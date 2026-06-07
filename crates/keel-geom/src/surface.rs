@@ -331,6 +331,80 @@ impl Surface3 {
         }
     }
 
+    /// Signed implicit form: zero on the surface, NEGATIVE on the
+    /// "inside" (behind the outward normal). Powers CSI fast paths and
+    /// the PMC sign oracle. Conventions per type:
+    /// plane: signed height along the frame z axis;
+    /// sphere: |p - c|^2 - r^2;
+    /// cylinder: |radial|^2 - r^2;
+    /// cone: |radial|^2 - (r0 + m h)^2 with m = tan(half_angle); valid
+    ///   on the physical nappe (callers stay on the side where
+    ///   r0 + m h >= 0; the mirror nappe is an artifact of squaring);
+    /// torus: (|radial| - R)^2 + h^2 - r^2.
+    pub fn implicit(&self, p: Vec3) -> f64 {
+        match self {
+            Surface3::Plane(pl) => (p - pl.frame.origin).dot(pl.frame.z),
+            Surface3::Sphere(s) => {
+                let w = p - s.frame.origin;
+                w.dot(w) - s.radius * s.radius
+            }
+            Surface3::Cylinder(c) => {
+                let w = p - c.frame.origin;
+                let radial = w - c.frame.z * w.dot(c.frame.z);
+                radial.dot(radial) - c.radius * c.radius
+            }
+            Surface3::Cone(c) => {
+                let w = p - c.frame.origin;
+                let h = w.dot(c.frame.z);
+                let radial = w - c.frame.z * h;
+                let rim = c.radius + c.half_angle.tan() * h;
+                radial.dot(radial) - rim * rim
+            }
+            Surface3::Torus(t) => {
+                let w = p - t.frame.origin;
+                let h = w.dot(t.frame.z);
+                let radial = w - t.frame.z * h;
+                let ring = radial.norm() - t.major;
+                ring * ring + h * h - t.minor * t.minor
+            }
+        }
+    }
+
+    /// Gradient of [`Surface3::implicit`]. The torus gradient is
+    /// undefined on the axis (|radial| = 0); the radial term is taken
+    /// as zero there (the field is locally axisymmetric).
+    pub fn implicit_gradient(&self, p: Vec3) -> Vec3 {
+        match self {
+            Surface3::Plane(pl) => pl.frame.z,
+            Surface3::Sphere(s) => (p - s.frame.origin) * 2.0,
+            Surface3::Cylinder(c) => {
+                let w = p - c.frame.origin;
+                (w - c.frame.z * w.dot(c.frame.z)) * 2.0
+            }
+            Surface3::Cone(c) => {
+                let m = c.half_angle.tan();
+                let w = p - c.frame.origin;
+                let h = w.dot(c.frame.z);
+                let radial = w - c.frame.z * h;
+                let rim = c.radius + m * h;
+                radial * 2.0 - c.frame.z * (2.0 * rim * m)
+            }
+            Surface3::Torus(t) => {
+                let w = p - t.frame.origin;
+                let h = w.dot(t.frame.z);
+                let radial = w - t.frame.z * h;
+                let rho = radial.norm();
+                let ring = rho - t.major;
+                let radial_term = if rho > 0.0 {
+                    radial * (2.0 * ring / rho)
+                } else {
+                    Vec3::ZERO
+                };
+                radial_term + t.frame.z * (2.0 * h)
+            }
+        }
+    }
+
     /// Exact closest-point projection. Axis-ambiguous inputs resolve
     /// deterministically: u = 0 on a symmetry axis, v = 0 at the
     /// sphere center and on the torus tube-center circle.
@@ -599,6 +673,73 @@ mod tests {
             );
             assert!((pr.point - p).norm() <= pr.distance + 1e-12);
         }
+    }
+
+    #[test]
+    fn implicit_zero_on_surface_samples() {
+        let f = Frame3::from_z(Vec3::new(0.3, -0.7, 2.0), Vec3::new(1., 1., 1.)).unwrap();
+        let surfaces = [
+            Surface3::Plane(Plane3::new(f.clone())),
+            Surface3::Cylinder(Cylinder3::new(f.clone(), 1.5).unwrap()),
+            Surface3::Sphere(Sphere3::new(f.clone(), 2.5).unwrap()),
+            Surface3::Torus(Torus3::new(f.clone(), 3.0, 0.8).unwrap()),
+            Surface3::Cone(Cone3::new(f, 1.0, 0.5).unwrap()),
+        ];
+        for s in &surfaces {
+            for i in 0..6 {
+                for j in 0..6 {
+                    let (u, v) = (0.3 + 0.9 * i as f64, -0.8 + 0.4 * j as f64);
+                    let p = s.point(u, v);
+                    let val = s.implicit(p);
+                    let scale = 1.0 + p.norm() * p.norm();
+                    assert!(val.abs() < 1e-10 * scale, "{s:?} at {u} {v}: {val}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn implicit_gradient_matches_finite_difference() {
+        let f = Frame3::from_z(Vec3::new(0.3, -0.7, 2.0), Vec3::new(1., 1., 1.)).unwrap();
+        let surfaces = [
+            Surface3::Plane(Plane3::new(f.clone())),
+            Surface3::Cylinder(Cylinder3::new(f.clone(), 1.5).unwrap()),
+            Surface3::Sphere(Sphere3::new(f.clone(), 2.5).unwrap()),
+            Surface3::Torus(Torus3::new(f.clone(), 3.0, 0.8).unwrap()),
+            Surface3::Cone(Cone3::new(f, 1.0, 0.5).unwrap()),
+        ];
+        let h = 1e-5;
+        for s in &surfaces {
+            for &p in &[
+                Vec3::new(1.0, 2.0, 3.0),
+                Vec3::new(-2.0, 0.5, 1.0),
+                Vec3::new(4.0, -1.0, 2.5),
+            ] {
+                let g = s.implicit_gradient(p);
+                for (axis, gi) in [
+                    (Vec3::new(1., 0., 0.), g.x),
+                    (Vec3::new(0., 1., 0.), g.y),
+                    (Vec3::new(0., 0., 1.), g.z),
+                ] {
+                    let fd = (s.implicit(p + axis * h) - s.implicit(p - axis * h)) / (2.0 * h);
+                    assert!((gi - fd).abs() < 1e-4 * (1.0 + fd.abs()), "{s:?} grad");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn implicit_sign_matches_inside_outside() {
+        let f = Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        let sph = Surface3::Sphere(Sphere3::new(f.clone(), 2.0).unwrap());
+        assert!(sph.implicit(Vec3::new(0.5, 0.5, 0.5)) < 0.0);
+        assert!(sph.implicit(Vec3::new(3.0, 0.0, 0.0)) > 0.0);
+        let tor = Surface3::Torus(Torus3::new(f.clone(), 3.0, 1.0).unwrap());
+        assert!(tor.implicit(Vec3::new(3.0, 0.0, 0.0)) < 0.0); // in the tube
+        assert!(tor.implicit(Vec3::ZERO) > 0.0); // axis is outside a ring torus
+        let cyl = Surface3::Cylinder(Cylinder3::new(f, 1.0).unwrap());
+        assert!(cyl.implicit(Vec3::new(0.2, 0.2, 5.0)) < 0.0);
+        assert!(cyl.implicit(Vec3::new(2.0, 0.0, 0.0)) > 0.0);
     }
 
     proptest! {
