@@ -720,3 +720,43 @@ REMAINING in M2a:
   enclosure proptests at extreme scales, fuzz_interval target with a
   clean 10-minute soak as the gate.
 - NEXT: execute M5a on branch m5a-ssi, Task 0 first.
+
+## Addendum 22 (2026-06-07): M5a Tasks 0-4 COMPLETE; interval gate CLEAN
+
+- Branch m5a-ssi. Task 0 (USER MANDATE): Interval bounds are now
+  EXTENDED REALS. The pre-audit hole was real: mul/add of near-MAX
+  operands overflowed to +-inf and broke the finite-bounds invariant
+  in release. Fix: infinite bounds legal (unbounded), point-at-infinity
+  forbidden (so inf-inf never arises in add/sub), 0*inf := 0 via
+  mul_corner, inf/inf div corner widens to the line. Half-ulp
+  containment property tests across a magnitude ladder (normals,
+  denormals, near-MAX, MIN_POSITIVE, 5e-324, MAX/MIN), chained-op
+  expression-tree soundness, M2b enclosure proptests re-run at 1e+-300
+  scales. fuzz_interval target: 10-MINUTE SOAK CLEAN = the gate for
+  the Krawczyk consumer (Task 5) is satisfied.
+- Shared fitter (fit.rs): least-squares cubic with chord params,
+  end-interpolation, control-count escalation, sampled-deviation x
+  safety verification, tol_achieved reported. Circle/line/segment
+  tests.
+- Task 1: SSI tier 1 exact (plane/plane line; plane/sphere &
+  sphere/sphere circles via radical plane; plane/cylinder ellipse +
+  ruling-line + tangent cases) with up-front Coincident classification
+  (parallel coplanar, concentric equal). Every result curve verified
+  on both implicit forms to 1e-9.
+- Task 2: tensor Bernstein mul/add/scale/elevate/derivative(axis) +
+  degree_of/coeff_at on MultiBernstein. Pointwise + FD oracles.
+- Tasks 3-4: SSI tier 2 (analytic x spline). compose_implicit_surface
+  = EXACT bivariate Bernstein composition of the analytic implicit
+  with each rational Bezier patch (2p,2q quadrics; 4p,4q torus).
+  Certified 2D tracer: whole-patch sign-variation reject, border
+  crossings (univariate Bernstein roots per edge) + PP critical points
+  (f=f_v / f=f_u turning) as the significant-point scaffold, gradient-
+  perpendicular continuation marching with Newton projection back to
+  the zero set, polyline merge across patch borders, cubic fit.
+  Tests: revolved-sphere-NURBS vs plane = circle; cylinder-NURBS vs
+  sphere; both verified to 1e-5 (fit tolerance, signed-distance form).
+- 196 workspace tests green, clippy clean.
+- NEXT: Task 5 tier 3 (spline x spline: Gauss-map separability,
+  collinear-normal seeds, Krawczyk-verified marching), Task 6 fit
+  hardening for closed branches, Task 7 fuzz_ssi + gate (incl. the
+  USER-MANDATED 2-HOUR extended soak before merge).
