@@ -5,6 +5,33 @@ use crate::GeomError;
 use crate::knots::KnotVector;
 use keel_math::vec::{Vec3, Vec4};
 
+/// In-place de Boor corner cutting (A3.1 inner loops): d[0..=p] holds
+/// the affected control points for `span` (local index k maps to
+/// global control index span - p + k); the result lands in d[p].
+pub(crate) fn de_boor_in_place(knots: &[f64], p: usize, span: usize, u: f64, d: &mut [Vec4]) {
+    for r in 1..=p {
+        for i in (r..=p).rev() {
+            let gi = span - p + i; // global control index
+            let denom = knots[gi + p + 1 - r] - knots[gi];
+            let a = if denom == 0.0 {
+                0.0
+            } else {
+                (u - knots[gi]) / denom
+            };
+            d[i] = d[i - 1] * (1.0 - a) + d[i] * a;
+        }
+    }
+}
+
+/// Binomial coefficient as f64; orders here are small (<= MAX_DEGREE).
+pub(crate) fn binom(n: usize, k: usize) -> f64 {
+    let mut b = 1.0f64;
+    for i in 1..=k {
+        b = b * (n - i + 1) as f64 / i as f64;
+    }
+    b
+}
+
 /// NURBS curve: clamped knot vector + homogeneous control points
 /// (w*x, w*y, w*z, w), all weights strictly positive.
 #[derive(Clone, Debug, PartialEq)]
@@ -110,21 +137,9 @@ impl NurbsCurve {
         let p = self.kv.degree();
         let u = self.kv.clamp(u);
         let span = self.kv.find_span(u);
-        let knots = self.kv.knots();
         // Working copy of the affected control points d[0..=p].
         let mut d: Vec<Vec4> = (0..=p).map(|i| self.ctrl[span - p + i]).collect();
-        for r in 1..=p {
-            for i in (r..=p).rev() {
-                let gi = span - p + i; // global control index
-                let denom = knots[gi + p + 1 - r] - knots[gi];
-                let a = if denom == 0.0 {
-                    0.0
-                } else {
-                    (u - knots[gi]) / denom
-                };
-                d[i] = d[i - 1] * (1.0 - a) + d[i] * a;
-            }
-        }
+        de_boor_in_place(self.kv.knots(), p, span, u, &mut d);
         d[p]
     }
 
