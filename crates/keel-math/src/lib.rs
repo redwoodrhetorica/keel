@@ -7,6 +7,7 @@
 pub mod bbox;
 pub mod interval;
 pub mod mat;
+pub mod predicates;
 pub mod tolerance;
 pub mod transform;
 pub mod vec;
