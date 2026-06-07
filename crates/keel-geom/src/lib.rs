@@ -7,6 +7,7 @@
 //! NURBS for computation.
 
 pub mod basis;
+pub mod curve;
 pub mod knots;
 pub mod nurbs_curve;
 
