@@ -101,3 +101,22 @@ Write the M2 plan (curves/surfaces: analytics + NURBS on homogeneous 4D points p
 The NURBS Book algorithm taxonomy, derivatives, closest-point with Hu-Wallner polish,
 multivariate subdivision solver, knot insertion/refinement (Boehm/Oslo), Bezier
 extraction), starting with a fresh read of any new research that has landed by then.
+
+---
+
+## 2026-06-07 (addendum: M2a planned, PAUSED before execution)
+
+- M2 split into M2a (spline core + curves) and M2b (surfaces + multivariate
+  subdivision solver). M2a plan written, self-reviewed, committed:
+  docs/superpowers/plans/2026-06-07-m2a-spline-curves.md (9 tasks: scaffold
+  keel-geom, knots, basis A2.2, NURBS eval + exact arcs, hodograph derivatives,
+  insertion/split/Bezier decomposition, analytic curves + Curve3 enum, global
+  closest-point, benches/fuzz/wrap-up).
+- Branch `m2a-spline-curves` created from master. NO M2a CODE WRITTEN YET.
+  Resume point: execute Task 1 (scaffold keel-geom crate) per the plan.
+- WSL Ubuntu-24.04 set up with Rust nightly + cargo-fuzz for fuzz runs (libFuzzer
+  needs Linux; native dev stays on Windows stable). First run failed: repo
+  rust-toolchain.toml pins stable, overriding WSL nightly; fix is
+  `cargo +nightly fuzz run`. Rerun of both M1 targets (10 min each) was running
+  in the background at pause time; check results before closing the M1 gate item.
+- USER PAUSED the session here.
