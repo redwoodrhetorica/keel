@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2221872bd233bc8531404c2e2e1af4cdb8361da691d012147948421c36aa12c5 # shrinks to (s, _, _) = (NurbsSurface { kv_u: KnotVector { degree: 2, knots: [0.0, 0.0, 0.0, 0.892001746312627, 1.0, 1.0, 1.0] }, kv_v: KnotVector { degree: 2, knots: [0.0, 0.0, 0.0, 1.0, 1.0, 1.0] }, ctrl: [Vec4 { x: 0.0, y: 0.0, z: 0.0, w: 0.05 }, Vec4 { x: 0.0, y: 0.0, z: 0.0, w: 0.05 }, Vec4 { x: 0.0, y: 0.0, z: 0.0, w: 0.05 }, Vec4 { x: 0.0, y: 0.0, z: 0.0, w: 0.05 }, Vec4 { x: 0.0, y: 0.0, z: 0.0, w: 0.05 }, Vec4 { x: 0.0, y: 0.0, z: 0.0, w: 0.05 }, Vec4 { x: 0.2628012661429597, y: 0.17390702676054, z: 0.0, w: 0.05 }, Vec4 { x: -0.16114758851480124, y: 0.01250121078924526, z: 0.0, w: 0.05 }, Vec4 { x: 0.27331550885194594, y: 0.0, z: 0.0, w: 0.05 }, Vec4 { x: 4.951740313435723, y: 8.076455770119509, z: 0.0, w: 0.8659369633252103 }, Vec4 { x: 0.17258931072897324, y: 0.0, z: 0.0, w: 0.05 }, Vec4 { x: 0.0, y: -3.471758887074391, z: 0.0, w: 0.8936213926768523 }], nu: 4, nv: 3 }, 0.0, 0.0), px = 9.883751912773377, py = 11.444754668283304, pz = -5.4765904357350745

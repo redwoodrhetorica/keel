@@ -224,6 +224,28 @@ impl NurbsSurface {
         crate::surface::local_geometry_from_ders(d[0][0], d[1][0], d[0][1], d[2][0], d[1][1], d[0][2])
     }
 
+    /// The four boundary iso-curves, with their surface edge and the
+    /// curve-parameter direction: [u = u0 (param v), u = u1 (param v),
+    /// v = v0 (param u), v = v1 (param u)]. For a clamped surface the
+    /// boundary curve's control points are the boundary row/column of
+    /// the net.
+    pub fn boundary_curves(&self) -> [crate::nurbs_curve::NurbsCurve; 4] {
+        use crate::nurbs_curve::NurbsCurve;
+        let row = |i: usize| -> Vec<Vec4> {
+            (0..self.nv).map(|j| self.ctrl[i * self.nv + j]).collect()
+        };
+        let col = |j: usize| -> Vec<Vec4> {
+            (0..self.nu).map(|i| self.ctrl[i * self.nv + j]).collect()
+        };
+        #[allow(clippy::unwrap_used)]
+        [
+            NurbsCurve::from_homogeneous(self.kv_v.clone(), row(0)).unwrap(),
+            NurbsCurve::from_homogeneous(self.kv_v.clone(), row(self.nu - 1)).unwrap(),
+            NurbsCurve::from_homogeneous(self.kv_u.clone(), col(0)).unwrap(),
+            NurbsCurve::from_homogeneous(self.kv_u.clone(), col(self.nv - 1)).unwrap(),
+        ]
+    }
+
     /// Insert `ubar` once into the u knot vector (Boehm A5.3 row form).
     /// Geometry unchanged; representation refined.
     pub fn insert_knot_u(&self, ubar: f64) -> Result<Self, GeomError> {
