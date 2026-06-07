@@ -83,6 +83,16 @@ The wave-2 literature repeatedly collapses feature families onto a few engines. 
 - Mesh-boolean renaissance transfer limits, coincidence-first, corpus-as-product (fTetWild pass-rate methodology), regions where Requicha r-set/regularized-boolean theory grounds PMC (Tilove SMC).
 - Refinements: cubic hybrid clipping (Lou-Liu 2022, order-4) joins the root-engine portfolio above plain Bezier clipping; Hu-Wallner second-order geometric iteration replaces bare Newton as the projection polisher; Selimovic + circular/torus clipping as the global projection pruner.
 
+## Addendum: kernel/11, curved exact predicates (read after the main wave)
+
+The eleventh kernel dossier closes the gap between our linear predicate spine (D2) and curved geometry, and it is doctrine-completing. Applied to the spec as the D2 curved-predicate tier table:
+
+- The wall: conic intersection coordinates are degree-4 algebraic numbers, quadric-quadric points are degree-8; every robustness-critical curved decision reduces to comparing algebraic numbers. The literature (EXACUS, QI, CGAL Algebraic Kernel; MPI/INRIA/NYU, ~1995-2015) is an order of magnitude thinner than the linear case.
+- Four tiers: linear exact (have); conics exact via one-root numbers + lazy-exact + filters (cheap, build for the M4 profile subsystem); quadrics exact-when-cheap via QI pencil analysis (rational whenever singular, single sqrt otherwise), certified intervals when not; NURBS certified-numeric topology (Bernstein isolation, Plantinga-Vegter, validated continuation) over tolerant metric geometry.
+- The sharpened doctrine: tolerances NEVER decide combinatorial topology, anywhere; they carry metric geometry and serialization only. This is the precise statement of Keel's differentiator versus the incumbents' tolerant modeling (fast, shippable, and the documented source of their failure modes).
+- Engineering blueprint: one `AlgebraicReal` expression-DAG type (interval + BFMSS escalation, diamond-operator capability restricted to topology decisions); curved layer specified to the CGAL Ak_1/Ak_2 interface with Bisolve behind solve_bivariate; semi-static filter generation in the Fortune-Van-Wyk LN spirit (Rust proc-macro candidate); SoS for linear/conic degeneracies; controlled perturbation (worked-out guards exist for circles/spheres) as the principled fixed-precision option for those subproblems; curved snap rounding is OPEN, so serialization rounds to tolerant boundary representation, isolating the gap at I/O.
+- Cost reality: filters keep curved exactness within 2-10x of floats on generic input, but CAD is degeneracy-dense BY DESIGN (intentional tangency, coincidence, symmetry), so the 100-1000x fallback fires on purpose-built configurations; the tier routing exists to keep those fallbacks low-degree.
+
 ## Reading-list updates per milestone
 
 - **Before M2:** The NURBS Book algorithm taxonomy (A2.x/A3.x/A4.x/A5.x) as the implementation map; Farouki-Rajan/Goodman conditioning; Lyche-Morken knot removal; Borden Bezier extraction.

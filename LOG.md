@@ -120,3 +120,24 @@ extraction), starting with a fresh read of any new research that has landed by t
   `cargo +nightly fuzz run`. Rerun of both M1 targets (10 min each) was running
   in the background at pause time; check results before closing the M1 gate item.
 - USER PAUSED the session here.
+
+---
+
+## 2026-06-07 (addendum 2: kernel/11 curved-predicates dossier absorbed, still paused)
+
+- User's research agent flagged docs/research/kernel/11-curved-exact-predicates.md
+  for immediate reading. Read in full and absorbed. It completes the D2 doctrine:
+  four predicate tiers (linear exact / conics exact via one-root numbers + lazy
+  exact + filters / quadrics exact-when-cheap via QI pencil analysis / NURBS
+  certified-numeric topology over tolerant metric geometry), with the sharpened
+  rule that TOLERANCES NEVER DECIDE COMBINATORIAL TOPOLOGY, only metric geometry
+  and serialization. Spec D2 amended; synthesis wave-2 addendum written.
+- Implementation consequences (future, none affect M2a): a Rust `AlgebraicReal`
+  expression-DAG number type (interval + BFMSS separation bounds) before M4's
+  conic arrangement work; the 2D profile subsystem gets Tier-1 exact conic
+  predicates; QI port consideration at M5; curved snap rounding is open, so
+  serialization targets tolerant boundary rep.
+- Still PAUSED. Resume point unchanged: execute M2a Task 1 (scaffold keel-geom).
+- Background: WSL fuzz rerun (cargo +nightly) of the two M1 targets still in
+  flight at time of writing; check task output before logging the M1 gate item
+  closed.
