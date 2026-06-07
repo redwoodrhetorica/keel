@@ -609,3 +609,24 @@ REMAINING in M2a:
   VOLUME SIGN as the M3 orientation falsification test (no abs():
   negative volume = fix M3, not the formula). fuzz_pmc vs implicit-sign
   oracle. Branch m4-classification.
+
+## Addendum 18 (2026-06-07): PMC performance research; M4 plan amended
+
+- User flagged ray-cast PMC cost. Research verdict: the field moved to
+  (a) winding numbers over crossing parity for containment (robust to
+  noise/open boundaries; Liu et al. arXiv:2510.25159 solves EXACTLY our
+  trimmed-parametric-surface UV containment with recursive winding +
+  ellipse bounds on Bezier trim segments + universal-cover lifting for
+  PERIODIC surfaces, i.e. our cylinder/torus seams), and (b) nearest-
+  face signed classification (BVH projection + Baerentzen-Aanaes
+  angle-weighted pseudonormals at edge/vertex feet) instead of rays for
+  the 3D query: O(log n), local, no ray ladder in the common case.
+- M4 plan amended: UV containment = winding number (universal cover on
+  periodic faces); 3D PMC primary = nearest-face signed classification;
+  ray ladder demoted to degenerate-incidence fallback + debug cross-
+  check; face-AABB BVH added as Task 5b shared infrastructure (booleans
+  reuse). Generalized winding numbers (Jacobson 2013, Barill 2018 fast
+  GWN, 2024 one-shot GWN) recorded as the healing-era fallback for
+  untrusted geometry. The M4 reference workload (<= 6 analytic faces,
+  closed-form projections) was never expensive; the INTERFACE is now
+  the scalable one from day one.

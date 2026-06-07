@@ -67,7 +67,7 @@ Oracles: line through sphere center (2 hits at exact distance), tangent line to 
 ### Task 4: pcurves for primitives + UV containment (keel-topo)
 
 - Extend `construct.rs`: every fin of every primitive face gets `pcurve = Some((curve_key, sense))` where the pcurve is a `Curve3::Line` in UV-as-3D (z = 0) parameter space (iso segments; seam fins get the two rectangle sides; closed-edge fins get full-period horizontal spans). Document the UV embedding convention (pcurves live in the face's (u, v, 0) space).
-- `pmc.rs`: `point_in_face_uv(body, face, uv) -> InOutOn`: crossing parity of a u-directed ray against the loops' pcurves, exact for the segment pcurves; `On` within parameter tolerance mapped from the face tolerance via first-fundamental-form scaling.
+- `pmc.rs`: `point_in_face_uv(body, face, uv) -> InOutOn`: WINDING NUMBER of the loops' pcurves about the query point (not crossing parity: winding is robust to noise and open boundaries and is the interface M5's curved trims need; for M4's exact segment pcurves the two coincide and winding costs the same). Periodic faces (cylinder u, torus u and v) evaluate in the universal cover (lift the query and the loop representatives by the period) per Liu et al. 2025 (arXiv:2510.25159), which makes seam-crossing loops consistent. When curved trims arrive (M5), adopt that paper's recursive evaluation with ellipse bounds on Bezier segments (linear-time, no subdivision). `On` within parameter tolerance mapped from the face tolerance via first-fundamental-form scaling.
 - Validation extension: every fin of a face with a surface must carry a pcurve whose endpoints map (via the surface) to its edge's endpoints within tolerance (watertightness in parameter space). Run on all primitives.
 
 ### Task 5: ray-cast PMC
@@ -76,10 +76,43 @@ Oracles: line through sphere center (2 hits at exact distance), tangent line to 
 pub enum Containment { In(RegionKey), On(FaceKey), Out } // Out = infinite region
 pub fn classify_point(body: &Body, p: Vec3) -> Result<Containment, TopoError>
 ```
-1. `On` check: for each face (BVH later; linear now), project p to the surface, UV-contain, distance <= tolerance: report On.
-2. Ray ladder: deterministic directions (+x, +y, +z, then the documented mixed set). For each face: CSI ray-vs-surface, keep hits with positive t, UV-inside (strictly: hits within parameter tolerance of a loop pcurve = degenerate, advance the ladder), tangential hits = degenerate, advance.
-3. Sort accepted hits by t; walk from the infinite region flipping region at each face crossing using the face's front/back region links; the region after the last crossing seen from infinity backward gives p's region. Cross-check: parity per region must be consistent; inconsistency = TopoError (validation bug, not a tolerance call).
-Tests: all five primitives (center In(solid), far Out, surface-point On), block with a void (mvfs inside): nested classification, the two-glued-cubes body, proptest vs `Surface3::implicit` sign oracle for the analytic primitives.
+Architecture per the 2026-06-07 performance research (user-prompted): the
+PRIMARY classifier is nearest-face signed classification, not ray casting.
+
+1. Nearest face: project p onto every face (linear scan now; the Task 5b
+   BVH makes it O(log n)), UV-contain the foot via the winding test.
+   Distance <= tolerance: report On.
+2. Signed verdict from the nearest face with an interior foot: the sign
+   of (p - foot) . outward_normal (outward derived from front/back
+   region solidity) names the region directly via the face's region
+   links. O(1) local information, no ray.
+3. Foot on an edge/vertex (within parameter tolerance of a loop):
+   angle-weighted pseudonormal (Baerentzen-Aanaes 2005) over the
+   incident faces decides; if still degenerate (non-manifold incidence),
+   FALL BACK to the deterministic ray ladder: directions +x, +y, +z,
+   then the documented mixed set; degenerate hits (near-loop in UV, or
+   tangential) advance the ladder; crossings walk regions from infinity
+   via front/back links.
+4. Debug builds cross-check nearest-face verdicts against the ray
+   parity on a sampled basis; disagreement = TopoError (bug, not
+   tolerance).
+
+5b. **Face-AABB BVH** (shared infrastructure; booleans and M5 reuse it):
+   static BVH over per-face control/geometry AABBs with ray traversal
+   and nearest-primitive search. Lives in keel-topo (or keel-geom if
+   face-agnostic), built per body on demand, invalidated by mutation.
+
+Tests: all five primitives (center In(solid), far Out, surface-point On),
+block with a void (mvfs inside): nested classification, the two-glued-
+cubes body, proptest vs `Surface3::implicit` sign oracle for the
+analytic primitives, near-edge and near-vertex queries exercising the
+pseudonormal path, and a documented case that forces the ray fallback.
+
+Scaling notes for the record: generalized winding numbers (Jacobson et
+al. 2013; Barill et al. 2018 fast winding numbers; 2024 one-shot GWN,
+arXiv:2408.04466) are the import/healing-era fallback for UNTRUSTED
+geometry (gaps, soups), where local methods lie; not needed while all
+bodies are operator-built and validated.
 
 ### Task 6: mass properties
 
