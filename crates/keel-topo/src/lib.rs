@@ -10,6 +10,7 @@ pub mod body;
 pub mod entity;
 pub mod euler;
 pub mod lineage;
+pub mod ops;
 pub mod validate;
 
 pub use body::{Body, TopoError};

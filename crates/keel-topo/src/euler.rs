@@ -384,6 +384,18 @@ impl Body {
         fin_b: FinKey,
         surface: Option<(SurfaceKey, bool)>,
     ) -> Result<MefOut, TopoError> {
+        self.mef_impl(fin_a, fin_b, surface, false)
+    }
+
+    /// `split_lineage = true` records the new face as a SplitChild of
+    /// the old face and emits a split event (used by ops::split_face).
+    pub(crate) fn mef_impl(
+        &mut self,
+        fin_a: FinKey,
+        fin_b: FinKey,
+        surface: Option<(SurfaceKey, bool)>,
+        split_lineage: bool,
+    ) -> Result<MefOut, TopoError> {
         let fa = self.fins.get(fin_a).ok_or(TopoError::StaleKey)?;
         let fb = self.fins.get(fin_b).ok_or(TopoError::StaleKey)?;
         if fa.owner != fb.owner {
@@ -413,12 +425,15 @@ impl Body {
             .get(old_face)
             .map(|x| x.id)
             .unwrap_or_default_id();
-        let new_face = self.new_face(
-            &mut rec,
-            front_region,
-            back_region,
-            Derivation::Generated { from: old_face_id },
-        );
+        let derivation = if split_lineage {
+            Derivation::SplitChild {
+                from: old_face_id,
+                ordinal: 1,
+            }
+        } else {
+            Derivation::Generated { from: old_face_id }
+        };
+        let new_face = self.new_face(&mut rec, front_region, back_region, derivation);
         let new_loop = self.new_loop(&mut rec, new_face, LoopKind::Outer, Derivation::Created);
         if let Some(f) = self.faces.get_mut(new_face) {
             f.loops.push(new_loop);
@@ -1212,8 +1227,15 @@ pub(crate) mod test_support {
     /// creation order [bottom, s0, s1, s2, s3-top-closer].
     pub(crate) fn cube() -> (Body, Vec<FaceKey>) {
         let mut b = Body::new();
+        let faces = cube_into(&mut b, Vec3::ZERO);
+        (b, faces)
+    }
+
+    /// Build a unit cube at `offset` into an existing body (its own
+    /// mvfs seed, so its own interior region).
+    pub(crate) fn cube_into(b: &mut Body, offset: Vec3) -> Vec<FaceKey> {
         let r = b.infinite_region();
-        let p = Vec3::new;
+        let p = |x: f64, y: f64, z: f64| Vec3::new(x, y, z) + offset;
         let seed = b.mvfs(r, p(0., 0., 0.)).unwrap_or_else(|e| panic!("{e:?}"));
         let lp = b
             .face(seed.face)
@@ -1224,23 +1246,23 @@ pub(crate) mod test_support {
         let m1 = b
             .mev(MevSite::VertexLoop(lp), p(1., 0., 0.))
             .unwrap_or_else(|e| panic!("{e:?}"));
-        let f1 = fin_ending_at(&b, lp, m1.vertex);
+        let f1 = fin_ending_at(b, lp, m1.vertex);
         let m2 = b
             .mev(MevSite::AfterFin(f1), p(1., 1., 0.))
             .unwrap_or_else(|e| panic!("{e:?}"));
-        let f2 = fin_ending_at(&b, lp, m2.vertex);
+        let f2 = fin_ending_at(b, lp, m2.vertex);
         let m3 = b
             .mev(MevSite::AfterFin(f2), p(0., 1., 0.))
             .unwrap_or_else(|e| panic!("{e:?}"));
-        let f3 = fin_ending_at(&b, lp, m3.vertex);
-        let f0 = fin_ending_at(&b, lp, v0);
+        let f3 = fin_ending_at(b, lp, m3.vertex);
+        let f0 = fin_ending_at(b, lp, v0);
         let bottom = b.mef(f3, f0, None).unwrap_or_else(|e| panic!("{e:?}"));
         // The seed face keeps loop lp (now the top rim); `bottom.face`
         // carries the bottom square. Verticals from each rim vertex.
         let rim = [v0, m1.vertex, m2.vertex, m3.vertex];
         let mut tops = Vec::new();
         for (i, &rv) in rim.iter().enumerate() {
-            let at = fin_ending_at(&b, lp, rv);
+            let at = fin_ending_at(b, lp, rv);
             let mv = b
                 .mev(MevSite::AfterFin(at), p(rim_x(i), rim_y(i), 1.))
                 .unwrap_or_else(|e| panic!("{e:?}"));
@@ -1249,13 +1271,13 @@ pub(crate) mod test_support {
         // Side faces: connect consecutive top vertices.
         let mut faces = vec![bottom.face];
         for i in 0..4 {
-            let a = fin_ending_at(&b, lp, tops[i]);
-            let c = fin_ending_at(&b, lp, tops[(i + 1) % 4]);
+            let a = fin_ending_at(b, lp, tops[i]);
+            let c = fin_ending_at(b, lp, tops[(i + 1) % 4]);
             let side = b.mef(a, c, None).unwrap_or_else(|e| panic!("{e:?}"));
             faces.push(side.face);
         }
         assert!(b.validate().is_ok());
-        (b, faces)
+        faces
     }
 
     fn rim_x(i: usize) -> f64 {
