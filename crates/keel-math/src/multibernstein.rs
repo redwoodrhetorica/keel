@@ -59,6 +59,166 @@ impl MultiBernstein {
         self.degrees.len()
     }
 
+    pub fn coeffs(&self) -> &[f64] {
+        &self.coeffs
+    }
+
+    /// Evaluate, returning the full coefficient access for callers.
+    pub fn coeff_at(&self, multi_index: &[usize]) -> f64 {
+        debug_assert_eq!(multi_index.len(), self.vars());
+        let mut idx = 0usize;
+        for (ax, &i) in multi_index.iter().enumerate() {
+            idx = idx * (self.degrees[ax] + 1) + i;
+        }
+        self.coeffs[idx]
+    }
+
+    /// Tensor-product Bernstein product (Farouki-Rajan per axis). The
+    /// operands must have the same variable count; result degree is
+    /// the per-axis sum. Stays in the well-conditioned basis.
+    pub fn mul(&self, other: &MultiBernstein) -> MultiBernstein {
+        debug_assert_eq!(self.vars(), other.vars());
+        let n = self.vars();
+        let degs: Vec<usize> = (0..n).map(|a| self.degrees[a] + other.degrees[a]).collect();
+        let out_len: usize = degs.iter().map(|d| d + 1).product();
+        let mut coeffs = vec![0.0; out_len];
+        let binom = |n: usize, k: usize| -> f64 {
+            let mut b = 1.0f64;
+            for i in 1..=k {
+                b = b * (n - i + 1) as f64 / i as f64;
+            }
+            b
+        };
+        // Iterate every (i, j) coefficient pair across all axes.
+        let self_shape: Vec<usize> = self.degrees.iter().map(|d| d + 1).collect();
+        let other_shape: Vec<usize> = other.degrees.iter().map(|d| d + 1).collect();
+        let out_shape: Vec<usize> = degs.iter().map(|d| d + 1).collect();
+        let mut si = vec![0usize; n];
+        for &ca in &self.coeffs {
+            if ca != 0.0 {
+                let mut oj = vec![0usize; n];
+                for &cb in &other.coeffs {
+                    if cb != 0.0 {
+                        // Output multi-index = si + oj; weight =
+                        // prod_a C(p_a, i_a) C(q_a, j_a) / C(p_a+q_a, k_a).
+                        let mut w = ca * cb;
+                        let mut out_idx = 0usize;
+                        for a in 0..n {
+                            let (pa, qa) = (self.degrees[a], other.degrees[a]);
+                            let (ia, ja) = (si[a], oj[a]);
+                            let ka = ia + ja;
+                            w *= binom(pa, ia) * binom(qa, ja) / binom(pa + qa, ka);
+                            out_idx = out_idx * out_shape[a] + ka;
+                        }
+                        coeffs[out_idx] += w;
+                    }
+                    inc_index(&mut oj, &other_shape);
+                }
+            }
+            inc_index(&mut si, &self_shape);
+        }
+        MultiBernstein {
+            degrees: degs,
+            coeffs,
+        }
+    }
+
+    /// Sum after degree-elevating both to the per-axis max degree.
+    pub fn add(&self, other: &MultiBernstein) -> MultiBernstein {
+        debug_assert_eq!(self.vars(), other.vars());
+        let n = self.vars();
+        let target: Vec<usize> = (0..n)
+            .map(|a| self.degrees[a].max(other.degrees[a]))
+            .collect();
+        let a = self.elevated_to(&target);
+        let b = other.elevated_to(&target);
+        MultiBernstein {
+            degrees: target,
+            coeffs: a.coeffs.iter().zip(&b.coeffs).map(|(x, y)| x + y).collect(),
+        }
+    }
+
+    pub fn scale(&self, s: f64) -> MultiBernstein {
+        MultiBernstein {
+            degrees: self.degrees.clone(),
+            coeffs: self.coeffs.iter().map(|c| c * s).collect(),
+        }
+    }
+
+    /// Degree-elevate to per-axis degrees `target` (each >= current),
+    /// one axis at a time.
+    pub fn elevated_to(&self, target: &[usize]) -> MultiBernstein {
+        let mut cur = self.clone();
+        for (axis, &t) in target.iter().enumerate() {
+            while cur.degrees[axis] < t {
+                cur = cur.elevate_axis(axis);
+            }
+        }
+        cur
+    }
+
+    fn elevate_axis(&self, axis: usize) -> MultiBernstein {
+        let p = self.degrees[axis];
+        let stride = self.stride(axis);
+        let lane_span = (p + 1) * stride;
+        let outer = self.coeffs.len() / lane_span;
+        let mut degs = self.degrees.clone();
+        degs[axis] = p + 1;
+        let new_lane = (p + 2) * stride;
+        let mut coeffs = vec![0.0; outer * new_lane];
+        for o in 0..outer {
+            for s in 0..stride {
+                // Lane coefficients along the axis.
+                let read = |i: usize| self.coeffs[o * lane_span + i * stride + s];
+                // Elevation: b'_k = (k/(p+1)) b_{k-1} + (1 - k/(p+1)) b_k.
+                for k in 0..=(p + 1) {
+                    let alpha = k as f64 / (p + 1) as f64;
+                    let lo = if k == 0 { 0.0 } else { read(k - 1) };
+                    let hi = if k <= p { read(k) } else { 0.0 };
+                    coeffs[o * new_lane + k * stride + s] = alpha * lo + (1.0 - alpha) * hi;
+                }
+            }
+        }
+        MultiBernstein {
+            degrees: degs,
+            coeffs,
+        }
+    }
+
+    /// Partial derivative along `axis`: degree drops by 1 on that axis.
+    /// b'_i = d * (b_{i+1} - b_i) on the [0,1] axis.
+    pub fn derivative(&self, axis: usize) -> MultiBernstein {
+        let p = self.degrees[axis];
+        if p == 0 {
+            let mut degs = self.degrees.clone();
+            degs[axis] = 0;
+            return MultiBernstein {
+                degrees: degs,
+                coeffs: vec![0.0; self.coeffs.len()],
+            };
+        }
+        let stride = self.stride(axis);
+        let lane_span = (p + 1) * stride;
+        let outer = self.coeffs.len() / lane_span;
+        let mut degs = self.degrees.clone();
+        degs[axis] = p - 1;
+        let new_lane = p * stride;
+        let mut coeffs = vec![0.0; outer * new_lane];
+        for o in 0..outer {
+            for s in 0..stride {
+                for i in 0..p {
+                    let b0 = self.coeffs[o * lane_span + i * stride + s];
+                    let b1 = self.coeffs[o * lane_span + (i + 1) * stride + s];
+                    coeffs[o * new_lane + i * stride + s] = p as f64 * (b1 - b0);
+                }
+            }
+        }
+        MultiBernstein {
+            degrees: degs,
+            coeffs,
+        }
+    }
+
     pub fn degrees(&self) -> &[usize] {
         &self.degrees
     }
@@ -142,6 +302,18 @@ impl MultiBernstein {
             env[i].1 = env[i].1.max(c);
         }
         env
+    }
+}
+
+/// Increment a multi-index (row-major, last axis fastest) within the
+/// given per-axis shape; wraps silently at the end.
+fn inc_index(idx: &mut [usize], shape: &[usize]) {
+    for a in (0..idx.len()).rev() {
+        idx[a] += 1;
+        if idx[a] < shape[a] {
+            return;
+        }
+        idx[a] = 0;
     }
 }
 
@@ -399,6 +571,44 @@ mod tests {
         for &(x, y) in &[(0.0, 0.0), (0.5, 0.5), (0.3, 0.8), (1.0, 0.2)] {
             let want = (x * x - 0.25) + (y * y - 0.25);
             assert!((f.eval(&[x, y]) - want).abs() < 1e-14, "at {x} {y}");
+        }
+    }
+
+    #[test]
+    fn bivariate_product_matches_pointwise() {
+        // f = x + 2y (deg 1,1 from corner values), g = 3 - x*y.
+        let f = MultiBernstein::new(vec![1, 1], vec![0., 2., 1., 3.]).unwrap();
+        // g corner values at (0,0),(0,1),(1,0),(1,1): 3, 3, 3, 2.
+        let g = MultiBernstein::new(vec![1, 1], vec![3., 3., 3., 2.]).unwrap();
+        let prod = f.mul(&g);
+        for &(x, y) in &[(0.0, 0.0), (0.3, 0.7), (1.0, 0.5), (0.4, 1.0)] {
+            let want = f.eval(&[x, y]) * g.eval(&[x, y]);
+            assert!((prod.eval(&[x, y]) - want).abs() < 1e-13, "at {x} {y}");
+        }
+    }
+
+    #[test]
+    fn bivariate_derivative_matches_fd() {
+        let f = MultiBernstein::new(vec![2, 2], (0..9).map(|i| (i as f64 * 0.3).sin()).collect())
+            .unwrap();
+        let fu = f.derivative(0);
+        let fv = f.derivative(1);
+        let h = 1e-6;
+        for &(x, y) in &[(0.3, 0.4), (0.6, 0.2), (0.5, 0.8)] {
+            let fdu = (f.eval(&[x + h, y]) - f.eval(&[x - h, y])) / (2.0 * h);
+            let fdv = (f.eval(&[x, y + h]) - f.eval(&[x, y - h])) / (2.0 * h);
+            assert!((fu.eval(&[x, y]) - fdu).abs() < 1e-5, "fu");
+            assert!((fv.eval(&[x, y]) - fdv).abs() < 1e-5, "fv");
+        }
+    }
+
+    #[test]
+    fn bivariate_add_and_elevate() {
+        let f = MultiBernstein::new(vec![1, 1], vec![1., 2., 3., 4.]).unwrap();
+        let g = MultiBernstein::new(vec![2, 2], vec![0.5; 9]).unwrap();
+        let sum = f.add(&g);
+        for &(x, y) in &[(0.0, 0.0), (0.5, 0.5), (1.0, 0.3)] {
+            assert!((sum.eval(&[x, y]) - (f.eval(&[x, y]) + 0.5)).abs() < 1e-13);
         }
     }
 
