@@ -792,3 +792,23 @@ REMAINING in M2a:
 - GATE RUNNING: 10-min fuzz_ssi, then 10-min fuzz_interval re-confirm,
   then the USER-MANDATED 2-HOUR extended soak (fuzz_ssi + fuzz_interval)
   before merge.
+
+## Addendum 24 (2026-06-07): M5a COMPLETE; 2-hour soak CLEAN; merged
+
+- USER-MANDATED EXTENDED SOAK PASSED. Prior artifacts replay clean.
+  fuzz_interval 1hr: 385,916,505 runs, 0 errors, 0 artifacts.
+  fuzz_ssi 1hr: 723,023,053 runs, 0 errors, 0 artifacts. ~1.1 BILLION
+  executions total across both targets, nothing found. The interval
+  extended-real soundness fix and the SSI engine both hold under
+  adversarial fuzzing at scale.
+- Full M5a exit gate met: fmt clean, clippy -D warnings clean, 200
+  workspace tests green, all prior fuzz artifacts replay clean, both
+  new 10-minute soaks clean, the 2-hour extended soak clean.
+- M5a (SSI engine, keel-geom) merged to master.
+- NEXT: M5b (topology integration: SsiCurves -> trim loops, imprint
+  via split_face + glue_edges with the dihedral radial sort now due,
+  NURBS surface extension service per kernel/13, trimmed-face PMC/mass
+  upgrades). Standing research re-read first (kernel/13 extension
+  service, kernel/01 boundary-evaluation, nurbs/04 section 3 SSI
+  topology). Then M6: booleans, the proof milestone (M7 = robust
+  booleans on NURBS-bounded solids).
