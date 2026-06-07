@@ -697,3 +697,26 @@ REMAINING in M2a:
 - NEXT: merge M4; then M5 planning (trims/imprint/SSI certified:
   the big one), standing research re-read first (nurbs/04 sections
   3-4, kernel/11, kernel/13 extension service).
+
+## Addendum 21 (2026-06-07): M5a plan written; interval soundness mandate
+
+- M5 split M2-style: M5a = SSI engine in keel-geom (this plan), M5b =
+  topology integration (trims, imprint, extension service, dihedral
+  radial sort). Plan: docs/superpowers/plans/2026-06-07-m5a-ssi-engine.md.
+- Three-tier architecture per nurbs/04 section 10 (re-read in full):
+  exact analytic-analytic; lower-dimensional analytic x spline via
+  EXACT bivariate Bernstein composition + certified 2D implicit-curve
+  tracing (PP critical points: singular + turning + border scaffold);
+  spline x spline via Gauss-map separability + collinear-normal seeds
+  + Krawczyk-verified marching. Output: SsiResult with up-front
+  dimensionality classification (Coincident never mis-traced).
+  Honesty ledger in the plan: what is certified in v1 vs staged
+  (validated-ODE, Yang-Jia-Yan escalation behind the same API).
+- USER MANDATE recorded: verify interval soundness before building
+  certification on it. Task 0 added, BLOCKING Task 5: fix the
+  Interval overflow-to-inf hole (bounds become extended reals; found
+  by inspection during plan review), half-ulp containment property
+  tests across the magnitude ladder, chained-op soundness, M2b
+  enclosure proptests at extreme scales, fuzz_interval target with a
+  clean 10-minute soak as the gate.
+- NEXT: execute M5a on branch m5a-ssi, Task 0 first.
