@@ -75,6 +75,7 @@ dependencies = [
  "arbitrary",
  "keel-geom",
  "keel-math",
+ "keel-topo",
  "libfuzzer-sys",
 ]
 
@@ -90,6 +91,14 @@ name = "keel-math"
 version = "0.1.0"
 dependencies = [
  "robust",
+]
+
+[[package]]
+name = "keel-topo"
+version = "0.1.0"
+dependencies = [
+ "keel-geom",
+ "keel-math",
 ]
 
 [[package]]

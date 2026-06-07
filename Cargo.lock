@@ -395,6 +395,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "keel-topo"
+version = "0.1.0"
+dependencies = [
+ "keel-geom",
+ "keel-math",
+ "proptest",
+]
+
+[[package]]
 name = "leb128fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
