@@ -5,9 +5,11 @@
 //! `predicates` module. Tolerances come from `tolerance`, never inline.
 
 pub mod bbox;
+pub mod bernstein;
 pub mod interval;
 pub mod mat;
 pub mod newton;
+pub mod poly;
 pub mod predicates;
 pub mod tolerance;
 pub mod transform;
