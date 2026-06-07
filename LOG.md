@@ -221,3 +221,68 @@ extraction), starting with a fresh read of any new research that has landed by t
   derivatives; retrofitting generic-over-scalar evaluation is expensive).
   Curve derivatives in M2a are already first-class (hodograph + rational
   recursion + FD oracle tests; projection consumes 2nd derivatives).
+
+---
+
+## 2026-06-07 (addendum 5: M2a execution progress, pre-compaction checkpoint)
+
+### M2a status (plan: docs/superpowers/plans/2026-06-07-m2a-spline-curves.md)
+
+DONE, committed, all tests green (23 in keel-geom + 58 in keel-math):
+- Task 1: keel-geom scaffolded, workspace member added.
+- Task 2: knots.rs (KnotVector: validation, find_span A2.1, multiplicity).
+- Task 3: basis.rs (A2.2 basis_funs, partition-of-unity proptest).
+- Task 4: nurbs_curve.rs core (homogeneous Vec4 ctrl, de Boor eval_homogeneous,
+  exact circular_arc/full_circle with w=cos(dtheta/2), circle exact at 1e-12;
+  arb_nurbs proptest strategy lives in pub(crate) test_support module).
+- Task 5: derivatives (hodograph derivative_curve chain + A4.2 rational
+  recursion; NOTE: derivatives beyond degree return ZEROS, do not cap d).
+- Task 6: insert_knot (Boehm A5.1), split (multiplicity-p insertion), to_beziers
+  + BezierSegment (eval/subdivide/control_points); geometry-preservation
+  proptests all green.
+- Task 7: curve.rs (Line3/Circle3/Ellipse3 + Curve3 enum: point, derivatives,
+  domain, bbox; analytic projections; ellipse projection via 32-scan + bracketed
+  Newton). FD-test lesson: central SECOND differences need h about 1e-4
+  (eps^(1/4)), not 1e-6, or cancellation noise dominates. Last commit may show
+  the curve.rs FD fix uncommitted: COMMIT IT FIRST THING if so.
+
+REMAINING in M2a:
+- Task 8: project.rs: global NURBS closest-point (Bezier decompose +
+  control-AABB branch-and-bound prune + bracketed-Newton polish on
+  g(u) = (C-p).C'); plan has FULL CODE: copy from plan section Task 8. Includes
+  dense-sampling global-optimality proptest oracle.
+- Task 9: benches/geom.rs (criterion: eval, derivs, project), fuzz target
+  fuzz_nurbs_curve (plan has full code; add [[bin]] to fuzz/Cargo.toml + dep
+  keel-geom), full validation (fmt + clippy -D warnings + workspace tests),
+  LOG entry with bench numbers, merge m2a-spline-curves to master per
+  finishing-a-development-branch.
+
+### Fuzzing state
+
+- Findings 1-4 all fixed + golden regression tests in keel-math
+  (poly.rs fuzz_regression_extreme_ratios_yield_finite_roots; newton.rs
+  midpoint = 0.5*lo + 0.5*hi doctrine).
+- A 15-minute fuzz_solve_cubic soak was running in background (task id
+  bi08j68hp) at checkpoint time; output file under AppData\Local\Temp\claude\
+  ...\tasks\bi08j68hp.output; prints ALL-ARTIFACTS-PASS then FUZZ-15MIN-CLEAN
+  or FUZZ-FOUND-NEW. If FOUND-NEW: decode artifact f64s via
+  [BitConverter]::ToDouble on 8-byte strides, fix, add golden test (procedure
+  proven 4x this session). WSL fuzzing recipe: wsl bash, . ~/.cargo/env,
+  CARGO_TARGET_DIR=~/keel-fuzz-target, cargo +nightly fuzz run <target>.
+- fuzz_bernstein_roots: clean over 8.6M runs.
+
+### Branch/repo state
+
+- On branch m2a-spline-curves. Research agent merges arrive via branch
+  worktree-nurbs-research (sometimes as new commits ahead: check git log before
+  assuming). Master is BEHIND: merge m2a-spline-curves to master at M2a end.
+- Research: 25 kernel dossiers + 7 nurbs dossiers + 3 syntheses (agent's
+  00-synthesis-v2.md deltas 9-22; my 01-synthesis-wave2.md, 02-synthesis-wave3.md).
+  Spec carries everything; spec governs.
+
+### Session decisions to remember
+
+- T-splines dropped (spec non-goal). Patent design-around doctrine: evaluate
+  against CLAIM ELEMENTS, not outcomes; record omitted element + prior-art
+  citation when near a fenced zone. M2b checklist: full SurfaceLocalGeometry
+  contract + interval-capable evaluation core (for M5 Krawczyk).

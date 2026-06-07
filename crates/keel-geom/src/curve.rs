@@ -344,11 +344,13 @@ mod tests {
         .unwrap();
         let cv = Curve3::Circle(c);
         let t = 1.1;
-        let h = 1e-6;
+        // h near eps^(1/4): the optimum for central second
+        // differences, whose rounding noise scales as eps/h^2.
+        let h = 1e-4;
         let d = cv.derivatives(t, 2);
         let fd1 = (cv.point(t + h) - cv.point(t - h)) / (2.0 * h);
-        assert!((d[1] - fd1).norm() < 1e-8);
+        assert!((d[1] - fd1).norm() < 1e-7);
         let fd2 = (cv.point(t + h) + cv.point(t - h) - cv.point(t) * 2.0) / (h * h);
-        assert!((d[2] - fd2).norm() < 1e-4);
+        assert!((d[2] - fd2).norm() < 1e-5, "{:?} vs {:?}", d[2], fd2);
     }
 }
