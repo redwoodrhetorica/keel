@@ -178,6 +178,7 @@ mod tests {
     // (2026-06-07): extreme coefficient ratios overflowed the
     // discriminant / Cauchy bound and returned non-finite roots.
     #[test]
+    #[allow(clippy::excessive_precision)] // exact crash-artifact bits
     fn fuzz_regression_extreme_ratios_yield_finite_roots() {
         let cases = [
             (1e-308, 1e308, 1.0, 0.0),
@@ -193,6 +194,14 @@ mod tests {
             // linear early-return path was unfiltered.
             (1.33e-315, 0.0, 1.74e-310, 2.0),
             (0.0, 1e-310, 1.0, 0.0),
+            // Finding 4 (artifact 2c7c25c4): midpoint overflow in
+            // solve_bracketed when lo + hi exceeds f64::MAX.
+            (
+                2.2250738588309922e-308,
+                -2.0000000037252903,
+                6.7399159074193948e-306,
+                1.6189543082925967e-319,
+            ),
         ];
         for (a, b, c, d) in cases {
             for r in solve_cubic(a, b, c, d) {

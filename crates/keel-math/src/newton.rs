@@ -7,6 +7,10 @@
 /// bracket guarantees convergence even with a flat or wrong
 /// derivative. Returns None when there is no sign change over the
 /// input bracket.
+///
+/// Midpoints are computed as 0.5*lo + 0.5*hi, never 0.5*(lo + hi):
+/// the sum form overflows to infinity for brackets near f64::MAX and
+/// poisons the bracket (fuzz finding 4, 2026-06-07).
 pub fn solve_bracketed<F>(f: F, mut lo: f64, mut hi: f64, x_tol: f64, max_iter: u32) -> Option<f64>
 where
     F: Fn(f64) -> (f64, f64),
@@ -23,7 +27,7 @@ where
         return None;
     }
 
-    let mut x = 0.5 * (lo + hi);
+    let mut x = 0.5 * lo + 0.5 * hi;
     for _ in 0..max_iter {
         let (fx, dfx) = f(x);
         if fx == 0.0 {
@@ -37,7 +41,7 @@ where
             hi = x;
         }
         if hi - lo <= x_tol {
-            return Some(0.5 * (lo + hi));
+            return Some(0.5 * lo + 0.5 * hi);
         }
         // Newton proposal; fall back to bisection when it exits the
         // bracket or the derivative is unusable.
@@ -50,7 +54,7 @@ where
             }
             x = newton;
         } else {
-            x = 0.5 * (lo + hi);
+            x = 0.5 * lo + 0.5 * hi;
         }
     }
     // Exhausted iterations: the iterate is the best estimate. Never
