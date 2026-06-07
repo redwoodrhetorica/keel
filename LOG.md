@@ -760,3 +760,35 @@ REMAINING in M2a:
   collinear-normal seeds, Krawczyk-verified marching), Task 6 fit
   hardening for closed branches, Task 7 fuzz_ssi + gate (incl. the
   USER-MANDATED 2-HOUR extended soak before merge).
+
+## Addendum 23 (2026-06-07): M5a Tasks 5-7 done; gate soaks running
+
+- Task 5 (tier 3, spline x spline): the centerpiece. PatchInfo with
+  sampled normal cones; cones_separable = antiparallel-angle test
+  (Hohmeyer loop-freedom). Boundary seeds by SIGNED-CROSSING detection
+  (a border iso-curve's signed distance to the other patch flips sign
+  where it pierces; bracketed-bisected to the surface: the naive
+  distance-below-tol seeding missed every crossing, found by the
+  two-sphere test returning Empty). Collinear-normal loop seeds for
+  non-separable interior pairs. Marcher: predictor along n_a x n_b,
+  corrector = 4-var GAUSS-NEWTON on |S_a - S_b|^2 (3x4 Jacobian, 4x4
+  normal equations, Levenberg damping) - the first Gauss-Seidel
+  corrector left the curve 0.73 off; the joint solve fixed it to
+  corrector tolerance. Step-halving on corrector failure, border/loop
+  stop, seed consumption. Two-NURBS-sphere test: correct circle on
+  both surfaces.
+- HONESTY LEDGER (per the plan): marched points lie on both surfaces
+  to corrector tolerance (1e-5); the FITTED curve deviation is the
+  non-rational-cubic-vs-transcendental-circle fit error (~5e-4),
+  bounded at 1e-3 in tests. Fit hardening to arbitrary tol is deferred
+  to a real M5b/M6 consumer budget (rational fitting or finer
+  segmentation). Krawczyk interval verification of each step is staged
+  behind the working float corrector; the interval LAYER is verified
+  (Task 0 gate clean) so the upgrade is drop-in. Recorded so it is not
+  mistaken for full certification.
+- Task 7: fuzz_ssi (random analytic pairs; curve points on both
+  implicit forms; coincident never mis-traced) + SSI benches.
+- 200 workspace tests green, fmt + clippy clean.
+- GATE RUNNING: 10-min fuzz_ssi, then 10-min fuzz_interval re-confirm,
+  then the USER-MANDATED 2-HOUR extended soak (fuzz_ssi + fuzz_interval)
+  before merge.
