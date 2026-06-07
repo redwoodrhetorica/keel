@@ -259,6 +259,168 @@ impl NurbsCurve {
     ) -> Result<Self, GeomError> {
         Self::circular_arc(center, x_axis, y_axis, radius, core::f64::consts::TAU)
     }
+
+    /// Boehm single knot insertion (A5.1 on homogeneous points).
+    /// Geometry is unchanged; representation gains one control point.
+    pub fn insert_knot(&self, u: f64) -> Result<Self, GeomError> {
+        let p = self.kv.degree();
+        let (a, b) = self.domain();
+        if !(u > a && u < b) {
+            return Err(GeomError::OutOfDomain);
+        }
+        if self.kv.multiplicity(u) >= p {
+            return Err(GeomError::MultiplicityExceeded);
+        }
+        let span = self.kv.find_span(u);
+        let knots = self.kv.knots();
+        let mut new_ctrl: Vec<Vec4> = Vec::with_capacity(self.ctrl.len() + 1);
+        new_ctrl.extend_from_slice(&self.ctrl[..=span - p]);
+        for i in (span - p + 1)..=span {
+            let alpha = (u - knots[i]) / (knots[i + p] - knots[i]);
+            new_ctrl.push(self.ctrl[i - 1] * (1.0 - alpha) + self.ctrl[i] * alpha);
+        }
+        new_ctrl.extend_from_slice(&self.ctrl[span..]);
+        let mut new_knots = knots.to_vec();
+        new_knots.insert(span + 1, u);
+        let kv = KnotVector::new(p, new_knots)?;
+        // Weights stay positive: each new w is a convex combination.
+        Self::from_homogeneous(kv, new_ctrl)
+    }
+
+    /// Split at u into two independent clamped curves covering [a, u]
+    /// and [u, b].
+    pub fn split(&self, u: f64) -> Result<(Self, Self), GeomError> {
+        let p = self.kv.degree();
+        let (a, b) = self.domain();
+        if !(u > a && u < b) {
+            return Err(GeomError::OutOfDomain);
+        }
+        // Raise multiplicity of u to p.
+        let mut cur = self.clone();
+        while cur.kv.multiplicity(u) < p {
+            cur = cur.insert_knot(u)?;
+        }
+        let span = cur.kv.find_span(u);
+        let knots = cur.kv.knots();
+        let i0 = span - p; // control point lying on the curve at u
+        let mut left_knots = knots[..=span].to_vec();
+        left_knots.push(u);
+        let mut right_knots = vec![u; p + 1];
+        right_knots.extend_from_slice(&knots[span + 1..]);
+        let left = Self::from_homogeneous(
+            KnotVector::new(p, left_knots)?,
+            cur.ctrl[..=i0].to_vec(),
+        )?;
+        let right = Self::from_homogeneous(
+            KnotVector::new(p, right_knots)?,
+            cur.ctrl[i0..].to_vec(),
+        )?;
+        Ok((left, right))
+    }
+
+    /// Decompose into rational Bezier segments: per nonempty span, the
+    /// p+1 homogeneous Bezier control points plus the span's parameter
+    /// interval [u0, u1] in this curve's domain.
+    pub fn to_beziers(&self) -> Vec<BezierSegment> {
+        let p = self.kv.degree();
+        // Raise every distinct interior knot to multiplicity p.
+        let mut cur = self.clone();
+        let interior: Vec<f64> = {
+            let (a, b) = self.domain();
+            let mut ks: Vec<f64> = self
+                .kv
+                .knots()
+                .iter()
+                .copied()
+                .filter(|&k| k > a && k < b)
+                .collect();
+            ks.dedup();
+            ks
+        };
+        for u in interior {
+            while cur.kv.multiplicity(u) < p {
+                match cur.insert_knot(u) {
+                    Ok(next) => cur = next,
+                    Err(_) => break,
+                }
+            }
+        }
+        // Nonempty spans each hold a Bezier segment.
+        let knots = cur.kv.knots();
+        let mut out = Vec::new();
+        let mut start = p;
+        while start + 1 < knots.len() - p {
+            let (u0, u1) = (knots[start], knots[start + 1]);
+            if u1 > u0 {
+                let first_ctrl = start - p;
+                out.push(BezierSegment {
+                    ctrl: cur.ctrl[first_ctrl..=first_ctrl + p].to_vec(),
+                    u0,
+                    u1,
+                });
+            }
+            start += 1;
+        }
+        out
+    }
+}
+
+/// One rational Bezier span extracted from a NURBS curve, with its
+/// parameter interval in the parent curve's domain.
+#[derive(Clone, Debug)]
+pub struct BezierSegment {
+    /// Homogeneous Bezier control points, length = degree + 1.
+    pub ctrl: Vec<Vec4>,
+    pub u0: f64,
+    pub u1: f64,
+}
+
+impl BezierSegment {
+    /// De Casteljau at local t in [0,1]; homogeneous result.
+    pub fn eval_homogeneous(&self, t: f64) -> Vec4 {
+        let mut w = self.ctrl.clone();
+        let mut len = w.len();
+        while len > 1 {
+            for i in 0..len - 1 {
+                w[i] = w[i] * (1.0 - t) + w[i + 1] * t;
+            }
+            len -= 1;
+        }
+        w[0]
+    }
+    /// 3D point at local t.
+    pub fn point(&self, t: f64) -> Vec3 {
+        let h = self.eval_homogeneous(t);
+        Vec3::new(h.x / h.w, h.y / h.w, h.z / h.w)
+    }
+    /// Split at local t into left/right segments (de Casteljau edges).
+    pub fn subdivide(&self, t: f64) -> (Self, Self) {
+        let n = self.ctrl.len();
+        let mut w = self.ctrl.clone();
+        let mut left = Vec::with_capacity(n);
+        let mut right = vec![Vec4::ZERO; n];
+        left.push(w[0]);
+        right[n - 1] = w[n - 1];
+        for level in 1..n {
+            for i in 0..n - level {
+                w[i] = w[i] * (1.0 - t) + w[i + 1] * t;
+            }
+            left.push(w[0]);
+            right[n - 1 - level] = w[n - 1 - level];
+        }
+        let um = self.u0 + t * (self.u1 - self.u0);
+        (
+            Self { ctrl: left, u0: self.u0, u1: um },
+            Self { ctrl: right, u0: um, u1: self.u1 },
+        )
+    }
+    /// Projected 3D control points (hull bound, valid for w > 0).
+    pub fn control_points(&self) -> Vec<Vec3> {
+        self.ctrl
+            .iter()
+            .map(|c| Vec3::new(c.x / c.w, c.y / c.w, c.z / c.w))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -433,6 +595,47 @@ mod tests {
             use keel_math::bbox::Aabb3;
             let bb = Aabb3::from_points(c.control_points()).expanded(1e-9);
             prop_assert!(bb.contains(c.point(t)));
+        }
+
+        #[test]
+        fn insertion_preserves_geometry(
+            c in arb_nurbs(), uk in 0.1..0.9f64, t in 0.0..1.0f64,
+        ) {
+            if let Ok(c2) = c.insert_knot(uk) {
+                prop_assert!((c.point(t) - c2.point(t)).norm() < 1e-9);
+                prop_assert_eq!(
+                    c2.homogeneous_control().len(),
+                    c.homogeneous_control().len() + 1
+                );
+            }
+        }
+
+        #[test]
+        fn split_halves_match(
+            c in arb_nurbs(), us in 0.2..0.8f64, t in 0.0..1.0f64,
+        ) {
+            let (l, r) = c.split(us).unwrap();
+            if t <= us {
+                prop_assert!((l.point(t) - c.point(t)).norm() < 1e-8);
+            }
+            if t >= us {
+                prop_assert!((r.point(t) - c.point(t)).norm() < 1e-8);
+            }
+        }
+
+        #[test]
+        fn bezier_segments_match(c in arb_nurbs(), t in 0.0..1.0f64) {
+            let segs = c.to_beziers();
+            let seg = segs
+                .iter()
+                .find(|s| t >= s.u0 && t <= s.u1)
+                .expect("t inside some segment");
+            let local = if seg.u1 > seg.u0 {
+                (t - seg.u0) / (seg.u1 - seg.u0)
+            } else {
+                0.0
+            };
+            prop_assert!((seg.point(local) - c.point(t)).norm() < 1e-8);
         }
     }
 }
