@@ -1,0 +1,21 @@
+[package]
+name = "keel-geom"
+description = "Curves and surfaces for the Keel geometry kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+keel-math = { path = "../keel-math" }
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "geom"
+harness = false
+path = "benches/geom.rs"

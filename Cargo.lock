@@ -377,6 +377,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "keel-geom"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "keel-math",
+ "proptest",
+]
+
+[[package]]
 name = "keel-math"
 version = "0.1.0"
 dependencies = [

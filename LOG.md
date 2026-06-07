@@ -101,3 +101,214 @@ Write the M2 plan (curves/surfaces: analytics + NURBS on homogeneous 4D points p
 The NURBS Book algorithm taxonomy, derivatives, closest-point with Hu-Wallner polish,
 multivariate subdivision solver, knot insertion/refinement (Boehm/Oslo), Bezier
 extraction), starting with a fresh read of any new research that has landed by then.
+
+---
+
+## 2026-06-07 (addendum: M2a planned, PAUSED before execution)
+
+- M2 split into M2a (spline core + curves) and M2b (surfaces + multivariate
+  subdivision solver). M2a plan written, self-reviewed, committed:
+  docs/superpowers/plans/2026-06-07-m2a-spline-curves.md (9 tasks: scaffold
+  keel-geom, knots, basis A2.2, NURBS eval + exact arcs, hodograph derivatives,
+  insertion/split/Bezier decomposition, analytic curves + Curve3 enum, global
+  closest-point, benches/fuzz/wrap-up).
+- Branch `m2a-spline-curves` created from master. NO M2a CODE WRITTEN YET.
+  Resume point: execute Task 1 (scaffold keel-geom crate) per the plan.
+- WSL Ubuntu-24.04 set up with Rust nightly + cargo-fuzz for fuzz runs (libFuzzer
+  needs Linux; native dev stays on Windows stable). First run failed: repo
+  rust-toolchain.toml pins stable, overriding WSL nightly; fix is
+  `cargo +nightly fuzz run`. Rerun of both M1 targets (10 min each) was running
+  in the background at pause time; check results before closing the M1 gate item.
+- USER PAUSED the session here.
+
+---
+
+## 2026-06-07 (addendum 2: kernel/11 curved-predicates dossier absorbed, still paused)
+
+- User's research agent flagged docs/research/kernel/11-curved-exact-predicates.md
+  for immediate reading. Read in full and absorbed. It completes the D2 doctrine:
+  four predicate tiers (linear exact / conics exact via one-root numbers + lazy
+  exact + filters / quadrics exact-when-cheap via QI pencil analysis / NURBS
+  certified-numeric topology over tolerant metric geometry), with the sharpened
+  rule that TOLERANCES NEVER DECIDE COMBINATORIAL TOPOLOGY, only metric geometry
+  and serialization. Spec D2 amended; synthesis wave-2 addendum written.
+- Implementation consequences (future, none affect M2a): a Rust `AlgebraicReal`
+  expression-DAG number type (interval + BFMSS separation bounds) before M4's
+  conic arrangement work; the 2D profile subsystem gets Tier-1 exact conic
+  predicates; QI port consideration at M5; curved snap rounding is open, so
+  serialization targets tolerant boundary rep.
+- Still PAUSED. Resume point unchanged: execute M2a Task 1 (scaffold keel-geom).
+- Background: WSL fuzz rerun (cargo +nightly) of the two M1 targets still in
+  flight at time of writing; check task output before logging the M1 gate item
+  closed.
+
+---
+
+## 2026-06-07 (addendum 3: wave-3 research absorbed, dossiers 12-19)
+
+- Eight more dossiers landed and were reviewed (12 direct modeling, 13 healing,
+  14 determinism/serialization, 15 feature recognition, 16 assembly, 17 GD&T/PMI,
+  18 patents, 19 regeneration). Synthesis: docs/research/02-synthesis-wave3.md.
+- PROJECT-LEVEL: (1) D10 patent posture added to spec. Three HIGH zones with safe
+  alternatives adopted: no auto-inferred Live-Rules constraints (explicit user
+  constraints instead, ~2034); no single-body mesh+B-rep convergent ops (separate
+  bodies + boundary conversion, ~2035+); no U-splines (THB-splines, or classic
+  T-splines whose patent EXPIRED March 2024). Classical core all clear. License
+  MIT OR Apache-2.0 validated. New standing rule: defensive publication of novel
+  Keel algorithms. (2) Differentiation thesis promoted into the spec mission:
+  exact/certified topology over tolerant metric geometry, by affordability
+  gradient; the literature's consensus hybrid that nobody ships.
+- D9 now carries the binding file-14 determinism contract + file-format doctrine
+  (pure-Rust libm for critical transcendentals, reproducible reductions, exact
+  f64 round-trip, append-only schema + down-save, AP242 interchange, fuzzed
+  importers) and the wave-3 kernel-boundary obligations (snapshot/restore,
+  fail-soft operators, datums + geometric selectors, structural-sharing
+  instancing + location primitive, local coords + f64 placement, typed PMI-ready
+  attributes).
+- Cross-wave note: persistent naming/lineage now demanded independently by SIX
+  consumers (regen, direct modeling, assembly, PMI, FR, collaboration). D9 is
+  the most load-bearing non-geometric decision in the kernel.
+- Still PAUSED. Resume point: M2a Task 1. None of wave 3 affects the M2a plan.
+
+---
+
+## 2026-06-07 (addendum 4: UNPAUSED; fuzz find fixed; merges reconciled; T-splines dropped)
+
+- USER DECISIONS: (1) T-splines dropped entirely (added to spec non-goals): no
+  kernel ships them, no format exchanges them, THB covers refinement. (2) Patent
+  posture discussed and affirmed: design-arounds are evaluated against CLAIM
+  ELEMENTS, not outcomes; when implementing near a fenced zone, record which
+  claim element is omitted + prior-art citation (composes with the defensive
+  publication rule). (3) UNPAUSED: proceed where safe.
+- FIRST FUZZING CAMPAIGN RESULTS (M1 gate item closed): fuzz_bernstein_roots
+  clean over 8.6M runs/10min. fuzz_solve_cubic FOUND A REAL BUG: finite inputs
+  with extreme coefficient ratios (a~1e-308, b~1e308) overflowed the
+  discriminant/Cauchy bound to inf and returned non-finite roots. Fix: exact
+  power-of-two coefficient normalization (root-preserving) in solve_quadratic
+  and solve_cubic + golden regression tests (fuzz_regression_extreme_ratios...).
+  58 tests green. FINDING 2 (caught by the 5-min rerun): denormal coefficients
+  survive normalization; q/a, -c/b, and the Cauchy bound can still hit inf.
+  Fix: non-finite roots are dropped (not representable in f64) and an infinite
+  Cauchy bound falls back to the quadratic part's roots. Both findings have
+  golden regression tests. All-artifact repro + 7-min rerun in background.
+- REPO TOPOLOGY NOTE: the research agent works on branch worktree-nurbs-research
+  and merges into our branch. A conflicted merge of its synthesis-v2 spec deltas
+  was reconciled BY THE AGENT (commit 807e32c): resolution verified good: our
+  stronger D3/D9/D10 govern (its synthesis v2 explicitly defers to wave-spec
+  text), its unique additions merged (D6 cubic-hybrid-clipping default,
+  keel-tess/keel-io crate contracts, comparison-cascade testing oracle, risk
+  entries, D9 CI clause). docs/research/00-synthesis-v2.md is the agent's
+  delta record (9-22); our wave records are 01-synthesis-wave2.md and
+  02-synthesis-wave3.md. Spec remains the single binding document.
+- Round-3 research (kernel/20-24: sheet metal, kinematics, model diff,
+  metrology fitting, canonical recovery) is bound into the spec via synthesis-v2
+  deltas 16/17/20/22; full reads deferred to their milestones (all long-tail,
+  none affect M2).
+- RESUMING: M2a execution from Task 1 (scaffold keel-geom).
+- FUZZ FINDING 4 (15 minutes after finding 3): midpoint overflow in
+  solve_bracketed: 0.5*(lo+hi) hits inf for brackets near f64::MAX, poisoning
+  the bracket (returned Some(inf)). Fixed as 0.5*lo + 0.5*hi everywhere; exact
+  artifact bits kept as a golden test. Four real findings from under an hour
+  of fuzzing: the corpus-as-product doctrine is earning out. Known limitation
+  noted, not yet fixed: x_tol = 1e-14*bound gives poor RELATIVE accuracy for
+  small roots of mixed-scale cubics (kernel consumers operate in normalized
+  boxes; revisit if a consumer needs it).
+- M2b PLAN CHECKLIST (from a peer-session review, adopted): (1) the surface
+  evaluator contract is the full local-geometry record per kernel/06
+  (E,F,G,L,M,N,K,H, principal curvatures + directions), not point+normal;
+  (2) the evaluation core must be INTERVAL-CAPABLE by design (Krawczyk
+  per-step certification in M5 consumes interval evaluation of surfaces and
+  derivatives; retrofitting generic-over-scalar evaluation is expensive).
+  Curve derivatives in M2a are already first-class (hodograph + rational
+  recursion + FD oracle tests; projection consumes 2nd derivatives).
+
+---
+
+## 2026-06-07 (addendum 5: M2a execution progress, pre-compaction checkpoint)
+
+### M2a status (plan: docs/superpowers/plans/2026-06-07-m2a-spline-curves.md)
+
+DONE, committed, all tests green (23 in keel-geom + 58 in keel-math):
+- Task 1: keel-geom scaffolded, workspace member added.
+- Task 2: knots.rs (KnotVector: validation, find_span A2.1, multiplicity).
+- Task 3: basis.rs (A2.2 basis_funs, partition-of-unity proptest).
+- Task 4: nurbs_curve.rs core (homogeneous Vec4 ctrl, de Boor eval_homogeneous,
+  exact circular_arc/full_circle with w=cos(dtheta/2), circle exact at 1e-12;
+  arb_nurbs proptest strategy lives in pub(crate) test_support module).
+- Task 5: derivatives (hodograph derivative_curve chain + A4.2 rational
+  recursion; NOTE: derivatives beyond degree return ZEROS, do not cap d).
+- Task 6: insert_knot (Boehm A5.1), split (multiplicity-p insertion), to_beziers
+  + BezierSegment (eval/subdivide/control_points); geometry-preservation
+  proptests all green.
+- Task 7: curve.rs (Line3/Circle3/Ellipse3 + Curve3 enum: point, derivatives,
+  domain, bbox; analytic projections; ellipse projection via 32-scan + bracketed
+  Newton). FD-test lesson: central SECOND differences need h about 1e-4
+  (eps^(1/4)), not 1e-6, or cancellation noise dominates. Last commit may show
+  the curve.rs FD fix uncommitted: COMMIT IT FIRST THING if so.
+
+REMAINING in M2a:
+- Task 8: project.rs: global NURBS closest-point (Bezier decompose +
+  control-AABB branch-and-bound prune + bracketed-Newton polish on
+  g(u) = (C-p).C'); plan has FULL CODE: copy from plan section Task 8. Includes
+  dense-sampling global-optimality proptest oracle.
+- Task 9: benches/geom.rs (criterion: eval, derivs, project), fuzz target
+  fuzz_nurbs_curve (plan has full code; add [[bin]] to fuzz/Cargo.toml + dep
+  keel-geom), full validation (fmt + clippy -D warnings + workspace tests),
+  LOG entry with bench numbers, merge m2a-spline-curves to master per
+  finishing-a-development-branch.
+
+### Fuzzing state
+
+- Findings 1-4 all fixed + golden regression tests in keel-math
+  (poly.rs fuzz_regression_extreme_ratios_yield_finite_roots; newton.rs
+  midpoint = 0.5*lo + 0.5*hi doctrine).
+- A 15-minute fuzz_solve_cubic soak was running in background (task id
+  bi08j68hp) at checkpoint time; output file under AppData\Local\Temp\claude\
+  ...\tasks\bi08j68hp.output; prints ALL-ARTIFACTS-PASS then FUZZ-15MIN-CLEAN
+  or FUZZ-FOUND-NEW. If FOUND-NEW: decode artifact f64s via
+  [BitConverter]::ToDouble on 8-byte strides, fix, add golden test (procedure
+  proven 4x this session). WSL fuzzing recipe: wsl bash, . ~/.cargo/env,
+  CARGO_TARGET_DIR=~/keel-fuzz-target, cargo +nightly fuzz run <target>.
+- fuzz_bernstein_roots: clean over 8.6M runs.
+
+### Branch/repo state
+
+- On branch m2a-spline-curves. Research agent merges arrive via branch
+  worktree-nurbs-research (sometimes as new commits ahead: check git log before
+  assuming). Master is BEHIND: merge m2a-spline-curves to master at M2a end.
+- Research: 25 kernel dossiers + 7 nurbs dossiers + 3 syntheses (agent's
+  00-synthesis-v2.md deltas 9-22; my 01-synthesis-wave2.md, 02-synthesis-wave3.md).
+  Spec carries everything; spec governs.
+
+### Session decisions to remember
+
+- T-splines dropped (spec non-goal). Patent design-around doctrine: evaluate
+  against CLAIM ELEMENTS, not outcomes; record omitted element + prior-art
+  citation when near a fenced zone. M2b checklist: full SurfaceLocalGeometry
+  contract + interval-capable evaluation core (for M5 Krawczyk).
+
+---
+
+## 2026-06-07 (addendum 6: M2a COMPLETE)
+
+- Tasks 8 and 9 done post-compaction (clean resume from the checkpoint: the
+  LOG-first discipline works). project.rs: global closest-point via Bezier
+  decomposition + control-AABB branch-and-bound + bracketed-Newton polish;
+  dense-sampling global-optimality proptest oracle green first run.
+- Benches (criterion baselines): nurbs_circle_point 98ns, derivs2 670ns,
+  project 786us. PROJECTION IS SLOW: the circle is the pruning worst case
+  (all segments near-equidistant). Known fix when needed: Selimovic
+  angle-criterion pruning + earlier Newton + coarser width_tol. Baseline
+  recorded, optimization deferred to a consumer with a budget.
+- fuzz_nurbs_curve target added (constructor validation + eval finiteness +
+  insertion invariance); compiles; first WSL run pending.
+- Final validation: fmt clean, clippy -D warnings clean workspace-wide,
+  84 tests green (26 geom + 58 math). M1-era fuzz artifacts all pass.
+- MemPalace (github.com/MemPalace/mempalace) evaluated at user request:
+  verdict skip-for-now; LOG/spec/git discipline is the authority and just
+  survived a compaction live; gbrain MCP already connected covers semantic
+  recall if wanted; revisit only if rediscovery costs appear.
+- M2a exit gate: all criteria met except the 10-minute fuzz run of the new
+  curve target (queued; the cubic soak from the M1 findings is still running).
+- NEXT: merge m2a-spline-curves to master, then plan M2b (surfaces +
+  multivariate Bernstein subdivision solver; checklist in addendum 5).

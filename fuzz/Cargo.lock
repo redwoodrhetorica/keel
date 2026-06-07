@@ -73,8 +73,16 @@ name = "keel-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
+ "keel-geom",
  "keel-math",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "keel-geom"
+version = "0.1.0"
+dependencies = [
+ "keel-math",
 ]
 
 [[package]]

@@ -11,6 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 keel-math = { path = "../crates/keel-math" }
+keel-geom = { path = "../crates/keel-geom" }
 
 [[bin]]
 name = "fuzz_solve_cubic"
@@ -21,5 +22,11 @@ doc = false
 [[bin]]
 name = "fuzz_bernstein_roots"
 path = "fuzz_targets/fuzz_bernstein_roots.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_nurbs_curve"
+path = "fuzz_targets/fuzz_nurbs_curve.rs"
 test = false
 doc = false
