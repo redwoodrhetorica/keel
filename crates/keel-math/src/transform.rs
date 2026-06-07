@@ -81,7 +81,7 @@ impl Transform3 {
     #[inline]
     pub fn then(self, next: Self) -> Self {
         Self {
-            linear: next.linear.mul(self.linear),
+            linear: next.linear * self.linear,
             translation: next.linear.mul_vec(self.translation) + next.translation,
         }
     }

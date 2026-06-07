@@ -1,3 +1,6 @@
+// Benches are not cfg(test), so the tests exemption does not apply.
+#![allow(clippy::unwrap_used)]
+
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use keel_math::bernstein::Bernstein;
 use keel_math::poly::solve_cubic;

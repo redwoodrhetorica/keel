@@ -137,10 +137,7 @@ impl Bernstein {
                     out.push(t1);
                 }
             }
-            1 if (self.coeffs[0] > 0.0) != (last > 0.0)
-                && self.coeffs[0] != 0.0
-                && last != 0.0 =>
-            {
+            1 if (self.coeffs[0] > 0.0) != (last > 0.0) && self.coeffs[0] != 0.0 && last != 0.0 => {
                 // Exactly one bracketed root: polish in GLOBAL
                 // coordinates. self.eval at local s equals the
                 // original polynomial at global t, and deriv is the

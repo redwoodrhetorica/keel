@@ -114,7 +114,10 @@ mod tests {
         let b = Vec3::new(1.0, 0.0, 0.0);
         let c = Vec3::new(0.0, 1.0, 0.0);
         assert_eq!(orient_3d(a, b, c, Vec3::new(0.0, 0.0, 1.0)), Sign::Positive);
-        assert_eq!(orient_3d(a, b, c, Vec3::new(0.0, 0.0, -1.0)), Sign::Negative);
+        assert_eq!(
+            orient_3d(a, b, c, Vec3::new(0.0, 0.0, -1.0)),
+            Sign::Negative
+        );
         assert_eq!(orient_3d(a, b, c, Vec3::new(0.3, 0.3, 0.0)), Sign::Zero);
     }
 

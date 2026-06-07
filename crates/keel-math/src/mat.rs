@@ -1,6 +1,7 @@
 //! Small dense matrices, column-major.
 
 use crate::vec::{Vec2, Vec3};
+use core::ops::Mul;
 
 /// 2x2 matrix, column-major.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -75,16 +76,6 @@ impl Mat3 {
     pub fn mul_vec(self, v: Vec3) -> Vec3 {
         self.cols[0] * v.x + self.cols[1] * v.y + self.cols[2] * v.z
     }
-    #[inline]
-    pub fn mul(self, o: Self) -> Self {
-        Self {
-            cols: [
-                self.mul_vec(o.cols[0]),
-                self.mul_vec(o.cols[1]),
-                self.mul_vec(o.cols[2]),
-            ],
-        }
-    }
     /// Inverse via the adjugate, or None when 1/det is not finite.
     pub fn try_inverse(self) -> Option<Self> {
         let [a, b, c] = self.cols;
@@ -100,6 +91,21 @@ impl Mat3 {
             Vec3::new(r0.y, r1.y, r2.y) * inv_det,
             Vec3::new(r0.z, r1.z, r2.z) * inv_det,
         ))
+    }
+}
+
+impl Mul for Mat3 {
+    type Output = Self;
+    /// Matrix product.
+    #[inline]
+    fn mul(self, o: Self) -> Self {
+        Self {
+            cols: [
+                self.mul_vec(o.cols[0]),
+                self.mul_vec(o.cols[1]),
+                self.mul_vec(o.cols[2]),
+            ],
+        }
     }
 }
 
@@ -142,9 +148,7 @@ mod tests {
 
     fn well_conditioned() -> impl Strategy<Value = Mat3> {
         let f = -100.0..100.0f64;
-        let v = move || {
-            (f.clone(), f.clone(), f.clone()).prop_map(|(x, y, z)| Vec3::new(x, y, z))
-        };
+        let v = move || (f.clone(), f.clone(), f.clone()).prop_map(|(x, y, z)| Vec3::new(x, y, z));
         (v(), v(), v())
             .prop_map(|(a, b, c)| Mat3::from_cols(a, b, c))
             .prop_filter("well conditioned", |m| m.determinant().abs() > 1.0)
@@ -154,7 +158,7 @@ mod tests {
         #[test]
         fn inverse_roundtrips(m in well_conditioned()) {
             let inv = m.try_inverse().unwrap();
-            let p = m.mul(inv);
+            let p = m * inv;
             for (a, b) in p.cols.iter().zip(Mat3::IDENTITY.cols.iter()) {
                 prop_assert!((*a - *b).norm() < 1e-6);
             }
