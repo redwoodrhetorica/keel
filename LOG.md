@@ -141,3 +141,31 @@ extraction), starting with a fresh read of any new research that has landed by t
 - Background: WSL fuzz rerun (cargo +nightly) of the two M1 targets still in
   flight at time of writing; check task output before logging the M1 gate item
   closed.
+
+---
+
+## 2026-06-07 (addendum 3: wave-3 research absorbed, dossiers 12-19)
+
+- Eight more dossiers landed and were reviewed (12 direct modeling, 13 healing,
+  14 determinism/serialization, 15 feature recognition, 16 assembly, 17 GD&T/PMI,
+  18 patents, 19 regeneration). Synthesis: docs/research/02-synthesis-wave3.md.
+- PROJECT-LEVEL: (1) D10 patent posture added to spec. Three HIGH zones with safe
+  alternatives adopted: no auto-inferred Live-Rules constraints (explicit user
+  constraints instead, ~2034); no single-body mesh+B-rep convergent ops (separate
+  bodies + boundary conversion, ~2035+); no U-splines (THB-splines, or classic
+  T-splines whose patent EXPIRED March 2024). Classical core all clear. License
+  MIT OR Apache-2.0 validated. New standing rule: defensive publication of novel
+  Keel algorithms. (2) Differentiation thesis promoted into the spec mission:
+  exact/certified topology over tolerant metric geometry, by affordability
+  gradient; the literature's consensus hybrid that nobody ships.
+- D9 now carries the binding file-14 determinism contract + file-format doctrine
+  (pure-Rust libm for critical transcendentals, reproducible reductions, exact
+  f64 round-trip, append-only schema + down-save, AP242 interchange, fuzzed
+  importers) and the wave-3 kernel-boundary obligations (snapshot/restore,
+  fail-soft operators, datums + geometric selectors, structural-sharing
+  instancing + location primitive, local coords + f64 placement, typed PMI-ready
+  attributes).
+- Cross-wave note: persistent naming/lineage now demanded independently by SIX
+  consumers (regen, direct modeling, assembly, PMI, FR, collaboration). D9 is
+  the most load-bearing non-geometric decision in the kernel.
+- Still PAUSED. Resume point: M2a Task 1. None of wave 3 affects the M2a plan.
