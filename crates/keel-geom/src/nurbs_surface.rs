@@ -369,6 +369,70 @@ impl NurbsSurface {
     }
 }
 
+/// Exact full surface of revolution: revolve `profile` about the axis
+/// through `origin` along `axis` (NURBS Book 8.* construction). The u
+/// direction is the exact 9-point rational full circle (degree 2,
+/// double interior knots, shoulder weight sqrt(2)/2, domain [0,1]);
+/// v is the profile parameter. Weights multiply (tensor structure),
+/// so the result is exact: revolving an exact arc yields an exact
+/// quadric or torus (kernel/24 forward direction).
+pub fn revolve_full(
+    profile: &crate::nurbs_curve::NurbsCurve,
+    origin: Vec3,
+    axis: Vec3,
+) -> Result<NurbsSurface, GeomError> {
+    if !origin.is_finite() {
+        return Err(GeomError::NonFinitePoint);
+    }
+    let az = axis.try_normalize().ok_or(GeomError::Degenerate)?;
+    let prof = profile.homogeneous_control();
+    let nv = prof.len();
+    const SHOULDER: f64 = core::f64::consts::FRAC_1_SQRT_2;
+    let wu = [
+        1.0, SHOULDER, 1.0, SHOULDER, 1.0, SHOULDER, 1.0, SHOULDER, 1.0,
+    ];
+    let mut ctrl = vec![Vec4::ZERO; 9 * nv];
+    for (j, pw) in prof.iter().enumerate() {
+        let wj = pw.w;
+        let pj = Vec3::new(pw.x / wj, pw.y / wj, pw.z / wj);
+        let d = pj - origin;
+        let o = origin + az * d.dot(az);
+        let xv = pj - o;
+        let r = xv.norm();
+        // On-axis profile points revolve to themselves: a degenerate
+        // ring of nine coincident control points (sphere poles).
+        let (xu, yu) = if r > 0.0 {
+            let xu = xv * (1.0 / r);
+            (xu, az.cross(xu))
+        } else {
+            (Vec3::ZERO, Vec3::ZERO)
+        };
+        // Nine columns: quadrant points and the tangent-intersection
+        // shoulders at o + r(+-X +- Y).
+        let pos = [
+            o + xu * r,
+            o + (xu + yu) * r,
+            o + yu * r,
+            o + (yu - xu) * r,
+            o - xu * r,
+            o - (xu + yu) * r,
+            o - yu * r,
+            o + (xu - yu) * r,
+            o + xu * r,
+        ];
+        for (i, (&w_circ, p)) in wu.iter().zip(&pos).enumerate() {
+            let w = w_circ * wj;
+            ctrl[i * nv + j] = Vec4::new(p.x * w, p.y * w, p.z * w, w);
+        }
+    }
+    let kv_u = KnotVector::new(
+        2,
+        vec![0., 0., 0., 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1., 1., 1.],
+    )?;
+    let kv_v = profile.knot_vector().clone();
+    NurbsSurface::from_homogeneous(kv_u, kv_v, ctrl)
+}
+
 /// Distinct knot values in order, including both ends.
 fn distinct_domain_knots(kv: &KnotVector) -> Vec<f64> {
     let mut out: Vec<f64> = Vec::new();
@@ -553,6 +617,7 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::{arb_surface_uv, quarter_cylinder_r2};
     use super::*;
+    use crate::nurbs_curve::NurbsCurve;
     use proptest::prelude::*;
 
     #[test]
@@ -673,6 +738,86 @@ mod tests {
         let radial = Vec3::new(p.x, p.y, 0.0);
         assert!(d[1][0].dot(radial).abs() < 1e-10 * d[1][0].norm() * radial.norm());
         assert!(d[1][0].z.abs() < 1e-12);
+    }
+
+    #[test]
+    fn revolved_sphere_is_exact() {
+        // Half circle in the xz half-plane (x >= 0): theta = 0 at the
+        // south pole, sweeping through (r, 0, 0) to the north pole.
+        let r = 2.0;
+        let profile = NurbsCurve::circular_arc(
+            Vec3::ZERO,
+            Vec3::new(0., 0., -1.),
+            Vec3::new(1., 0., 0.),
+            r,
+            core::f64::consts::PI,
+        )
+        .unwrap();
+        let s = revolve_full(&profile, Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        let ((u0, u1), (v0, v1)) = s.domain();
+        for i in 0..=8 {
+            for j in 0..=8 {
+                let u = u0 + (u1 - u0) * i as f64 / 8.0;
+                let v = v0 + (v1 - v0) * j as f64 / 8.0;
+                let p = s.point(u, v);
+                assert!((p.norm() - r).abs() < 1e-12, "sphere residual at {u} {v}");
+            }
+        }
+    }
+
+    #[test]
+    fn revolved_torus_is_exact() {
+        let (major, minor) = (3.0, 1.0);
+        let profile = NurbsCurve::full_circle(
+            Vec3::new(major, 0., 0.),
+            Vec3::new(1., 0., 0.),
+            Vec3::new(0., 0., 1.),
+            minor,
+        )
+        .unwrap();
+        let s = revolve_full(&profile, Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        let ((u0, u1), (v0, v1)) = s.domain();
+        for i in 0..=8 {
+            for j in 0..=8 {
+                let u = u0 + (u1 - u0) * i as f64 / 8.0;
+                let v = v0 + (v1 - v0) * j as f64 / 8.0;
+                let p = s.point(u, v);
+                let ring = (p.x * p.x + p.y * p.y).sqrt() - major;
+                let res = ring * ring + p.z * p.z - minor * minor;
+                assert!(res.abs() < 1e-11, "torus residual {res} at {u} {v}");
+            }
+        }
+    }
+
+    #[test]
+    fn revolved_line_is_cylinder_and_cone() {
+        // Line parallel to the axis at distance 2 -> cylinder radius 2.
+        let cylp = NurbsCurve::new(
+            1,
+            vec![0., 0., 1., 1.],
+            vec![Vec3::new(2., 0., 0.), Vec3::new(2., 0., 5.)],
+            None,
+        )
+        .unwrap();
+        let cyl = revolve_full(&cylp, Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        for i in 0..=8 {
+            let p = cyl.point(i as f64 / 8.0, 0.37);
+            assert!(((p.x * p.x + p.y * p.y).sqrt() - 2.0).abs() < 1e-13);
+        }
+        // Slanted line -> cone: radius linear in height.
+        let conp = NurbsCurve::new(
+            1,
+            vec![0., 0., 1., 1.],
+            vec![Vec3::new(1., 0., 0.), Vec3::new(3., 0., 4.)],
+            None,
+        )
+        .unwrap();
+        let con = revolve_full(&conp, Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        for j in 0..=8 {
+            let p = con.point(0.2, j as f64 / 8.0);
+            let want_r = 1.0 + 2.0 * (p.z / 4.0);
+            assert!(((p.x * p.x + p.y * p.y).sqrt() - want_r).abs() < 1e-12);
+        }
     }
 
     #[test]
