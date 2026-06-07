@@ -394,3 +394,46 @@ REMAINING in M2a:
   (A2.3): mixed partials make hodograph chains expensive and fitting/IGA
   consumers want basis ders anyway.
 - NEXT: execute the M2b plan on branch m2b-surfaces.
+
+## Addendum 10 (2026-06-07): M2b COMPLETE (surfaces, analytics, PP solver)
+
+- All 11 plan tasks executed on branch m2b-surfaces. 132 tests green
+  (66 geom + 66 math), fmt + clippy -D warnings clean, all M1/M2a fuzz
+  artifacts replay clean, fuzz_nurbs_surface 10-minute soak CLEAN.
+- Delivered: basis_ders (A2.3); NurbsSurface (A3.5 eval, constructor
+  carries all M2a fuzz medicine); surface derivatives (A3.6 + A4.4);
+  SurfaceLocalGeometry (E,F,G,L,M,N, K, H, principal curvatures and
+  directions, deterministic umbilic fallback); directional knot
+  insertion + Bezier patch decomposition; analytic surfaces (plane,
+  cylinder, cone, sphere, torus; exact closed-form derivatives and
+  projections, deterministic axis-point conventions, cone apex clamp
+  deferred to M3); exact revolve_full (sphere residual <= 1e-12, torus
+  <= 1e-11 at dense samples: exactness oracles passed first run);
+  global surface projection (patch B&B + 2x2 Newton + boundary-curve
+  candidates); MultiBernstein + Projected Polyhedron solver in
+  keel-math (spec D6); interval de Casteljau enclosures on
+  BezierSegment/BezierPatch + Interval::checked_div (M5 groundwork).
+- Bugs caught by planned oracles during execution:
+  1. PP hull chain keep/pop INVERTED (lower chain computed the upper
+     hull): contraction over-tightened, roots silently lost; caught by
+     univariate parity proptest vs Bernstein::roots.
+  2. PP f64 endgame: deeply cropped coefficients are rounding noise;
+     the floating hull falsely excluded a box that had converged onto
+     a root (traced live at width 1.2e-9). Fix: 1 percent + 1e-12
+     guard band on crops; exclusion on a box <= 8*tol emits instead of
+     discards. Module docs flag IPP (M5) as the certified upgrade.
+  3. Surface projection missed boundary minima (clamped 2x2 Newton
+     under-optimizes the tangential coordinate on an edge); caught by
+     the dense-sampling oracle. Fix: project onto the four boundary
+     iso-curves with the certified curve projector (boundary_curves()).
+- Bench baselines: nurbs_torus_point 143ns, local_geometry 1.35us,
+  surface project 87ms (torus = equidistant worst case, same pruning
+  story as the curve circle; Selimovic-class pruning still the known
+  deferred fix when a consumer needs the speed).
+- Process slip to not repeat: twice a PowerShell `;` chain committed
+  before the clippy gate result was checked (the exact M2a lesson).
+  Switched to `if ($LASTEXITCODE -eq 0)` guards mid-session; keep that.
+- NEXT: M3 planning, which opens with the PRE-M3 PAPER-DESIGN GATE
+  (boolean/SSI pipeline shape, D9 lineage hooks, PES operator set
+  BEFORE the topology API freezes) plus the standing research re-read
+  (files 14 in full, 19 kernel-obligations, 16 location/instancing).

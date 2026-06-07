@@ -8,6 +8,7 @@ pub mod bbox;
 pub mod bernstein;
 pub mod interval;
 pub mod mat;
+pub mod multibernstein;
 pub mod newton;
 pub mod poly;
 pub mod predicates;

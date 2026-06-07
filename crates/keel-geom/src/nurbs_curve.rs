@@ -3,7 +3,35 @@
 
 use crate::GeomError;
 use crate::knots::KnotVector;
+use keel_math::interval::Interval;
 use keel_math::vec::{Vec3, Vec4};
+
+/// In-place de Boor corner cutting (A3.1 inner loops): d[0..=p] holds
+/// the affected control points for `span` (local index k maps to
+/// global control index span - p + k); the result lands in d[p].
+pub(crate) fn de_boor_in_place(knots: &[f64], p: usize, span: usize, u: f64, d: &mut [Vec4]) {
+    for r in 1..=p {
+        for i in (r..=p).rev() {
+            let gi = span - p + i; // global control index
+            let denom = knots[gi + p + 1 - r] - knots[gi];
+            let a = if denom == 0.0 {
+                0.0
+            } else {
+                (u - knots[gi]) / denom
+            };
+            d[i] = d[i - 1] * (1.0 - a) + d[i] * a;
+        }
+    }
+}
+
+/// Binomial coefficient as f64; orders here are small (<= MAX_DEGREE).
+pub(crate) fn binom(n: usize, k: usize) -> f64 {
+    let mut b = 1.0f64;
+    for i in 1..=k {
+        b = b * (n - i + 1) as f64 / i as f64;
+    }
+    b
+}
 
 /// NURBS curve: clamped knot vector + homogeneous control points
 /// (w*x, w*y, w*z, w), all weights strictly positive.
@@ -110,21 +138,9 @@ impl NurbsCurve {
         let p = self.kv.degree();
         let u = self.kv.clamp(u);
         let span = self.kv.find_span(u);
-        let knots = self.kv.knots();
         // Working copy of the affected control points d[0..=p].
         let mut d: Vec<Vec4> = (0..=p).map(|i| self.ctrl[span - p + i]).collect();
-        for r in 1..=p {
-            for i in (r..=p).rev() {
-                let gi = span - p + i; // global control index
-                let denom = knots[gi + p + 1 - r] - knots[gi];
-                let a = if denom == 0.0 {
-                    0.0
-                } else {
-                    (u - knots[gi]) / denom
-                };
-                d[i] = d[i - 1] * (1.0 - a) + d[i] * a;
-            }
-        }
+        de_boor_in_place(self.kv.knots(), p, span, u, &mut d);
         d[p]
     }
 
@@ -459,6 +475,50 @@ impl BezierSegment {
             .map(|c| Vec3::new(c.x / c.w, c.y / c.w, c.z / c.w))
             .collect()
     }
+
+    /// Certified enclosure of the homogeneous point over a local
+    /// parameter interval: interval de Casteljau. Over-wide (t and
+    /// 1 - t are treated as independent) but always sound. The M5
+    /// Krawczyk building block.
+    pub fn eval_homogeneous_interval(&self, t: Interval) -> [Interval; 4] {
+        let omt = Interval::point(1.0) - t;
+        let mut w: Vec<[Interval; 4]> = self
+            .ctrl
+            .iter()
+            .map(|c| {
+                [
+                    Interval::point(c.x),
+                    Interval::point(c.y),
+                    Interval::point(c.z),
+                    Interval::point(c.w),
+                ]
+            })
+            .collect();
+        let mut len = w.len();
+        while len > 1 {
+            for i in 0..len - 1 {
+                let next = w[i + 1];
+                for (slot, nx) in w[i].iter_mut().zip(next) {
+                    *slot = omt * *slot + t * nx;
+                }
+            }
+            len -= 1;
+        }
+        w[0]
+    }
+
+    /// Certified 3D enclosure: the homogeneous enclosure divided by
+    /// the weight interval. None when the weight enclosure straddles
+    /// zero (the interval arithmetic must prove positivity, not
+    /// assume it; for t inside [0,1] on a valid segment it does).
+    pub fn point_enclosure(&self, t: Interval) -> Option<[Interval; 3]> {
+        let h = self.eval_homogeneous_interval(t);
+        Some([
+            h[0].checked_div(h[3])?,
+            h[1].checked_div(h[3])?,
+            h[2].checked_div(h[3])?,
+        ])
+    }
 }
 
 #[cfg(test)]
@@ -529,10 +589,26 @@ mod tests {
             1.2984926927785823e219,
         ];
         let pts = vec![
-            Vec3::new(1.4523965173143224e-176, 1.2984926927785823e219, 1.2984926927785823e219),
-            Vec3::new(1.2984926927785823e219, 1.2984926927785823e219, 1.2984926927785823e219),
-            Vec3::new(1.2984926927767764e219, 1.2984926919361387e219, 1.2984926927785823e219),
-            Vec3::new(1.2984926927785823e219, 1.2984926927785823e219, 1.2984926927785823e219),
+            Vec3::new(
+                1.4523965173143224e-176,
+                1.2984926927785823e219,
+                1.2984926927785823e219,
+            ),
+            Vec3::new(
+                1.2984926927785823e219,
+                1.2984926927785823e219,
+                1.2984926927785823e219,
+            ),
+            Vec3::new(
+                1.2984926927767764e219,
+                1.2984926919361387e219,
+                1.2984926927785823e219,
+            ),
+            Vec3::new(
+                1.2984926927785823e219,
+                1.2984926927785823e219,
+                1.2984926927785823e219,
+            ),
         ];
         let ws = vec![
             1.2984926927785837e219,
@@ -572,7 +648,11 @@ mod tests {
     /// common factor must not move the curve.
     #[test]
     fn weight_scale_invariance() {
-        let pts = vec![Vec3::ZERO, Vec3::new(1.0, 2.0, 0.0), Vec3::new(3.0, 0.0, 1.0)];
+        let pts = vec![
+            Vec3::ZERO,
+            Vec3::new(1.0, 2.0, 0.0),
+            Vec3::new(3.0, 0.0, 1.0),
+        ];
         let knots = vec![0., 0., 0., 1., 1., 1.];
         let a = NurbsCurve::new(2, knots.clone(), pts.clone(), Some(vec![1.0, 2.0, 3.0])).unwrap();
         let b = NurbsCurve::new(2, knots, pts, Some(vec![1e200, 2e200, 3e200])).unwrap();
@@ -592,7 +672,11 @@ mod tests {
         let knots = vec![a, a, a, b, b, b, b];
         let pts = vec![
             Vec3::new(1.4523965173143224e-176, b, b),
-            Vec3::new(4.857875624558299e-33, 4.8148343340696226e-33, 4.848094946726139e-33),
+            Vec3::new(
+                4.857875624558299e-33,
+                4.8148343340696226e-33,
+                4.848094946726139e-33,
+            ),
             Vec3::new(5.1723916756679745e54, 7.440614902924675e219, b),
             Vec3::new(b, b, b),
         ];
@@ -697,6 +781,25 @@ mod tests {
     }
 
     proptest! {
+        // Interval enclosure soundness: any exact point at a parameter
+        // inside the interval lies inside the enclosure.
+        #[test]
+        fn interval_eval_encloses_curve(
+            c in arb_nurbs(),
+            t0 in 0.0..1.0f64, dt in 0.0..0.3f64, fs in 0.0..1.0f64,
+        ) {
+            let segs = c.to_beziers();
+            let seg = &segs[0];
+            let t1 = (t0 + dt).min(1.0);
+            let ti = Interval::new(t0.min(t1), t1.max(t0));
+            let enc = seg.point_enclosure(ti).unwrap();
+            let tx = ti.lo + fs * (ti.hi - ti.lo);
+            let exact = seg.point(tx);
+            prop_assert!(enc[0].contains(exact.x), "x {} not in {:?}", exact.x, enc[0]);
+            prop_assert!(enc[1].contains(exact.y), "y {} not in {:?}", exact.y, enc[1]);
+            prop_assert!(enc[2].contains(exact.z), "z {} not in {:?}", exact.z, enc[2]);
+        }
+
         // Finite-difference cross-check of the first derivative.
         #[test]
         fn derivative_matches_finite_difference(

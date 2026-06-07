@@ -57,6 +57,27 @@ impl Interval {
             None
         }
     }
+    /// Conservative division. None unless the divisor is strictly
+    /// one-signed (an interval straddling zero has unbounded quotient).
+    pub fn checked_div(self, o: Self) -> Option<Self> {
+        if !(o.lo > 0.0 || o.hi < 0.0) {
+            return None;
+        }
+        let p = [
+            self.lo / o.lo,
+            self.lo / o.hi,
+            self.hi / o.lo,
+            self.hi / o.hi,
+        ];
+        let mut lo = p[0];
+        let mut hi = p[0];
+        for &v in &p[1..] {
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+        Some(Self { lo, hi }.widened())
+    }
+
     /// Conservative square root; None when entirely negative.
     /// A straddling interval is clamped to [0, hi] first.
     pub fn sqrt(self) -> Option<Self> {
@@ -144,6 +165,17 @@ mod tests {
     }
 
     #[test]
+    fn div_requires_one_signed_divisor() {
+        let a = Interval::new(1.0, 2.0);
+        assert!(a.checked_div(Interval::new(-1.0, 1.0)).is_none());
+        let r = a.checked_div(Interval::new(2.0, 4.0)).unwrap();
+        assert!(r.lo <= 0.25 && r.hi >= 1.0);
+        // Negative divisor flips the quotient sign.
+        let r = a.checked_div(Interval::new(-4.0, -2.0)).unwrap();
+        assert!(r.lo <= -1.0 && r.hi >= -0.25);
+    }
+
+    #[test]
     fn sqrt_of_negative_is_none() {
         assert!(Interval::new(-2.0, -1.0).sqrt().is_none());
         // Straddling zero clamps the low bound to 0.
@@ -156,6 +188,12 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn div_is_sound(a in small(), b in 0.5..1.0e3f64) {
+            let r = Interval::point(a).checked_div(Interval::point(b)).unwrap();
+            prop_assert!(r.lo <= a / b && a / b <= r.hi);
+        }
+
         // Soundness: real arithmetic on members stays inside the result.
         #[test]
         fn add_is_sound(a in small(), b in small()) {
