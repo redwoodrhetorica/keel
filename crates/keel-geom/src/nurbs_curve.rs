@@ -109,6 +109,90 @@ impl NurbsCurve {
         Vec3::new(h.x / h.w, h.y / h.w, h.z / h.w)
     }
 
+    /// Control points and knots of the homogeneous derivative curve
+    /// (degree p-1): Q_i = p * (P_{i+1} - P_i) / (u_{i+p+1} - u_{i+1}).
+    /// None when degree is already 1 (handled by the caller).
+    fn derivative_curve(&self) -> Option<Self> {
+        let p = self.kv.degree();
+        if p == 1 {
+            return None;
+        }
+        let knots = self.kv.knots();
+        let ctrl: Vec<Vec4> = (0..self.ctrl.len() - 1)
+            .map(|i| {
+                let denom = knots[i + p + 1] - knots[i + 1];
+                debug_assert!(denom > 0.0);
+                (self.ctrl[i + 1] - self.ctrl[i]) * (p as f64 / denom)
+            })
+            .collect();
+        let dknots = knots[1..knots.len() - 1].to_vec();
+        let kv = KnotVector::new(p - 1, dknots).ok()?;
+        // Derivative curves are vector-valued: w components may be
+        // any sign, so skip the positive-weight check.
+        if ctrl.len() != kv.control_count() {
+            return None;
+        }
+        Some(Self { kv, ctrl })
+    }
+
+    /// Homogeneous derivatives A^(k) for k = 0..=d via successive
+    /// derivative curves.
+    fn ders_homogeneous(&self, u: f64, d: usize) -> Vec<Vec4> {
+        let mut out = Vec::with_capacity(d + 1);
+        out.push(self.eval_homogeneous(u));
+        let mut cur = self.clone();
+        let mut k = 1;
+        while k <= d {
+            if cur.kv.degree() == 1 {
+                // Derivative of a degree-1 curve is the difference
+                // quotient on the active span; higher ders are zero.
+                let span = cur.kv.find_span(u);
+                let knots = cur.kv.knots();
+                let denom = knots[span + 1] - knots[span];
+                let q = if denom > 0.0 {
+                    (cur.ctrl[span] - cur.ctrl[span - 1]) * (1.0 / denom)
+                } else {
+                    Vec4::ZERO
+                };
+                out.push(q);
+                for _ in (k + 1)..=d {
+                    out.push(Vec4::ZERO);
+                }
+                return out;
+            }
+            match cur.derivative_curve() {
+                Some(dc) => {
+                    out.push(dc.eval_homogeneous(u));
+                    cur = dc;
+                }
+                None => out.push(Vec4::ZERO),
+            }
+            k += 1;
+        }
+        out
+    }
+
+    /// 3D derivatives C^(0..=d)(u) via the rational quotient-rule
+    /// recursion (NURBS Book A4.2):
+    /// C^(k) = (A^(k) - sum_{i=1..k} binom(k,i) w^(i) C^(k-i)) / w.
+    pub fn derivatives(&self, u: f64, d: usize) -> Vec<Vec3> {
+        let h = self.ders_homogeneous(u, d);
+        let d = h.len() - 1;
+        let mut c: Vec<Vec3> = Vec::with_capacity(d + 1);
+        let w0 = h[0].w;
+        for k in 0..=d {
+            let ak = Vec3::new(h[k].x, h[k].y, h[k].z);
+            let mut v = ak;
+            let mut binom = 1.0_f64;
+            for i in 1..=k {
+                binom = binom * (k - i + 1) as f64 / i as f64;
+                v = v - c[k - i] * (binom * h[i].w);
+            }
+            c.push(v / w0);
+        }
+        c
+    }
+
     /// Exact circular arc: center, two unit orthogonal in-plane axes,
     /// radius, sweep angle in (0, 2*pi]. Built from
     /// ceil(sweep / (pi/2)) rational quadratic segments with interior
@@ -276,7 +360,58 @@ mod tests {
         assert!((c.point(1.0) - end).norm() < 1e-14);
     }
 
+    #[test]
+    fn line_derivative_is_direction() {
+        let c = NurbsCurve::new(
+            1,
+            vec![0., 0., 1., 1.],
+            vec![Vec3::ZERO, Vec3::new(2.0, 4.0, 6.0)],
+            None,
+        )
+        .unwrap();
+        let d = c.derivatives(0.3, 2);
+        assert!((d[1] - Vec3::new(2.0, 4.0, 6.0)).norm() < 1e-13);
+        assert!(d[2].norm() < 1e-13);
+    }
+
+    #[test]
+    fn circle_derivative_is_tangent() {
+        let c = NurbsCurve::full_circle(
+            Vec3::ZERO,
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            3.0,
+        )
+        .unwrap();
+        for i in 1..20 {
+            let u = i as f64 / 20.0;
+            let d = c.derivatives(u, 1);
+            // Tangent is orthogonal to the radius vector.
+            assert!(
+                d[1].dot(d[0]).abs() < 1e-9 * d[1].norm() * d[0].norm().max(1.0),
+                "u={u}"
+            );
+        }
+    }
+
     proptest! {
+        // Finite-difference cross-check of the first derivative.
+        #[test]
+        fn derivative_matches_finite_difference(
+            c in arb_nurbs(), t in 0.05..0.95f64,
+        ) {
+            let h = 1e-6;
+            let d = c.derivatives(t, 1);
+            let fd = (c.point(t + h) - c.point(t - h)) / (2.0 * h);
+            // FD error scales with curve magnitude; generous bound,
+            // loosened further near reduced-continuity interior knots.
+            let scale = d[1].norm().max(1.0);
+            prop_assert!(
+                (d[1] - fd).norm() < 1e-2 * scale,
+                "analytic {:?} fd {:?}", d[1], fd
+            );
+        }
+
         // de Boor must agree with basis-functions-dot-control-points.
         #[test]
         fn de_boor_matches_basis_dot(c in arb_nurbs(), t in 0.0..1.0f64) {
