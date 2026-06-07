@@ -35,6 +35,28 @@ impl NurbsCurve {
         if ws.iter().any(|w| !w.is_finite() || *w <= 0.0) {
             return Err(GeomError::InvalidWeight);
         }
+        if points.iter().any(|p| !p.is_finite()) {
+            return Err(GeomError::NonFinitePoint);
+        }
+        // Weights are projective: a common scale factor leaves the curve
+        // unchanged. Canonicalize by an exact power of two so the largest
+        // weight lands in (0.5, 1]; the homogeneous products w*x are then
+        // bounded by |x| and cannot overflow (fuzz finding 5: coords
+        // ~1.3e219 with weights ~1.3e219 made w*x = inf in storage).
+        // The scaling is split into two power-of-two factors so the factor
+        // itself stays finite even for subnormal or near-max weights;
+        // power-of-two multiplies are exact wherever the result is normal.
+        let wmax = ws.iter().fold(0.0f64, |m, w| m.max(*w));
+        let e = wmax.log2().ceil() as i32;
+        let h = e / 2;
+        let (s1, s2) = (2.0f64.powi(-h), 2.0f64.powi(-(e - h)));
+        let ws: Vec<f64> = ws.iter().map(|w| w * s1 * s2).collect();
+        // A weight that leaves the normal range after canonicalization
+        // means the max/min ratio is not representable; evaluation could
+        // not divide by it safely. Reject rather than misbehave.
+        if ws.iter().any(|w| *w < f64::MIN_POSITIVE) {
+            return Err(GeomError::InvalidWeight);
+        }
         let ctrl = points
             .iter()
             .zip(&ws)
@@ -479,6 +501,89 @@ mod tests {
         assert_eq!(
             NurbsCurve::new(1, vec![0., 0., 1., 1.], pts, Some(vec![1.0, -2.0])).unwrap_err(),
             GeomError::InvalidWeight
+        );
+    }
+
+    /// Fuzz finding 5 (exact crash-artifact values): huge coords with
+    /// huge weights overflowed the homogeneous lift w*x to inf, and the
+    /// denormal trailing weight made the max/min ratio unrepresentable.
+    /// The constructor must reject this input cleanly.
+    #[test]
+    fn fuzz_regression_extreme_weight_ratio_rejected() {
+        let knots = vec![
+            1.2217638442043777e161,
+            1.2217638442043777e161,
+            1.2217638442043777e161,
+            1.2984845815252542e219,
+            1.2984926927785823e219,
+            1.2984926927785823e219,
+            1.2984926927785823e219,
+        ];
+        let pts = vec![
+            Vec3::new(1.4523965173143224e-176, 1.2984926927785823e219, 1.2984926927785823e219),
+            Vec3::new(1.2984926927785823e219, 1.2984926927785823e219, 1.2984926927785823e219),
+            Vec3::new(1.2984926927767764e219, 1.2984926919361387e219, 1.2984926927785823e219),
+            Vec3::new(1.2984926927785823e219, 1.2984926927785823e219, 1.2984926927785823e219),
+        ];
+        let ws = vec![
+            1.2984926927785837e219,
+            1.2984926927785823e219,
+            2008.3450982187308,
+            3.5e-323,
+        ];
+        assert_eq!(
+            NurbsCurve::new(2, knots, pts, Some(ws)).unwrap_err(),
+            GeomError::InvalidWeight
+        );
+    }
+
+    /// Companion to fuzz finding 5: the same huge coords with uniformly
+    /// huge weights describe a perfectly finite curve; canonicalization
+    /// must make the homogeneous lift survive and evaluation stay finite.
+    #[test]
+    fn huge_uniform_weights_canonicalize_to_finite_curve() {
+        let big = 1.2984926927785823e219;
+        let c = NurbsCurve::new(
+            1,
+            vec![0., 0., 1., 1.],
+            vec![Vec3::new(big, 0.0, 0.0), Vec3::new(0.0, big, 0.0)],
+            Some(vec![big, big]),
+        )
+        .unwrap();
+        let p = c.point(0.5);
+        assert!(p.is_finite());
+        assert!((p - Vec3::new(0.5 * big, 0.5 * big, 0.0)).norm() < 1e-9 * big);
+        // Canonicalized weights land in (0.5, 1].
+        for h in c.homogeneous_control() {
+            assert!(h.w > 0.5 && h.w <= 1.0);
+        }
+    }
+
+    /// Weight canonicalization is projective: scaling all weights by a
+    /// common factor must not move the curve.
+    #[test]
+    fn weight_scale_invariance() {
+        let pts = vec![Vec3::ZERO, Vec3::new(1.0, 2.0, 0.0), Vec3::new(3.0, 0.0, 1.0)];
+        let knots = vec![0., 0., 0., 1., 1., 1.];
+        let a = NurbsCurve::new(2, knots.clone(), pts.clone(), Some(vec![1.0, 2.0, 3.0])).unwrap();
+        let b = NurbsCurve::new(2, knots, pts, Some(vec![1e200, 2e200, 3e200])).unwrap();
+        for i in 0..=10 {
+            let u = i as f64 / 10.0;
+            assert!((a.point(u) - b.point(u)).norm() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn nonfinite_points_rejected() {
+        assert_eq!(
+            NurbsCurve::new(
+                1,
+                vec![0., 0., 1., 1.],
+                vec![Vec3::ZERO, Vec3::new(f64::NAN, 0.0, 0.0)],
+                None,
+            )
+            .unwrap_err(),
+            GeomError::NonFinitePoint
         );
     }
 

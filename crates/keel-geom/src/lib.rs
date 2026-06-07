@@ -31,8 +31,11 @@ pub enum GeomError {
     NotClamped,
     /// Control-point / weight counts inconsistent with knots.
     CountMismatch,
-    /// Weights must be strictly positive and finite.
+    /// Weights must be strictly positive and finite, with a max/min
+    /// ratio representable in f64 after power-of-two canonicalization.
     InvalidWeight,
+    /// Control-point coordinates must be finite.
+    NonFinitePoint,
     /// Geometry is degenerate (zero direction, zero radius, ...).
     Degenerate,
     /// Parameter outside the curve domain.

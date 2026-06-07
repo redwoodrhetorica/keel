@@ -312,3 +312,31 @@ REMAINING in M2a:
   curve target (queued; the cubic soak from the M1 findings is still running).
 - NEXT: merge m2a-spline-curves to master, then plan M2b (surfaces +
   multivariate Bernstein subdivision solver; checklist in addendum 5).
+
+## Addendum 7 (2026-06-07, post-merge): fuzz finding 5, homogeneous lift overflow
+
+- First 10-minute run of fuzz_nurbs_curve: CURVE-FUZZ-FOUND. Artifact
+  crash-25aa70aff2 decoded via cargo fuzz fmt: degree 2, valid clamped knots
+  ~1.2e161/1.3e219, control coords ~1.3e219, weights ~1.3e219 plus one
+  DENORMAL weight 3.5e-323. Constructor accepted; point(u) returned inf.
+- Mechanism: the homogeneous lift stores (w*x, w*y, w*z, w); 1.3e219 *
+  1.3e219 = 1.7e438 overflows to inf IN STORAGE. Curve-level cousin of fuzz
+  finding 1 (poly coefficient overflow), same medicine.
+- Fix in NurbsCurve::new: weights are projective (common scale is identity),
+  so canonicalize by an EXACT power of two so max weight lands in (0.5, 1];
+  w*x is then bounded by |x| and cannot overflow. Scale applied as two
+  power-of-two factors (s1*s2) so the factor itself stays finite for
+  subnormal/near-max weight scales; power-of-two multiplies are exact
+  wherever the result is normal. Weights that leave the normal range after
+  canonicalization (the 3.5e-323 one: max/min ratio ~1e542, unrepresentable)
+  are rejected as InvalidWeight. Also added the missing finiteness check on
+  input points (new GeomError::NonFinitePoint), preempting the obvious next
+  fuzz find.
+- Golden tests added (exact artifact bits): extreme-ratio rejection, huge
+  uniform weights now canonicalize to a finite curve, weight scale
+  invariance (1,2,3 vs 1e200-scaled), NaN point rejection. 88 tests green
+  (30 geom + 58 math), clippy -D warnings clean, artifact re-run clean.
+- Note: canonicalization changes stored weights (homogeneous_control now
+  returns max-weight-in-(0.5,1] form). Ratios are preserved exactly; any
+  future round-trip/serialization code must treat weights as projective.
+- Fresh 10-minute soak relaunched after the fix.
