@@ -551,3 +551,27 @@ REMAINING in M2a:
   Task 9 query.rs (adjacency/classification/dump), Task 10 fuzz_topo_ops
   + exit gate (fmt/clippy/tests/artifact replays/10-min soak/goldens/
   LOG/merge).
+
+## Addendum 15 (2026-06-07): M3 COMPLETE; repo goes to GitHub
+
+- Tasks 7-10 done: session.rs (Snapshot deep-clone, OpDescriptor journal,
+  REPLAY DETERMINISM PROOF: journaled build replays to identical
+  topology hash), construct.rs (block/prism/cylinder/cone/sphere/torus,
+  pure Euler sequences + M2 exact geometry, watertightness oracle: edge
+  curve samples on all adjacent face surfaces <= 1e-9), query.rs
+  (adjacency, connected components, Parasolid body-class lattice,
+  deterministic dump grammar), fuzz_topo_ops (operator programs;
+  validate after every op; failed ops must leave the hash unchanged).
+- EXIT GATE: fmt clean, clippy -D warnings clean, 159 workspace tests
+  green (66 math + 66 geom + 27 topo), all M1/M2 fuzz artifacts replay
+  clean, fuzz_topo_ops 10-minute soak CLEAN on first campaign.
+- Deferred (documented in module docs): dihedral radial sort (M5),
+  split_region/merge_regions (M6), Body-held auto-journaling (session
+  object refactor), umbrella-walk vertex adjacency optimization.
+- README updated: M3 status, crate layout, and the official project
+  subtitle per the user: "It will keel."
+- Repo to GitHub at user direction: keel-kernel/keel, PRIVATE (backup
+  without publicity; publish decision stays decoupled).
+- NEXT: M4 planning (PMC, CSI, curve-curve intersection, mass
+  properties; the consumers that can falsify constructor orientation
+  conventions). Standing rules: research re-read first.
