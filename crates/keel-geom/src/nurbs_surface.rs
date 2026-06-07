@@ -223,6 +223,263 @@ impl NurbsSurface {
         let d = self.derivatives(u, v, 2);
         crate::surface::local_geometry_from_ders(d[0][0], d[1][0], d[0][1], d[2][0], d[1][1], d[0][2])
     }
+
+    /// Insert `ubar` once into the u knot vector (Boehm A5.3 row form).
+    /// Geometry unchanged; representation refined.
+    pub fn insert_knot_u(&self, ubar: f64) -> Result<Self, GeomError> {
+        let p = self.kv_u.degree();
+        let (a, b) = self.kv_u.domain();
+        if !ubar.is_finite() || ubar <= a || ubar >= b {
+            return Err(GeomError::OutOfDomain);
+        }
+        if self.kv_u.multiplicity(ubar) >= p {
+            return Err(GeomError::MultiplicityExceeded);
+        }
+        let knots = self.kv_u.knots();
+        let k = self.kv_u.find_span(ubar);
+        let mut new_ctrl = vec![Vec4::ZERO; (self.nu + 1) * self.nv];
+        for j in 0..self.nv {
+            for i in 0..=(k - p) {
+                new_ctrl[i * self.nv + j] = self.ctrl[i * self.nv + j];
+            }
+            for i in (k - p + 1)..=k {
+                let denom = knots[i + p] - knots[i];
+                let alpha = if denom == 0.0 {
+                    0.0
+                } else {
+                    (ubar - knots[i]) / denom
+                };
+                new_ctrl[i * self.nv + j] = self.ctrl[(i - 1) * self.nv + j] * (1.0 - alpha)
+                    + self.ctrl[i * self.nv + j] * alpha;
+            }
+            for i in k..self.nu {
+                new_ctrl[(i + 1) * self.nv + j] = self.ctrl[i * self.nv + j];
+            }
+        }
+        let mut new_knots = knots.to_vec();
+        new_knots.insert(k + 1, ubar);
+        let kv_u = KnotVector::new(p, new_knots)?;
+        Ok(Self {
+            kv_u,
+            kv_v: self.kv_v.clone(),
+            ctrl: new_ctrl,
+            nu: self.nu + 1,
+            nv: self.nv,
+        })
+    }
+
+    /// Insert `vbar` once into the v knot vector (column form).
+    pub fn insert_knot_v(&self, vbar: f64) -> Result<Self, GeomError> {
+        let q = self.kv_v.degree();
+        let (a, b) = self.kv_v.domain();
+        if !vbar.is_finite() || vbar <= a || vbar >= b {
+            return Err(GeomError::OutOfDomain);
+        }
+        if self.kv_v.multiplicity(vbar) >= q {
+            return Err(GeomError::MultiplicityExceeded);
+        }
+        let knots = self.kv_v.knots();
+        let k = self.kv_v.find_span(vbar);
+        let nv2 = self.nv + 1;
+        let mut new_ctrl = vec![Vec4::ZERO; self.nu * nv2];
+        for i in 0..self.nu {
+            for j in 0..=(k - q) {
+                new_ctrl[i * nv2 + j] = self.ctrl[i * self.nv + j];
+            }
+            for j in (k - q + 1)..=k {
+                let denom = knots[j + q] - knots[j];
+                let alpha = if denom == 0.0 {
+                    0.0
+                } else {
+                    (vbar - knots[j]) / denom
+                };
+                new_ctrl[i * nv2 + j] = self.ctrl[i * self.nv + (j - 1)] * (1.0 - alpha)
+                    + self.ctrl[i * self.nv + j] * alpha;
+            }
+            for j in k..self.nv {
+                new_ctrl[i * nv2 + (j + 1)] = self.ctrl[i * self.nv + j];
+            }
+        }
+        let mut new_knots = knots.to_vec();
+        new_knots.insert(k + 1, vbar);
+        let kv_v = KnotVector::new(q, new_knots)?;
+        Ok(Self {
+            kv_u: self.kv_u.clone(),
+            kv_v,
+            ctrl: new_ctrl,
+            nu: self.nu,
+            nv: nv2,
+        })
+    }
+
+    /// Decompose into rational Bezier patches by saturating every
+    /// interior knot to full multiplicity in both directions.
+    pub fn to_bezier_patches(&self) -> Result<Vec<BezierPatch>, GeomError> {
+        let (p, q) = (self.kv_u.degree(), self.kv_v.degree());
+        let mut s = self.clone();
+        for dir_u in [true, false] {
+            loop {
+                let kv = if dir_u { &s.kv_u } else { &s.kv_v };
+                let deg = kv.degree();
+                let (a, b) = kv.domain();
+                let next = kv
+                    .knots()
+                    .iter()
+                    .copied()
+                    .find(|&k| a < k && k < b && kv.multiplicity(k) < deg);
+                match next {
+                    Some(k) => {
+                        s = if dir_u {
+                            s.insert_knot_u(k)?
+                        } else {
+                            s.insert_knot_v(k)?
+                        };
+                    }
+                    None => break,
+                }
+            }
+        }
+        // Each (span_u, span_v) block of (p+1) x (q+1) control points
+        // is now a Bezier patch.
+        let u_breaks = distinct_domain_knots(&s.kv_u);
+        let v_breaks = distinct_domain_knots(&s.kv_v);
+        let mut out = Vec::new();
+        for (iu, uw) in u_breaks.windows(2).enumerate() {
+            for (iv, vw) in v_breaks.windows(2).enumerate() {
+                let i0 = iu * p;
+                let j0 = iv * q;
+                let mut ctrl = Vec::with_capacity((p + 1) * (q + 1));
+                for i in 0..=p {
+                    for j in 0..=q {
+                        ctrl.push(s.ctrl[(i0 + i) * s.nv + (j0 + j)]);
+                    }
+                }
+                out.push(BezierPatch {
+                    p,
+                    q,
+                    ctrl,
+                    u0: uw[0],
+                    u1: uw[1],
+                    v0: vw[0],
+                    v1: vw[1],
+                });
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Distinct knot values in order, including both ends.
+fn distinct_domain_knots(kv: &KnotVector) -> Vec<f64> {
+    let mut out: Vec<f64> = Vec::new();
+    for &k in kv.knots() {
+        if out.last() != Some(&k) {
+            out.push(k);
+        }
+    }
+    out
+}
+
+/// Rational Bezier patch (one span pair of a NurbsSurface) with its
+/// originating parameter rectangle. Control row-major i * (q+1) + j.
+#[derive(Clone, Debug)]
+pub struct BezierPatch {
+    pub p: usize,
+    pub q: usize,
+    pub ctrl: Vec<Vec4>,
+    pub u0: f64,
+    pub u1: f64,
+    pub v0: f64,
+    pub v1: f64,
+}
+
+impl BezierPatch {
+    /// De Casteljau in s along each column, then in t (local [0,1]^2).
+    pub fn eval_homogeneous(&self, s: f64, t: f64) -> Vec4 {
+        let mut col = [Vec4::ZERO; MAX_ORDER];
+        let mut lane = [Vec4::ZERO; MAX_ORDER];
+        for (j, slot) in col.iter_mut().enumerate().take(self.q + 1) {
+            for (i, l) in lane.iter_mut().enumerate().take(self.p + 1) {
+                *l = self.ctrl[i * (self.q + 1) + j];
+            }
+            let mut len = self.p + 1;
+            while len > 1 {
+                for i in 0..len - 1 {
+                    lane[i] = lane[i] * (1.0 - s) + lane[i + 1] * s;
+                }
+                len -= 1;
+            }
+            *slot = lane[0];
+        }
+        let mut len = self.q + 1;
+        while len > 1 {
+            for j in 0..len - 1 {
+                col[j] = col[j] * (1.0 - t) + col[j + 1] * t;
+            }
+            len -= 1;
+        }
+        col[0]
+    }
+
+    pub fn eval(&self, s: f64, t: f64) -> Vec3 {
+        let h = self.eval_homogeneous(s, t);
+        Vec3::new(h.x / h.w, h.y / h.w, h.z / h.w)
+    }
+
+    /// Split along local u at s, propagating the parameter rectangle.
+    pub fn subdivide_u(&self, s: f64) -> (Self, Self) {
+        let cols = self.q + 1;
+        let mut left = self.clone();
+        let mut right = self.clone();
+        for j in 0..cols {
+            let mut lane: Vec<Vec4> = (0..=self.p).map(|i| self.ctrl[i * cols + j]).collect();
+            for level in 1..=self.p {
+                for i in 0..=(self.p - level) {
+                    lane[i] = lane[i] * (1.0 - s) + lane[i + 1] * s;
+                }
+                left.ctrl[level * cols + j] = lane[0];
+                right.ctrl[(self.p - level) * cols + j] = lane[self.p - level];
+            }
+        }
+        let um = self.u0 + s * (self.u1 - self.u0);
+        left.u1 = um;
+        right.u0 = um;
+        (left, right)
+    }
+
+    /// Split along local v at t.
+    pub fn subdivide_v(&self, t: f64) -> (Self, Self) {
+        let cols = self.q + 1;
+        let mut left = self.clone();
+        let mut right = self.clone();
+        for i in 0..=self.p {
+            let mut lane: Vec<Vec4> = (0..=self.q).map(|j| self.ctrl[i * cols + j]).collect();
+            for level in 1..=self.q {
+                for j in 0..=(self.q - level) {
+                    lane[j] = lane[j] * (1.0 - t) + lane[j + 1] * t;
+                }
+                left.ctrl[i * cols + level] = lane[0];
+                right.ctrl[i * cols + (self.q - level)] = lane[self.q - level];
+            }
+        }
+        let vm = self.v0 + t * (self.v1 - self.v0);
+        left.v1 = vm;
+        right.v0 = vm;
+        (left, right)
+    }
+
+    /// AABB of the projected control net (bounds the patch by the
+    /// convex hull property; weights are positive).
+    pub fn control_aabb(&self) -> (Vec3, Vec3) {
+        let mut lo = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+        let mut hi = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for c in &self.ctrl {
+            let p3 = Vec3::new(c.x / c.w, c.y / c.w, c.z / c.w);
+            lo = Vec3::new(lo.x.min(p3.x), lo.y.min(p3.y), lo.z.min(p3.z));
+            hi = Vec3::new(hi.x.max(p3.x), hi.y.max(p3.y), hi.z.max(p3.z));
+        }
+        (lo, hi)
+    }
 }
 
 #[cfg(test)]
@@ -419,6 +676,48 @@ mod tests {
     }
 
     #[test]
+    fn insert_rejects_overfull_multiplicity() {
+        let s = quarter_cylinder_r2();
+        let ((u0, u1), _) = s.domain();
+        let mid = 0.5 * u0 + 0.5 * u1;
+        // The arc already has interior knots; pick a fresh value.
+        let fresh = u0 + 0.37 * (u1 - u0);
+        let m0 = s.kv_u().multiplicity(fresh);
+        let mut cur = s;
+        for _ in m0..2 {
+            cur = cur.insert_knot_u(fresh).unwrap();
+        }
+        assert_eq!(
+            cur.insert_knot_u(fresh).unwrap_err(),
+            GeomError::MultiplicityExceeded
+        );
+        let _ = mid;
+    }
+
+    #[test]
+    fn patch_subdivision_matches_eval() {
+        let s = quarter_cylinder_r2();
+        let patches = s.to_bezier_patches().unwrap();
+        let pc = &patches[0];
+        let (l, r) = pc.subdivide_u(0.5);
+        for i in 0..=4 {
+            for j in 0..=4 {
+                let (a, b) = (i as f64 / 4.0, j as f64 / 4.0);
+                let scale = 1.0 + pc.eval(a, b).norm();
+                assert!((l.eval(a, b) - pc.eval(0.5 * a, b)).norm() < 1e-12 * scale);
+                assert!((r.eval(a, b) - pc.eval(0.5 + 0.5 * a, b)).norm() < 1e-12 * scale);
+            }
+        }
+        let (bl, br) = pc.subdivide_v(0.3);
+        for i in 0..=4 {
+            let a = i as f64 / 4.0;
+            let scale = 1.0 + pc.eval(a, 0.5).norm();
+            assert!((bl.eval(a, 0.5) - pc.eval(a, 0.15)).norm() < 1e-12 * scale);
+            assert!((br.eval(a, 0.5) - pc.eval(a, 0.3 + 0.7 * 0.5)).norm() < 1e-12 * scale);
+        }
+    }
+
+    #[test]
     fn plane_patch_local_geometry() {
         let pts = vec![
             Vec3::ZERO,
@@ -483,6 +782,31 @@ mod tests {
             let scale = 1.0 + fdu.norm() + fdv.norm();
             prop_assert!((d[1][0] - fdu).norm() < 1e-4 * scale);
             prop_assert!((d[0][1] - fdv).norm() < 1e-4 * scale);
+        }
+
+        // Insertion is representation-only: geometry unchanged.
+        #[test]
+        fn insertion_preserves_geometry((s, u, v) in arb_surface_uv()) {
+            let ((u0, u1), (v0, v1)) = s.domain();
+            let su = s.insert_knot_u(0.5 * u0 + 0.5 * u1).unwrap();
+            let sv = s.insert_knot_v(0.5 * v0 + 0.5 * v1).unwrap();
+            let p0 = s.point(u, v);
+            let scale = 1.0 + p0.norm();
+            prop_assert!((su.point(u, v) - p0).norm() < 1e-9 * scale);
+            prop_assert!((sv.point(u, v) - p0).norm() < 1e-9 * scale);
+        }
+
+        // Bezier decomposition reproduces the surface.
+        #[test]
+        fn bezier_patches_match((s, u, v) in arb_surface_uv()) {
+            let p0 = s.point(u, v);
+            let scale = 1.0 + p0.norm();
+            let patches = s.to_bezier_patches().unwrap();
+            let patch = patches.iter().find(|pc|
+                pc.u0 <= u && u <= pc.u1 && pc.v0 <= v && v <= pc.v1).unwrap();
+            let sloc = (u - patch.u0) / (patch.u1 - patch.u0);
+            let tloc = (v - patch.v0) / (patch.v1 - patch.v0);
+            prop_assert!((patch.eval(sloc, tloc) - p0).norm() < 1e-8 * scale);
         }
 
         // De Boor against the basis-dot-net oracle.
