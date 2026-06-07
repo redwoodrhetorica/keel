@@ -6,6 +6,7 @@
 //! surface types are first-class and never silently converted to
 //! NURBS for computation.
 
+pub mod basis;
 pub mod knots;
 
 /// Maximum supported spline degree (spec D4: cap working degree;
