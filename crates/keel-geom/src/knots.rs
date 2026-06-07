@@ -13,8 +13,41 @@ pub struct KnotVector {
 impl KnotVector {
     /// Validate and construct. Requirements: 1 <= degree <= MAX_DEGREE,
     /// len >= 2 * (degree + 1), finite nondecreasing knots, clamped
-    /// ends, and a nonempty domain.
+    /// ends with multiplicity exactly degree + 1, interior multiplicity
+    /// at most degree, and a nonempty domain.
     pub fn new(degree: usize, knots: Vec<f64>) -> Result<Self, GeomError> {
+        Self::validate_core(degree, &knots)?;
+        let p = degree;
+        let m = knots.len() - 1;
+        let (a, b) = (knots[0], knots[m]);
+        // End multiplicity must be EXACTLY p + 1: a (p+2)-fold end value
+        // puts a zero-width span inside the algorithms' index range (fuzz
+        // finding 6: [a,a,a,b,b,b,b] at degree 2 made a derivative-curve
+        // knot denominator exactly zero).
+        if knots[p + 1] == a || knots[m - p - 1] == b {
+            return Err(GeomError::MultiplicityExceeded);
+        }
+        // Interior values are capped at multiplicity p. Equal values are
+        // contiguous (nondecreasing), so a violation is a run of p + 1
+        // equal knots strictly between the clamped ends.
+        if knots[p + 1..m - p].windows(p + 1).any(|w| w[0] == w[p]) {
+            return Err(GeomError::MultiplicityExceeded);
+        }
+        Ok(Self { degree, knots })
+    }
+
+    /// Crate-internal: construct WITHOUT the multiplicity caps. For
+    /// derivative (hodograph) knot vectors only, where an interior knot
+    /// may legitimately carry multiplicity degree + 1: the derivative of
+    /// a curve with a C0 corner is discontinuous there. Structural
+    /// invariants (finite, nondecreasing, clamped, nonempty domain) are
+    /// still enforced.
+    pub(crate) fn new_hodograph(degree: usize, knots: Vec<f64>) -> Result<Self, GeomError> {
+        Self::validate_core(degree, &knots)?;
+        Ok(Self { degree, knots })
+    }
+
+    fn validate_core(degree: usize, knots: &[f64]) -> Result<(), GeomError> {
         if !(1..=MAX_DEGREE).contains(&degree) {
             return Err(GeomError::DegreeOutOfRange);
         }
@@ -33,7 +66,7 @@ impl KnotVector {
         if knots[p] != a || knots[m - p] != b || a >= b {
             return Err(GeomError::NotClamped);
         }
-        Ok(Self { degree, knots })
+        Ok(())
     }
 
     #[inline]
@@ -123,6 +156,27 @@ mod tests {
             KnotVector::new(1, vec![0., 0., f64::NAN, 1.]).unwrap_err(),
             GeomError::InvalidKnots
         );
+    }
+
+    /// Fuzz finding 6: end multiplicity p + 2 ([a,a,a,b,b,b,b] at p = 2)
+    /// passed validation and later produced a zero knot denominator.
+    #[test]
+    fn fuzz_regression_overfull_end_multiplicity_rejected() {
+        assert_eq!(
+            KnotVector::new(2, vec![0., 0., 0., 1., 1., 1., 1.]).unwrap_err(),
+            GeomError::MultiplicityExceeded
+        );
+        assert_eq!(
+            KnotVector::new(2, vec![0., 0., 0., 0., 1., 1., 1.]).unwrap_err(),
+            GeomError::MultiplicityExceeded
+        );
+        // Interior multiplicity p + 1 is also out.
+        assert_eq!(
+            KnotVector::new(2, vec![0., 0., 0., 1., 1., 1., 2., 2., 2.]).unwrap_err(),
+            GeomError::MultiplicityExceeded
+        );
+        // Interior multiplicity p is the legal maximum.
+        assert!(KnotVector::new(2, vec![0., 0., 0., 1., 1., 2., 2., 2.]).is_ok());
     }
 
     #[test]

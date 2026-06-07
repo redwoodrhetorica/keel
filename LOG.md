@@ -340,3 +340,30 @@ REMAINING in M2a:
   returns max-weight-in-(0.5,1] form). Ratios are preserved exactly; any
   future round-trip/serialization code must treat weights as projective.
 - Fresh 10-minute soak relaunched after the fix.
+
+## Addendum 8 (2026-06-07): fuzz finding 6, overfull end-knot multiplicity
+
+- Post-fix soak: CURVE-FUZZ-FOUND again, crash-79c0a738. Decoded: degree 2,
+  knots [a,a,a,b,b,b,b]: the END value b has multiplicity 4 = p+2.
+  KnotVector::new accepted it (clamped checks look at positions p and m-p
+  only); derivative_curve then hit denom = u_{i+p+1} - u_{i+1} = 0 and
+  tripped its debug_assert.
+- Fix in KnotVector::new: multiplicity caps. End values must have
+  multiplicity EXACTLY p+1 (adjacent knot must differ); interior values at
+  most p (windows(p+1) scan over the interior slice). Violations are
+  MultiplicityExceeded.
+- Instructive breakage: the cap broke circle derivatives. The hodograph of
+  a degree-p curve with interior mult p (legal C0 corner, and the circle's
+  double knots) is a degree p-1 vector with interior mult p = (p-1)+1,
+  which the new cap rejects; ders_homogeneous silently mapped the failed
+  construction to ZERO derivatives. Resolution: pub(crate)
+  KnotVector::new_hodograph skips the multiplicity caps (structural checks
+  retained) for internally built derivative curves, and derivative_curve
+  now guards zero-width windows with the 0/0 := 0 basis-derivative
+  convention instead of asserting. Lesson recorded: validation tightening
+  must distinguish user-facing invariants from internal representations
+  that legitimately live one step outside them.
+- Golden tests: exact artifact bits (MultiplicityExceeded), knots-level
+  rejection matrix (end mult p+2 both sides, interior mult p+1 rejected,
+  interior mult p accepted). 90 tests green (32 geom + 58 math), clippy
+  clean, both artifacts re-run clean. Soak relaunched.

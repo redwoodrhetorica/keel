@@ -147,12 +147,21 @@ impl NurbsCurve {
         let ctrl: Vec<Vec4> = (0..self.ctrl.len() - 1)
             .map(|i| {
                 let denom = knots[i + p + 1] - knots[i + 1];
-                debug_assert!(denom > 0.0);
-                (self.ctrl[i + 1] - self.ctrl[i]) * (p as f64 / denom)
+                // A zero-width window occurs only at a discontinuity of
+                // an internally built hodograph (user knot vectors cap
+                // multiplicity below this); 0/0 := 0 matches the
+                // basis-derivative convention.
+                if denom > 0.0 {
+                    (self.ctrl[i + 1] - self.ctrl[i]) * (p as f64 / denom)
+                } else {
+                    Vec4::ZERO
+                }
             })
             .collect();
         let dknots = knots[1..knots.len() - 1].to_vec();
-        let kv = KnotVector::new(p - 1, dknots).ok()?;
+        // Hodograph knots may carry interior multiplicity degree + 1
+        // (derivative of a C0 corner), so skip the multiplicity caps.
+        let kv = KnotVector::new_hodograph(p - 1, dknots).ok()?;
         // Derivative curves are vector-valued: w components may be
         // any sign, so skip the positive-weight check.
         if ctrl.len() != kv.control_count() {
@@ -571,6 +580,27 @@ mod tests {
             let u = i as f64 / 10.0;
             assert!((a.point(u) - b.point(u)).norm() < 1e-12);
         }
+    }
+
+    /// Fuzz finding 6 (exact crash-artifact values): end knot with
+    /// multiplicity p + 2 survived validation; derivative_curve then hit
+    /// a zero knot denominator. The constructor must reject the knots.
+    #[test]
+    fn fuzz_regression_overfull_end_knot_rejected() {
+        let a = 1.2217638442043777e161;
+        let b = 1.2984926927785823e219;
+        let knots = vec![a, a, a, b, b, b, b];
+        let pts = vec![
+            Vec3::new(1.4523965173143224e-176, b, b),
+            Vec3::new(4.857875624558299e-33, 4.8148343340696226e-33, 4.848094946726139e-33),
+            Vec3::new(5.1723916756679745e54, 7.440614902924675e219, b),
+            Vec3::new(b, b, b),
+        ];
+        let ws = vec![1.2984926927785837e219, 1.2984522949348584e219, b, b];
+        assert_eq!(
+            NurbsCurve::new(2, knots, pts, Some(ws)).unwrap_err(),
+            GeomError::MultiplicityExceeded
+        );
     }
 
     #[test]
