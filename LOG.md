@@ -205,3 +205,19 @@ extraction), starting with a fresh read of any new research that has landed by t
   deltas 16/17/20/22; full reads deferred to their milestones (all long-tail,
   none affect M2).
 - RESUMING: M2a execution from Task 1 (scaffold keel-geom).
+- FUZZ FINDING 4 (15 minutes after finding 3): midpoint overflow in
+  solve_bracketed: 0.5*(lo+hi) hits inf for brackets near f64::MAX, poisoning
+  the bracket (returned Some(inf)). Fixed as 0.5*lo + 0.5*hi everywhere; exact
+  artifact bits kept as a golden test. Four real findings from under an hour
+  of fuzzing: the corpus-as-product doctrine is earning out. Known limitation
+  noted, not yet fixed: x_tol = 1e-14*bound gives poor RELATIVE accuracy for
+  small roots of mixed-scale cubics (kernel consumers operate in normalized
+  boxes; revisit if a consumer needs it).
+- M2b PLAN CHECKLIST (from a peer-session review, adopted): (1) the surface
+  evaluator contract is the full local-geometry record per kernel/06
+  (E,F,G,L,M,N,K,H, principal curvatures + directions), not point+normal;
+  (2) the evaluation core must be INTERVAL-CAPABLE by design (Krawczyk
+  per-step certification in M5 consumes interval evaluation of surfaces and
+  derivatives; retrofitting generic-over-scalar evaluation is expensive).
+  Curve derivatives in M2a are already first-class (hodograph + rational
+  recursion + FD oracle tests; projection consumes 2nd derivatives).
