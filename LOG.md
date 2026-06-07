@@ -466,3 +466,21 @@ REMAINING in M2a:
   primitive constructors (block/prism/cylinder/sphere/cone/torus) as
   pure Euler sequences, debug dump + topology-hash goldens.
 - NEXT: M3 implementation plan (writing-plans), then execute.
+
+## Addendum 12 (2026-06-07): symgen plan shelved; M3 gate decisions confirmed
+
+- User confirmed the M3 gate decisions: regions go NATIVE (decision 1
+  explicit); decisions 2-5 (PES fins + radial cycles, Euler-only
+  mutation, total lineage, paper boolean pipeline) per my judgement as
+  written in the gate doc.
+- Symbolic simplification (Wolfram/SymPy) PLANNED but SHELVED at user
+  direction: docs/superpowers/plans/2026-06-07-symgen-symbolic-
+  simplification.md. Two modes designed: Mode A (CAS ground-truth
+  verification tables for hand-derived formulas) and Mode B
+  (CSE codegen with ULP-parity + pathological-corpus + bench gates).
+  Binding policy if ever picked up: sign-feeding expressions are NEVER
+  swapped (real-arithmetic equivalence does not survive rounding; the
+  determinism contract forbids tolerance-band parity where signs
+  branch); artifacts committed, Python never a build dependency.
+  Revisit triggers recorded in the plan header.
+- NEXT: M3 implementation plan.
