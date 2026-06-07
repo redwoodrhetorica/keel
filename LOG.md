@@ -286,3 +286,29 @@ REMAINING in M2a:
   against CLAIM ELEMENTS, not outcomes; record omitted element + prior-art
   citation when near a fenced zone. M2b checklist: full SurfaceLocalGeometry
   contract + interval-capable evaluation core (for M5 Krawczyk).
+
+---
+
+## 2026-06-07 (addendum 6: M2a COMPLETE)
+
+- Tasks 8 and 9 done post-compaction (clean resume from the checkpoint: the
+  LOG-first discipline works). project.rs: global closest-point via Bezier
+  decomposition + control-AABB branch-and-bound + bracketed-Newton polish;
+  dense-sampling global-optimality proptest oracle green first run.
+- Benches (criterion baselines): nurbs_circle_point 98ns, derivs2 670ns,
+  project 786us. PROJECTION IS SLOW: the circle is the pruning worst case
+  (all segments near-equidistant). Known fix when needed: Selimovic
+  angle-criterion pruning + earlier Newton + coarser width_tol. Baseline
+  recorded, optimization deferred to a consumer with a budget.
+- fuzz_nurbs_curve target added (constructor validation + eval finiteness +
+  insertion invariance); compiles; first WSL run pending.
+- Final validation: fmt clean, clippy -D warnings clean workspace-wide,
+  84 tests green (26 geom + 58 math). M1-era fuzz artifacts all pass.
+- MemPalace (github.com/MemPalace/mempalace) evaluated at user request:
+  verdict skip-for-now; LOG/spec/git discipline is the authority and just
+  survived a compaction live; gbrain MCP already connected covers semantic
+  recall if wanted; revisit only if rediscovery costs appear.
+- M2a exit gate: all criteria met except the 10-minute fuzz run of the new
+  curve target (queued; the cubic soak from the M1 findings is still running).
+- NEXT: merge m2a-spline-curves to master, then plan M2b (surfaces +
+  multivariate Bernstein subdivision solver; checklist in addendum 5).
