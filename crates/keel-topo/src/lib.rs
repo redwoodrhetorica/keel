@@ -12,6 +12,7 @@ pub mod entity;
 pub mod euler;
 pub mod lineage;
 pub mod ops;
+pub mod pmc;
 pub mod query;
 pub mod session;
 pub mod validate;

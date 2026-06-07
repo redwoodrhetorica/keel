@@ -16,6 +16,9 @@ use keel_geom::curve::{Circle3, Curve3, Line3};
 use keel_geom::surface::{Cone3, Cylinder3, Frame3, Plane3, Sphere3, Surface3, Torus3};
 use keel_math::vec::Vec3;
 
+/// A straight pcurve segment in the parameter cover: (start, end) UV.
+pub type UvSegment = ((f64, f64), (f64, f64));
+
 pub struct PrimitiveOut {
     pub faces: Vec<FaceKey>,
     pub edges: Vec<EdgeKey>,
@@ -193,6 +196,9 @@ impl Body {
         }
         let mut vertices = rim;
         vertices.extend(tops);
+        for &fk in &faces {
+            self.attach_plane_pcurves(fk)?;
+        }
         Ok(PrimitiveOut {
             faces,
             edges: all_edges,
@@ -267,6 +273,19 @@ impl Body {
         self.attach_edge_curve(top.edge, Curve3::Circle(c1), true);
         let seam_line = Line3::new(seam0, frame.z).map_err(geom_err)?;
         self.attach_edge_curve(seam.edge, Curve3::Line(seam_line), true);
+        // Pcurves: lateral rectangle in the unwrapped cover; planar caps.
+        let tau = core::f64::consts::TAU;
+        self.attach_loop_uv_path(
+            lp,
+            &[
+                ((0.0, 0.0), (tau, 0.0)),
+                ((tau, 0.0), (tau, h)),
+                ((tau, h), (0.0, h)),
+                ((0.0, h), (0.0, 0.0)),
+            ],
+        )?;
+        self.attach_plane_pcurves(bot.face)?;
+        self.attach_plane_pcurves(top.face)?;
         Ok(PrimitiveOut {
             faces: vec![seed.face, bot.face, top.face],
             edges: vec![bot.edge, seam.edge, top.edge],
@@ -323,6 +342,17 @@ impl Body {
         self.attach_edge_curve(bot.edge, Curve3::Circle(c0), true);
         let seam_line = Line3::new(seam0, apex - seam0).map_err(geom_err)?;
         self.attach_edge_curve(seam.edge, Curve3::Line(seam_line), true);
+        // Pcurves: lateral path with the implicit apex closure; cap.
+        let tau = core::f64::consts::TAU;
+        self.attach_loop_uv_path(
+            lp,
+            &[
+                ((0.0, 0.0), (tau, 0.0)),
+                ((tau, 0.0), (tau, h)),
+                ((0.0, h), (0.0, 0.0)),
+            ],
+        )?;
+        self.attach_plane_pcurves(bot.face)?;
         Ok(PrimitiveOut {
             faces: vec![seed.face, bot.face],
             edges: vec![bot.edge, seam.edge],
@@ -429,6 +459,117 @@ impl Body {
             vertices: vec![seed.vertex, m.vertex],
             reports,
         })
+    }
+
+    /// Attach pcurves to every fin of a PLANAR face: per fin, the UV
+    /// segment between its vertices in the plane frame; closed
+    /// circular rim edges get a full-circle UV pcurve. (M4 Task 4.)
+    pub(crate) fn attach_plane_pcurves(&mut self, face: FaceKey) -> Result<(), TopoError> {
+        let Some((sk, _)) = self.faces.get(face).and_then(|f| f.surface) else {
+            return Err(TopoError::Precondition("attach_plane_pcurves: no surface"));
+        };
+        let Some(crate::entity::SurfaceGeom::Analytic(Surface3::Plane(plane))) =
+            self.surfaces.get(sk).cloned()
+        else {
+            return Err(TopoError::Precondition("attach_plane_pcurves: not a plane"));
+        };
+        let frame = plane.frame.clone();
+        let uv = |p: Vec3| -> (f64, f64) {
+            let w = p - frame.origin;
+            (w.dot(frame.x), w.dot(frame.y))
+        };
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        for lk in loops {
+            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            loop {
+                let (edge, next) = match self.fins.get(cur) {
+                    Some(f) => (f.edge, f.next),
+                    None => return Err(TopoError::StaleKey),
+                };
+                let e = self.edges.get(edge).ok_or(TopoError::StaleKey)?;
+                if e.is_closed() {
+                    // Circular rim: full circle in UV.
+                    let Some((ck, _)) = e.curve else {
+                        return Err(TopoError::Precondition("closed edge without curve"));
+                    };
+                    let Some(keel_geom::curve::Curve3::Circle(c)) = self.curves.get(ck).cloned()
+                    else {
+                        return Err(TopoError::Precondition("closed edge curve not a circle"));
+                    };
+                    let center = uv(c.center);
+                    let Ok(uv_circle) = keel_geom::curve::Circle3::new(
+                        Vec3::new(center.0, center.1, 0.0),
+                        Vec3::new(1., 0., 0.),
+                        Vec3::new(0., 1., 0.),
+                        c.radius,
+                    ) else {
+                        return Err(TopoError::Precondition("bad rim circle"));
+                    };
+                    self.attach_pcurve(cur, keel_geom::curve::Curve3::Circle(uv_circle), true);
+                } else {
+                    let p0 = self
+                        .fin_start_vertex(cur)
+                        .and_then(|v| self.vertices.get(v).map(|x| x.point))
+                        .ok_or(TopoError::StaleKey)?;
+                    let p1 = self
+                        .fin_end_vertex(cur)
+                        .and_then(|v| self.vertices.get(v).map(|x| x.point))
+                        .ok_or(TopoError::StaleKey)?;
+                    self.attach_pcurve_segment(cur, uv(p0), uv(p1));
+                }
+                cur = next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Assign explicit UV segments to a loop's fins in walk order
+    /// (used for periodic lateral faces where vertex projection cannot
+    /// distinguish seam representatives).
+    pub(crate) fn attach_loop_uv_path(
+        &mut self,
+        lp: crate::entity::LoopKey,
+        path: &[UvSegment],
+    ) -> Result<(), TopoError> {
+        let Some(entry) = self.loops.get(lp).and_then(|l| l.fin) else {
+            return Err(TopoError::Precondition("attach_loop_uv_path: vertex loop"));
+        };
+        let mut cur = entry;
+        let mut i = 0usize;
+        loop {
+            if i >= path.len() {
+                return Err(TopoError::Precondition(
+                    "attach_loop_uv_path: too few entries",
+                ));
+            }
+            let (a, b) = path[i];
+            self.attach_pcurve_segment(cur, a, b);
+            i += 1;
+            cur = self
+                .fins
+                .get(cur)
+                .map(|f| f.next)
+                .ok_or(TopoError::StaleKey)?;
+            if cur == entry {
+                break;
+            }
+        }
+        if i != path.len() {
+            return Err(TopoError::Precondition(
+                "attach_loop_uv_path: count mismatch",
+            ));
+        }
+        Ok(())
     }
 
     /// Production fin addressing: the fin of `lp` ending at `v`.
