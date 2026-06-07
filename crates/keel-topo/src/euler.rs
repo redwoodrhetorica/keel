@@ -1493,6 +1493,85 @@ mod tests {
         assert!(b.validate().is_ok());
     }
 
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig {
+            cases: 64, ..proptest::prelude::ProptestConfig::default()
+        })]
+        // Random valid operator sequences must preserve validity at
+        // every step (debug builds also auto-validate inside each op).
+        #[test]
+        fn random_operator_sequences_stay_valid(
+            program in proptest::collection::vec(0u8..=255u8, 1..40),
+        ) {
+            let mut b = Body::new();
+            let r = b.infinite_region();
+            b.mvfs(r, Vec3::ZERO).unwrap_or_else(|e| panic!("{e:?}"));
+            let mut step = 0u64;
+            for byte in program {
+                step += 1;
+                let p = Vec3::new(step as f64, (byte % 7) as f64, (byte % 3) as f64);
+                let fins: Vec<FinKey> = b
+                    .entity_ids()
+                    .filter_map(|id| match b.lookup(id) {
+                        Some(crate::entity::AnyKey::Fin(k)) => Some(k),
+                        _ => None,
+                    })
+                    .collect();
+                let loops: Vec<LoopKey> = b
+                    .entity_ids()
+                    .filter_map(|id| match b.lookup(id) {
+                        Some(crate::entity::AnyKey::Loop(k)) => Some(k),
+                        _ => None,
+                    })
+                    .collect();
+                let edges: Vec<EdgeKey> = b
+                    .entity_ids()
+                    .filter_map(|id| match b.lookup(id) {
+                        Some(crate::entity::AnyKey::Edge(k)) => Some(k),
+                        _ => None,
+                    })
+                    .collect();
+                match byte % 4 {
+                    0 => {
+                        let vertex_loop = loops
+                            .iter()
+                            .find(|&&lk| b.loop_(lk).is_some_and(|l| l.vertex.is_some()));
+                        if let Some(&lk) = vertex_loop {
+                            let _ = b.mev(MevSite::VertexLoop(lk), p);
+                        } else if !fins.is_empty() {
+                            let f = fins[byte as usize % fins.len()];
+                            let _ = b.mev(MevSite::AfterFin(f), p);
+                        }
+                    }
+                    1 => {
+                        if !fins.is_empty() {
+                            let fa = fins[byte as usize % fins.len()];
+                            let owner = b.fin(fa).map(|f| f.owner);
+                            let same: Vec<FinKey> = fins
+                                .iter()
+                                .copied()
+                                .filter(|&fk| b.fin(fk).map(|f| f.owner) == owner)
+                                .collect();
+                            let fb = same[(byte as usize / 4) % same.len()];
+                            let _ = b.mef(fa, fb, None);
+                        }
+                    }
+                    2 => {
+                        if !edges.is_empty() {
+                            let _ = b.kev(edges[byte as usize % edges.len()]);
+                        }
+                    }
+                    _ => {
+                        if !edges.is_empty() {
+                            let _ = b.kef(edges[byte as usize % edges.len()]);
+                        }
+                    }
+                }
+                proptest::prop_assert!(b.validate().is_ok(), "invalid after step {}", step);
+            }
+        }
+    }
+
     #[test]
     fn kfmrh_mfkrh_round_trip() {
         let mut b = Body::new();
