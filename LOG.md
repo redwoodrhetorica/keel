@@ -367,3 +367,30 @@ REMAINING in M2a:
   rejection matrix (end mult p+2 both sides, interior mult p+1 rejected,
   interior mult p accepted). 90 tests green (32 geom + 58 math), clippy
   clean, both artifacts re-run clean. Soak relaunched.
+
+## Addendum 9 (2026-06-07): curve fuzz CLEAN, M2b plan written
+
+- fuzz_nurbs_curve formal 10-minute soak after findings 5 and 6: CLEAN.
+  Bonus signal: a mistyped replay command accidentally ran a 2.4 HOUR fuzz
+  session seeded with both crash inputs (directory passed as corpus) and
+  found nothing new. Corpus salvaged (+102 entries, now 194). M2a fuzz
+  loop is closed: 6 findings total across M1+M2a, 6 golden tests, all
+  artifacts replay clean.
+- M2b research sweep done: no new dossiers since wave 3. Key inputs
+  re-confirmed: nurbs/02 (A2.3/A3.5/A3.6/A4.4/A5.3), nurbs/04 section 4
+  (Projected Polyhedron), kernel/24 (canonical recovery wants exact
+  fundamental forms + exact revolution surfaces: both now M2b deliverables).
+- M2b plan written: docs/superpowers/plans/2026-06-07-m2b-surfaces.md.
+  11 tasks, full code: basis_ders (A2.3), NurbsSurface core (A3.5, with
+  all M2a fuzz medicine baked into the constructor), derivatives (A4.4),
+  SurfaceLocalGeometry (E,F,G,L,M,N,K,H, principal curvature directions),
+  directional insertion + Bezier patches, analytic surfaces (plane,
+  cylinder, cone, sphere, torus; exact projections, deterministic
+  axis-point conventions), exact revolve_full (oracle: revolved sphere /
+  torus implicit residuals at 1e-12/1e-11), global surface projection,
+  multivariate Bernstein PP solver in keel-math (spec D6), interval de
+  Casteljau enclosures (M5 Krawczyk groundwork), surface fuzz target +
+  benches + gate. Derivative path switched from hodograph to basis-ders
+  (A2.3): mixed partials make hodograph chains expensive and fitting/IGA
+  consumers want basis ders anyway.
+- NEXT: execute the M2b plan on branch m2b-surfaces.
