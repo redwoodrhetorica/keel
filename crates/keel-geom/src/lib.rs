@@ -8,6 +8,7 @@
 
 pub mod basis;
 pub mod curve;
+pub mod intersect;
 pub mod knots;
 pub mod nurbs_curve;
 pub mod nurbs_surface;
