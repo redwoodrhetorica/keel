@@ -213,6 +213,16 @@ impl NurbsSurface {
         }
         out
     }
+
+    /// Full second-order local geometry at (u, v).
+    pub fn local_geometry(
+        &self,
+        u: f64,
+        v: f64,
+    ) -> Result<crate::surface::SurfaceLocalGeometry, GeomError> {
+        let d = self.derivatives(u, v, 2);
+        crate::surface::local_geometry_from_ders(d[0][0], d[1][0], d[0][1], d[2][0], d[1][1], d[0][2])
+    }
 }
 
 #[cfg(test)]
@@ -406,6 +416,55 @@ mod tests {
         let radial = Vec3::new(p.x, p.y, 0.0);
         assert!(d[1][0].dot(radial).abs() < 1e-10 * d[1][0].norm() * radial.norm());
         assert!(d[1][0].z.abs() < 1e-12);
+    }
+
+    #[test]
+    fn plane_patch_local_geometry() {
+        let pts = vec![
+            Vec3::ZERO,
+            Vec3::new(0., 3., 0.),
+            Vec3::new(3., 0., 0.),
+            Vec3::new(3., 3., 0.),
+        ];
+        let k = vec![0., 0., 1., 1.];
+        let s = NurbsSurface::new(1, 1, k.clone(), k, pts, None).unwrap();
+        let lg = s.local_geometry(0.4, 0.6).unwrap();
+        assert!((lg.normal - Vec3::new(0., 0., 1.)).norm() < 1e-14);
+        assert!(lg.gaussian.abs() < 1e-14);
+        assert!(lg.mean.abs() < 1e-14);
+        assert!(lg.k1.abs() < 1e-14 && lg.k2.abs() < 1e-14);
+    }
+
+    #[test]
+    fn cylinder_patch_curvatures() {
+        // Quarter cylinder radius 2 about z: K = 0, |H| = 1/(2r) = 0.25,
+        // principal curvatures {0, +/-1/r}.
+        let s = quarter_cylinder_r2();
+        let lg = s.local_geometry(0.5, 0.5).unwrap();
+        assert!(lg.gaussian.abs() < 1e-10);
+        assert!((lg.mean.abs() - 0.25).abs() < 1e-10);
+        let (kmax, kmin) = (
+            lg.k1.abs().max(lg.k2.abs()),
+            lg.k1.abs().min(lg.k2.abs()),
+        );
+        assert!((kmax - 0.5).abs() < 1e-10 && kmin < 1e-10);
+        // The zero-curvature principal direction runs along the axis.
+        let axis_dir = if lg.k1.abs() < lg.k2.abs() { lg.dir1 } else { lg.dir2 };
+        assert!(axis_dir.cross(Vec3::new(0., 0., 1.)).norm() < 1e-8);
+    }
+
+    #[test]
+    fn degenerate_normal_is_error() {
+        // All control points on one line: S_u x S_v = 0 everywhere.
+        let pts = vec![
+            Vec3::ZERO,
+            Vec3::new(1., 0., 0.),
+            Vec3::new(2., 0., 0.),
+            Vec3::new(3., 0., 0.),
+        ];
+        let k = vec![0., 0., 1., 1.];
+        let s = NurbsSurface::new(1, 1, k.clone(), k, pts, None).unwrap();
+        assert_eq!(s.local_geometry(0.5, 0.5).unwrap_err(), GeomError::Degenerate);
     }
 
     proptest! {
