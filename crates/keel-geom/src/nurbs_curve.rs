@@ -513,7 +513,11 @@ impl BezierSegment {
     /// assume it; for t inside [0,1] on a valid segment it does).
     pub fn point_enclosure(&self, t: Interval) -> Option<[Interval; 3]> {
         let h = self.eval_homogeneous_interval(t);
-        Some([h[0].checked_div(h[3])?, h[1].checked_div(h[3])?, h[2].checked_div(h[3])?])
+        Some([
+            h[0].checked_div(h[3])?,
+            h[1].checked_div(h[3])?,
+            h[2].checked_div(h[3])?,
+        ])
     }
 }
 
@@ -585,10 +589,26 @@ mod tests {
             1.2984926927785823e219,
         ];
         let pts = vec![
-            Vec3::new(1.4523965173143224e-176, 1.2984926927785823e219, 1.2984926927785823e219),
-            Vec3::new(1.2984926927785823e219, 1.2984926927785823e219, 1.2984926927785823e219),
-            Vec3::new(1.2984926927767764e219, 1.2984926919361387e219, 1.2984926927785823e219),
-            Vec3::new(1.2984926927785823e219, 1.2984926927785823e219, 1.2984926927785823e219),
+            Vec3::new(
+                1.4523965173143224e-176,
+                1.2984926927785823e219,
+                1.2984926927785823e219,
+            ),
+            Vec3::new(
+                1.2984926927785823e219,
+                1.2984926927785823e219,
+                1.2984926927785823e219,
+            ),
+            Vec3::new(
+                1.2984926927767764e219,
+                1.2984926919361387e219,
+                1.2984926927785823e219,
+            ),
+            Vec3::new(
+                1.2984926927785823e219,
+                1.2984926927785823e219,
+                1.2984926927785823e219,
+            ),
         ];
         let ws = vec![
             1.2984926927785837e219,
@@ -628,7 +648,11 @@ mod tests {
     /// common factor must not move the curve.
     #[test]
     fn weight_scale_invariance() {
-        let pts = vec![Vec3::ZERO, Vec3::new(1.0, 2.0, 0.0), Vec3::new(3.0, 0.0, 1.0)];
+        let pts = vec![
+            Vec3::ZERO,
+            Vec3::new(1.0, 2.0, 0.0),
+            Vec3::new(3.0, 0.0, 1.0),
+        ];
         let knots = vec![0., 0., 0., 1., 1., 1.];
         let a = NurbsCurve::new(2, knots.clone(), pts.clone(), Some(vec![1.0, 2.0, 3.0])).unwrap();
         let b = NurbsCurve::new(2, knots, pts, Some(vec![1e200, 2e200, 3e200])).unwrap();
@@ -648,7 +672,11 @@ mod tests {
         let knots = vec![a, a, a, b, b, b, b];
         let pts = vec![
             Vec3::new(1.4523965173143224e-176, b, b),
-            Vec3::new(4.857875624558299e-33, 4.8148343340696226e-33, 4.848094946726139e-33),
+            Vec3::new(
+                4.857875624558299e-33,
+                4.8148343340696226e-33,
+                4.848094946726139e-33,
+            ),
             Vec3::new(5.1723916756679745e54, 7.440614902924675e219, b),
             Vec3::new(b, b, b),
         ];

@@ -237,11 +237,7 @@ fn below_zero_span(chain: &[(f64, f64)]) -> Option<(f64, f64)> {
 
 /// Projected Polyhedron solve over [0,1]^n. Returns None when the
 /// node budget is exhausted.
-pub fn solve_system(
-    polys: &[MultiBernstein],
-    tol: f64,
-    max_nodes: usize,
-) -> Option<Vec<RootBox>> {
+pub fn solve_system(polys: &[MultiBernstein], tol: f64, max_nodes: usize) -> Option<Vec<RootBox>> {
     if polys.is_empty() {
         return Some(Vec::new());
     }
@@ -434,7 +430,10 @@ mod tests {
         assert_eq!(roots.len(), 1, "{roots:?}");
         let cx = 0.5 * roots[0].lo[0] + 0.5 * roots[0].hi[0];
         let cy = 0.5 * roots[0].lo[1] + 0.5 * roots[0].hi[1];
-        assert!((cx - 0.5).abs() < 1e-6 && (cy - 0.5).abs() < 1e-6, "{roots:?}");
+        assert!(
+            (cx - 0.5).abs() < 1e-6 && (cy - 0.5).abs() < 1e-6,
+            "{roots:?}"
+        );
     }
 
     #[test]

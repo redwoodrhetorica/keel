@@ -547,7 +547,8 @@ mod tests {
         let f = Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
         let sph = Surface3::Sphere(Sphere3::new(f, 1.0).unwrap());
         assert_eq!(
-            sph.local_geometry(0.3, core::f64::consts::FRAC_PI_2).unwrap_err(),
+            sph.local_geometry(0.3, core::f64::consts::FRAC_PI_2)
+                .unwrap_err(),
             GeomError::Degenerate
         );
     }

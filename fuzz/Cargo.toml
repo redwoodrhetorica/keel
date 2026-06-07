@@ -30,3 +30,9 @@ name = "fuzz_nurbs_curve"
 path = "fuzz_targets/fuzz_nurbs_curve.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_nurbs_surface"
+path = "fuzz_targets/fuzz_nurbs_surface.rs"
+test = false
+doc = false

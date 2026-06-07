@@ -3,10 +3,10 @@
 //! bracketed-Newton polish (Ma-Hewitt / Selimovic pattern, research
 //! dossier nurbs/04 section 5).
 
+use crate::GeomError;
 use crate::nurbs_curve::{BezierSegment, NurbsCurve};
 use crate::nurbs_surface::{BezierPatch, NurbsSurface};
 use crate::surface::SurfaceProjection;
-use crate::GeomError;
 use keel_math::bbox::Aabb3;
 use keel_math::vec::Vec3;
 
@@ -285,7 +285,10 @@ mod tests {
             .unwrap();
         let pr = project_point_surface(&s, Vec3::new(5.0, 0.0, 0.0), 1e-4).unwrap();
         assert!((pr.distance - 3.0).abs() < 1e-7, "{pr:?}");
-        assert!((pr.point - Vec3::new(2.0, 0.0, 0.0)).norm() < 1e-6, "{pr:?}");
+        assert!(
+            (pr.point - Vec3::new(2.0, 0.0, 0.0)).norm() < 1e-6,
+            "{pr:?}"
+        );
     }
 
     proptest! {

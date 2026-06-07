@@ -80,8 +80,7 @@ pub fn basis_ders(kv: &KnotVector, span: usize, u: f64, d: usize) -> Vec<[f64; M
             };
             for j in j1..=j2 {
                 let ju = j as usize;
-                a[s2][ju] =
-                    (a[s1][ju] - a[s1][ju - 1]) / ndu[(pk + 1) as usize][(rk + j) as usize];
+                a[s2][ju] = (a[s1][ju] - a[s1][ju - 1]) / ndu[(pk + 1) as usize][(rk + j) as usize];
                 dv += a[s2][ju] * ndu[(rk + j) as usize][pk as usize];
             }
             if r as i64 <= pk {

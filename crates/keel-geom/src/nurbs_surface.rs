@@ -205,8 +205,7 @@ impl NurbsSurface {
                 }
                 for i in 1..=k {
                     for j in 1..=l {
-                        acc = acc
-                            - out[k - i][l - j] * (binom(k, i) * binom(l, j) * a[i][j].w);
+                        acc = acc - out[k - i][l - j] * (binom(k, i) * binom(l, j) * a[i][j].w);
                     }
                 }
                 out[k][l] = acc * (1.0 / w0);
@@ -222,7 +221,9 @@ impl NurbsSurface {
         v: f64,
     ) -> Result<crate::surface::SurfaceLocalGeometry, GeomError> {
         let d = self.derivatives(u, v, 2);
-        crate::surface::local_geometry_from_ders(d[0][0], d[1][0], d[0][1], d[2][0], d[1][1], d[0][2])
+        crate::surface::local_geometry_from_ders(
+            d[0][0], d[1][0], d[0][1], d[2][0], d[1][1], d[0][2],
+        )
     }
 
     /// The four boundary iso-curves, with their surface edge and the
@@ -232,12 +233,10 @@ impl NurbsSurface {
     /// the net.
     pub fn boundary_curves(&self) -> [crate::nurbs_curve::NurbsCurve; 4] {
         use crate::nurbs_curve::NurbsCurve;
-        let row = |i: usize| -> Vec<Vec4> {
-            (0..self.nv).map(|j| self.ctrl[i * self.nv + j]).collect()
-        };
-        let col = |j: usize| -> Vec<Vec4> {
-            (0..self.nu).map(|i| self.ctrl[i * self.nv + j]).collect()
-        };
+        let row =
+            |i: usize| -> Vec<Vec4> { (0..self.nv).map(|j| self.ctrl[i * self.nv + j]).collect() };
+        let col =
+            |j: usize| -> Vec<Vec4> { (0..self.nu).map(|i| self.ctrl[i * self.nv + j]).collect() };
         #[allow(clippy::unwrap_used)]
         [
             NurbsCurve::from_homogeneous(self.kv_v.clone(), row(0)).unwrap(),
@@ -604,7 +603,11 @@ impl BezierPatch {
     /// weight enclosure straddles zero.
     pub fn point_enclosure(&self, s: Interval, t: Interval) -> Option<[Interval; 3]> {
         let h = self.eval_homogeneous_interval(s, t);
-        Some([h[0].checked_div(h[3])?, h[1].checked_div(h[3])?, h[2].checked_div(h[3])?])
+        Some([
+            h[0].checked_div(h[3])?,
+            h[1].checked_div(h[3])?,
+            h[2].checked_div(h[3])?,
+        ])
     }
 
     /// AABB of the projected control net (bounds the patch by the
@@ -774,7 +777,11 @@ mod tests {
                 let p = s.point(u, v);
                 let r = (p.x * p.x + p.y * p.y).sqrt();
                 assert!((r - 2.0).abs() < 1e-12, "radius {r} at {u} {v}");
-                assert!((-1e-12..=3.0 + 1e-12).contains(&p.z), "z {} at {u} {v}", p.z);
+                assert!(
+                    (-1e-12..=3.0 + 1e-12).contains(&p.z),
+                    "z {} at {u} {v}",
+                    p.z
+                );
             }
         }
     }
@@ -962,13 +969,14 @@ mod tests {
         let lg = s.local_geometry(0.5, 0.5).unwrap();
         assert!(lg.gaussian.abs() < 1e-10);
         assert!((lg.mean.abs() - 0.25).abs() < 1e-10);
-        let (kmax, kmin) = (
-            lg.k1.abs().max(lg.k2.abs()),
-            lg.k1.abs().min(lg.k2.abs()),
-        );
+        let (kmax, kmin) = (lg.k1.abs().max(lg.k2.abs()), lg.k1.abs().min(lg.k2.abs()));
         assert!((kmax - 0.5).abs() < 1e-10 && kmin < 1e-10);
         // The zero-curvature principal direction runs along the axis.
-        let axis_dir = if lg.k1.abs() < lg.k2.abs() { lg.dir1 } else { lg.dir2 };
+        let axis_dir = if lg.k1.abs() < lg.k2.abs() {
+            lg.dir1
+        } else {
+            lg.dir2
+        };
         assert!(axis_dir.cross(Vec3::new(0., 0., 1.)).norm() < 1e-8);
     }
 
@@ -983,7 +991,10 @@ mod tests {
         ];
         let k = vec![0., 0., 1., 1.];
         let s = NurbsSurface::new(1, 1, k.clone(), k, pts, None).unwrap();
-        assert_eq!(s.local_geometry(0.5, 0.5).unwrap_err(), GeomError::Degenerate);
+        assert_eq!(
+            s.local_geometry(0.5, 0.5).unwrap_err(),
+            GeomError::Degenerate
+        );
     }
 
     proptest! {
