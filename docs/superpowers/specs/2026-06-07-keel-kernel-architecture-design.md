@@ -75,8 +75,9 @@ Decided after extended debate against C, C++, and C#. Deciding factors, given th
 
 ### D7. Machine learning policy
 
-*(Added per research synthesis, track F.)*
+*(Added per research synthesis, track F; sharpened per user direction.)*
 
+- **Primary mode: ML as an offline development weapon, not a runtime component.** Brute-force search, learned mutators, and black-box optimization attack problems we cannot theory our way out of: mining adversarial configurations that break intersectors and booleans, discovering tolerance and filter thresholds no published analysis derives, finding counterexamples to design assumptions, and growing the regression corpus. Offline results ship as ordinary constants, test cases, and corpus entries; the kernel binary contains no model. Embedding a model at runtime (e.g., Newton seed prediction) is permitted but optional, and only ever under the propose-then-certify contract below.
 - **Nothing learned sits on the correctness path.** Published accuracy ceilings for neural geometry (about 1e-3 of bounding box) are six orders of magnitude short of kernel decisions. The binding contract is propose-then-certify: ML may seed, rank, tune, and generate tests; classical machinery certifies every output.
 - Sanctioned uses, in roadmap order: ML-guided fuzzing with learned mutators against kernel invariants (M3+), Newton seed prediction for projection/tracing (M2+), degeneracy prediction for preemptive precision escalation (M5+), SSI algorithm-portfolio selection (M5+), Bayesian optimization of thresholds against the regression corpus (M6+).
 - Experiment designs (hypothesis, data source, model class, metric, certification route) live in docs/research/f-ml-for-geometry.md.
