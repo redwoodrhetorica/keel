@@ -437,3 +437,32 @@ REMAINING in M2a:
   (boolean/SSI pipeline shape, D9 lineage hooks, PES operator set
   BEFORE the topology API freezes) plus the standing research re-read
   (files 14 in full, 19 kernel-obligations, 16 location/instancing).
+
+## Addendum 11 (2026-06-07): pre-M3 research re-read + topology gate design
+
+- Research sweep: no new dossiers since the M2b sweep. Pre-M3 standing
+  reading completed: kernel/01 (topology/Euler), kernel/02 (non-manifold
+  PES verdict), kernel/07 (naming/sessions mandates 1-14), kernel/14 in
+  full (determinism contract + file doctrine), kernel/22 skimmed
+  (obligations: canonicalization service, deterministic sampling, clean
+  traversability; all above-kernel, consistent with D9).
+- M3 PAPER-DESIGN GATE WRITTEN:
+  docs/superpowers/specs/2026-06-07-m3-topology-gate-design.md.
+  Key bindings: 8-entity tower (body/region/shell/face/loop/fin/edge/
+  vertex, Parasolid names); regions primary and space-partitioning with
+  one infinite region per body; PES-class fins with day-one radial
+  cycles (manifold = 2-cycle fast path); typed arenas + stable u64
+  EntityIds (slots are never identity); manifold Euler five + inverses
+  with incremental Euler-Poincare checks; subdivision/stitch primitives
+  (split_edge/split_face/merge/glue_edges/embed) as first-class API
+  because lineage needs their split/merge semantics; total OpReports
+  (Modified/Generated/Deleted/Split/Merged, no anonymous topology);
+  derivation records per entity; snapshot/restore (deep clone first,
+  COW later behind the same API); journal trait + replay determinism
+  test; d-of-d validation oracle alongside Euler-Poincare; boolean
+  pipeline designed on paper (localize/intersect/imprint/classify/
+  stitch/report) with the freeze checklist mapped item-by-item to the
+  M3 API. M3 scope: keel-topo crate, operators, validation, lineage,
+  primitive constructors (block/prism/cylinder/sphere/cone/torus) as
+  pure Euler sequences, debug dump + topology-hash goldens.
+- NEXT: M3 implementation plan (writing-plans), then execute.
