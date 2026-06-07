@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["crates/keel-math"]
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/keel-kernel/keel"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+dbg_macro = "warn"
+
+[workspace.dependencies]
+robust = "1"
+proptest = "1"
+criterion = "0.5"

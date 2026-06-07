@@ -1,1 +1,5 @@
 /target
+/.claude/worktrees/
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/

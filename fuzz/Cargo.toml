@@ -1,0 +1,25 @@
+[package]
+name = "keel-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+keel-math = { path = "../crates/keel-math" }
+
+[[bin]]
+name = "fuzz_solve_cubic"
+path = "fuzz_targets/fuzz_solve_cubic.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_bernstein_roots"
+path = "fuzz_targets/fuzz_bernstein_roots.rs"
+test = false
+doc = false
