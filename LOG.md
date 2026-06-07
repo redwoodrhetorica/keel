@@ -169,3 +169,39 @@ extraction), starting with a fresh read of any new research that has landed by t
   consumers (regen, direct modeling, assembly, PMI, FR, collaboration). D9 is
   the most load-bearing non-geometric decision in the kernel.
 - Still PAUSED. Resume point: M2a Task 1. None of wave 3 affects the M2a plan.
+
+---
+
+## 2026-06-07 (addendum 4: UNPAUSED; fuzz find fixed; merges reconciled; T-splines dropped)
+
+- USER DECISIONS: (1) T-splines dropped entirely (added to spec non-goals): no
+  kernel ships them, no format exchanges them, THB covers refinement. (2) Patent
+  posture discussed and affirmed: design-arounds are evaluated against CLAIM
+  ELEMENTS, not outcomes; when implementing near a fenced zone, record which
+  claim element is omitted + prior-art citation (composes with the defensive
+  publication rule). (3) UNPAUSED: proceed where safe.
+- FIRST FUZZING CAMPAIGN RESULTS (M1 gate item closed): fuzz_bernstein_roots
+  clean over 8.6M runs/10min. fuzz_solve_cubic FOUND A REAL BUG: finite inputs
+  with extreme coefficient ratios (a~1e-308, b~1e308) overflowed the
+  discriminant/Cauchy bound to inf and returned non-finite roots. Fix: exact
+  power-of-two coefficient normalization (root-preserving) in solve_quadratic
+  and solve_cubic + golden regression tests (fuzz_regression_extreme_ratios...).
+  58 tests green. FINDING 2 (caught by the 5-min rerun): denormal coefficients
+  survive normalization; q/a, -c/b, and the Cauchy bound can still hit inf.
+  Fix: non-finite roots are dropped (not representable in f64) and an infinite
+  Cauchy bound falls back to the quadratic part's roots. Both findings have
+  golden regression tests. All-artifact repro + 7-min rerun in background.
+- REPO TOPOLOGY NOTE: the research agent works on branch worktree-nurbs-research
+  and merges into our branch. A conflicted merge of its synthesis-v2 spec deltas
+  was reconciled BY THE AGENT (commit 807e32c): resolution verified good: our
+  stronger D3/D9/D10 govern (its synthesis v2 explicitly defers to wave-spec
+  text), its unique additions merged (D6 cubic-hybrid-clipping default,
+  keel-tess/keel-io crate contracts, comparison-cascade testing oracle, risk
+  entries, D9 CI clause). docs/research/00-synthesis-v2.md is the agent's
+  delta record (9-22); our wave records are 01-synthesis-wave2.md and
+  02-synthesis-wave3.md. Spec remains the single binding document.
+- Round-3 research (kernel/20-24: sheet metal, kinematics, model diff,
+  metrology fitting, canonical recovery) is bound into the spec via synthesis-v2
+  deltas 16/17/20/22; full reads deferred to their milestones (all long-tail,
+  none affect M2).
+- RESUMING: M2a execution from Task 1 (scaffold keel-geom).

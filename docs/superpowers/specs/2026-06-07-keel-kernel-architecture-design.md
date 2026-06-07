@@ -22,6 +22,7 @@ Build an open-source B-rep solid modeling kernel in Rust with Parasolid-class am
 - Fillets/blends, shelling, sheet-metal, healing, history/parametrics (post-M7 long tail).
 - STEP/IGES import (post-M7; STL/OBJ export ships early for visibility).
 - GPU evaluation, exact-arithmetic modeling mode.
+- T-splines, in any form (user decision 2026-06-07): no shipping kernel carries them, no interchange format exchanges them, and THB-splines cover local refinement wherever it is ever needed. The original patent's March 2024 expiry changes their availability, not their necessity.
 
 ## 2. Core architectural decisions
 
