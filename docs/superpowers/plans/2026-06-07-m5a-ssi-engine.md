@@ -104,7 +104,7 @@ Oracles: two revolved-exact spheres (intersection = exact circle, compare to tie
 Fit polylines (3D + both pcurves simultaneously) with cubic least-squares NURBS, knots by arc-length; verify: dense parameter sampling of fitted vs traced (and fitted point's distance to BOTH surfaces via projection), inflate by a sampled-derivative bound; refine knots and refit until tol met; record `tol_achieved`. Closed branches fit periodically (wrap by knot repetition... clamped with matched ends + tangents for M5a, documented).
 
 ### Task 7: fuzz, benches, gate
-`fuzz_ssi`: random analytic pairs (+ random rigid transforms): every reported curve point must satisfy both implicit forms within tol; no panics; Coincident never mis-traced (coaxial constructions). Benches: plane/sphere exact, sphere-as-NURBS vs plane (tier 2), two NURBS spheres (tier 3). Exit gate: standard + 10-min soak + LOG + merge.
+`fuzz_ssi`: random analytic pairs (+ random rigid transforms): every reported curve point must satisfy both implicit forms within tol; no panics; Coincident never mis-traced (coaxial constructions). Benches: plane/sphere exact, sphere-as-NURBS vs plane (tier 2), two NURBS spheres (tier 3). Exit gate: standard + 10-min soak of each new target + **a 2-HOUR EXTENDED SOAK (user mandate 2026-06-07) of fuzz_ssi and fuzz_interval before merge** + LOG + merge.
 
 ## Deferred to M5b (the topology half)
 Trim loops from SSI output (real pcurves on faces); imprint (split_face along SsiCurves, glue_edges with the dihedral radial sort it now needs); NURBS surface extension service (kernel/13 co-design); PMC/massprops upgrades for trimmed faces (winding handles curved pcurves already by construction); validated-ODE and algebraic-topology escalations as needed by M6 robustness data.

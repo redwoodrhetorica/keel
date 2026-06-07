@@ -49,3 +49,9 @@ name = "fuzz_pmc"
 path = "fuzz_targets/fuzz_pmc.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_interval"
+path = "fuzz_targets/fuzz_interval.rs"
+test = false
+doc = false
