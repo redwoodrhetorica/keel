@@ -61,6 +61,78 @@ impl Bernstein {
         w[0]
     }
 
+    /// Exact Bernstein product (Farouki-Rajan 1988): degree p + q,
+    /// c_k = sum_i C(p,i) C(q,k-i) / C(p+q,k) * a_i * b_{k-i}.
+    /// Stays in the well-conditioned basis; never converts to power.
+    pub fn mul(&self, other: &Bernstein) -> Bernstein {
+        let p = self.degree();
+        let q = other.degree();
+        let n = p + q;
+        let binom = |n: usize, k: usize| -> f64 {
+            let mut b = 1.0f64;
+            for i in 1..=k {
+                b = b * (n - i + 1) as f64 / i as f64;
+            }
+            b
+        };
+        let mut coeffs = vec![0.0; n + 1];
+        for (k, c) in coeffs.iter_mut().enumerate() {
+            let lo = k.saturating_sub(q);
+            let hi = k.min(p);
+            let mut acc = 0.0;
+            for i in lo..=hi {
+                acc += binom(p, i) * binom(q, k - i) * self.coeffs[i] * other.coeffs[k - i];
+            }
+            *c = acc / binom(n, k);
+        }
+        Bernstein { coeffs }
+    }
+
+    /// Sum after degree-raising both operands to the max degree.
+    pub fn add(&self, other: &Bernstein) -> Bernstein {
+        let n = self.degree().max(other.degree());
+        let a = self.elevated_to(n);
+        let b = other.elevated_to(n);
+        Bernstein {
+            coeffs: a.coeffs.iter().zip(&b.coeffs).map(|(x, y)| x + y).collect(),
+        }
+    }
+
+    /// Scalar multiple.
+    pub fn scale(&self, s: f64) -> Bernstein {
+        Bernstein {
+            coeffs: self.coeffs.iter().map(|c| c * s).collect(),
+        }
+    }
+
+    /// Exact degree elevation to degree n >= self.degree().
+    pub fn elevated_to(&self, n: usize) -> Bernstein {
+        let p = self.degree();
+        if n == p {
+            return self.clone();
+        }
+        debug_assert!(n > p);
+        let r = n - p;
+        let binom = |n: usize, k: usize| -> f64 {
+            let mut b = 1.0f64;
+            for i in 1..=k {
+                b = b * (n - i + 1) as f64 / i as f64;
+            }
+            b
+        };
+        let mut coeffs = vec![0.0; n + 1];
+        for (k, c) in coeffs.iter_mut().enumerate() {
+            let lo = k.saturating_sub(r);
+            let hi = k.min(p);
+            let mut acc = 0.0;
+            for i in lo..=hi {
+                acc += binom(p, i) * binom(r, k - i) * self.coeffs[i];
+            }
+            *c = acc / binom(n, k);
+        }
+        Bernstein { coeffs }
+    }
+
     /// Derivative, degree n-1 (constant zero for degree 0 input).
     pub fn derivative(&self) -> Self {
         let n = self.degree();
@@ -208,6 +280,33 @@ mod tests {
         let p = Bernstein::from_power(&[0.0, 0.0, 1.0]).unwrap();
         let d = p.derivative();
         assert!((d.eval(0.7) - 1.4).abs() < 1e-14);
+    }
+
+    #[test]
+    fn product_and_sum_match_power_arithmetic() {
+        // (1 + 2x)(3 - x) = 3 + 5x - 2x^2.
+        let a = Bernstein::from_power(&[1.0, 2.0]).unwrap();
+        let b = Bernstein::from_power(&[3.0, -1.0]).unwrap();
+        let prod = a.mul(&b);
+        for &t in &[0.0, 0.3, 0.7, 1.0] {
+            let want = 3.0 + 5.0 * t - 2.0 * t * t;
+            assert!((prod.eval(t) - want).abs() < 1e-14);
+        }
+        let sum = a.add(&b.scale(2.0));
+        for &t in &[0.0, 0.5, 1.0] {
+            let want = (1.0 + 2.0 * t) + 2.0 * (3.0 - t);
+            assert!((sum.eval(t) - want).abs() < 1e-14);
+        }
+    }
+
+    #[test]
+    fn elevation_preserves_values() {
+        let p = Bernstein::from_power(&[1.0, -2.0, 0.5]).unwrap();
+        let e = p.elevated_to(5);
+        assert_eq!(e.degree(), 5);
+        for &t in &[0.0, 0.25, 0.6, 1.0] {
+            assert!((e.eval(t) - p.eval(t)).abs() < 1e-14);
+        }
     }
 
     #[test]

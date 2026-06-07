@@ -517,6 +517,480 @@ fn seg_ders2(seg: &BezierSegment, t: f64) -> (Vec3, Vec3, Vec3) {
     (d[0], d[1], d[2])
 }
 
+// ---------------------------------------------------------------------
+// curve / surface intersection (CSI)
+
+use crate::nurbs_surface::NurbsSurface;
+use crate::surface::Surface3;
+
+/// An intersection point between a curve and a surface.
+#[derive(Clone, Debug)]
+pub struct SurfaceHit {
+    /// Curve parameter.
+    pub t: f64,
+    /// Surface parameters at the hit.
+    pub uv: (f64, f64),
+    pub point: Vec3,
+    pub tangential: bool,
+}
+
+/// Surface operand for CSI.
+pub enum SurfaceRef<'a> {
+    Analytic(&'a Surface3),
+    Nurbs(&'a NurbsSurface),
+}
+
+/// Intersect a bounded curve with a surface.
+pub fn intersect_curve_surface(
+    c: &Curve3,
+    dc: Domain,
+    s: &SurfaceRef<'_>,
+    tol: f64,
+) -> Result<Vec<SurfaceHit>, GeomError> {
+    if tol <= 0.0 || !tol.is_finite() {
+        return Err(GeomError::Degenerate);
+    }
+    match s {
+        SurfaceRef::Analytic(surf) => {
+            let n = match c {
+                Curve3::Line(l) => return line_analytic_surface(l, dc, surf, tol),
+                _ => to_nurbs(c)?.0,
+            };
+            curve_analytic_surface(&n, surf, tol)
+        }
+        SurfaceRef::Nurbs(ns) => {
+            let n = match c {
+                Curve3::Line(_) => {
+                    // Lines vs spline surfaces: bound the line to the
+                    // surface's control AABB and route through the
+                    // NURBS path as an exact degree-1 curve.
+                    line_as_segment_curve(c, ns, tol)?
+                }
+                _ => to_nurbs(c)?.0,
+            };
+            nurbs_curve_nurbs_surface(&n, ns, tol)
+        }
+    }
+}
+
+/// Line restricted to a finite span covering the surface's control
+/// AABB, as an exact degree-1 NURBS.
+fn line_as_segment_curve(c: &Curve3, ns: &NurbsSurface, tol: f64) -> Result<NurbsCurve, GeomError> {
+    let Curve3::Line(l) = c else {
+        return Err(GeomError::Degenerate);
+    };
+    let mut lo = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+    let mut hi = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for h in ns.homogeneous_control() {
+        let p = Vec3::new(h.x / h.w, h.y / h.w, h.z / h.w);
+        lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+        hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+    }
+    let center = (lo + hi) * 0.5;
+    let radius = (hi - lo).norm() * 0.5 + 10.0 * tol;
+    let mid = (center - l.origin).dot(l.dir);
+    let (t0, t1) = (mid - radius, mid + radius);
+    NurbsCurve::new(
+        1,
+        vec![t0, t0, t1, t1],
+        vec![l.point(t0), l.point(t1)],
+        None,
+    )
+}
+
+/// Line vs analytic surface: exact low-degree polynomial roots of the
+/// implicit form restricted to the line.
+fn line_analytic_surface(
+    l: &Line3,
+    dl: Domain,
+    s: &Surface3,
+    tol: f64,
+) -> Result<Vec<SurfaceHit>, GeomError> {
+    // Power-basis coefficients of f(o + t d) by surface type; degree
+    // <= 2 except the torus quartic.
+    let o = l.origin;
+    let d = l.dir;
+    let roots: Vec<f64> = match s {
+        Surface3::Plane(p) => {
+            let denom = d.dot(p.frame.z);
+            let num = (o - p.frame.origin).dot(p.frame.z);
+            if denom.abs() <= 1e-14 {
+                if num.abs() <= tol {
+                    return Err(GeomError::Degenerate); // line in plane
+                }
+                Vec::new()
+            } else {
+                vec![-num / denom]
+            }
+        }
+        Surface3::Sphere(sp) => {
+            let w = o - sp.frame.origin;
+            keel_math::poly::solve_quadratic(
+                d.dot(d),
+                2.0 * w.dot(d),
+                w.dot(w) - sp.radius * sp.radius,
+            )
+        }
+        Surface3::Cylinder(cy) => {
+            let z = cy.frame.z;
+            let w = o - cy.frame.origin;
+            let wp = w - z * w.dot(z);
+            let dp = d - z * d.dot(z);
+            let qa = dp.dot(dp);
+            if qa <= 1e-28 {
+                // Line parallel to the axis: on the wall or not.
+                if (wp.norm() - cy.radius).abs() <= tol {
+                    return Err(GeomError::Degenerate);
+                }
+                Vec::new()
+            } else {
+                keel_math::poly::solve_quadratic(
+                    qa,
+                    2.0 * wp.dot(dp),
+                    wp.dot(wp) - cy.radius * cy.radius,
+                )
+            }
+        }
+        Surface3::Cone(co) => {
+            let m = co.half_angle.tan();
+            let z = co.frame.z;
+            let w = o - co.frame.origin;
+            let (wh, dh) = (w.dot(z), d.dot(z));
+            let wp = w - z * wh;
+            let dp = d - z * dh;
+            // |wp + t dp|^2 - (r0 + m (wh + t dh))^2 = 0.
+            let qa = dp.dot(dp) - m * m * dh * dh;
+            let qb = 2.0 * (wp.dot(dp) - m * dh * (co.radius + m * wh));
+            let qc = wp.dot(wp) - (co.radius + m * wh) * (co.radius + m * wh);
+            if qa.abs() <= 1e-28 && qb.abs() <= 1e-28 {
+                if qc.abs() <= tol {
+                    return Err(GeomError::Degenerate);
+                }
+                Vec::new()
+            } else if qa.abs() <= 1e-28 {
+                vec![-qc / qb]
+            } else {
+                keel_math::poly::solve_quadratic(qa, qb, qc)
+            }
+        }
+        Surface3::Torus(t) => {
+            // Quartic: ((|q|^2 + R^2 - r^2)^2 - 4 R^2 (|q|^2 - (q.z)^2))
+            // with q(t) = w + t d. Build power-basis coefficient arrays
+            // exactly and route through Bernstein on a bounded span.
+            let z = t.frame.z;
+            let w = o - t.frame.origin;
+            // |q|^2 = at^2 + bt + c; (q.z)^2 = (e t + f)^2.
+            let (qa, qb, qc) = (d.dot(d), 2.0 * w.dot(d), w.dot(w));
+            let (e, f) = (d.dot(z), w.dot(z));
+            let k = t.major * t.major - t.minor * t.minor;
+            // A(t) = |q|^2 + k: degree 2.
+            let a_poly = [qc + k, qb, qa];
+            // B(t) = |q|^2 - (q.z)^2: degree 2.
+            let b_poly = [qc - f * f, qb - 2.0 * e * f, qa - e * e];
+            // f(t) = A^2 - 4 R^2 B: degree 4.
+            let mut quart = [0.0f64; 5];
+            for (i, &ai) in a_poly.iter().enumerate() {
+                for (j, &aj) in a_poly.iter().enumerate() {
+                    quart[i + j] += ai * aj;
+                }
+            }
+            let four_r2 = 4.0 * t.major * t.major;
+            for (i, &bi) in b_poly.iter().enumerate() {
+                quart[i] -= four_r2 * bi;
+            }
+            // Bound the parameter span by the torus extent.
+            let reach = t.major + t.minor + 10.0 * tol;
+            let mid = (t.frame.origin - o).dot(d);
+            let (t0, t1) = (mid - reach, mid + reach);
+            // Affine substitution t = t0 + (t1 - t0) s into the power
+            // poly, then Bernstein roots on s in [0,1].
+            let subs = power_affine(&quart, t0, t1 - t0);
+            match Bernstein::from_power(&subs) {
+                Some(b) => b
+                    .roots(1e-12)
+                    .into_iter()
+                    .map(|s| t0 + (t1 - t0) * s)
+                    .collect(),
+                None => Vec::new(),
+            }
+        }
+    };
+    let mut hits = Vec::new();
+    for t in roots {
+        if !domain_contains(dl, t, tol) {
+            continue;
+        }
+        let p = l.point(t);
+        let pr = s.project(p)?;
+        if pr.distance > tol {
+            continue;
+        }
+        let grad = s.implicit_gradient(p);
+        let tangential = d.dot(grad).abs() <= TANGENT_EPS * d.norm() * grad.norm().max(1e-300);
+        hits.push(SurfaceHit {
+            t,
+            uv: (pr.u, pr.v),
+            point: pr.point,
+            tangential,
+        });
+    }
+    Ok(hits)
+}
+
+/// Power-basis affine substitution: p(t0 + s*scale) coefficients in s.
+fn power_affine(p: &[f64], t0: f64, scale: f64) -> Vec<f64> {
+    let n = p.len();
+    let mut out = vec![0.0; n];
+    // p(t) = sum a_i t^i; t = t0 + scale*s; expand binomially.
+    for (i, &ai) in p.iter().enumerate() {
+        // (t0 + scale*s)^i = sum_j C(i,j) t0^(i-j) scale^j s^j.
+        let mut binom = 1.0f64;
+        for (j, slot) in out.iter_mut().enumerate().take(i + 1) {
+            if j > 0 {
+                binom = binom * (i - j + 1) as f64 / j as f64;
+            }
+            *slot += ai * binom * t0.powi((i - j) as i32) * scale.powi(j as i32);
+        }
+    }
+    out
+}
+
+/// General curve vs analytic surface: EXACT Bernstein composition of
+/// the implicit form with each rational Bezier segment (never sample-
+/// and-fit). For quadrics the composed numerator has degree 2p; the
+/// torus gives 4p.
+fn curve_analytic_surface(
+    n: &NurbsCurve,
+    s: &Surface3,
+    tol: f64,
+) -> Result<Vec<SurfaceHit>, GeomError> {
+    let mut hits = Vec::new();
+    for seg in n.to_beziers() {
+        // Component Bernsteins of the homogeneous segment.
+        let comp = |pick: fn(&keel_math::vec::Vec4) -> f64| -> Option<Bernstein> {
+            Bernstein::new(seg.ctrl.iter().map(pick).collect())
+        };
+        let (Some(bx), Some(by), Some(bz), Some(bw)) =
+            (comp(|c| c.x), comp(|c| c.y), comp(|c| c.z), comp(|c| c.w))
+        else {
+            continue;
+        };
+        let f = compose_implicit(s, &bx, &by, &bz, &bw);
+        for t_local in f.roots(1e-12) {
+            let p = seg.point(t_local);
+            let pr = s.project(p)?;
+            if pr.distance > tol {
+                continue;
+            }
+            let t = seg.u0 + t_local * (seg.u1 - seg.u0);
+            let tangent = curve_tangent(n, t);
+            let grad = s.implicit_gradient(p);
+            let tangential =
+                tangent.dot(grad).abs() <= TANGENT_EPS * tangent.norm() * grad.norm().max(1e-300);
+            hits.push(SurfaceHit {
+                t,
+                uv: (pr.u, pr.v),
+                point: pr.point,
+                tangential,
+            });
+        }
+    }
+    dedup_surface_hits(&mut hits, tol);
+    Ok(hits)
+}
+
+/// The composed numerator polynomial f(C(t)) * w(t)^deg(f) in exact
+/// Bernstein form, built from Bernstein products only.
+fn compose_implicit(
+    s: &Surface3,
+    bx: &Bernstein,
+    by: &Bernstein,
+    bz: &Bernstein,
+    bw: &Bernstein,
+) -> Bernstein {
+    // q = X - o*w in surface-local terms; helper dot products.
+    let dotc = |a: (&Bernstein, &Bernstein, &Bernstein),
+                b: (&Bernstein, &Bernstein, &Bernstein)|
+     -> Bernstein { a.0.mul(b.0).add(&a.1.mul(b.1)).add(&a.2.mul(b.2)) };
+    let origin = match s {
+        Surface3::Plane(p) => p.frame.origin,
+        Surface3::Sphere(sp) => sp.frame.origin,
+        Surface3::Cylinder(c) => c.frame.origin,
+        Surface3::Cone(c) => c.frame.origin,
+        Surface3::Torus(t) => t.frame.origin,
+    };
+    let q = (
+        bx.add(&bw.scale(-origin.x)),
+        by.add(&bw.scale(-origin.y)),
+        bz.add(&bw.scale(-origin.z)),
+    );
+    let qr = (&q.0, &q.1, &q.2);
+    let zdir = match s {
+        Surface3::Plane(p) => p.frame.z,
+        Surface3::Sphere(_) => Vec3::new(0., 0., 1.), // unused
+        Surface3::Cylinder(c) => c.frame.z,
+        Surface3::Cone(c) => c.frame.z,
+        Surface3::Torus(t) => t.frame.z,
+    };
+    let qz =
+        q.0.scale(zdir.x)
+            .add(&q.1.scale(zdir.y))
+            .add(&q.2.scale(zdir.z));
+    match s {
+        Surface3::Plane(_) => qz,
+        Surface3::Sphere(sp) => {
+            // |q|^2 - r^2 w^2.
+            dotc(qr, qr).add(&bw.mul(bw).scale(-(sp.radius * sp.radius)))
+        }
+        Surface3::Cylinder(c) => {
+            // |q|^2 - qz^2 - r^2 w^2.
+            dotc(qr, qr)
+                .add(&qz.mul(&qz).scale(-1.0))
+                .add(&bw.mul(bw).scale(-(c.radius * c.radius)))
+        }
+        Surface3::Cone(c) => {
+            // |q|^2 - qz^2 - (r0 w + m qz)^2.
+            let m = c.half_angle.tan();
+            let rim = bw.scale(c.radius).add(&qz.scale(m));
+            dotc(qr, qr)
+                .add(&qz.mul(&qz).scale(-1.0))
+                .add(&rim.mul(&rim).scale(-1.0))
+        }
+        Surface3::Torus(t) => {
+            // A = |q|^2 + (R^2 - r^2) w^2; B = |q|^2 - qz^2;
+            // f = A^2 - 4 R^2 w^2 B.
+            let k = t.major * t.major - t.minor * t.minor;
+            let q2 = dotc(qr, qr);
+            let a = q2.add(&bw.mul(bw).scale(k));
+            let b = q2.add(&qz.mul(&qz).scale(-1.0));
+            a.mul(&a)
+                .add(&bw.mul(bw).mul(&b).scale(-4.0 * t.major * t.major))
+        }
+    }
+}
+
+fn dedup_surface_hits(hits: &mut Vec<SurfaceHit>, tol: f64) {
+    hits.sort_by(|a, b| a.t.total_cmp(&b.t));
+    hits.dedup_by(|a, b| (a.point - b.point).norm() <= 2.0 * tol && (a.t - b.t).abs() <= 1e-6);
+}
+
+/// NURBS curve x NURBS surface: per patch/segment PP solve of the
+/// exact homogeneous difference system in (u, v, t):
+/// X_S(u,v) w_C(t) - X_C(t) w_S(u,v) = 0.
+fn nurbs_curve_nurbs_surface(
+    n: &NurbsCurve,
+    ns: &NurbsSurface,
+    tol: f64,
+) -> Result<Vec<SurfaceHit>, GeomError> {
+    let mut hits: Vec<SurfaceHit> = Vec::new();
+    let patches = ns.to_bezier_patches()?;
+    for seg in n.to_beziers() {
+        for patch in &patches {
+            let (lo, hi) = patch.control_aabb();
+            if !aabb_overlap_box(&seg, lo, hi, tol) {
+                continue;
+            }
+            let (pu, qv) = (patch.p, patch.q);
+            let pc = seg.ctrl.len() - 1;
+            let cols = qv + 1;
+            let mut systems = Vec::with_capacity(3);
+            for axis in 0..3 {
+                let mut coeffs = Vec::with_capacity((pu + 1) * (qv + 1) * (pc + 1));
+                for i in 0..=pu {
+                    for j in 0..=qv {
+                        let cs = patch.ctrl[i * cols + j];
+                        let xs = [cs.x, cs.y, cs.z][axis];
+                        for cc in &seg.ctrl {
+                            let xc = [cc.x, cc.y, cc.z][axis];
+                            coeffs.push(xs * cc.w - xc * cs.w);
+                        }
+                    }
+                }
+                systems.push(
+                    MultiBernstein::new(vec![pu, qv, pc], coeffs).ok_or(GeomError::Degenerate)?,
+                );
+            }
+            let Some(boxes) = solve_system(&systems, PP_TOL, PP_BUDGET) else {
+                return Err(GeomError::Degenerate);
+            };
+            for bx in boxes {
+                let mut u = 0.5 * bx.lo[0] + 0.5 * bx.hi[0];
+                let mut v = 0.5 * bx.lo[1] + 0.5 * bx.hi[1];
+                let mut t = 0.5 * bx.lo[2] + 0.5 * bx.hi[2];
+                // 3x3 Newton polish on S(u,v) - C(t) = 0 in GLOBAL
+                // parameters.
+                let gu0 = patch.u0;
+                let gu1 = patch.u1;
+                let gv0 = patch.v0;
+                let gv1 = patch.v1;
+                let gt0 = seg.u0;
+                let gt1 = seg.u1;
+                let (mut gu, mut gv, mut gt) = (
+                    gu0 + u * (gu1 - gu0),
+                    gv0 + v * (gv1 - gv0),
+                    gt0 + t * (gt1 - gt0),
+                );
+                for _ in 0..20 {
+                    let sd = ns.derivatives(gu, gv, 1);
+                    let cd = n.derivatives(gt, 1);
+                    let r = sd[0][0] - cd[0];
+                    let (su, sv, ct) = (sd[1][0], sd[0][1], cd[1]);
+                    // Solve [su sv -ct] x = -r by Cramer.
+                    let det = su.dot(sv.cross(ct * -1.0));
+                    if det.abs() < 1e-300 {
+                        break;
+                    }
+                    let rhs = r * -1.0;
+                    let du = rhs.dot(sv.cross(ct * -1.0)) / det;
+                    let dv = su.dot(rhs.cross(ct * -1.0)) / det;
+                    let dt = su.dot(sv.cross(rhs)) / det;
+                    gu = (gu + du).clamp(gu0, gu1);
+                    gv = (gv + dv).clamp(gv0, gv1);
+                    gt = (gt + dt).clamp(gt0, gt1);
+                    if du.abs() + dv.abs() + dt.abs() < 1e-15 {
+                        break;
+                    }
+                }
+                u = gu;
+                v = gv;
+                t = gt;
+                let p1 = ns.point(u, v);
+                let p2 = n.point(t);
+                if (p1 - p2).norm() <= tol {
+                    let sd = ns.derivatives(u, v, 1);
+                    let normal = sd[1][0].cross(sd[0][1]);
+                    let tangent = n.derivatives(t, 1)[1];
+                    let tangential = tangent.dot(normal).abs()
+                        <= TANGENT_EPS * tangent.norm() * normal.norm().max(1e-300);
+                    hits.push(SurfaceHit {
+                        t,
+                        uv: (u, v),
+                        point: (p1 + p2) * 0.5,
+                        tangential,
+                    });
+                }
+            }
+        }
+    }
+    dedup_surface_hits(&mut hits, tol);
+    Ok(hits)
+}
+
+fn aabb_overlap_box(seg: &BezierSegment, lo: Vec3, hi: Vec3, tol: f64) -> bool {
+    let mut slo = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+    let mut shi = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for p in seg.control_points() {
+        slo = Vec3::new(slo.x.min(p.x), slo.y.min(p.y), slo.z.min(p.z));
+        shi = Vec3::new(shi.x.max(p.x), shi.y.max(p.y), shi.z.max(p.z));
+    }
+    slo.x <= hi.x + tol
+        && lo.x <= shi.x + tol
+        && slo.y <= hi.y + tol
+        && lo.y <= shi.y + tol
+        && slo.z <= hi.z + tol
+        && lo.z <= shi.z + tol
+}
+
 /// Merge hits that coincide in space and parameters (cluster artifacts
 /// from segment boundaries and PP box splits).
 fn dedup_hits(hits: &mut Vec<CurveHit>, tol: f64) {
@@ -645,6 +1119,97 @@ mod tests {
         for h in &hits {
             assert!((h.point.y - 1.0).abs() < 1e-9);
             assert!((h.point.norm() - 2.0).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn line_through_sphere_and_tangent_to_cylinder() {
+        use crate::surface::{Cylinder3, Frame3, Sphere3, Surface3};
+        let f = Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        let sph = Surface3::Sphere(Sphere3::new(f.clone(), 2.0).unwrap());
+        let l = Curve3::Line(Line3::new(Vec3::new(-5., 0., 0.), Vec3::new(1., 0., 0.)).unwrap());
+        let hits =
+            intersect_curve_surface(&l, span(-20., 20.), &SurfaceRef::Analytic(&sph), TOL).unwrap();
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        for h in &hits {
+            assert!((h.point.norm() - 2.0).abs() < 1e-9);
+            assert!(!h.tangential);
+        }
+        // Tangent line touching the cylinder wall at x = r.
+        let cyl = Surface3::Cylinder(Cylinder3::new(f, 1.5).unwrap());
+        let t = Curve3::Line(Line3::new(Vec3::new(1.5, -5., 1.0), Vec3::new(0., 1., 0.)).unwrap());
+        let hits = intersect_curve_surface(&t, span(-20., 20.), &SurfaceRef::Analytic(&cyl), 1e-7)
+            .unwrap();
+        assert!(!hits.is_empty());
+        assert!(hits.iter().all(|h| h.tangential), "{hits:?}");
+        // Line through the torus tube: 4 hits on the x axis.
+        use crate::surface::Torus3;
+        let f2 = Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        let tor = Surface3::Torus(Torus3::new(f2, 3.0, 1.0).unwrap());
+        let lx = Curve3::Line(Line3::new(Vec3::new(-9., 0., 0.), Vec3::new(1., 0., 0.)).unwrap());
+        let hits = intersect_curve_surface(&lx, span(-20., 20.), &SurfaceRef::Analytic(&tor), 1e-7)
+            .unwrap();
+        assert_eq!(hits.len(), 4, "{hits:?}");
+        let mut xs: Vec<f64> = hits.iter().map(|h| h.point.x).collect();
+        xs.sort_by(f64::total_cmp);
+        for (got, want) in xs.iter().zip([-4.0, -2.0, 2.0, 4.0]) {
+            assert!((got - want).abs() < 1e-7, "{xs:?}");
+        }
+    }
+
+    #[test]
+    fn nurbs_arc_vs_analytic_sphere() {
+        use crate::surface::{Frame3, Sphere3, Surface3};
+        let f = Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        let sph = Surface3::Sphere(Sphere3::new(f, 2.0).unwrap());
+        // A circle of radius 3 in the z = 0 plane centered at (2,0,0)
+        // crosses the sphere |p| = 2 where x^2+y^2 = 4: exact circle-
+        // circle geometry gives two symmetric hits.
+        let arc = Curve3::Nurbs(
+            NurbsCurve::full_circle(
+                Vec3::new(2., 0., 0.),
+                Vec3::new(1., 0., 0.),
+                Vec3::new(0., 1., 0.),
+                3.0,
+            )
+            .unwrap(),
+        );
+        let hits =
+            intersect_curve_surface(&arc, span(0., 1.), &SurfaceRef::Analytic(&sph), 1e-7).unwrap();
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        for h in &hits {
+            assert!((h.point.norm() - 2.0).abs() < 1e-7);
+            assert!(((h.point - Vec3::new(2., 0., 0.)).norm() - 3.0).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn nurbs_curve_vs_nurbs_surface() {
+        use crate::nurbs_surface::revolve_full;
+        // Revolved exact sphere of radius 2; a straight NURBS segment
+        // through it along x.
+        let profile = NurbsCurve::circular_arc(
+            Vec3::ZERO,
+            Vec3::new(0., 0., -1.),
+            Vec3::new(1., 0., 0.),
+            2.0,
+            core::f64::consts::PI,
+        )
+        .unwrap();
+        let s = revolve_full(&profile, Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        let c = Curve3::Nurbs(
+            NurbsCurve::new(
+                1,
+                vec![0., 0., 1., 1.],
+                vec![Vec3::new(-5., 0.3, 0.2), Vec3::new(5., 0.3, 0.2)],
+                None,
+            )
+            .unwrap(),
+        );
+        let hits = intersect_curve_surface(&c, span(0., 1.), &SurfaceRef::Nurbs(&s), 1e-7).unwrap();
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        for h in &hits {
+            assert!((h.point.norm() - 2.0).abs() < 1e-6, "{h:?}");
         }
     }
 
