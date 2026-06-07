@@ -780,6 +780,45 @@ mod tests {
         }
     }
 
+    /// M5a Task 0: enclosure soundness at the magnitude extremes the
+    /// fuzz campaigns taught us to fear (huge, tiny, mixed-scale
+    /// control points).
+    #[test]
+    fn interval_enclosure_sound_at_extreme_scales() {
+        let cases: Vec<Vec<Vec3>> = vec![
+            vec![
+                Vec3::new(1e300, -1e300, 1e299),
+                Vec3::new(-1e299, 1e300, -1e300),
+                Vec3::new(1e300, 1e299, 1e300),
+            ],
+            vec![
+                Vec3::new(1e-300, 1e-308, -1e-300),
+                Vec3::new(-1e-299, 1e-300, 1e-308),
+                Vec3::new(1e-300, -1e-300, 1e-299),
+            ],
+            vec![
+                Vec3::new(1e300, 1e-300, 1.0),
+                Vec3::new(-1.0, 1e300, 1e-300),
+                Vec3::new(1e-300, -1.0, 1e300),
+            ],
+        ];
+        for pts in cases {
+            let c = NurbsCurve::new(2, vec![0., 0., 0., 1., 1., 1.], pts, None).unwrap();
+            let segs = c.to_beziers();
+            let seg = &segs[0];
+            let ti = Interval::new(0.2, 0.7);
+            let enc = seg.eval_homogeneous_interval(ti);
+            for k in 0..=10 {
+                let t = 0.2 + 0.5 * k as f64 / 10.0;
+                let h = seg.eval_homogeneous(t);
+                for (e, v) in enc.iter().zip([h.x, h.y, h.z, h.w]) {
+                    assert!(!e.lo.is_nan() && !e.hi.is_nan());
+                    assert!(e.contains(v), "{v} not in {e:?}");
+                }
+            }
+        }
+    }
+
     proptest! {
         // Interval enclosure soundness: any exact point at a parameter
         // inside the interval lies inside the enclosure.

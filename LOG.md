@@ -720,3 +720,95 @@ REMAINING in M2a:
   enclosure proptests at extreme scales, fuzz_interval target with a
   clean 10-minute soak as the gate.
 - NEXT: execute M5a on branch m5a-ssi, Task 0 first.
+
+## Addendum 22 (2026-06-07): M5a Tasks 0-4 COMPLETE; interval gate CLEAN
+
+- Branch m5a-ssi. Task 0 (USER MANDATE): Interval bounds are now
+  EXTENDED REALS. The pre-audit hole was real: mul/add of near-MAX
+  operands overflowed to +-inf and broke the finite-bounds invariant
+  in release. Fix: infinite bounds legal (unbounded), point-at-infinity
+  forbidden (so inf-inf never arises in add/sub), 0*inf := 0 via
+  mul_corner, inf/inf div corner widens to the line. Half-ulp
+  containment property tests across a magnitude ladder (normals,
+  denormals, near-MAX, MIN_POSITIVE, 5e-324, MAX/MIN), chained-op
+  expression-tree soundness, M2b enclosure proptests re-run at 1e+-300
+  scales. fuzz_interval target: 10-MINUTE SOAK CLEAN = the gate for
+  the Krawczyk consumer (Task 5) is satisfied.
+- Shared fitter (fit.rs): least-squares cubic with chord params,
+  end-interpolation, control-count escalation, sampled-deviation x
+  safety verification, tol_achieved reported. Circle/line/segment
+  tests.
+- Task 1: SSI tier 1 exact (plane/plane line; plane/sphere &
+  sphere/sphere circles via radical plane; plane/cylinder ellipse +
+  ruling-line + tangent cases) with up-front Coincident classification
+  (parallel coplanar, concentric equal). Every result curve verified
+  on both implicit forms to 1e-9.
+- Task 2: tensor Bernstein mul/add/scale/elevate/derivative(axis) +
+  degree_of/coeff_at on MultiBernstein. Pointwise + FD oracles.
+- Tasks 3-4: SSI tier 2 (analytic x spline). compose_implicit_surface
+  = EXACT bivariate Bernstein composition of the analytic implicit
+  with each rational Bezier patch (2p,2q quadrics; 4p,4q torus).
+  Certified 2D tracer: whole-patch sign-variation reject, border
+  crossings (univariate Bernstein roots per edge) + PP critical points
+  (f=f_v / f=f_u turning) as the significant-point scaffold, gradient-
+  perpendicular continuation marching with Newton projection back to
+  the zero set, polyline merge across patch borders, cubic fit.
+  Tests: revolved-sphere-NURBS vs plane = circle; cylinder-NURBS vs
+  sphere; both verified to 1e-5 (fit tolerance, signed-distance form).
+- 196 workspace tests green, clippy clean.
+- NEXT: Task 5 tier 3 (spline x spline: Gauss-map separability,
+  collinear-normal seeds, Krawczyk-verified marching), Task 6 fit
+  hardening for closed branches, Task 7 fuzz_ssi + gate (incl. the
+  USER-MANDATED 2-HOUR extended soak before merge).
+
+## Addendum 23 (2026-06-07): M5a Tasks 5-7 done; gate soaks running
+
+- Task 5 (tier 3, spline x spline): the centerpiece. PatchInfo with
+  sampled normal cones; cones_separable = antiparallel-angle test
+  (Hohmeyer loop-freedom). Boundary seeds by SIGNED-CROSSING detection
+  (a border iso-curve's signed distance to the other patch flips sign
+  where it pierces; bracketed-bisected to the surface: the naive
+  distance-below-tol seeding missed every crossing, found by the
+  two-sphere test returning Empty). Collinear-normal loop seeds for
+  non-separable interior pairs. Marcher: predictor along n_a x n_b,
+  corrector = 4-var GAUSS-NEWTON on |S_a - S_b|^2 (3x4 Jacobian, 4x4
+  normal equations, Levenberg damping) - the first Gauss-Seidel
+  corrector left the curve 0.73 off; the joint solve fixed it to
+  corrector tolerance. Step-halving on corrector failure, border/loop
+  stop, seed consumption. Two-NURBS-sphere test: correct circle on
+  both surfaces.
+- HONESTY LEDGER (per the plan): marched points lie on both surfaces
+  to corrector tolerance (1e-5); the FITTED curve deviation is the
+  non-rational-cubic-vs-transcendental-circle fit error (~5e-4),
+  bounded at 1e-3 in tests. Fit hardening to arbitrary tol is deferred
+  to a real M5b/M6 consumer budget (rational fitting or finer
+  segmentation). Krawczyk interval verification of each step is staged
+  behind the working float corrector; the interval LAYER is verified
+  (Task 0 gate clean) so the upgrade is drop-in. Recorded so it is not
+  mistaken for full certification.
+- Task 7: fuzz_ssi (random analytic pairs; curve points on both
+  implicit forms; coincident never mis-traced) + SSI benches.
+- 200 workspace tests green, fmt + clippy clean.
+- GATE RUNNING: 10-min fuzz_ssi, then 10-min fuzz_interval re-confirm,
+  then the USER-MANDATED 2-HOUR extended soak (fuzz_ssi + fuzz_interval)
+  before merge.
+
+## Addendum 24 (2026-06-07): M5a COMPLETE; 2-hour soak CLEAN; merged
+
+- USER-MANDATED EXTENDED SOAK PASSED. Prior artifacts replay clean.
+  fuzz_interval 1hr: 385,916,505 runs, 0 errors, 0 artifacts.
+  fuzz_ssi 1hr: 723,023,053 runs, 0 errors, 0 artifacts. ~1.1 BILLION
+  executions total across both targets, nothing found. The interval
+  extended-real soundness fix and the SSI engine both hold under
+  adversarial fuzzing at scale.
+- Full M5a exit gate met: fmt clean, clippy -D warnings clean, 200
+  workspace tests green, all prior fuzz artifacts replay clean, both
+  new 10-minute soaks clean, the 2-hour extended soak clean.
+- M5a (SSI engine, keel-geom) merged to master.
+- NEXT: M5b (topology integration: SsiCurves -> trim loops, imprint
+  via split_face + glue_edges with the dihedral radial sort now due,
+  NURBS surface extension service per kernel/13, trimmed-face PMC/mass
+  upgrades). Standing research re-read first (kernel/13 extension
+  service, kernel/01 boundary-evaluation, nurbs/04 section 3 SSI
+  topology). Then M6: booleans, the proof milestone (M7 = robust
+  booleans on NURBS-bounded solids).
