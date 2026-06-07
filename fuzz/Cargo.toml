@@ -12,6 +12,7 @@ libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 keel-math = { path = "../crates/keel-math" }
 keel-geom = { path = "../crates/keel-geom" }
+keel-topo = { path = "../crates/keel-topo" }
 
 [[bin]]
 name = "fuzz_solve_cubic"
@@ -34,5 +35,11 @@ doc = false
 [[bin]]
 name = "fuzz_nurbs_surface"
 path = "fuzz_targets/fuzz_nurbs_surface.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_topo_ops"
+path = "fuzz_targets/fuzz_topo_ops.rs"
 test = false
 doc = false
