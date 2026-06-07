@@ -513,3 +513,41 @@ REMAINING in M2a:
   front region, shell ownership, closed-edge seam vertices, region
   solidity alternation rule, the manifold Euler check formula.
 - NEXT: execute M3 on branch m3-topology.
+
+## Addendum 14 (2026-06-07): M3 execution, Tasks 1-6 COMPLETE
+
+- Branch m3-topology. keel-topo crate live: 18 tests green, clippy clean.
+- Task 1-2: generational Arena<T>+Key<T> (own impl, zero deps, LIFO free
+  list, stale-key tests), EntityId monotonic via Body counter, entity
+  tower with regions native, lineage map + OpRecorder (every mutation =
+  one recorded op).
+- Task 3: validate() = id-map bijection, fin-ring closure+prev
+  consistency, radial-cycle exactly-once, loop xor rule + outer-first,
+  shell/region bijection (every face side in exactly one shell, region
+  links match), boundary-chain continuity (the practical d-of-d
+  oracle), Euler-Poincare on purely-manifold bodies
+  (V-E+F = 2(S_closed - G) + R, S_closed = regions-1, G = sum genus/2).
+  topology_hash = FNV-1a in EntityId order, geometry as f64 bits.
+- Task 4-5: MVFS/KVFS (region pair + two shells per closed surface),
+  MEV/KEV (vertex-loop bootstrap + spur), MEF/KEF (incl. CLOSED-edge
+  variant fin_a==fin_b and on-vertex-loop), KEMR/MEKR, KFMRH/MFKRH
+  (genus on shell pairs). CUBE-BY-OPERATORS test green (V8 E12 F6);
+  skeletons: balloon V1E1F2, sphere V2E1F1, cylinder V2E3F3,
+  genus-1 V2E2F1R1G1 (mvfs+mev+mef-closed+kfmrh). All inverse pairs
+  round-trip. Randomized 64-case operator-sequence proptest validates
+  after every step. ONE design fix mid-build: mef closer-fin directions
+  (old-loop closer runs va->vb forward; chain continuity caught on
+  paper before tests ran).
+- Task 6: split_edge (all radial fins split, SplitChild 0/1 + Generated
+  lineage), split_face (mef_impl with split lineage), merge_vertices
+  (umbrella groups = PES partial-entity trigger), glue_edges (radial
+  merge; FIRST NON-MANIFOLD STATE: two cubes stitched along an edge =
+  radial 4, Euler check correctly skips, d-of-d holds), embed_vertex/
+  embed_wire. Deferrals recorded in ops.rs module docs: dihedral radial
+  sort (M5), split_region/merge_regions (M6), coincidence judgement on
+  callers (M5).
+- REMAINING M3: Task 7 session.rs (snapshot/journal/replay), Task 8
+  construct.rs (block/prism/cylinder/cone/sphere/torus + geometry),
+  Task 9 query.rs (adjacency/classification/dump), Task 10 fuzz_topo_ops
+  + exit gate (fmt/clippy/tests/artifact replays/10-min soak/goldens/
+  LOG/merge).
