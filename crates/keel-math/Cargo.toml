@@ -1,0 +1,21 @@
+[package]
+name = "keel-math"
+description = "Numeric foundations for the Keel geometry kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+robust.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "math"
+harness = false
+path = "benches/math.rs"
