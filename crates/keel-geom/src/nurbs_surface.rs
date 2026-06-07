@@ -3,8 +3,9 @@
 
 use crate::GeomError;
 use crate::MAX_ORDER;
+use crate::basis::basis_ders;
 use crate::knots::KnotVector;
-use crate::nurbs_curve::de_boor_in_place;
+use crate::nurbs_curve::{binom, de_boor_in_place};
 use keel_math::vec::{Vec3, Vec4};
 
 /// NURBS surface: clamped knot vectors in u and v plus a homogeneous
@@ -150,6 +151,67 @@ impl NurbsSurface {
     pub fn point(&self, u: f64, v: f64) -> Vec3 {
         let h = self.eval_homogeneous(u, v);
         Vec3::new(h.x / h.w, h.y / h.w, h.z / h.w)
+    }
+
+    /// Homogeneous partial derivatives A^(k,l) up to total order d via
+    /// basis-function derivatives (A3.6 on Vec4). Entries beyond a
+    /// direction's degree stay zero (M2a lesson: zero-fill, never
+    /// truncate).
+    fn ders_homogeneous(&self, u: f64, v: f64, d: usize) -> Vec<Vec<Vec4>> {
+        let (p, q) = (self.kv_u.degree(), self.kv_v.degree());
+        let u = self.kv_u.clamp(u);
+        let v = self.kv_v.clamp(v);
+        let su = self.kv_u.find_span(u);
+        let sv = self.kv_v.find_span(v);
+        let nu_d = basis_ders(&self.kv_u, su, u, d);
+        let nv_d = basis_ders(&self.kv_v, sv, v, d);
+        let mut out = vec![vec![Vec4::ZERO; d + 1]; d + 1];
+        for (k, row_k) in out.iter_mut().enumerate().take(d.min(p) + 1) {
+            for (l, slot) in row_k.iter_mut().enumerate().take(d.min(q) + 1) {
+                let mut acc = Vec4::ZERO;
+                for (i, &nui) in nu_d[k][..=p].iter().enumerate() {
+                    let gi = su - p + i;
+                    let mut inner = Vec4::ZERO;
+                    for (j, &nvj) in nv_d[l][..=q].iter().enumerate() {
+                        inner = inner + self.ctrl[gi * self.nv + (sv - q + j)] * nvj;
+                    }
+                    acc = acc + inner * nui;
+                }
+                *slot = acc;
+            }
+        }
+        out
+    }
+
+    /// 3D partial derivatives S^(k,l) for k + l <= d via the bivariate
+    /// rational quotient rule (NURBS Book A4.4):
+    /// S_{k,l} = (A_{k,l} - sum_i B(k,i) w_{i,0} S_{k-i,l}
+    ///                    - sum_j B(l,j) w_{0,j} S_{k,l-j}
+    ///                    - sum_{i,j} B(k,i) B(l,j) w_{i,j} S_{k-i,l-j}) / w.
+    /// Entries with k + l > d are zero.
+    pub fn derivatives(&self, u: f64, v: f64, d: usize) -> Vec<Vec<Vec3>> {
+        let a = self.ders_homogeneous(u, v, d);
+        let w0 = a[0][0].w;
+        let mut out = vec![vec![Vec3::ZERO; d + 1]; d + 1];
+        for k in 0..=d {
+            for l in 0..=(d - k) {
+                let mut acc = Vec3::new(a[k][l].x, a[k][l].y, a[k][l].z);
+                for i in 1..=k {
+                    acc = acc - out[k - i][l] * (binom(k, i) * a[i][0].w);
+                }
+                for j in 1..=l {
+                    acc = acc - out[k][l - j] * (binom(l, j) * a[0][j].w);
+                }
+                for i in 1..=k {
+                    for j in 1..=l {
+                        acc = acc
+                            - out[k - i][l - j] * (binom(k, i) * binom(l, j) * a[i][j].w);
+                    }
+                }
+                out[k][l] = acc * (1.0 / w0);
+            }
+        }
+        out
     }
 }
 
@@ -310,7 +372,60 @@ mod tests {
         }
     }
 
+    #[test]
+    fn derivatives_of_bilinear() {
+        // S(u,v) = (2u, 2v, 2uv): S_u = (2,0,2v), S_v = (0,2,2u), S_uv = (0,0,2).
+        let pts = vec![
+            Vec3::ZERO,
+            Vec3::new(0., 2., 0.),
+            Vec3::new(2., 0., 0.),
+            Vec3::new(2., 2., 2.),
+        ];
+        let k = vec![0., 0., 1., 1.];
+        let s = NurbsSurface::new(1, 1, k.clone(), k, pts, None).unwrap();
+        let d = s.derivatives(0.3, 0.7, 2);
+        assert!((d[1][0] - Vec3::new(2., 0., 1.4)).norm() < 1e-13);
+        assert!((d[0][1] - Vec3::new(0., 2., 0.6)).norm() < 1e-13);
+        assert!((d[1][1] - Vec3::new(0., 0., 2.)).norm() < 1e-13);
+        // Beyond degree: zero-filled, never truncated (M2a lesson).
+        assert_eq!(d[2][0], Vec3::ZERO);
+        assert_eq!(d[0][2], Vec3::ZERO);
+    }
+
+    #[test]
+    fn cylinder_derivatives_are_tangent_and_axial() {
+        let s = quarter_cylinder_r2();
+        let ((u0, u1), _) = s.domain();
+        let u = u0 + 0.37 * (u1 - u0);
+        let d = s.derivatives(u, 0.42, 1);
+        // v direction is the exact extrusion direction (0, 0, 3).
+        assert!((d[0][1] - Vec3::new(0., 0., 3.)).norm() < 1e-12);
+        // u derivative is tangent to the circle: perpendicular to the
+        // radial direction and to z.
+        let p = s.point(u, 0.42);
+        let radial = Vec3::new(p.x, p.y, 0.0);
+        assert!(d[1][0].dot(radial).abs() < 1e-10 * d[1][0].norm() * radial.norm());
+        assert!(d[1][0].z.abs() < 1e-12);
+    }
+
     proptest! {
+        // FD oracle for first partials. h = 1e-5, tolerance 1e-4-scaled
+        // (M2a lesson on the cancellation floor), same-span guard.
+        #[test]
+        fn surface_ders_match_finite_difference((s, u, v) in arb_surface_uv()) {
+            let h = 1e-5;
+            let ((u0, u1), (v0, v1)) = s.domain();
+            prop_assume!(u - h > u0 && u + h < u1 && v - h > v0 && v + h < v1);
+            prop_assume!(s.kv_u().find_span(u - h) == s.kv_u().find_span(u + h));
+            prop_assume!(s.kv_v().find_span(v - h) == s.kv_v().find_span(v + h));
+            let d = s.derivatives(u, v, 1);
+            let fdu = (s.point(u + h, v) - s.point(u - h, v)) * (1.0 / (2.0 * h));
+            let fdv = (s.point(u, v + h) - s.point(u, v - h)) * (1.0 / (2.0 * h));
+            let scale = 1.0 + fdu.norm() + fdv.norm();
+            prop_assert!((d[1][0] - fdu).norm() < 1e-4 * scale);
+            prop_assert!((d[0][1] - fdv).norm() < 1e-4 * scale);
+        }
+
         // De Boor against the basis-dot-net oracle.
         #[test]
         fn de_boor_matches_basis_dot((s, u, v) in arb_surface_uv()) {
@@ -321,12 +436,12 @@ mod tests {
             let nu_ = crate::basis::basis_funs(s.kv_u(), su, u);
             let nv_ = crate::basis::basis_funs(s.kv_v(), sv, v);
             let mut want = Vec4::ZERO;
-            for i in 0..=p {
-                for j in 0..=q {
+            for (i, nui) in nu_.iter().enumerate().take(p + 1) {
+                for (j, nvj) in nv_.iter().enumerate().take(q + 1) {
                     want = want
                         + s.homogeneous_control()
                             [(su - p + i) * s.count_v() + (sv - q + j)]
-                            * (nu_[i] * nv_[j]);
+                            * (nui * nvj);
                 }
             }
             let got = s.eval_homogeneous(u, v);
