@@ -43,3 +43,9 @@ name = "fuzz_topo_ops"
 path = "fuzz_targets/fuzz_topo_ops.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_pmc"
+path = "fuzz_targets/fuzz_pmc.rs"
+test = false
+doc = false

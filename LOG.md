@@ -630,3 +630,70 @@ REMAINING in M2a:
   untrusted geometry. The M4 reference workload (<= 6 analytic faces,
   closed-form projections) was never expensive; the INTERFACE is now
   the scalable one from day one.
+
+## Addendum 19 (2026-06-07): M4 Tasks 1-3 COMPLETE
+
+- Branch m4-classification. 172 workspace tests green, clippy clean.
+- Task 1: Surface3::implicit (signed, negative inside; cone valid on
+  the physical nappe, documented) + implicit_gradient (torus axis
+  radial term := 0). Tests: zero-on-surface, FD gradients, sign cases.
+- Task 2: intersect_curves in keel-geom/intersect.rs. Exact paths:
+  line/line (parallel-distinct = empty, coincident = Degenerate),
+  line/conic (shared Conic for circle+ellipse: in-plane quadratic +
+  transversal pierce), line/NURBS two-plane reduction with the
+  IN-PLANE-CURVE fix (a curve lying in one reduction plane makes that
+  polynomial identically zero; pick roots from the nondegenerate
+  plane, both-zero = coincident Degenerate: found by the arc test on
+  first run). Generic pairs: exact NURBS forms (ellipse = anisotropic
+  scaling of the exact circle ctrl) + PP per Bezier segment pair on
+  homogeneous cross-multiplied difference tensors (coeff = xa_i*wb_j -
+  xb_j*wa_i: EXACT, never sampled), Newton polish on squared distance,
+  tangency = near-parallel tangents, cluster dedup. PP budget
+  exhaustion maps to Degenerate (coincidence suspected).
+- Task 3: Bernstein mul/add/scale/elevated_to in keel-math (Farouki-
+  Rajan product); intersect_curve_surface: line vs analytics exact
+  (plane linear, quadrics quadratic, torus quartic via power_affine +
+  Bernstein on a bounded span: 4-hit x-axis test exact to 1e-7);
+  general curve vs analytics via compose_implicit (EXACT Bernstein
+  composition of the implicit form with each rational segment: 2p for
+  quadrics, 4p for torus); NURBS curve x NurbsSurface via 3-var PP on
+  exact trivariate difference tensors + 3x3 Cramer Newton. All hit
+  tests passed first run including tangency flags.
+- REMAINING: Task 4 pcurves+UV winding containment, Task 5 PMC
+  (nearest-face primary + ray-ladder fallback + face BVH), Task 6 mass
+  properties (volume-sign orientation audit), Task 7 fuzz_pmc + gate.
+
+## Addendum 20 (2026-06-07): M4 COMPLETE; ORIENTATION AUDIT PASSED
+
+- Tasks 4-7 done after the Tasks 1-3 checkpoint (addendum 19):
+- Task 4: pcurves for primitives. Planar faces: generic vertex-UV
+  segments + full-circle UV pcurves for closed rims
+  (attach_plane_pcurves); periodic laterals: explicit unwrapped-cover
+  paths in loop walk order (attach_loop_uv_path); collapsed boundaries
+  (cone apex) close implicitly in the winding accumulation. KEY
+  INSIGHT: a face whose every boundary edge has its whole radial cycle
+  on that face covers its entire closed surface
+  (face_covers_closed_surface): sphere/torus containment is trivially
+  In, deferring genus-1 universal-cover bookkeeping until real trims.
+- Task 5: classify_point: nearest-face signed classification primary
+  (per the PMC research amendment), pole/apex Degenerate feet fall
+  through to the deterministic ray ladder (found by the sphere-axis
+  test on first run: a point above the north pole projects TO the
+  pole). Ray verdict needs only the FIRST interior hit (front/back
+  region links), parity not required. Winding-number UV containment
+  with boundary tolerance via first-fundamental-form scaling.
+- Task 6: mass_properties: divergence theorem, 10 moments, planar
+  faces by triangle-fan degree-5 rule / polar periodic-trapezoid x GL8
+  discs, curved faces by 16x16-panel composite GL8. THE AUDIT PASSED:
+  all five primitive volumes positive and correct from M3 region-
+  solidity conventions alone, NO sign fudge (block exact, sphere/cone
+  1e-9 rel, torus 2 pi^2 R r^2 with Izz = V(R^2+3r^2/4), pentagon
+  prism = shoelace). One quadrature bug caught (triangle weights sum
+  to 1: factor is area, not doubled cross product: planar volumes were
+  exactly 2x); curved faces exact on first run.
+- Task 7: fuzz_pmc (classification vs implicit sign oracle + block
+  half-space oracle) 10-MINUTE SOAK CLEAN. Prior artifacts replay
+  clean. 180 workspace tests green, fmt + clippy clean.
+- NEXT: merge M4; then M5 planning (trims/imprint/SSI certified:
+  the big one), standing research re-read first (nurbs/04 sections
+  3-4, kernel/11, kernel/13 extension service).
