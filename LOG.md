@@ -575,3 +575,16 @@ REMAINING in M2a:
 - NEXT: M4 planning (PMC, CSI, curve-curve intersection, mass
   properties; the consumers that can falsify constructor orientation
   conventions). Standing rules: research re-read first.
+
+## Addendum 16 (2026-06-07): GitHub backup live
+
+- M3 merged to master (post-merge sanity green: 159 tests).
+- Remote: https://github.com/redwoodrhetorica/keel (PRIVATE). The
+  keel-kernel org does not exist yet and orgs cannot be created via
+  CLI; the repo lives under the personal account and transfers to
+  keel-kernel/keel in one command (Settings > Transfer, or
+  `gh api repos/redwoodrhetorica/keel/transfer -f new_owner=keel-kernel`)
+  once the user creates the org in the web UI. GitHub auto-redirects
+  old URLs after transfer. All branches pushed (m1-foundations,
+  m2a-spline-curves, m2b-surfaces, m3-topology, worktree-nurbs-research,
+  master).
