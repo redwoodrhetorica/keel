@@ -14,6 +14,7 @@ pub mod knots;
 pub mod nurbs_curve;
 pub mod nurbs_surface;
 pub mod project;
+pub mod ssi;
 pub mod surface;
 
 /// Maximum supported spline degree (spec D4: cap working degree;
