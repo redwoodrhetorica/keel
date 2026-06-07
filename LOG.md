@@ -484,3 +484,32 @@ REMAINING in M2a:
   branch); artifacts committed, Python never a build dependency.
   Revisit triggers recorded in the plan header.
 - NEXT: M3 implementation plan.
+
+## Addendum 13 (2026-06-07): M3 implementation plan written
+
+- Symgen purpose clarified by user and recorded in the shelf plan:
+  it exists for PERFORMANCE (replace a profiled-hot hand formula with a
+  faster CAS-derived form), not formula verification; Mode A tables are
+  the safety gate enabling a swap, not the goal.
+- M3 plan: docs/superpowers/plans/2026-06-07-m3-topology.md. Ten tasks:
+  (1) generational arenas + EntityId + entity tower (regions native,
+  shells = oriented face-side collections owned by one region; closed
+  manifold surface appears as two shells), (2) lineage + OpReport via a
+  per-op recorder, (3) validation (structural + d-of-d oracle +
+  Euler-Poincare on the manifold sub-complex) + FNV topology hash,
+  (4) MVFS/KVFS + MEV/KEV with vertex-loop bootstrap, (5) MEF/KEF +
+  KEMR/MEKR + KFMRH/MFKRH + closed-edge MEF variant (seam-vertex
+  doctrine: no vertex-free ring edges), cube-by-operators test plus
+  balloon/cylinder/sphere/torus skeleton count tests, randomized
+  operator-sequence proptest, (6) split_edge/split_face/merge_vertices/
+  glue_edges (dihedral radial_sort)/embed_* + region split/merge,
+  (7) snapshot/restore + OpJournal trait + replay-determinism proof,
+  (8) constructors block/prism/cylinder/cone/sphere/torus attaching M2
+  geometry with coincidence oracles + hash goldens, (9) adjacency/
+  classification/debug dump, (10) fuzz_topo_ops (operator programs;
+  validate after every op; failed ops must not mutate, checked by hash)
+  + exit gate.
+- Binding conventions fixed in the plan: fin direction, face sense to
+  front region, shell ownership, closed-edge seam vertices, region
+  solidity alternation rule, the manifold Euler check formula.
+- NEXT: execute M3 on branch m3-topology.

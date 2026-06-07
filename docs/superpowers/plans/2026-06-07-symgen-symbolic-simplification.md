@@ -1,10 +1,14 @@
 # Symgen: Build-Time Symbolic Verification and Simplification Implementation Plan
 
 > **STATUS: SHELVED (2026-06-07, user decision).** Plan only; do not execute.
-> Revisit if/when (a) a hand-derived formula is suspected wrong, (b) M5
-> needs third-order analytic derivatives, or (c) a bench shows a value-path
-> expression hot enough to justify CSE codegen. The policy section is
-> binding whenever this is picked up.
+> **Purpose (user clarification 2026-06-07): performance.** The trigger to
+> pick this up is profiling/benches showing a hand-derived formula is a
+> hot-path bottleneck and needs a faster algebraic form (Mode B is the
+> point; Mode A ground-truth tables are the safety gate that lets a faster
+> form ship, not a goal in themselves). The policy section is binding
+> whenever this is picked up: sign-feeding expressions are never swapped,
+> and no simplified form ships without ULP-parity fuzzing against the
+> original plus a bench win.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
