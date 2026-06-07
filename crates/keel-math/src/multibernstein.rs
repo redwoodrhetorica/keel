@@ -59,6 +59,10 @@ impl MultiBernstein {
         self.degrees.len()
     }
 
+    pub fn degree_of(&self, axis: usize) -> usize {
+        self.degrees[axis]
+    }
+
     pub fn coeffs(&self) -> &[f64] {
         &self.coeffs
     }

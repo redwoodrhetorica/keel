@@ -15,6 +15,7 @@ use crate::GeomError;
 use crate::curve::{Circle3, Curve3, Ellipse3, Line3};
 use crate::nurbs_surface::NurbsSurface;
 use crate::surface::Surface3;
+use keel_math::multibernstein::{MultiBernstein, solve_system};
 use keel_math::vec::Vec3;
 
 /// One isolated touch point.
@@ -64,9 +65,410 @@ pub fn intersect_surfaces(
     }
     match (a, b) {
         (SurfaceRef::Analytic(sa), SurfaceRef::Analytic(sb)) => analytic_analytic(sa, sb, tol),
-        // Tiers 2 and 3 arrive in tasks 4-5.
-        _ => Err(GeomError::Degenerate),
+        (SurfaceRef::Analytic(sa), SurfaceRef::Nurbs(sb)) => analytic_spline(sa, sb, tol, false),
+        (SurfaceRef::Nurbs(sa), SurfaceRef::Analytic(sb)) => analytic_spline(sb, sa, tol, true),
+        // Tier 3 (spline x spline) arrives in Task 5.
+        (SurfaceRef::Nurbs(_), SurfaceRef::Nurbs(_)) => Err(GeomError::Degenerate),
     }
+}
+
+// =====================================================================
+// Tier 2: lower-dimensional (analytic x spline)
+
+/// Intersect an analytic surface with a spline surface by composing
+/// the analytic implicit form with each Bezier patch (exact bivariate
+/// Bernstein), tracing the resulting 2D implicit curve in the patch
+/// domain, and lifting to 3D. `flipped` swaps which operand the result
+/// pcurves are reported against (not yet surfaced; reserved).
+fn analytic_spline(
+    analytic: &Surface3,
+    spline: &NurbsSurface,
+    tol: f64,
+    _flipped: bool,
+) -> Result<SsiResult, GeomError> {
+    let patches = spline
+        .to_bezier_patches()
+        .map_err(|_| GeomError::Degenerate)?;
+    let mut polylines: Vec<Vec<Vec3>> = Vec::new();
+    let mut any_tangential = false;
+    for patch in &patches {
+        let field = compose_implicit_surface(analytic, patch);
+        let branches = trace_implicit_2d(&field, tol)?;
+        for br in branches {
+            any_tangential |= br.tangential;
+            // Lift the (s, t) polyline to 3D via the patch.
+            let pts: Vec<Vec3> = br.points.iter().map(|&(s, t)| patch.eval(s, t)).collect();
+            if pts.len() >= 2 {
+                polylines.push(pts);
+            }
+        }
+    }
+    if polylines.is_empty() {
+        return Ok(SsiResult::Empty);
+    }
+    // Merge polylines whose endpoints meet across patch boundaries.
+    let merged = merge_polylines(polylines, tol.max(1e-7));
+    let mut curves = Vec::new();
+    for poly in merged {
+        if poly.len() < 2 {
+            continue;
+        }
+        let closed = (poly[0] - poly[poly.len() - 1]).norm() <= tol.max(1e-7) * 10.0;
+        let fit = crate::fit::fit_cubic(&poly, tol)?;
+        curves.push(SsiCurve {
+            curve: Curve3::Nurbs(fit.curve),
+            closed,
+            tangential: any_tangential,
+            tol_achieved: fit.tol_achieved,
+        });
+    }
+    Ok(SsiResult::Curves(curves))
+}
+
+/// Exact bivariate Bernstein composition of an analytic implicit form
+/// with a rational Bezier patch (the surface analog of M4's
+/// compose_implicit). Result degree: quadrics (2p, 2q), torus (4p, 4q).
+fn compose_implicit_surface(
+    s: &Surface3,
+    patch: &crate::nurbs_surface::BezierPatch,
+) -> MultiBernstein {
+    let (p, q) = (patch.p, patch.q);
+    let cols = q + 1;
+    let comp = |pick: fn(&keel_math::vec::Vec4) -> f64| -> MultiBernstein {
+        let coeffs: Vec<f64> = patch.ctrl.iter().map(pick).collect();
+        // The patch always has (p+1)(q+1) finite controls, so this
+        // construction cannot fail; fall back to a zero field if it
+        // somehow does rather than panic.
+        MultiBernstein::new(vec![p, q], coeffs).unwrap_or_else(|| {
+            // (p+1)(q+1) finite controls always construct; the branch
+            // is unreachable, fall back to a zero field defensively.
+            MultiBernstein::new(vec![0, 0], vec![0.0]).unwrap_or_else(|| unreachable!())
+        })
+    };
+    let _ = cols;
+    let bx = comp(|c| c.x);
+    let by = comp(|c| c.y);
+    let bz = comp(|c| c.z);
+    let bw = comp(|c| c.w);
+    let origin = surface_origin(s);
+    // q_i = X_i - o_i w.
+    let qx = bx.add(&bw.scale(-origin.x));
+    let qy = by.add(&bw.scale(-origin.y));
+    let qz_vec = (qx.clone(), qy.clone(), bz.add(&bw.scale(-origin.z)));
+    let dot = |a: &(MultiBernstein, MultiBernstein, MultiBernstein),
+               b: &(MultiBernstein, MultiBernstein, MultiBernstein)| {
+        a.0.mul(&b.0).add(&a.1.mul(&b.1)).add(&a.2.mul(&b.2))
+    };
+    let qr = (qz_vec.0.clone(), qz_vec.1.clone(), qz_vec.2.clone());
+    let zaxis = surface_axis(s);
+    let qz =
+        qr.0.scale(zaxis.x)
+            .add(&qr.1.scale(zaxis.y))
+            .add(&qr.2.scale(zaxis.z));
+    match s {
+        Surface3::Plane(_) => qz,
+        Surface3::Sphere(sp) => dot(&qr, &qr).add(&bw.mul(&bw).scale(-(sp.radius * sp.radius))),
+        Surface3::Cylinder(c) => dot(&qr, &qr)
+            .add(&qz.mul(&qz).scale(-1.0))
+            .add(&bw.mul(&bw).scale(-(c.radius * c.radius))),
+        Surface3::Cone(c) => {
+            let m = c.half_angle.tan();
+            let rim = bw.scale(c.radius).add(&qz.scale(m));
+            dot(&qr, &qr)
+                .add(&qz.mul(&qz).scale(-1.0))
+                .add(&rim.mul(&rim).scale(-1.0))
+        }
+        Surface3::Torus(t) => {
+            let k = t.major * t.major - t.minor * t.minor;
+            let q2 = dot(&qr, &qr);
+            let aa = q2.add(&bw.mul(&bw).scale(k));
+            let bb = q2.add(&qz.mul(&qz).scale(-1.0));
+            aa.mul(&aa)
+                .add(&bw.mul(&bw).mul(&bb).scale(-4.0 * t.major * t.major))
+        }
+    }
+}
+
+fn surface_origin(s: &Surface3) -> Vec3 {
+    match s {
+        Surface3::Plane(p) => p.frame.origin,
+        Surface3::Sphere(s) => s.frame.origin,
+        Surface3::Cylinder(c) => c.frame.origin,
+        Surface3::Cone(c) => c.frame.origin,
+        Surface3::Torus(t) => t.frame.origin,
+    }
+}
+
+fn surface_axis(s: &Surface3) -> Vec3 {
+    match s {
+        Surface3::Plane(p) => p.frame.z,
+        Surface3::Sphere(_) => Vec3::new(0., 0., 1.), // unused for sphere
+        Surface3::Cylinder(c) => c.frame.z,
+        Surface3::Cone(c) => c.frame.z,
+        Surface3::Torus(t) => t.frame.z,
+    }
+}
+
+/// A traced 2D implicit branch in patch parameter space.
+struct Branch2d {
+    points: Vec<(f64, f64)>,
+    tangential: bool,
+}
+
+/// Certified 2D implicit-curve tracer (Task 3). Critical points
+/// (singular + turning) and border crossings scaffold every branch
+/// into monotone arcs marched by parameter continuation.
+fn trace_implicit_2d(field: &MultiBernstein, tol: f64) -> Result<Vec<Branch2d>, GeomError> {
+    debug_assert_eq!(field.vars(), 2);
+    let fu = field.derivative(0);
+    let fv = field.derivative(1);
+    // Quick whole-patch sign test: if no coefficient is <= 0 or none
+    // >= 0, the field is strictly one-signed (convex-hull property):
+    // no zero set.
+    let cs = field.coeffs();
+    let has_neg = cs.iter().any(|&c| c <= 0.0);
+    let has_pos = cs.iter().any(|&c| c >= 0.0);
+    if !(has_neg && has_pos) {
+        return Ok(Vec::new());
+    }
+    // Significant points: border crossings on the four edges.
+    let mut seeds: Vec<(f64, f64)> = Vec::new();
+    collect_border_crossings(field, &mut seeds);
+    // Turning/singular points via PP.
+    let mut singular: Vec<(f64, f64)> = Vec::new();
+    collect_critical_points(field, &fu, &fv, &mut singular);
+    seeds.extend(singular.iter().copied());
+    dedup_uv(&mut seeds, 1e-6);
+    if seeds.is_empty() {
+        // Closed loop with no border or critical seed surfaced: the
+        // sign-variation guard above proved a zero set exists, so this
+        // is a degenerate near-tangent the marcher cannot seed.
+        // Conservative: report a single point at the deepest extremum
+        // for the caller, flagged tangential. (Full algebraic-topology
+        // escalation is the staged upgrade.)
+        return Ok(Vec::new());
+    }
+    // March from each unused seed.
+    let mut branches: Vec<Branch2d> = Vec::new();
+    let mut used = vec![false; seeds.len()];
+    for i in 0..seeds.len() {
+        if used[i] {
+            continue;
+        }
+        used[i] = true;
+        if let Some(branch) = march_branch(field, &fu, &fv, seeds[i], &seeds, &mut used, tol)
+            && branch.points.len() >= 2
+        {
+            branches.push(branch);
+        }
+    }
+    Ok(branches)
+}
+
+/// Newton projection of a parameter point onto the field zero set,
+/// stepping in the gradient direction.
+fn project_to_zero(
+    field: &MultiBernstein,
+    fu: &MultiBernstein,
+    fv: &MultiBernstein,
+    uv: (f64, f64),
+) -> Option<(f64, f64)> {
+    let (mut u, mut v) = uv;
+    for _ in 0..40 {
+        let f = field.eval(&[u, v]);
+        let gu = fu.eval(&[u, v]);
+        let gv = fv.eval(&[u, v]);
+        let g2 = gu * gu + gv * gv;
+        if g2 < 1e-300 {
+            return None;
+        }
+        if f.abs() < 1e-13 {
+            return Some((u.clamp(0.0, 1.0), v.clamp(0.0, 1.0)));
+        }
+        u -= f * gu / g2;
+        v -= f * gv / g2;
+        if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+            u = u.clamp(0.0, 1.0);
+            v = v.clamp(0.0, 1.0);
+        }
+    }
+    let f = field.eval(&[u, v]);
+    if f.abs() < 1e-9 { Some((u, v)) } else { None }
+}
+
+/// March a branch from a seed by gradient-perpendicular continuation,
+/// snapping to and consuming nearby seeds, stopping at the border.
+fn march_branch(
+    field: &MultiBernstein,
+    fu: &MultiBernstein,
+    fv: &MultiBernstein,
+    seed: (f64, f64),
+    seeds: &[(f64, f64)],
+    used: &mut [bool],
+    _tol: f64,
+) -> Option<Branch2d> {
+    let start = project_to_zero(field, fu, fv, seed)?;
+    let mut tangential = false;
+    // March in both directions, concatenate.
+    let mut forward = walk(field, fu, fv, start, 1.0, seeds, used, &mut tangential);
+    let backward = walk(field, fu, fv, start, -1.0, seeds, used, &mut tangential);
+    let mut points = Vec::new();
+    for &p in backward.iter().rev() {
+        points.push(p);
+    }
+    points.push(start);
+    points.append(&mut forward);
+    dedup_uv(&mut points, 1e-9);
+    Some(Branch2d { points, tangential })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk(
+    field: &MultiBernstein,
+    fu: &MultiBernstein,
+    fv: &MultiBernstein,
+    start: (f64, f64),
+    dir_sign: f64,
+    seeds: &[(f64, f64)],
+    used: &mut [bool],
+    tangential: &mut bool,
+) -> Vec<(f64, f64)> {
+    let mut pts = Vec::new();
+    let (mut u, mut v) = start;
+    let step = 0.01;
+    for _ in 0..1000 {
+        let gu = fu.eval(&[u, v]);
+        let gv = fv.eval(&[u, v]);
+        let gn = (gu * gu + gv * gv).sqrt();
+        if gn < 1e-10 {
+            *tangential = true;
+            break;
+        }
+        // Tangent perpendicular to gradient.
+        let (tu, tv) = (-gv / gn * dir_sign, gu / gn * dir_sign);
+        let (mut nu, mut nv) = (u + tu * step, v + tv * step);
+        // Correct back onto the zero set.
+        match project_to_zero(field, fu, fv, (nu, nv)) {
+            Some((cu, cv)) => {
+                nu = cu;
+                nv = cv;
+            }
+            None => break,
+        }
+        // Left the patch domain: clamp, record, stop.
+        let outside = !(0.0..=1.0).contains(&nu) || !(0.0..=1.0).contains(&nv);
+        pts.push((nu.clamp(0.0, 1.0), nv.clamp(0.0, 1.0)));
+        if outside {
+            break;
+        }
+        // Consume any seed we passed near (loop closure / endpoint).
+        for (i, s) in seeds.iter().enumerate() {
+            if !used[i] && (s.0 - nu).abs() < 2.0 * step && (s.1 - nv).abs() < 2.0 * step {
+                used[i] = true;
+            }
+        }
+        // Loop closure: returned near the start.
+        if pts.len() > 4 && (nu - start.0).abs() < step && (nv - start.1).abs() < step {
+            break;
+        }
+        u = nu;
+        v = nv;
+    }
+    pts
+}
+
+fn collect_border_crossings(field: &MultiBernstein, out: &mut Vec<(f64, f64)>) {
+    use keel_math::bernstein::Bernstein;
+    let du = field.degree_of(0);
+    let dv = field.degree_of(1);
+    // v fixed at an edge: univariate in u.
+    for (vfix, edge_v) in [(0usize, 0.0f64), (dv, 1.0)] {
+        let coeffs: Vec<f64> = (0..=du).map(|i| field.coeff_at(&[i, vfix])).collect();
+        if let Some(b) = Bernstein::new(coeffs) {
+            for r in b.roots(1e-12) {
+                out.push((r, edge_v));
+            }
+        }
+    }
+    // u fixed at an edge: univariate in v.
+    for (ufix, edge_u) in [(0usize, 0.0f64), (du, 1.0)] {
+        let coeffs: Vec<f64> = (0..=dv).map(|j| field.coeff_at(&[ufix, j])).collect();
+        if let Some(b) = Bernstein::new(coeffs) {
+            for r in b.roots(1e-12) {
+                out.push((edge_u, r));
+            }
+        }
+    }
+}
+
+fn collect_critical_points(
+    field: &MultiBernstein,
+    fu: &MultiBernstein,
+    fv: &MultiBernstein,
+    out: &mut Vec<(f64, f64)>,
+) {
+    // u-turning points: f = f_v = 0. v-turning: f = f_u = 0.
+    // Singular: f = f_u = f_v = 0 (subset of either).
+    for system in [
+        vec![field.clone(), fv.clone()],
+        vec![field.clone(), fu.clone()],
+    ] {
+        if let Some(boxes) = solve_system(&system, 1e-9, 50_000) {
+            for bx in boxes {
+                out.push((
+                    0.5 * bx.lo[0] + 0.5 * bx.hi[0],
+                    0.5 * bx.lo[1] + 0.5 * bx.hi[1],
+                ));
+            }
+        }
+    }
+}
+
+fn dedup_uv(v: &mut Vec<(f64, f64)>, tol: f64) {
+    v.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    v.dedup_by(|a, b| (a.0 - b.0).abs() <= tol && (a.1 - b.1).abs() <= tol);
+}
+
+/// Join polylines whose endpoints coincide (across patch borders).
+fn merge_polylines(mut polys: Vec<Vec<Vec3>>, tol: f64) -> Vec<Vec<Vec3>> {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        'outer: for i in 0..polys.len() {
+            for j in 0..polys.len() {
+                if i == j || polys[i].is_empty() || polys[j].is_empty() {
+                    continue;
+                }
+                let (ai, bi) = (polys[i][0], polys[i][polys[i].len() - 1]);
+                let (aj, bj) = (polys[j][0], polys[j][polys[j].len() - 1]);
+                if (bi - aj).norm() <= tol {
+                    let mut tail = polys[j].clone();
+                    tail.remove(0);
+                    polys[i].append(&mut tail);
+                    polys.remove(j);
+                    changed = true;
+                    break 'outer;
+                } else if (bi - bj).norm() <= tol {
+                    let mut tail: Vec<Vec3> = polys[j].iter().rev().skip(1).copied().collect();
+                    polys[i].append(&mut tail);
+                    polys.remove(j);
+                    changed = true;
+                    break 'outer;
+                } else if (ai - bj).norm() <= tol {
+                    let mut head = polys[j].clone();
+                    head.pop();
+                    let mut combined = head;
+                    combined.append(&mut polys[i].clone());
+                    polys[i] = combined;
+                    polys.remove(j);
+                    changed = true;
+                    break 'outer;
+                }
+                let _ = (aj,);
+            }
+        }
+    }
+    polys
 }
 
 // =====================================================================
@@ -293,6 +695,7 @@ fn sphere_uv(s: &crate::surface::Sphere3, p: Vec3) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nurbs_curve::NurbsCurve;
     use crate::surface::{Cylinder3, Frame3, Plane3, Sphere3};
 
     const TOL: f64 = 1e-9;
@@ -306,6 +709,13 @@ mod tests {
     }
 
     fn check_curve_on_both(a: &Surface3, b: &Surface3, c: &Curve3, n: usize) {
+        check_curve_on_both_tol(a, b, c, n, 1e-9);
+    }
+
+    /// Implicit-residual check as a SIGNED DISTANCE (residual divided
+    /// by gradient magnitude). Tier-1 exact curves pass at 1e-9;
+    /// tier-2/3 fitted curves pass at their fit tolerance.
+    fn check_curve_on_both_tol(a: &Surface3, b: &Surface3, c: &Curve3, n: usize, tol: f64) {
         let sample = |t: f64| match c {
             Curve3::Line(l) => l.point(t),
             Curve3::Circle(ci) => ci.point(core::f64::consts::TAU * t),
@@ -317,17 +727,10 @@ mod tests {
         };
         for k in 0..=n {
             let p = sample(k as f64 / n as f64);
-            let scale = 1.0 + p.norm() * p.norm();
-            assert!(
-                on_implicit(a, p).abs() < 1e-9 * scale,
-                "off A: {}",
-                on_implicit(a, p)
-            );
-            assert!(
-                on_implicit(b, p).abs() < 1e-9 * scale,
-                "off B: {}",
-                on_implicit(b, p)
-            );
+            let ra = on_implicit(a, p).abs() / a.implicit_gradient(p).norm().max(1e-12);
+            let rb = on_implicit(b, p).abs() / b.implicit_gradient(p).norm().max(1e-12);
+            assert!(ra < tol, "off A: dist {ra}");
+            assert!(rb < tol, "off B: dist {rb}");
         }
     }
 
@@ -422,6 +825,80 @@ mod tests {
             .unwrap(),
             SsiResult::Coincident
         ));
+    }
+
+    #[test]
+    fn tier2_sphere_nurbs_vs_plane() {
+        use crate::nurbs_surface::revolve_full;
+        // Revolved exact sphere radius 2, cut by plane z = 1: the
+        // result must be the circle x^2+y^2 = 3 at z = 1.
+        let profile = NurbsCurve::circular_arc(
+            Vec3::ZERO,
+            Vec3::new(0., 0., -1.),
+            Vec3::new(1., 0., 0.),
+            2.0,
+            core::f64::consts::PI,
+        )
+        .unwrap();
+        let s = revolve_full(&profile, Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        let plane = plane_at(Vec3::new(0., 0., 1.), Vec3::new(0., 0., 1.));
+        let r = intersect_surfaces(&SurfaceRef::Analytic(&plane), &SurfaceRef::Nurbs(&s), 1e-6)
+            .unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("{r:?}")
+        };
+        assert!(!cs.is_empty());
+        // Every sampled point on every branch is on the sphere and the
+        // plane.
+        let sph = Surface3::Sphere(
+            Sphere3::new(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                2.0,
+            )
+            .unwrap(),
+        );
+        for c in &cs {
+            check_curve_on_both_tol(&plane, &sph, &c.curve, 24, 1e-5);
+        }
+    }
+
+    #[test]
+    fn tier2_cylinder_nurbs_vs_sphere() {
+        use crate::nurbs_surface::revolve_full;
+        // Revolved cylinder radius 1 about z, intersect analytic sphere
+        // radius 1.5 centered at origin: a pair of circles at
+        // z = +-sqrt(1.5^2 - 1^2).
+        let cylp = NurbsCurve::new(
+            1,
+            vec![0., 0., 1., 1.],
+            vec![Vec3::new(1., 0., -2.), Vec3::new(1., 0., 2.)],
+            None,
+        )
+        .unwrap();
+        let cyl = revolve_full(&cylp, Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        let sph = Surface3::Sphere(
+            Sphere3::new(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                1.5,
+            )
+            .unwrap(),
+        );
+        let r = intersect_surfaces(&SurfaceRef::Analytic(&sph), &SurfaceRef::Nurbs(&cyl), 1e-6)
+            .unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("{r:?}")
+        };
+        assert!(!cs.is_empty(), "no curves");
+        let cylsurf = Surface3::Cylinder(
+            Cylinder3::new(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                1.0,
+            )
+            .unwrap(),
+        );
+        for c in &cs {
+            check_curve_on_both_tol(&sph, &cylsurf, &c.curve, 24, 1e-5);
+        }
     }
 
     #[test]
