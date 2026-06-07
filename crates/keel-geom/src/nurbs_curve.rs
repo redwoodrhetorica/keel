@@ -3,6 +3,7 @@
 
 use crate::GeomError;
 use crate::knots::KnotVector;
+use keel_math::interval::Interval;
 use keel_math::vec::{Vec3, Vec4};
 
 /// In-place de Boor corner cutting (A3.1 inner loops): d[0..=p] holds
@@ -474,6 +475,46 @@ impl BezierSegment {
             .map(|c| Vec3::new(c.x / c.w, c.y / c.w, c.z / c.w))
             .collect()
     }
+
+    /// Certified enclosure of the homogeneous point over a local
+    /// parameter interval: interval de Casteljau. Over-wide (t and
+    /// 1 - t are treated as independent) but always sound. The M5
+    /// Krawczyk building block.
+    pub fn eval_homogeneous_interval(&self, t: Interval) -> [Interval; 4] {
+        let omt = Interval::point(1.0) - t;
+        let mut w: Vec<[Interval; 4]> = self
+            .ctrl
+            .iter()
+            .map(|c| {
+                [
+                    Interval::point(c.x),
+                    Interval::point(c.y),
+                    Interval::point(c.z),
+                    Interval::point(c.w),
+                ]
+            })
+            .collect();
+        let mut len = w.len();
+        while len > 1 {
+            for i in 0..len - 1 {
+                let next = w[i + 1];
+                for (slot, nx) in w[i].iter_mut().zip(next) {
+                    *slot = omt * *slot + t * nx;
+                }
+            }
+            len -= 1;
+        }
+        w[0]
+    }
+
+    /// Certified 3D enclosure: the homogeneous enclosure divided by
+    /// the weight interval. None when the weight enclosure straddles
+    /// zero (the interval arithmetic must prove positivity, not
+    /// assume it; for t inside [0,1] on a valid segment it does).
+    pub fn point_enclosure(&self, t: Interval) -> Option<[Interval; 3]> {
+        let h = self.eval_homogeneous_interval(t);
+        Some([h[0].checked_div(h[3])?, h[1].checked_div(h[3])?, h[2].checked_div(h[3])?])
+    }
 }
 
 #[cfg(test)]
@@ -712,6 +753,25 @@ mod tests {
     }
 
     proptest! {
+        // Interval enclosure soundness: any exact point at a parameter
+        // inside the interval lies inside the enclosure.
+        #[test]
+        fn interval_eval_encloses_curve(
+            c in arb_nurbs(),
+            t0 in 0.0..1.0f64, dt in 0.0..0.3f64, fs in 0.0..1.0f64,
+        ) {
+            let segs = c.to_beziers();
+            let seg = &segs[0];
+            let t1 = (t0 + dt).min(1.0);
+            let ti = Interval::new(t0.min(t1), t1.max(t0));
+            let enc = seg.point_enclosure(ti).unwrap();
+            let tx = ti.lo + fs * (ti.hi - ti.lo);
+            let exact = seg.point(tx);
+            prop_assert!(enc[0].contains(exact.x), "x {} not in {:?}", exact.x, enc[0]);
+            prop_assert!(enc[1].contains(exact.y), "y {} not in {:?}", exact.y, enc[1]);
+            prop_assert!(enc[2].contains(exact.z), "z {} not in {:?}", exact.z, enc[2]);
+        }
+
         // Finite-difference cross-check of the first derivative.
         #[test]
         fn derivative_matches_finite_difference(

@@ -6,6 +6,7 @@ use crate::MAX_ORDER;
 use crate::basis::basis_ders;
 use crate::knots::KnotVector;
 use crate::nurbs_curve::{binom, de_boor_in_place};
+use keel_math::interval::Interval;
 use keel_math::vec::{Vec3, Vec4};
 
 /// NURBS surface: clamped knot vectors in u and v plus a homogeneous
@@ -554,6 +555,58 @@ impl BezierPatch {
         (left, right)
     }
 
+    /// Certified enclosure of the homogeneous point over a local
+    /// (s, t) parameter box: interval de Casteljau, rows in u then a
+    /// column in v. Over-wide but always sound (M5 Krawczyk block).
+    pub fn eval_homogeneous_interval(&self, s: Interval, t: Interval) -> [Interval; 4] {
+        let zero = [Interval::point(0.0); 4];
+        let oms = Interval::point(1.0) - s;
+        let omt = Interval::point(1.0) - t;
+        let mut col: Vec<[Interval; 4]> = vec![zero; self.q + 1];
+        for (j, slot) in col.iter_mut().enumerate() {
+            let mut lane: Vec<[Interval; 4]> = (0..=self.p)
+                .map(|i| {
+                    let c = self.ctrl[i * (self.q + 1) + j];
+                    [
+                        Interval::point(c.x),
+                        Interval::point(c.y),
+                        Interval::point(c.z),
+                        Interval::point(c.w),
+                    ]
+                })
+                .collect();
+            let mut len = self.p + 1;
+            while len > 1 {
+                for i in 0..len - 1 {
+                    let next = lane[i + 1];
+                    for (cell, nx) in lane[i].iter_mut().zip(next) {
+                        *cell = oms * *cell + s * nx;
+                    }
+                }
+                len -= 1;
+            }
+            *slot = lane[0];
+        }
+        let mut len = self.q + 1;
+        while len > 1 {
+            for j in 0..len - 1 {
+                let next = col[j + 1];
+                for (cell, nx) in col[j].iter_mut().zip(next) {
+                    *cell = omt * *cell + t * nx;
+                }
+            }
+            len -= 1;
+        }
+        col[0]
+    }
+
+    /// Certified 3D enclosure over a parameter box; None when the
+    /// weight enclosure straddles zero.
+    pub fn point_enclosure(&self, s: Interval, t: Interval) -> Option<[Interval; 3]> {
+        let h = self.eval_homogeneous_interval(s, t);
+        Some([h[0].checked_div(h[3])?, h[1].checked_div(h[3])?, h[2].checked_div(h[3])?])
+    }
+
     /// AABB of the projected control net (bounds the patch by the
     /// convex hull property; weights are positive).
     pub fn control_aabb(&self) -> (Vec3, Vec3) {
@@ -949,6 +1002,30 @@ mod tests {
             let scale = 1.0 + fdu.norm() + fdv.norm();
             prop_assert!((d[1][0] - fdu).norm() < 1e-4 * scale);
             prop_assert!((d[0][1] - fdv).norm() < 1e-4 * scale);
+        }
+
+        // Interval enclosure soundness: any exact point evaluated at a
+        // parameter inside the box lies inside the interval enclosure.
+        #[test]
+        fn interval_eval_encloses_patch(
+            (s, _, _) in arb_surface_uv(),
+            s0 in 0.0..1.0f64, ds in 0.0..0.3f64,
+            t0 in 0.0..1.0f64, dt in 0.0..0.3f64,
+            fs in 0.0..1.0f64, ft in 0.0..1.0f64,
+        ) {
+            let patches = s.to_bezier_patches().unwrap();
+            let pc = &patches[0];
+            let s1 = (s0 + ds).min(1.0);
+            let t1 = (t0 + dt).min(1.0);
+            let si = Interval::new(s0.min(s1), s1.max(s0));
+            let ti = Interval::new(t0.min(t1), t1.max(t0));
+            let enc = pc.point_enclosure(si, ti).unwrap();
+            let sx = si.lo + fs * (si.hi - si.lo);
+            let tx = ti.lo + ft * (ti.hi - ti.lo);
+            let exact = pc.eval(sx, tx);
+            prop_assert!(enc[0].contains(exact.x), "x {} not in {:?}", exact.x, enc[0]);
+            prop_assert!(enc[1].contains(exact.y), "y {} not in {:?}", exact.y, enc[1]);
+            prop_assert!(enc[2].contains(exact.z), "z {} not in {:?}", exact.z, enc[2]);
         }
 
         // Insertion is representation-only: geometry unchanged.
