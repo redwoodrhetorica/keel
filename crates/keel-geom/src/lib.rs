@@ -10,6 +10,7 @@ pub mod basis;
 pub mod curve;
 pub mod knots;
 pub mod nurbs_curve;
+pub mod project;
 
 /// Maximum supported spline degree (spec D4: cap working degree;
 /// Bernstein conditioning grows as p * 2^p, knot-independent).
