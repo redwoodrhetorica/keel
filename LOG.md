@@ -588,3 +588,24 @@ REMAINING in M2a:
   old URLs after transfer. All branches pushed (m1-foundations,
   m2a-spline-curves, m2b-surfaces, m3-topology, worktree-nurbs-research,
   master).
+
+## Addendum 17 (2026-06-07): M4 plan written
+
+- Research sweep: nothing new; kernel/06 re-read (differential geometry
+  contract confirmed shipped in M2b; isophotes/silhouettes noted as
+  future interrogation consumers of the normal field).
+- M4 plan: docs/superpowers/plans/2026-06-07-m4-classification.md.
+  Scope: implicit forms for Surface3 (signed, with gradient: CSI fast
+  paths + PMC fuzz oracle), curve-curve intersection (analytic exact +
+  PP for spline pairs, tangency reported not resolved), curve-surface
+  intersection (implicit substitution with EXACT Bernstein composition,
+  never sample-and-fit; PP 3-var + Newton for spline-spline), pcurves
+  for primitive faces (UV iso-segments; the M5 trim interface), UV
+  point-in-face crossing test + parameter-space watertightness check,
+  ray-cast PMC with deterministic retry LADDER on degenerate hits (no
+  random perturbation: determinism contract; Tilove neighborhood
+  classification deferred to M6 where it is unavoidable), mass
+  properties via divergence theorem over parameter rectangles with the
+  VOLUME SIGN as the M3 orientation falsification test (no abs():
+  negative volume = fix M3, not the formula). fuzz_pmc vs implicit-sign
+  oracle. Branch m4-classification.
