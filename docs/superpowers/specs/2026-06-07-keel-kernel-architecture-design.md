@@ -35,10 +35,13 @@ Decided after extended debate against C, C++, and C#. Deciding factors, given th
 
 ### D2. Numerics: tolerant modeling on f64, exact predicates at decision points
 
-- All geometry arithmetic in `f64`. No exact-arithmetic modeling mode (CGAL-style exactness is incompatible with freeform NURBS performance and with imported real-world data).
-- Session-wide linear resolution of 1e-8 in a normalized model box (Parasolid's published figures: 1000-unit box, 1e-8 resolution, angular resolution 1e-11). Tolerances are centralized in `keel-math`; no magic epsilons scattered through code.
-- Per-entity tolerances (tolerant vertices/edges) are part of the data model from day one, even though tolerant-modeling algorithms deepen later. Retrofitting per-entity tolerance into a kernel is a known disaster; carrying the fields early is cheap.
-- Sign-critical decisions (orientation, incidence, point-vs-plane) use adaptive-precision exact predicates (Shewchuk-style; the `robust` crate or a vetted port). Float for arithmetic, exact for decisions.
+*(Amended per research synthesis, docs/research/00-synthesis.md.)*
+
+- All geometry arithmetic in `f64`. No exact-arithmetic modeling mode (CGAL-style exactness is incompatible with freeform NURBS performance and with imported real-world data; no exact paradigm exists for NURBS intersection curves at all).
+- **EPICK discipline codebase-wide:** no combinatorial decision ever branches on an unfiltered f64 sign. Every sign-critical predicate (orientation, incidence, point-vs-plane) runs a three-tier cascade: semi-static f64 filter, interval-arithmetic fallback, exact floating-point-expansion evaluation (Shewchuk-style; `robust` crate or vetted port).
+- **Indirect predicates** (Attene 2020) for decisions on constructed points (line-plane, three-plane intersections): exactness extends through linear constructions at near-float cost. Extending the exact island to quadric constructions is a flagged investigation.
+- **Per-entity local tolerances with propagation are the primary tolerance model from day one**, not an add-on. The session-wide linear resolution (1e-8 in a normalized model box; angular 1e-11, Parasolid's published figures) is the floor/default only. A single global epsilon is explicitly rejected; every robustness track of the literature review converged on this. Tolerance policy is centralized in `keel-math`; no inline epsilons.
+- Topology enforces watertightness; geometry is never assumed exact. (Trimmed-NURBS patches are intrinsically gappy; the literature is unanimous that watertightness is a topological contract, not a geometric fact.)
 
 ### D3. Topology: arena storage, generational handles, Euler operators
 
@@ -61,7 +64,24 @@ Decided after extended debate against C, C++, and C#. Deciding factors, given th
 - Every fallible operation returns `Result<T, KernelError>` with structured error variants (tolerance unsatisfiable, intersection non-convergence, degenerate input, invalid topology, ...).
 - No `unwrap`/`expect`/`panic!` in library code paths. Fuzzing enforces this continuously.
 
-### D6. Dependencies: minimal and deliberate
+### D6. One solver behind every query
+
+*(Added per research synthesis; pattern from Elber/Kim's IRIT solver line.)*
+
+- A single central **Bernstein-basis subdivision multivariate solver** (Projected Polyhedron with Mourrain-Pavone reduction) lives in the math layer and backs every polynomial-system query in the kernel: curve-curve and curve-surface intersection, surface-surface start points, closest-point projection, interrogation.
+- **Bezier clipping** (Sederberg-Nishita) is the quadratically convergent local refiner; **Yuksel (HPG 2022) and Blinn-style solvers** handle fixed low degrees (the analytic-primitive hot path). Naive Cardano/Ferrari and the power basis are banned.
+- Evaluation follows Piegl-Tiller (de Boor / de Casteljau) with per-span Bezier extraction for stability at high degree; the IGA-hardened refinement toolkit (knot insertion, degree elevation, Bezier decomposition) is core, with the invariant that refinement preserves geometry exactly.
+- Rationale: ad-hoc per-query numerics is where robustness investment goes to die; concentrating it in one solver makes every hardening improvement global.
+
+### D7. Machine learning policy
+
+*(Added per research synthesis, track F.)*
+
+- **Nothing learned sits on the correctness path.** Published accuracy ceilings for neural geometry (about 1e-3 of bounding box) are six orders of magnitude short of kernel decisions. The binding contract is propose-then-certify: ML may seed, rank, tune, and generate tests; classical machinery certifies every output.
+- Sanctioned uses, in roadmap order: ML-guided fuzzing with learned mutators against kernel invariants (M3+), Newton seed prediction for projection/tracing (M2+), degeneracy prediction for preemptive precision escalation (M5+), SSI algorithm-portfolio selection (M5+), Bayesian optimization of thresholds against the regression corpus (M6+).
+- Experiment designs (hypothesis, data source, model class, metric, certification route) live in docs/research/f-ml-for-geometry.md.
+
+### D8. Dependencies: minimal and deliberate
 
 - Own small linear algebra in `keel-math` (Vec2/3/4, Mat2/3/4, transforms): kernels need full control of numerics and the types are public API surface.
 - Exact predicates: `robust` crate or vetted internal port.
@@ -99,8 +119,8 @@ Cargo workspace, dependency-ordered (each crate depends only on those above it):
 - **M2. Geometry:** all curve/surface types with evaluation, derivatives, closest-point; property-tested against references.
 - **M3. Topology and first solids:** arenas, Euler ops, validator; primitive construction; tessellation; STL export. First visible output.
 - **M4. Sweeps and simple intersection:** extrude/revolve; curve-curve and curve-surface intersection with fuzzing.
-- **M5. Surface-surface intersection:** analytic-analytic closed forms; general marching with start-point detection, loop detection, and singularity handling. The hardest single component; expect the longest schedule.
-- **M6. Booleans on analytic solids:** imprint/classify/stitch pipeline, mass-property oracles online.
+- **M5. Surface-surface intersection:** topology-first architecture per the research synthesis. Closed forms for analytic pairs, with quadric-quadric via the exact QI parameterization (Dupont et al.), never Levin's pencil method. For freeform: normal-cone loop-detection gate (Sederberg-Meyers, Hohmeyer) before any marching, Interval Projected Polyhedron start points, predictor-corrector tracing with Ye-Maekawa differential geometry and per-step Krawczyk certification. Overlap/coincidence extraction is a first-class result kind, and tangential cases are designed for at the start, not deferred: the literature identifies them as the dominant boolean failure mode. Track the Yang-Jia-Yan papers (2023-2026), the current state of the art. The hardest single component; expect the longest schedule.
+- **M6. Booleans on analytic solids:** pipeline per the research synthesis: BVH broad phase, local imprint along intersection curves only (no global arrangement, the EMBER lesson), winding-number-vector classification (Zhou/Jacobson, more robust than neighborhood walking and gives n-ary booleans free), tolerant stitch with gap covering. Symbolic perturbation for degeneracies; coincidence-first mindset (exact touching is CAD's common case); caller-tunable fuzzy mode planned. Mass-property oracles online.
 - **M7. Booleans on NURBS-bounded solids:** the proof milestone.
 - **Post-M7 long tail:** fillets/blends, shelling, STEP import and healing, deeper tolerant modeling, C ABI layer, PyO3 bindings, WASM demos.
 
@@ -112,6 +132,11 @@ Each milestone gets its own brainstorm/spec/plan cycle before implementation; th
 - **Tolerance-model mistakes** are unfixable late. Mitigation: centralized tolerance policy in `keel-math` (D2), per-entity tolerance fields from day one, no inline epsilons (enforced by review/lint).
 - **Scope creep** toward Parasolid's full surface (thousands of API functions). Mitigation: this spec's non-goals list and the single proof milestone; nothing ships before M7 except via the roadmap.
 - **Performance regressions** from safety abstractions. Mitigation: criterion benchmarks from M1; arena/handle design is already the known-fast layout (struct-of-arrays friendly, cache-coherent).
+- **Robustness without an industrial regression base.** Production kernels lean on decades of customer models (C3D cites 500k+). Mitigation: the corpus is a first-class artifact from M1: generated adversarial cases, ABC-dataset imports as they become readable, ML-guided fuzzing findings, and every bug ever found. No public NURBS-boolean robustness benchmark exists; publishing ours doubles as a community contribution.
+
+## 8. Research basis
+
+Six literature-review tracks with full citations live in `docs/research/` (robust numerics, NURBS/freeform, surface intersection, booleans/tolerant modeling, kernel architecture lessons, ML for geometry), consolidated in `docs/research/00-synthesis.md`. The synthesis lists the binding design deltas applied to this spec and a flagged reading list per milestone (Golovanov before M3, Patrikalakis-Maekawa-Cho before M4/M5, Yang-Jia-Yan before M5, the mesh-arrangement corpus before M6). Topology future-proofing note from track E: the radial cycle around each edge is structured to hold 3+ coedges so partial-entity non-manifold support remains an extension, not a rewrite; persistent/immutable arenas are flagged as a candidate for Parasolid-style session rollback.
 
 ## 7. Public API sketch (facade crate)
 
