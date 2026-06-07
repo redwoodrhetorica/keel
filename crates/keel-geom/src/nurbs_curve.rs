@@ -95,7 +95,11 @@ impl NurbsCurve {
             for i in (r..=p).rev() {
                 let gi = span - p + i; // global control index
                 let denom = knots[gi + p + 1 - r] - knots[gi];
-                let a = if denom == 0.0 { 0.0 } else { (u - knots[gi]) / denom };
+                let a = if denom == 0.0 {
+                    0.0
+                } else {
+                    (u - knots[gi]) / denom
+                };
                 d[i] = d[i - 1] * (1.0 - a) + d[i] * a;
             }
         }
@@ -204,8 +208,7 @@ impl NurbsCurve {
         radius: f64,
         sweep: f64,
     ) -> Result<Self, GeomError> {
-        if !(radius.is_finite() && radius > 0.0)
-            || !(sweep > 0.0 && sweep <= core::f64::consts::TAU)
+        if !radius.is_finite() || radius <= 0.0 || !(sweep > 0.0 && sweep <= core::f64::consts::TAU)
         {
             return Err(GeomError::Degenerate);
         }
@@ -307,14 +310,10 @@ impl NurbsCurve {
         left_knots.push(u);
         let mut right_knots = vec![u; p + 1];
         right_knots.extend_from_slice(&knots[span + 1..]);
-        let left = Self::from_homogeneous(
-            KnotVector::new(p, left_knots)?,
-            cur.ctrl[..=i0].to_vec(),
-        )?;
-        let right = Self::from_homogeneous(
-            KnotVector::new(p, right_knots)?,
-            cur.ctrl[i0..].to_vec(),
-        )?;
+        let left =
+            Self::from_homogeneous(KnotVector::new(p, left_knots)?, cur.ctrl[..=i0].to_vec())?;
+        let right =
+            Self::from_homogeneous(KnotVector::new(p, right_knots)?, cur.ctrl[i0..].to_vec())?;
         Ok((left, right))
     }
 
@@ -410,8 +409,16 @@ impl BezierSegment {
         }
         let um = self.u0 + t * (self.u1 - self.u0);
         (
-            Self { ctrl: left, u0: self.u0, u1: um },
-            Self { ctrl: right, u0: um, u1: self.u1 },
+            Self {
+                ctrl: left,
+                u0: self.u0,
+                u1: um,
+            },
+            Self {
+                ctrl: right,
+                u0: um,
+                u1: self.u1,
+            },
         )
     }
     /// Projected 3D control points (hull bound, valid for w > 0).
@@ -466,13 +473,11 @@ mod tests {
         let pts = vec![Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0)];
         assert!(NurbsCurve::new(1, vec![0., 0., 1., 1.], pts.clone(), None).is_ok());
         assert_eq!(
-            NurbsCurve::new(1, vec![0., 0., 1., 1.], pts.clone(), Some(vec![1.0]))
-                .unwrap_err(),
+            NurbsCurve::new(1, vec![0., 0., 1., 1.], pts.clone(), Some(vec![1.0])).unwrap_err(),
             GeomError::CountMismatch
         );
         assert_eq!(
-            NurbsCurve::new(1, vec![0., 0., 1., 1.], pts, Some(vec![1.0, -2.0]))
-                .unwrap_err(),
+            NurbsCurve::new(1, vec![0., 0., 1., 1.], pts, Some(vec![1.0, -2.0])).unwrap_err(),
             GeomError::InvalidWeight
         );
     }
@@ -581,8 +586,8 @@ mod tests {
             let span = c.knot_vector().find_span(t);
             let n = basis_funs(c.knot_vector(), span, t);
             let mut h = Vec4::ZERO;
-            for i in 0..=p {
-                h = h + c.homogeneous_control()[span - p + i] * n[i];
+            for (i, &ni) in n.iter().enumerate().take(p + 1) {
+                h = h + c.homogeneous_control()[span - p + i] * ni;
             }
             let via_basis = Vec3::new(h.x / h.w, h.y / h.w, h.z / h.w);
             prop_assert!((c.point(t) - via_basis).norm() < 1e-9);

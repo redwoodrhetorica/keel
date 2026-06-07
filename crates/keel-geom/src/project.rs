@@ -38,11 +38,19 @@ pub fn project_point(curve: &NurbsCurve, p: Vec3, width_tol: f64) -> Projection 
     let (dom_a, dom_b) = curve.domain();
     // Seed best with the domain endpoints.
     let pa = curve.point(dom_a);
-    let mut best = Projection { u: dom_a, point: pa, distance: (pa - p).norm() };
+    let mut best = Projection {
+        u: dom_a,
+        point: pa,
+        distance: (pa - p).norm(),
+    };
     let pb = curve.point(dom_b);
     let db = (pb - p).norm();
     if db < best.distance {
-        best = Projection { u: dom_b, point: pb, distance: db };
+        best = Projection {
+            u: dom_b,
+            point: pb,
+            distance: db,
+        };
     }
 
     let mut stack: Vec<BezierSegment> = curve.to_beziers();
@@ -93,7 +101,11 @@ pub fn project_point(curve: &NurbsCurve, p: Vec3, width_tol: f64) -> Projection 
             let q = curve.point(u);
             let d = (q - p).norm();
             if d < best.distance {
-                best = Projection { u, point: q, distance: d };
+                best = Projection {
+                    u,
+                    point: q,
+                    distance: d,
+                };
             }
         }
     }

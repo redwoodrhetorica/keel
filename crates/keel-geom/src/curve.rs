@@ -51,12 +51,7 @@ pub struct Circle3 {
 }
 
 impl Circle3 {
-    pub fn new(
-        center: Vec3,
-        x_axis: Vec3,
-        y_axis: Vec3,
-        radius: f64,
-    ) -> Result<Self, GeomError> {
+    pub fn new(center: Vec3, x_axis: Vec3, y_axis: Vec3, radius: f64) -> Result<Self, GeomError> {
         if !(radius.is_finite() && radius > 0.0) {
             return Err(GeomError::Degenerate);
         }
@@ -65,7 +60,12 @@ impl Circle3 {
         if x.dot(y).abs() > 1e-12 {
             return Err(GeomError::Degenerate);
         }
-        Ok(Self { center, x_axis: x, y_axis: y, radius })
+        Ok(Self {
+            center,
+            x_axis: x,
+            y_axis: y,
+            radius,
+        })
     }
     #[inline]
     pub fn point(&self, theta: f64) -> Vec3 {
@@ -82,7 +82,11 @@ impl Circle3 {
             return 0.0;
         }
         let theta = cy.atan2(cx);
-        if theta < 0.0 { theta + core::f64::consts::TAU } else { theta }
+        if theta < 0.0 {
+            theta + core::f64::consts::TAU
+        } else {
+            theta
+        }
     }
 }
 
@@ -112,13 +116,17 @@ impl Ellipse3 {
         if x.dot(y).abs() > 1e-12 {
             return Err(GeomError::Degenerate);
         }
-        Ok(Self { center, x_axis: x, y_axis: y, a, b })
+        Ok(Self {
+            center,
+            x_axis: x,
+            y_axis: y,
+            a,
+            b,
+        })
     }
     #[inline]
     pub fn point(&self, theta: f64) -> Vec3 {
-        self.center
-            + self.x_axis * (self.a * theta.cos())
-            + self.y_axis * (self.b * theta.sin())
+        self.center + self.x_axis * (self.a * theta.cos()) + self.y_axis * (self.b * theta.sin())
     }
     #[inline]
     fn deriv(&self, theta: f64) -> Vec3 {
@@ -134,8 +142,7 @@ impl Ellipse3 {
         let g = |th: f64| {
             let e = self.point(th) - p;
             let d1 = self.deriv(th);
-            let d2 =
-                self.x_axis * (-self.a * th.cos()) + self.y_axis * (-self.b * th.sin());
+            let d2 = self.x_axis * (-self.a * th.cos()) + self.y_axis * (-self.b * th.sin());
             (e.dot(d1), d1.dot(d1) + e.dot(d2))
         };
         let mut best = (0.0_f64, (self.point(0.0) - p).norm_sq());
@@ -144,12 +151,12 @@ impl Ellipse3 {
         for i in 1..=SCAN {
             let th = i as f64 * tau / SCAN as f64;
             let gv = g(th).0;
-            if prev_g == 0.0 || (prev_g > 0.0) != (gv > 0.0) {
-                if let Some(root) = solve_bracketed(g, prev_th, th, 1e-14, 64) {
-                    let d = (self.point(root) - p).norm_sq();
-                    if d < best.1 {
-                        best = (root.rem_euclid(tau), d);
-                    }
+            if (prev_g == 0.0 || (prev_g > 0.0) != (gv > 0.0))
+                && let Some(root) = solve_bracketed(g, prev_th, th, 1e-14, 64)
+            {
+                let d = (self.point(root) - p).norm_sq();
+                if d < best.1 {
+                    best = (root.rem_euclid(tau), d);
                 }
             }
             prev_th = th;
@@ -254,7 +261,10 @@ impl Curve3 {
                     (c.x_axis.y.powi(2) + c.y_axis.y.powi(2)).sqrt(),
                     (c.x_axis.z.powi(2) + c.y_axis.z.powi(2)).sqrt(),
                 ) * r;
-                Aabb3 { min: c.center - e, max: c.center + e }
+                Aabb3 {
+                    min: c.center - e,
+                    max: c.center + e,
+                }
             }
             Curve3::Ellipse(c) => {
                 let e = Vec3::new(
@@ -262,7 +272,10 @@ impl Curve3 {
                     ((c.a * c.x_axis.y).powi(2) + (c.b * c.y_axis.y).powi(2)).sqrt(),
                     ((c.a * c.x_axis.z).powi(2) + (c.b * c.y_axis.z).powi(2)).sqrt(),
                 );
-                Aabb3 { min: c.center - e, max: c.center + e }
+                Aabb3 {
+                    min: c.center - e,
+                    max: c.center + e,
+                }
             }
             Curve3::Nurbs(c) => Aabb3::from_points(c.control_points()),
         }
@@ -291,8 +304,7 @@ mod tests {
         .unwrap();
         let theta = 2.3;
         // Radial and axial offsets leave the projection unchanged.
-        let p = c.point(theta) + (c.point(theta) - c.center) * 0.4
-            + Vec3::new(0.0, 0.0, 9.0);
+        let p = c.point(theta) + (c.point(theta) - c.center) * 0.4 + Vec3::new(0.0, 0.0, 9.0);
         assert!((c.project(p) - theta).abs() < 1e-12);
     }
 

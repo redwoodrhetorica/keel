@@ -15,7 +15,7 @@ impl KnotVector {
     /// len >= 2 * (degree + 1), finite nondecreasing knots, clamped
     /// ends, and a nonempty domain.
     pub fn new(degree: usize, knots: Vec<f64>) -> Result<Self, GeomError> {
-        if degree < 1 || degree > MAX_DEGREE {
+        if !(1..=MAX_DEGREE).contains(&degree) {
             return Err(GeomError::DegreeOutOfRange);
         }
         if knots.len() < 2 * (degree + 1) {
@@ -74,7 +74,11 @@ impl KnotVector {
         let mut hi = n + 1;
         while hi - lo > 1 {
             let mid = (lo + hi) / 2;
-            if u < self.knots[mid] { hi = mid } else { lo = mid }
+            if u < self.knots[mid] {
+                hi = mid
+            } else {
+                lo = mid
+            }
         }
         lo
     }
