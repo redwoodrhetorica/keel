@@ -2277,3 +2277,30 @@ closed-surface -> no trim).
 RUNNING TOTAL: stays 62/144 (hardening the torus fillet).
 GATE: exact CI triplet green (120 keel-topo). tessellate shared with the
 winding classifier -> fuzz_boolean re-soaked. Merged.
+
+## Addendum 68 (2026-06-08): CONCAVE fillet GEOMETRY + convexity detection + fillet_edge dispatch (map stays 62/144)
+
+Three increments toward concave (reentrant) fillets, the highest-value fillet
+extension (inner-corner rounding is ~half of all fillets):
+1. fillet_edge now AUTO-DISPATCHES by support geometry: a plane/cylinder cap rim
+   -> the torus rung (fillet_cap_rim); two planes -> the cylinder rung. One entry
+   point. (Bottom-rim torus fillet test also added -- the sgn=-1 cap path.)
+2. CONVEXITY DETECTION: edge_is_convex(edge) probes the generalized winding
+   number just off the edge along the in-face bisector (u0+u1, into both faces'
+   interiors); inside the material => convex, in the open notch => concave.
+   Corrects an earlier WRONG assumption (I had thought the offset sign was
+   convexity-independent): a concave edge needs the ball on the +r (non-material)
+   side, filling the notch, not the -r material side.
+3. blend_cylinder_for_edge now uses the detected sign (off = -r convex / +r
+   concave), so the blend GEOMETRY is correct for both. The convex plane-plane
+   SURGERY is gated for concave (it adds rather than removes material -- a
+   follow-up); the blend geometry already handles concave.
+Test: L-prism (non-convex profile [(0,0),(2,0),(2,1),(1,1),(1,2),(0,2)] extruded)
+-> reentrant edge at (1,1) detected CONCAVE, corner edge CONVEX; concave blend
+spine at (1+r,1+r)=(1.3,1.3) tangent to both faces; convex blend spine inside the
+material (1.7,0.3); concave fillet_edge surgery gated. Existing convex fillets
+still pass through the new detection unchanged.
+RUNNING TOTAL: stays 62/144 (concave geometry done; concave surgery completes it).
+GATE: exact CI triplet green (122 keel-topo). edge_is_convex reuses the existing
+winding classifier; no tessellate/boolean pipeline change -> no new fuzz path.
+Merged.
