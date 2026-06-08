@@ -112,6 +112,37 @@ mod tests {
         b
     }
 
+    fn nurbs_sphere_body(c: Vec3, r: f64) -> Body {
+        let mut b = Body::new();
+        b.nurbs_sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r)
+            .unwrap();
+        b
+    }
+
+    #[test]
+    fn gwn_nurbs_sphere_inside_is_one_outside_is_zero() {
+        // Task 0 (M7a): NURBS winding sound before classifying on it.
+        for &(r, shift) in &[(1.0, 0.0), (4.0, 0.0), (2.0, 20.0), (0.5, -12.0)] {
+            let c = Vec3::new(shift, -shift * 0.5, shift);
+            let b = nurbs_sphere_body(c, r);
+            let wi = b.generalized_winding_number(c); // centre
+            let wo = b.generalized_winding_number(c + Vec3::new(r * 4.0, 0.0, 0.0));
+            assert!(
+                (wi - 1.0).abs() < 3e-3,
+                "nurbs sphere centre w={wi} (r {r})"
+            );
+            assert!(wo.abs() < 3e-3, "nurbs sphere outside w={wo} (r {r})");
+        }
+    }
+
+    #[test]
+    fn gwn_nurbs_sphere_orientation_audit() {
+        // Outward (local_geometry normal) gives +1 inside, not -1.
+        let b = nurbs_sphere_body(Vec3::ZERO, 1.0);
+        let w = b.generalized_winding_number(Vec3::new(0.1, 0.0, 0.0));
+        assert!(w > 0.9, "nurbs orientation: inside should be +1, got {w}");
+    }
+
     #[test]
     fn gwn_cylinder_inside_is_one_outside_is_zero() {
         // Task 0 (M6c): cylinder winding sound before classifying on it.

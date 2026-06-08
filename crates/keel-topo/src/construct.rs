@@ -401,6 +401,60 @@ impl Body {
         })
     }
 
+    /// Solid sphere with a NURBS (revolved rational) surface instead of
+    /// the analytic `Surface3::Sphere`. Same topology as `sphere()`
+    /// (V2 E1 F1, poles at +/-frame.z, seam meridian in the
+    /// (frame.z, frame.x) plane). The first NURBS-faced solid (M7a).
+    pub fn nurbs_sphere(&mut self, frame: Frame3, radius: f64) -> Result<PrimitiveOut, TopoError> {
+        if radius <= 0.0 || !radius.is_finite() {
+            return Err(TopoError::Precondition("nurbs_sphere: bad radius"));
+        }
+        let (center, az, fx) = (frame.origin, frame.z, frame.x);
+        let s = core::f64::consts::FRAC_1_SQRT_2;
+        // Rational quadratic semicircle (the meridian profile) from the
+        // south pole through the +x equator point to the north pole.
+        let ctrl = vec![
+            center - az * radius,
+            center - az * radius + fx * radius,
+            center + fx * radius,
+            center + az * radius + fx * radius,
+            center + az * radius,
+        ];
+        let profile = keel_geom::nurbs_curve::NurbsCurve::new(
+            2,
+            vec![0., 0., 0., 0.5, 0.5, 1., 1., 1.],
+            ctrl,
+            Some(vec![1.0, s, 1.0, s, 1.0]),
+        )
+        .map_err(geom_err)?;
+        let surf =
+            keel_geom::nurbs_surface::revolve_full(&profile, center, az).map_err(geom_err)?;
+
+        let mut reports = Vec::new();
+        let r = self.infinite_region();
+        let south = center - az * radius;
+        let north = center + az * radius;
+        let seed = self.mvfs(r, south)?;
+        reports.push(seed.report.clone());
+        let lp = self
+            .faces
+            .get(seed.face)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let seam = self.mev(MevSite::VertexLoop(lp), north)?;
+        reports.push(seam.report.clone());
+        self.debug_validate();
+
+        self.attach_face_surface(seed.face, SurfaceGeom::Nurbs(surf), true);
+        self.attach_edge_curve(seam.edge, Curve3::Nurbs(profile), true);
+        Ok(PrimitiveOut {
+            faces: vec![seed.face],
+            edges: vec![seam.edge],
+            vertices: vec![seed.vertex, seam.vertex],
+            reports,
+        })
+    }
+
     /// Solid ring torus about frame.z. Topology V2 E2 F1 with one
     /// inner ring and genus 1 (the M3 torus skeleton: outer/inner
     /// equator seam structure).

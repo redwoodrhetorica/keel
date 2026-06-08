@@ -1135,3 +1135,57 @@ REMAINING in M2a:
   localization (the all-pairs O(n^2) throughput cost, also why
   fuzz_cyl_boolean throughput is low). M7 = robust booleans on NURBS-
   bounded solids (the proof bar).
+
+## Assessment (2026-06-07): is Keel a Parasolid competitor? (candid opinion, requested)
+
+Honest, calibrated opinion (not a claim, not marketing). Split into three
+buckets, because lumping them flatters or insults the work:
+
+- SOUND? Genuinely yes -- arguably more rigorously than some shipping
+  kernels. Foundations are CERTIFIED not "seems to work": extended-real
+  interval arithmetic (caught a real release-mode overflow bug),
+  Krawczyk verification on the spline solver, validity-by-construction
+  topology, a determinism contract + FNV hash, the M4 orientation audit
+  and M6b/M7a winding soundness gates that independently cross-check
+  conventions. Sound by construction + proof, not by accumulated scars.
+  Punches above its weight for its age.
+
+- ROBUST? Only partially, and this is the brutal Parasolid gap. Keel is
+  robust ON WHAT IT COVERS and robust-by-DECLINING on degeneracies (the
+  never-lie partial-success model). But Parasolid's crown jewel is the
+  thing Keel does NOT do: swallow arbitrary DIRTY real-world input
+  (near-tangent, near-coincident, sliver, mm-vs-km scale, self-
+  intersecting imports) and still return a usable answer. Keel's fuzzers
+  found exactly those cases and the response was to decline cleanly --
+  correct for now, but DECLINING IS NOT COMPETING. A CAD user wants the
+  boolean to succeed on their messy part.
+
+- COVERAGE / FEATURE-COMPLETE? Not close. Keel = booleans + primitives
+  (analytic + just-started NURBS). Parasolid = ~40 yrs, full trimmed-
+  NURBS booleans + blending/chamfer/shell/loft/sweep/sheet-metal/
+  healing/draft, dozens of subsystems. Low-single-digit % of the surface
+  area. Curved-volume verification is still a COARSE tessellated oracle
+  (no exact trimmed mass props); no differential testing vs OCCT/ABC
+  corpus yet -- robustness evidence is fuzzing-strong but real-world-
+  corpus-untested.
+
+VERDICT: NOT a Parasolid competitor today -- a legitimately sound, well-
+architected FOUNDATION that has proven the conceptual CORE (robust
+booleans, the hardest part) correctly on a tiny slice of the domain.
+
+BUT "is it a Parasolid competitor" is slightly the wrong question. Head-
+to-head nobody beats Parasolid (a billions-of-parts moat, not a code-
+quality gap). The real question is a DEFENSIBLE NICHE Parasolid doesn't
+serve well -- and Keel has one: the exact-topology/tolerant-geometry
+hybrid (file 11) that per the literature NO kernel fully ships. If M7b
+lands it (certified SSI error bounds riding into the topology, epsilon-
+solidity as a checkable contract), Keel could credibly claim PROVABLY-
+BOUNDED booleans -- a wedge for verification/simulation-meshing/
+regulated-aerospace where "empirically robust" isn't good enough. A
+wedge, not a frontal assault.
+
+One line: sound enough to be taken seriously, nowhere near robust or
+broad enough to compete yet -- but making the RIGHT architectural bets,
+with a differentiation thesis that is real rather than marketing. The
+risk isn't a wrong foundation; it's the multi-year robustness-and-
+coverage grind, and whether the niche is worth it.
