@@ -812,3 +812,26 @@ REMAINING in M2a:
   service, kernel/01 boundary-evaluation, nurbs/04 section 3 SSI
   topology). Then M6: booleans, the proof milestone (M7 = robust
   booleans on NURBS-bounded solids).
+
+## Addendum 25 (2026-06-07): M5b plan written
+
+- Research sweep: nothing new. kernel/13 Part 2 re-read: extension
+  service requirements pinned (bounded safe-reach from degree+curvature
+  +weight-positivity, fold validation, analytic-exact preferred,
+  fail-clean, co-designed with the intersector).
+- M5b plan: docs/superpowers/plans/2026-06-07-m5b-imprint-trim.md.
+  Seven tasks: (1) SsiCurve gains pcurve_a/pcurve_b (exact inversion
+  for analytics, project+fit for spline tiers); (2) extend_surface
+  service (analytic exact/unbounded = domain widen; NURBS bounded
+  natural unclamping with fold+weight validation, clean Err on
+  over-reach); (3) DIHEDRAL RADIAL SORT in glue_edges (the M3
+  deferral, first consumer here); (4) single-face imprint_curve
+  (crossing -> split_edge+split_face; closed loop -> inner ring;
+  coincidence judged here vs tol); (5) two-body imprint_bodies (SSI +
+  imprint both + glue = the boolean precursor, shared radial-4 seam);
+  (6) trimmed-face mass props via GREEN'S THEOREM (lifts the M4
+  parameter-rectangle limit); (7) fuzz_imprint + gate. Scope boundary
+  binding: M5b imprints, M6 classifies/stitches/selects. Deferral
+  ledger: general trimmed-NURBS healing, Shetty-White/Mo-Zhao
+  extensions, Krawczyk imprint fitting all staged.
+- NEXT: execute M5b on branch m5b-imprint.
