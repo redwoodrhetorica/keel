@@ -1910,15 +1910,14 @@ mod tests {
             .unwrap();
         let mut b = Body::new();
         b.block(Vec3::new(0.0, 20.0, 0.0), 0.5, 0.5, 0.5).unwrap();
-        match boolean(&a, &b, BoolOp::Intersection, 1e-7) {
-            Ok(res) => {
-                let v = res.body.mass_properties().map(|m| m.volume);
-                assert!(
-                    matches!(v, Ok(vol) if vol.is_finite() && vol > 0.0),
-                    "Ok result must have positive finite volume, got {v:?}"
-                );
-            }
-            Err(_) => {} // declining a near-degenerate config is fine.
+        // Declining a near-degenerate config is fine; an Ok result must
+        // have positive finite volume (never a wrong "valid" body).
+        if let Ok(res) = boolean(&a, &b, BoolOp::Intersection, 1e-7) {
+            let v = res.body.mass_properties().map(|m| m.volume);
+            assert!(
+                matches!(v, Ok(vol) if vol.is_finite() && vol > 0.0),
+                "Ok result must have positive finite volume, got {v:?}"
+            );
         }
     }
 
