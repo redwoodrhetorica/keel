@@ -234,6 +234,66 @@ fn polish_and_update(srf: &NurbsSurface, pc: &BezierPatch, p: Vec3, best: &mut S
     }
 }
 
+/// Fast (NON-certified) closest-point: a coarse parameter-grid seed
+/// followed by a short damped Newton polish on the orthogonality system.
+/// For points KNOWN to be on or near the surface (e.g. samples of an SSI
+/// curve), this is far cheaper than the certified global
+/// `project_point_surface` (no Bezier subdivision, no boundary-curve
+/// projection) and is what the imprint pcurve fit uses. NOT guaranteed
+/// to find the global minimum on a wildly folded surface.
+pub fn project_point_surface_fast(srf: &NurbsSurface, p: Vec3) -> SurfaceProjection {
+    let ((u0, u1), (v0, v1)) = srf.domain();
+    // Coarse grid seed.
+    const G: usize = 8;
+    let (mut bu, mut bv) = (u0, v0);
+    let mut bd = f64::INFINITY;
+    for i in 0..=G {
+        let u = u0 + (u1 - u0) * i as f64 / G as f64;
+        for j in 0..=G {
+            let v = v0 + (v1 - v0) * j as f64 / G as f64;
+            let d = (srf.point(u, v) - p).norm();
+            if d < bd {
+                bd = d;
+                bu = u;
+                bv = v;
+            }
+        }
+    }
+    // Newton polish from the seed, clamped to the domain.
+    let (mut u, mut v) = (bu, bv);
+    for _ in 0..25 {
+        let d = srf.derivatives(u, v, 2);
+        let dl = d[0][0] - p;
+        let (su, sv) = (d[1][0], d[0][1]);
+        let g1 = dl.dot(su);
+        let g2 = dl.dot(sv);
+        let j11 = su.dot(su) + dl.dot(d[2][0]);
+        let j12 = su.dot(sv) + dl.dot(d[1][1]);
+        let j22 = sv.dot(sv) + dl.dot(d[0][2]);
+        let det = j11 * j22 - j12 * j12;
+        if det.abs() < 1e-300 {
+            break;
+        }
+        let step_u = (-g1 * j22 + g2 * j12) / det;
+        let step_v = (-g2 * j11 + g1 * j12) / det;
+        let nu = (u + step_u).clamp(u0, u1);
+        let nv = (v + step_v).clamp(v0, v1);
+        let moved = (nu - u).abs() + (nv - v).abs();
+        u = nu;
+        v = nv;
+        if moved < 1e-14 * (1.0 + u.abs() + v.abs()) {
+            break;
+        }
+    }
+    let q = srf.point(u, v);
+    SurfaceProjection {
+        u,
+        v,
+        point: q,
+        distance: (q - p).norm(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
