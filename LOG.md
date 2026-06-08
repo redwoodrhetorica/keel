@@ -1006,3 +1006,65 @@ REMAINING in M2a:
   tolerant scaling robustness (the sliver class); AABB/BVH localization
   (the all-pairs O(n^2) is the throughput cost). Differential testing
   vs OCCT over the ABC corpus remains the M6b/M7 approximate oracle.
+
+## Addendum 30 (2026-06-07): M6b COMPLETE (winding-number classification + curved booleans); merged
+
+- THE architectural win this milestone, mandated by docs/research/
+  d-booleans-tolerant.md section 4 (ADOPT winding-number classification,
+  AVOID ray-cast/neighborhood PMC as the sole classifier): the boolean
+  fragment classifier is now the GENERALIZED WINDING NUMBER (Jacobson/
+  Barill), which degrades gracefully at on-boundary/tangential contacts
+  and is surface-type-agnostic -- it works on periodic faces with no
+  pcurve dependency, the exact thing that blocked curved booleans in
+  M6a. Branch m6b-winding.
+- New modules: winding.rs (tri_solid_angle Van Oosterom-Strackee;
+  generalized_winding_number = (1/4pi) sum of signed solid angles;
+  tessellated_volume), tessellate.rs (outward-oriented coarse triangle
+  tessellation of planar + spherical faces, with trimmed-cap meshing
+  keyed off the CLOSED SSI circle vs the sphere's open meridian).
+- Task 0 MANDATE (self-imposed, the M5a soundness-before-build lesson):
+  proved the winding number sound before any classification used it --
+  w~1 inside / ~0 outside for box and sphere across a magnitude ladder;
+  orientation audit gives +1 inside (independent cross-check of the M3
+  face-side conventions, as M4 mass props did); continuous graceful
+  degradation through ~0.5 across a face (no jumps/NaN); deterministic.
+- Tasks delivered: classifier swap (all 16 M6a planar booleans stay
+  green); curved fragment interior point (sphere cap apex, side fixed
+  by the boundary fin's LOOP KIND since the closed circle's forward
+  flag + shared pcurve cannot distinguish the two caps); import-and-glue
+  stitch (stitch_by_import copies kept faces' full topology from both
+  operands, merges coincident seam vertices, glues the coincident SSI-
+  circle seams, builds the 2-region partition -- the body-to-body copier
+  deferred from M6a); ALL THREE sphere booleans:
+  - sphere INTERSECT sphere = a lens (two caps glued).
+  - sphere UNION sphere = a peanut.
+  - sphere DIFFERENCE sphere = a dimpled sphere (reversed subtracted cap;
+    a reversed face keeps front=inf/back=solid -- a solid boundary face's
+    outward normal always faces the exterior; reversal flips only sense/
+    fin/loop-order).
+  Volumes within 5% of the exact spherical-cap/lens formulas via the
+  tessellated oracle (the exact trimmed-cap mass-properties integral is
+  the staged item).
+- Dual-mode degeneracy post-condition: PLANAR results gated by exact
+  mass-properties (catches near-coincident slivers the coarse tessellation
+  would accept); CURVED results (lens) gated by the surface-agnostic
+  tessellated volume (mass-props cannot integrate trimmed caps yet).
+- FUZZ: fuzz_winding (random box/sphere + probe; GWN finite, in [~0,1]
+  off-boundary, inside>0.85/outside<0.15). Two findings, both fixed +
+  golden-tested + corpus-seeded: (1) GWN at an exact box corner is a
+  boundary value -> tight bound gated off the boundary; (2) near-
+  coincident box touch sliver -> dual-mode post-condition. Final soaks
+  CLEAN: fuzz_winding 1,228,685 runs, fuzz_boolean clean.
+- GATE: fmt + clippy clean, 231 workspace tests green (90 geom + 77
+  math + 64 topo), both 10-min soaks CLEAN. Merged to master.
+- DEFERRED to M6c (honest ledger): block-cylinder + general analytic
+  mixed-surface booleans (cylinder-lateral seam crossings; needs
+  cylinder/cone/torus tessellation); coplanar/coincident neighborhood
+  classification (winding-number-VECTOR / n-ary); EXACT trimmed-cap mass
+  properties (the lens volume is currently the coarse tessellated
+  oracle, ~few %); holed-face stitch (union of overlapping boxes);
+  enclosed-void 3-region stitch; tolerant edges/vertices (Jackson, the
+  M7 NURBS-SSI requirement); hierarchical/BVH-accelerated GWN + AABB
+  localization (the all-pairs O(n^2) throughput cost); general sphere-
+  pair fuzzing with arbitrary-axis equatorial seaming. M7 remains the
+  proof bar: robust booleans on NURBS-bounded solids.
