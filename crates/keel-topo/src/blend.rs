@@ -959,6 +959,38 @@ mod tests {
     }
 
     #[test]
+    fn fillet_cylinder_bottom_rim_to_torus() {
+        // The BOTTOM rim (cap normal -z, sgn = -1): exercises the
+        // asymmetric offset (h_off = hp - sgn*r) and confirms the torus
+        // surgery generalizes to either cap.
+        use keel_geom::surface::Frame3;
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut base = Body::new();
+        base.cylinder(frame, 1.0, 2.0).unwrap();
+        let rim = base
+            .edges
+            .iter()
+            .map(|(k, _)| k)
+            .find(|&e| {
+                let fs = base.faces_around_edge(e);
+                fs.len() == 2
+                    && fs.iter().any(|&f| {
+                        matches!(
+                            base.face_surface_geom(f),
+                            Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                        )
+                    })
+                    && fs.iter().any(|&f| matches!(base.face_outward_normal(f), Some(n) if n.z < -0.9))
+            })
+            .expect("no bottom rim edge");
+        let filleted = base.fillet_cap_rim(rim, 0.3).unwrap();
+        assert!(filleted.validate().is_ok(), "bottom rim fillet invalid");
+        let v = filleted.mesh_volume();
+        // Symmetric to the top-rim case: same removed corner, so 6.170.
+        assert!((v - 6.16998).abs() < 0.08, "bottom rim fillet volume {v}");
+    }
+
+    #[test]
     fn blend_rejects_bad_radius() {
         let mut b = Body::new();
         b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
