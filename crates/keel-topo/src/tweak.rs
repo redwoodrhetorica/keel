@@ -10,8 +10,10 @@
 //! planes, then rebuilds the incident straight edges. CURVED case:
 //! offsetting a cylindrical face changes its radius, recomputing the
 //! cap circles (cylinder ^ cap-plane) at the new radius and moving the
-//! seam. Taper/draft, delete-face-with-heal, and sphere/cone/torus tweak
-//! are the next slices.
+//! seam. TAPER/DRAFT rotates the plane about a parting line. DELETE-FACE
+//! heals by merging a face into a coplanar neighbour (kef). Deferred:
+//! sphere/cone/torus tweak, and the extend-and-reintersect delete-heal
+//! (needs edge contraction the Euler op set lacks).
 
 use crate::Body;
 use crate::body::TopoError;
@@ -290,6 +292,44 @@ impl Body {
             .map_err(|_| TopoError::Precondition("taper_face: degenerate normal"))?;
         self.tweak_face_to_plane(face, Plane3::new(frame), sense)
     }
+
+    /// Delete a face, healing the wound (item 40). This is the
+    /// MERGE/absorb heal mode: the face is merged into a coplanar
+    /// neighbour by killing their shared edge (`kef`), so the neighbour
+    /// absorbs the face's region with no geometric change. This handles
+    /// redundant/sliver coplanar faces and undoes a coplanar split (also
+    /// item 133, face merging). The EXTEND-AND-REINTERSECT heal (delete a
+    /// non-coplanar face so its neighbours grow back to meet) needs
+    /// edge-contraction surgery the current Euler op set does not provide
+    /// (file 03: delete-face is a dedicated, non-decomposable primitive);
+    /// that mode is deferred.
+    pub fn delete_face(&mut self, face: FaceKey) -> Result<(), TopoError> {
+        let (fplane, _) = self.face_plane(face).ok_or(TopoError::Precondition(
+            "delete_face: non-planar (only the coplanar-merge heal is supported)",
+        ))?;
+        let edges = self.face_loop_edges(face).ok_or(TopoError::StaleKey)?;
+        for e in edges {
+            for nbr in self.faces_around_edge(e) {
+                if nbr == face {
+                    continue;
+                }
+                if let Some((nplane, _)) = self.face_plane(nbr) {
+                    let parallel = fplane.frame.z.cross(nplane.frame.z).norm() < 1e-9;
+                    let coincident = (nplane.frame.origin - fplane.frame.origin)
+                        .dot(fplane.frame.z)
+                        .abs()
+                        < 1e-9;
+                    if parallel && coincident {
+                        self.kef(e)?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        Err(TopoError::Precondition(
+            "delete_face: no coplanar neighbour to merge into (extend-reintersect heal deferred)",
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -369,6 +409,35 @@ mod tests {
             v.is_finite() && v > 0.0 && (v - 8.0).abs() > 1e-6,
             "taper volume {v} unchanged/invalid"
         );
+    }
+
+    #[test]
+    fn delete_face_merges_coplanar_split() {
+        // Split a block's top face into two coplanar halves, then delete
+        // one: it merges back (kef), restoring the original face count and
+        // volume. (The merge/absorb heal mode of delete-face.)
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let f0 = b.counts().f;
+        let top = top_face(&b);
+        let (sk, sense) = b.faces.get(top).unwrap().surface.unwrap();
+        // Collect the top loop's fins, split along a diagonal.
+        let lp = b.faces.get(top).unwrap().loops[0];
+        let first = b.loops.get(lp).unwrap().fin.unwrap();
+        let mut fins = vec![first];
+        let mut fk = b.fins.get(first).unwrap().next;
+        while fk != first {
+            fins.push(fk);
+            fk = b.fins.get(fk).unwrap().next;
+        }
+        assert!(fins.len() >= 4, "top should be a quad");
+        let split = b.split_face(fins[0], fins[2], Some((sk, sense))).unwrap();
+        assert_eq!(b.counts().f, f0 + 1, "split should add a face");
+        b.delete_face(split.face_new).unwrap();
+        assert_eq!(b.counts().f, f0, "delete-merge should restore the count");
+        assert!(b.validate().is_ok(), "merged body invalid");
+        let v = b.mass_properties().unwrap().volume;
+        assert!((v - 8.0).abs() < 1e-9, "volume {v} != 8");
     }
 
     #[test]
