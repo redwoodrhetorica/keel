@@ -565,6 +565,45 @@ mod tests {
         );
     }
 
+    /// An edge whose two faces have outward normals matching `na`, `nb`
+    /// (each given as a unit-ish axis to test the dominant component of).
+    fn edge_with_normals(b: &Body, na: Vec3, nb: Vec3) -> EdgeKey {
+        for (e, _) in b.edges.iter() {
+            let fs = b.faces_around_edge(e);
+            if fs.len() != 2 {
+                continue;
+            }
+            let (Some(x), Some(y)) = (b.face_outward_normal(fs[0]), b.face_outward_normal(fs[1]))
+            else {
+                continue;
+            };
+            let m = |u: Vec3, t: Vec3| u.dot(t) > 0.9;
+            if (m(x, na) && m(y, nb)) || (m(x, nb) && m(y, na)) {
+                return e;
+            }
+        }
+        panic!("no edge with the requested normals");
+    }
+
+    #[test]
+    fn fillet_vertical_box_edge() {
+        // A vertical edge (+x / +y faces): different orientation than the
+        // top-right edge, exercising the surgery's generality.
+        let mut base = Body::new();
+        base.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e = edge_with_normals(&base, Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+        let filleted = base.fillet_edge(e, 0.5).unwrap();
+        assert!(filleted.validate().is_ok(), "vertical fillet invalid");
+        let c = filleted.counts();
+        assert_eq!((c.v, c.e, c.f), (10, 15, 7), "counts {:?}", (c.v, c.e, c.f));
+        let v = filleted.mesh_volume();
+        let expect = 8.0 - (0.25 - core::f64::consts::PI * 0.25 / 4.0) * 2.0;
+        assert!(
+            (v - expect).abs() < expect * 0.01,
+            "vertical fillet volume {v}"
+        );
+    }
+
     #[test]
     fn blend_rejects_bad_radius() {
         let mut b = Body::new();
