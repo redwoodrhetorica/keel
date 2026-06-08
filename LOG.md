@@ -1736,3 +1736,37 @@ and 78 (draft about a parting reference). Double-sided draft and curved
 taper deferred.
 RUNNING TOTAL: capability map 45 -> 47/144.
 GATE: exact CI triplet green. Merged.
+
+## Addendum 47 (2026-06-08): Parity tweak FINISHED -- delete-face-with-heal + new-research review (map 47 -> 49/144)
+
+delete_face(face) (items 40, 133): the MERGE/absorb heal mode -- merge a
+face into a coplanar neighbour by killing their shared edge (kef), no
+geometric change. Handles redundant/sliver coplanar faces and undoes a
+coplanar split (= face merging, 133). Tested: split a block top into two
+coplanar halves, delete one -> count + volume restored, valid. The
+EXTEND-AND-REINTERSECT heal (non-coplanar neighbours grow back to meet)
+needs edge-contraction surgery the current Euler op set (mvfs/mev/mef/kev/
+kef/kemr/kfmrh/mfkrh + merge_vertices, which refuses shared-edge merges)
+does NOT provide -- file 03 confirms delete-face is a dedicated,
+non-decomposable primitive; that mode is honestly deferred.
+
+TWEAK FAMILY COMPLETE (planar + cylindrical): change/replace surface
+(35,39), move (36), offset (37, planar+cylindrical), taper/draft (38,78),
+delete-face-heal merge mode (40), face merging (133).
+RUNNING TOTAL: capability map 47 -> 49/144.
+
+NEW RESEARCH REVIEW (user flagged; files 34-38 + the updated
+03-completeness-audit): adversarial audit of the corpus. Load-bearing
+flags relevant to shipped/upcoming work: (2.1) per-entity tolerance
+PROPAGATION is unvalidated original engineering, not in the literature --
+bears on the M7b tolerant edges; (2.2) the exact-topology/tolerant-geometry
+hybrid (the canonical-recovery thesis) is asserted interactive but never
+BENCHMARKED -- a microbenchmark is owed before it is load-bearing; (3.4)
+attribute-propagation POLICY is "specified nowhere" -- the M10 register
+hook is a concrete default we invented (original engineering, flag as
+such); (3.1) STEP/AP242 import is under-researched (file 38 adds it) --
+reinforces the STEP-export borrowable already pulled into the roadmap
+(0d). Files 34-37 (test corpus, verification/oracles, performance,
+numerical substrate) are quality/infra for later. None redirected the
+tweak work.
+GATE: exact CI triplet green. Merged.
