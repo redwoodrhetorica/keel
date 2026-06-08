@@ -1457,6 +1457,23 @@ mod tests {
     }
 
     #[test]
+    fn nested_boxes_no_seam() {
+        // B entirely inside A: no surface intersection. A ∩ B = B,
+        // A ∪ B = A. (A - B would enclose a void: 3 regions, beyond the
+        // 2-region stitch; deferred.)
+        let a = block(Vec3::ZERO, Vec3::new(3., 3., 3.));
+        let b = block(Vec3::new(1., 1., 1.), Vec3::new(1., 1., 1.));
+        let inter = boolean(&a, &b, BoolOp::Intersection, 1e-7).unwrap();
+        assert!(inter.body.validate().is_ok());
+        let vi = inter.body.mass_properties().unwrap().volume;
+        assert!((vi - 1.0).abs() < 1e-6, "A∩B (nested) volume {vi} != 1");
+        let uni = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
+        assert!(uni.body.validate().is_ok());
+        let vu = uni.body.mass_properties().unwrap().volume;
+        assert!((vu - 27.0).abs() < 1e-6, "A∪B (nested) volume {vu} != 27");
+    }
+
+    #[test]
     fn intersection_is_commutative_by_volume() {
         let a = block(Vec3::ZERO, Vec3::new(4., 4., 4.));
         let b = block(Vec3::new(2., -1., -1.), Vec3::new(4., 6., 6.));
