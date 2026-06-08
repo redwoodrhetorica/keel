@@ -309,7 +309,11 @@ impl Body {
     /// Sample a fin's edge 3D curve in the fin's traversal direction
     /// (`m` points, start inclusive). Returns None if the edge has no
     /// curve.
-    fn fin_curve_samples(&self, fin: FinKey, m: usize) -> Option<Vec<keel_math::vec::Vec3>> {
+    pub(crate) fn fin_curve_samples(
+        &self,
+        fin: FinKey,
+        m: usize,
+    ) -> Option<Vec<keel_math::vec::Vec3>> {
         use keel_geom::curve::Curve3;
         let f = self.fins.get(fin)?;
         let e = self.edges.get(f.edge)?;
