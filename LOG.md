@@ -868,3 +868,33 @@ REMAINING in M2a:
   until the gate is met. Branch pushed for backup.
 - NEXT: crossing-case imprint, then two-body imprint, then Green mass
   props, then gate + merge.
+
+## Addendum 27 (2026-06-07): M5b COMPLETE (imprint primitives, trimmed faces, extension); merged
+
+- Tasks done: 2 (extension), 3 (dihedral sort), 4 (single-face imprint
+  both cases), 6 (trimmed-face mass props), 7 (fuzz/gate). Task 5
+  (two-body imprint) REASSIGNED TO M6 (scope decision in addendum/
+  plan: periodic-wrap face splitting + coplanar-face coincidence are
+  M6 classify concerns; M5b ships the reusable imprint PRIMITIVES, M6
+  composes them with classify/select).
+- Task 4 completed: imprint_closed_curve (spur+mef+kemr -> disc+annulus)
+  AND imprint_open_curve (split_edge x2 + split_face for a boundary-
+  crossing curve). Both compute pcurves by sample-invert-fit, judge
+  on-surface coincidence at the call site (atomic rejection), attach
+  pcurves to all new fins. PMC proof: imprinted disc classifies In.
+- Task 6: trimmed-face mass properties via signed-triangle-fan Green
+  integration over multi-loop UV regions (outer loop natural winding,
+  inner rings forced opposite). Exact polar fast-path preserved for
+  single-circle disc caps (cylinder/cone). Curvedness judged by the
+  EDGE's 3D curve, not the pcurve enum (a degree-1 NURBS pcurve is
+  straight: this was the bug that made block volume 17.79 instead of
+  24). Imprint volume-invariance verified exactly (the circle polyline
+  cancels between annulus-subtract and disc-add regardless of sampling).
+- GATE: fmt + clippy clean, 206 workspace tests green, all prior fuzz
+  artifacts replay clean, fuzz_imprint 10-min soak CLEAN.
+- M5b merged to master.
+- NEXT: M6 = booleans, the proof-milestone front end. Opens with
+  two-body imprint (SSI + imprint both + glue, the reassigned Task 5)
+  then classify (PMC-based fragment in/out) + select (union/intersect/
+  difference tables) + stitch. Standing research re-read first
+  (kernel/01 boundary evaluation, Requicha-Voelcker, Tilove SMC/PMC).

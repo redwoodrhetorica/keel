@@ -64,7 +64,20 @@ Cases by how the pcurve meets the face's loops (in UV):
 - **Endpoint on a boundary, other interior (open spur):** `split_edge` + `mev`-style spur to the interior terminus.
 Coincidence is judged here: the curve must lie on the face surface within tol (sampled check) or `Err`. Tests: imprint a circle onto a cube's top face (inner ring, validate, winding now excludes the disc); imprint a line crossing a face (two faces); lineage on all new entities; topology hash golden.
 
-### Task 5: two-body imprint (the boolean precursor)
+### Task 5: two-body imprint (REASSIGNED TO M6)
+**Scope decision (2026-06-07, during execution):** two-body imprint
+(localize face pairs, SSI each, imprint both sides, glue) is reassigned
+to the opening of M6. Rationale discovered in execution: even the
+simplest transversal case (cylinder through block) requires periodic-
+wrap face splitting (a full cross-section circle on the cylinder's
+lateral face is not an interior loop) and coplanar-face coincidence
+handling, both of which are M6's classify/coincidence concerns. M5b
+delivers the single-face imprint PRIMITIVES (the hard, reusable core);
+M6 composes them with the classify/select logic only it owns. The
+M3-gate boolean pipeline is unchanged; only the M5b/M6 task boundary
+moved by one step. Original Task 5 sketch retained below for M6.
+
+
 ```rust
 pub fn imprint_bodies(a: &mut Body, b: &mut Body, tol: f64) -> Result<ImprintReport, TopoError>
 ```
