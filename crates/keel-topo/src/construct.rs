@@ -376,6 +376,200 @@ impl Body {
         })
     }
 
+    /// Full 360-degree solid of revolution (sweep/loft family, parity
+    /// items 62-69) of a meridian `profile` of (radius, height) points
+    /// about `frame.z`, with `frame.x` the seam-meridian reference. The
+    /// profile must meet the axis (radius 0) at BOTH ends and stay off
+    /// the axis (radius > 0) between; each segment revolves to a cone
+    /// (changing radius) or cylinder (constant radius) band, with the
+    /// two end points becoming poles. Topology: m points -> (m+1)
+    /// vertices, (2m-1) edges, m faces (Euler 2).
+    ///
+    /// Scope: the end segments must be NON-horizontal (so the pole bands
+    /// are true cones, not flat discs) and no interior segment may be
+    /// horizontal (which would revolve to a holed washer). Flat end-caps
+    /// and washer faces are follow-ups; pcurves are not attached yet
+    /// (analytic mass_properties needs them -- use mesh_volume meanwhile;
+    /// tessellation and booleans work without them).
+    pub fn revolve(
+        &mut self,
+        frame: Frame3,
+        profile: &[(f64, f64)],
+    ) -> Result<PrimitiveOut, TopoError> {
+        let m = profile.len();
+        if m < 3 {
+            return Err(TopoError::Precondition("revolve: need 3+ profile points"));
+        }
+        if profile
+            .iter()
+            .any(|&(r, h)| !r.is_finite() || !h.is_finite())
+        {
+            return Err(TopoError::Precondition("revolve: non-finite profile"));
+        }
+        if profile[0].0 != 0.0 || profile[m - 1].0 != 0.0 {
+            return Err(TopoError::Precondition(
+                "revolve: ends must lie on the axis",
+            ));
+        }
+        if profile[1..m - 1].iter().any(|&(r, _)| r <= 0.0) {
+            return Err(TopoError::Precondition(
+                "revolve: interior must be off-axis",
+            ));
+        }
+        // End segments non-horizontal (pole bands are cones, not discs).
+        if (profile[0].1 - profile[1].1).abs() < 1e-12
+            || (profile[m - 1].1 - profile[m - 2].1).abs() < 1e-12
+        {
+            return Err(TopoError::Precondition(
+                "revolve: horizontal end-cap (follow-up)",
+            ));
+        }
+        // Interior horizontal segments revolve to holed washers (follow-up).
+        for i in 1..m - 2 {
+            if (profile[i].1 - profile[i + 1].1).abs() < 1e-12 {
+                return Err(TopoError::Precondition(
+                    "revolve: interior washer (follow-up)",
+                ));
+            }
+        }
+
+        let (o, ex, ey, ez) = (frame.origin, frame.x, frame.y, frame.z);
+        let s = |i: usize| o + ex * profile[i].0 + ez * profile[i].1;
+
+        let mut reports = Vec::new();
+        let r = self.infinite_region();
+        // Seed at the first off-axis point s_1; build its circle and the
+        // bottom cone down to the bottom pole.
+        let seed = self.mvfs(r, s(1))?;
+        reports.push(seed.report.clone());
+        let lp = self
+            .faces
+            .get(seed.face)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let bot = self.mef_on_vertex_loop(lp, None)?;
+        reports.push(bot.report.clone());
+        let bot_lp = self
+            .faces
+            .get(bot.face)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let fin = self.fin_ending_at(bot_lp, seed.vertex)?;
+        let mdown = self.mev(MevSite::AfterFin(fin), s(0))?;
+        reports.push(mdown.report);
+
+        // bands: (face, lower_index, upper_index).
+        let mut bands = vec![(bot.face, 0usize, 1usize)];
+        let mut cur_face = seed.face;
+        let mut cur_lp = lp;
+        let mut cur_vertex = seed.vertex;
+        for i in 1..=m.saturating_sub(3) {
+            let fin = self.fin_ending_at(cur_lp, cur_vertex)?;
+            let up = self.mev(MevSite::AfterFin(fin), s(i + 1))?;
+            reports.push(up.report);
+            let at = self.fin_ending_at(cur_lp, up.vertex)?;
+            let cap = self.mef(at, at, None)?;
+            reports.push(cap.report.clone());
+            bands.push((cur_face, i, i + 1));
+            cur_face = cap.face;
+            cur_lp = self
+                .faces
+                .get(cap.face)
+                .map(|f| f.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            cur_vertex = up.vertex;
+        }
+        // Top cone: extend the working face up to the top pole.
+        let fin = self.fin_ending_at(cur_lp, cur_vertex)?;
+        let mtop = self.mev(MevSite::AfterFin(fin), s(m - 1))?;
+        reports.push(mtop.report);
+        bands.push((cur_face, m - 2, m - 1));
+        self.debug_validate();
+
+        // ---- geometry attach: a cone or cylinder per band ----
+        let axis_at = |h: f64| o + ez * h;
+        for &(fk, lo, hi) in &bands {
+            let (r_lo, h_lo) = profile[lo];
+            let (r_hi, h_hi) = profile[hi];
+            if (r_hi - r_lo).abs() < 1e-12 {
+                // Cylinder band (constant radius).
+                let cyl_frame = Frame3 {
+                    origin: axis_at(h_lo),
+                    x: ex,
+                    y: ey,
+                    z: ez,
+                };
+                self.attach_face_surface(
+                    fk,
+                    SurfaceGeom::Analytic(Surface3::Cylinder(
+                        Cylinder3::new(cyl_frame, r_lo).map_err(geom_err)?,
+                    )),
+                    true,
+                );
+            } else {
+                // Cone band: anchor v=0 at the end with radius > 0.
+                let (anchor_r, anchor_h) = if r_lo > 0.0 {
+                    (r_lo, h_lo)
+                } else {
+                    (r_hi, h_hi)
+                };
+                let slope = (r_hi - r_lo) / (h_hi - h_lo);
+                let cone_frame = Frame3 {
+                    origin: axis_at(anchor_h),
+                    x: ex,
+                    y: ey,
+                    z: ez,
+                };
+                self.attach_face_surface(
+                    fk,
+                    SurfaceGeom::Analytic(Surface3::Cone(
+                        Cone3::new(cone_frame, anchor_r, slope.atan()).map_err(geom_err)?,
+                    )),
+                    true,
+                );
+            }
+        }
+
+        // Edges: closed -> latitude circle, open -> seam line.
+        let edge_keys: Vec<EdgeKey> = self.edges.iter().map(|(k, _)| k).collect();
+        let mut all_edges = Vec::new();
+        for ek in edge_keys {
+            let edge = self.edges.get(ek).ok_or(TopoError::StaleKey)?;
+            let (va, vb) = edge.bounds;
+            let closed = edge.is_closed();
+            let pa = self
+                .vertices
+                .get(va)
+                .map(|v| v.point)
+                .ok_or(TopoError::StaleKey)?;
+            if closed {
+                let h = (pa - o).dot(ez);
+                let center = axis_at(h);
+                let radius = (pa - center).norm();
+                let circle = Circle3::new(center, ex, ey, radius).map_err(geom_err)?;
+                self.attach_edge_curve(ek, Curve3::Circle(circle), true);
+            } else {
+                let pb = self
+                    .vertices
+                    .get(vb)
+                    .map(|v| v.point)
+                    .ok_or(TopoError::StaleKey)?;
+                let line = Line3::new(pa, pb - pa).map_err(geom_err)?;
+                self.attach_edge_curve(ek, Curve3::Line(line), true);
+            }
+            all_edges.push(ek);
+        }
+
+        let faces: Vec<FaceKey> = bands.iter().map(|&(f, _, _)| f).collect();
+        let vertices: Vec<VertexKey> = self.vertices.iter().map(|(k, _)| k).collect();
+        Ok(PrimitiveOut {
+            faces,
+            edges: all_edges,
+            vertices,
+            reports,
+        })
+    }
+
     /// Solid cylinder: axis = frame.z, base disc at the frame origin,
     /// height h. Topology V2 E3 F3 (caps + lateral with seam).
     pub fn cylinder(
@@ -973,6 +1167,60 @@ mod tests {
         ];
         let mut b = Body::new();
         assert!(b.loft(&bottom, &top).is_err(), "twisted loft should reject");
+    }
+
+    fn z_up() -> Frame3 {
+        Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap()
+    }
+
+    #[test]
+    fn revolve_bicone() {
+        // Profile pole(-1) -> equator r1 at 0 -> pole(+1): two cones,
+        // base-to-base. Each cone vol (1/3)*pi*r^2*h = pi/3; total 2pi/3.
+        let mut b = Body::new();
+        let out = b
+            .revolve(z_up(), &[(0.0, -1.0), (1.0, 0.0), (0.0, 1.0)])
+            .unwrap();
+        assert!(b.validate().is_ok(), "bicone invalid");
+        let c = b.counts();
+        assert_eq!((c.v, c.e, c.f), (3, 3, 2), "bicone counts");
+        assert_eq!(out.faces.len(), 2);
+        let v = b.mesh_volume();
+        let expect = 2.0 * core::f64::consts::PI / 3.0;
+        // Tessellation undershoot (inscribed 64-gon): within ~1%.
+        assert!(
+            (v - expect).abs() < expect * 0.01,
+            "bicone mesh_volume {v} != ~{expect}"
+        );
+    }
+
+    #[test]
+    fn revolve_barrel() {
+        // pole(-1) -> r1 at -0.5 -> r1 at 0.5 -> pole(1): two cones + a
+        // cylinder. Cones: 2*(1/3)pi*1*0.5 = pi/3; cylinder pi*1*1 = pi;
+        // total 4pi/3.
+        let mut b = Body::new();
+        b.revolve(z_up(), &[(0.0, -1.0), (1.0, -0.5), (1.0, 0.5), (0.0, 1.0)])
+            .unwrap();
+        assert!(b.validate().is_ok(), "barrel invalid");
+        let c = b.counts();
+        assert_eq!((c.v, c.e, c.f), (4, 5, 3), "barrel counts");
+        let v = b.mesh_volume();
+        let expect = 4.0 * core::f64::consts::PI / 3.0;
+        assert!(
+            (v - expect).abs() < expect * 0.01,
+            "barrel mesh_volume {v} != ~{expect}"
+        );
+    }
+
+    #[test]
+    fn revolve_rejects_open_profile() {
+        let mut b = Body::new();
+        // Both ends off-axis -> not a closed solid of revolution.
+        assert!(
+            b.revolve(z_up(), &[(1.0, 0.0), (1.0, 1.0), (0.5, 2.0)])
+                .is_err()
+        );
     }
 
     #[test]

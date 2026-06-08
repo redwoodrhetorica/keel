@@ -79,6 +79,18 @@ impl Body {
         self.face_keys().iter().map(|&f| self.face_area(f)).sum()
     }
 
+    /// Volume from the body's outward tessellation via the divergence
+    /// theorem, (1/6) sum a.(b x c) over outward triangles. Exact for
+    /// all-planar bodies; tessellation-approximate for curved faces. A
+    /// pcurve-free companion to the analytic mass_properties().volume.
+    pub fn mesh_volume(&self) -> f64 {
+        self.all_triangles()
+            .iter()
+            .map(|t| t[0].dot(t[1].cross(t[2])))
+            .sum::<f64>()
+            / 6.0
+    }
+
     /// Axis-aligned bounding box of the body (parity item 105). Tight
     /// from the tessellation: exact for planar faces, tessellation-tight
     /// for curved (a fast refinement to exact analytic extrema is a
@@ -267,6 +279,33 @@ mod tests {
             (bb.max - Vec3::new(5.0, 7.0, 9.0)).norm() < 1e-9,
             "max {:?}",
             bb.max
+        );
+    }
+
+    #[test]
+    fn cone_is_first_class_in_tessellation() {
+        // Before tessellate_cone, the lateral contributed no triangles ->
+        // bbox/area were wrong. Cone radius 1, height 1, apex at z=1.
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut b = Body::new();
+        b.cone(frame, 1.0, 1.0).unwrap();
+        let bb = b.bounding_box();
+        assert!(
+            (bb.min - Vec3::new(-1.0, -1.0, 0.0)).norm() < 1e-2,
+            "cone bbox min {:?}",
+            bb.min
+        );
+        assert!(
+            (bb.max - Vec3::new(1.0, 1.0, 1.0)).norm() < 1e-2,
+            "cone bbox max {:?}",
+            bb.max
+        );
+        // Area = base disc (pi) + lateral (pi * r * slant, slant = sqrt(2)).
+        let area = b.surface_area();
+        let expect = core::f64::consts::PI * (1.0 + core::f64::consts::SQRT_2);
+        assert!(
+            (area - expect).abs() < 0.05,
+            "cone area {area} != ~{expect}"
         );
     }
 
