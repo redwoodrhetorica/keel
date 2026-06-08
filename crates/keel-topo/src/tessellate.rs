@@ -27,7 +27,7 @@ impl Body {
                 }
                 Surface3::Cylinder(c) => self.tessellate_cylinder(face, &c.clone(), sense),
                 Surface3::Cone(c) => self.tessellate_cone(face, &c.clone(), sense),
-                Surface3::Torus(t) => self.tessellate_torus(&t.clone(), sense),
+                Surface3::Torus(t) => self.tessellate_torus(face, &t.clone(), sense),
             },
             Some(crate::entity::SurfaceGeom::Nurbs(n)) => {
                 self.tessellate_nurbs(face, &n.clone(), sense)
@@ -122,11 +122,57 @@ impl Body {
         None
     }
 
-    /// Tessellate a full ring torus. point(u, v) = c + (R + rr cos v)*
+    /// The tube-angle [v_lo, v_hi] span a torus face occupies. The full
+    /// tube (0, TAU) when the face covers its whole closed surface (the
+    /// torus primitive); otherwise the min/max boundary-vertex tube angle
+    /// (a partial-tube patch such as a fillet's quarter-torus ring).
+    fn torus_tube_span(&self, face: FaceKey, t: &keel_geom::surface::Torus3) -> (f64, f64) {
+        let tau = core::f64::consts::TAU;
+        if self.face_covers_closed_surface(face) {
+            return (0.0, tau);
+        }
+        let (c, ez, rmaj) = (t.frame.origin, t.frame.z, t.major);
+        let (mut lo, mut hi, mut any) = (f64::INFINITY, f64::NEG_INFINITY, false);
+        for &lk in self.faces.get(face).map(|f| &f.loops).into_iter().flatten() {
+            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            while let Some(fin) = self.fins.get(cur) {
+                if let Some(p) = self
+                    .fin_end_vertex(cur)
+                    .and_then(|vk| self.vertices.get(vk))
+                    .map(|v| v.point)
+                {
+                    let w = (p - c) - ez * (p - c).dot(ez);
+                    if let Some(radial) = w.try_normalize() {
+                        let d = p - (c + radial * rmaj);
+                        let v = d.dot(ez).atan2(d.dot(radial));
+                        lo = lo.min(v);
+                        hi = hi.max(v);
+                        any = true;
+                    }
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        if any && hi > lo { (lo, hi) } else { (0.0, tau) }
+    }
+
+    /// Tessellate a ring torus. point(u, v) = c + (R + rr cos v)*
     /// (ex cos u + ey sin u) + ez * rr sin v; outward points away from the
-    /// tube centreline, sense-adjusted. (Whole torus; partial-tube blend
-    /// faces are a follow-up.)
-    fn tessellate_torus(&self, torus: &keel_geom::surface::Torus3, sense: bool) -> Vec<[Vec3; 3]> {
+    /// tube centreline, sense-adjusted. Full revolution in u; the tube
+    /// angle v is trimmed to the face's span (so a fillet's quarter-torus
+    /// ring meshes only its tube quarter).
+    fn tessellate_torus(
+        &self,
+        face: FaceKey,
+        torus: &keel_geom::surface::Torus3,
+        sense: bool,
+    ) -> Vec<[Vec3; 3]> {
         let (c, ex, ey, ez, rmaj, rmin) = (
             torus.frame.origin,
             torus.frame.x,
@@ -139,6 +185,7 @@ impl Body {
         const NV: usize = 32;
         let tau = core::f64::consts::TAU;
         let sgn = if sense { 1.0 } else { -1.0 };
+        let (vlo, vhi) = self.torus_tube_span(face, torus);
         let pt = |u: f64, v: f64| -> Vec3 {
             let radial = ex * u.cos() + ey * u.sin();
             c + radial * (rmaj + rmin * v.cos()) + ez * (rmin * v.sin())
@@ -152,8 +199,8 @@ impl Body {
             let u0 = tau * i as f64 / NU as f64;
             let u1 = tau * (i + 1) as f64 / NU as f64;
             for j in 0..NV {
-                let v0 = tau * j as f64 / NV as f64;
-                let v1 = tau * (j + 1) as f64 / NV as f64;
+                let v0 = vlo + (vhi - vlo) * j as f64 / NV as f64;
+                let v1 = vlo + (vhi - vlo) * (j + 1) as f64 / NV as f64;
                 let a = pt(u0, v0);
                 let b = pt(u0, v1);
                 let cc = pt(u1, v1);

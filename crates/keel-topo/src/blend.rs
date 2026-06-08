@@ -949,6 +949,13 @@ mod tests {
             .collect();
         assert_eq!(tori.len(), 1, "expected one torus blend face");
         assert!((tori[0] - 0.3).abs() < 1e-12, "torus minor {}", tori[0]);
+        // Volume: cylinder up to z=1.7 (1.7 pi) + the rounded top (revolve
+        // of the torus quarter), ~6.170. Exercises trimmed-torus tessellation.
+        let v = filleted.mesh_volume();
+        assert!(
+            (v - 6.16998).abs() < 0.08,
+            "rim fillet mesh_volume {v} != ~6.170"
+        );
     }
 
     #[test]
