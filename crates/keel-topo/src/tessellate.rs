@@ -122,10 +122,60 @@ impl Body {
         None
     }
 
+    /// The angular [phi_lo, phi_hi] span a cylindrical face occupies,
+    /// in the frame's (ex, ey) basis. Returns the full wrap (0, TAU) when
+    /// the face carries a CLOSED circle edge (a whole lateral or SSI-
+    /// trimmed band); otherwise the min/max boundary-vertex angle (a
+    /// partial-angle patch such as a fillet's quarter-cylinder blend).
+    fn cyl_angular_span(
+        &self,
+        face: FaceKey,
+        origin: Vec3,
+        ex: Vec3,
+        ey: Vec3,
+        ez: Vec3,
+    ) -> (f64, f64) {
+        let tau = core::f64::consts::TAU;
+        let Some(f) = self.faces.get(face) else {
+            return (0.0, tau);
+        };
+        let (mut lo, mut hi, mut any) = (f64::INFINITY, f64::NEG_INFINITY, false);
+        for &lk in &f.loops {
+            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            while let Some(fin) = self.fins.get(cur) {
+                if self.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true) {
+                    return (0.0, tau);
+                }
+                if let Some(p) = self
+                    .fin_end_vertex(cur)
+                    .and_then(|vk| self.vertices.get(vk))
+                    .map(|v| v.point)
+                {
+                    let w = p - origin;
+                    let w = w - ez * w.dot(ez);
+                    let phi = w.dot(ey).atan2(w.dot(ex));
+                    lo = lo.min(phi);
+                    hi = hi.max(phi);
+                    any = true;
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        if any && hi > lo { (lo, hi) } else { (0.0, tau) }
+    }
+
     /// Lat-band tessellate a cylindrical face. The axial band [hlo,hhi]
     /// is bounded by the face's CLOSED circle edges (the cap circles of
-    /// the whole lateral, or the SSI + cap circles of a trimmed band);
-    /// the lateral is full-wrap so no angular trim. Outward = radial.
+    /// the whole lateral, or the SSI + cap circles of a trimmed band).
+    /// A face with no closed circle edge (a partial-angle patch, e.g. a
+    /// fillet's quarter-cylinder blend) is ANGULARLY TRIMMED to the
+    /// [phi_lo, phi_hi] span of its boundary vertices. Outward = radial.
     fn tessellate_cylinder(
         &self,
         face: FaceKey,
@@ -150,9 +200,9 @@ impl Body {
         if hhi - hlo <= 0.0 {
             return Vec::new();
         }
+        let (plo, phi_hi) = self.cyl_angular_span(face, origin, ex, ey, ez);
         const NV: usize = 16;
         const NP: usize = 64;
-        let tau = core::f64::consts::TAU;
         let sgn = if sense { 1.0 } else { -1.0 };
         let pt = |phi: f64, v: f64| -> Vec3 {
             origin + (ex * phi.cos() + ey * phi.sin()) * radius + ez * v
@@ -162,8 +212,8 @@ impl Body {
             let v0 = hlo + (hhi - hlo) * i as f64 / NV as f64;
             let v1 = hlo + (hhi - hlo) * (i + 1) as f64 / NV as f64;
             for j in 0..NP {
-                let p0 = tau * j as f64 / NP as f64;
-                let p1 = tau * (j + 1) as f64 / NP as f64;
+                let p0 = plo + (phi_hi - plo) * j as f64 / NP as f64;
+                let p1 = plo + (phi_hi - plo) * (j + 1) as f64 / NP as f64;
                 let a = pt(p0, v0);
                 let b = pt(p0, v1);
                 let c = pt(p1, v1);
