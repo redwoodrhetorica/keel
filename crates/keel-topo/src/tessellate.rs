@@ -16,21 +16,67 @@ impl Body {
     /// Outward-oriented triangles covering a face's trimmed region.
     /// Empty for unsupported (non-planar/non-spherical) faces in M6b.
     pub(crate) fn tessellate_face(&self, face: FaceKey) -> Vec<[Vec3; 3]> {
-        let Some(surf) = self.face_surface3(face) else {
+        let Some((sk, sense)) = self.faces.get(face).and_then(|f| f.surface) else {
             return Vec::new();
         };
-        let sense = self
-            .faces
-            .get(face)
-            .and_then(|f| f.surface)
-            .map(|(_, s)| s)
-            .unwrap_or(true);
-        match surf {
-            Surface3::Plane(p) => self.tessellate_planar(face, p.frame.z, sense),
-            Surface3::Sphere(s) => self.tessellate_sphere(face, s.frame.origin, s.radius, sense),
-            Surface3::Cylinder(c) => self.tessellate_cylinder(face, &c, sense),
-            _ => Vec::new(),
+        match self.surfaces.get(sk) {
+            Some(crate::entity::SurfaceGeom::Analytic(surf)) => match surf {
+                Surface3::Plane(p) => self.tessellate_planar(face, p.frame.z, sense),
+                Surface3::Sphere(s) => {
+                    self.tessellate_sphere(face, s.frame.origin, s.radius, sense)
+                }
+                Surface3::Cylinder(c) => self.tessellate_cylinder(face, &c.clone(), sense),
+                _ => Vec::new(),
+            },
+            Some(crate::entity::SurfaceGeom::Nurbs(n)) => self.tessellate_nurbs(&n.clone(), sense),
+            None => Vec::new(),
         }
+    }
+
+    /// Grid-tessellate a NURBS face over its parameter domain into
+    /// outward-oriented triangles (outward = the surface `local_geometry`
+    /// normal, sense-adjusted; the cell-center fallback handles
+    /// parameterization singularities like sphere poles). Whole-surface
+    /// faces only in M7a; trimmed NURBS fragments are M7a Task 4 /
+    /// M7b.
+    pub(crate) fn tessellate_nurbs(
+        &self,
+        nurbs: &keel_geom::nurbs_surface::NurbsSurface,
+        sense: bool,
+    ) -> Vec<[Vec3; 3]> {
+        let ((u0, u1), (v0, v1)) = nurbs.domain();
+        const NU: usize = 40;
+        const NV: usize = 28;
+        let sgn = if sense { 1.0 } else { -1.0 };
+        let mut tris = Vec::new();
+        let pt = |i: usize, n: usize, lo: f64, hi: f64| lo + (hi - lo) * i as f64 / n as f64;
+        for i in 0..NU {
+            let ua = pt(i, NU, u0, u1);
+            let ub = pt(i + 1, NU, u0, u1);
+            for j in 0..NV {
+                let va = pt(j, NV, v0, v1);
+                let vb = pt(j + 1, NV, v0, v1);
+                let a = nurbs.point(ua, va);
+                let b = nurbs.point(ub, va);
+                let c = nurbs.point(ub, vb);
+                let d = nurbs.point(ua, vb);
+                // Outward at the cell centre.
+                let (uc, vc) = (0.5 * (ua + ub), 0.5 * (va + vb));
+                let outward = nurbs
+                    .local_geometry(uc, vc)
+                    .ok()
+                    .map(|g| g.normal * sgn)
+                    .unwrap_or_else(|| {
+                        // Pole fallback: away from the surface centre is
+                        // ill-defined here; use the quad's own normal.
+                        (b - a).cross(d - a) * sgn
+                    });
+                for tri in [[a, b, c], [a, c, d]] {
+                    tris.push(orient(tri, outward));
+                }
+            }
+        }
+        tris
     }
 
     /// Lat-band tessellate a cylindrical face. The axial band [hlo,hhi]

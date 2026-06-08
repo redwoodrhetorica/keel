@@ -1135,3 +1135,97 @@ REMAINING in M2a:
   localization (the all-pairs O(n^2) throughput cost, also why
   fuzz_cyl_boolean throughput is low). M7 = robust booleans on NURBS-
   bounded solids (the proof bar).
+
+## Assessment (2026-06-07): is Keel a Parasolid competitor? (candid opinion, requested)
+
+Honest, calibrated opinion (not a claim, not marketing). Split into three
+buckets, because lumping them flatters or insults the work:
+
+- SOUND? Genuinely yes -- arguably more rigorously than some shipping
+  kernels. Foundations are CERTIFIED not "seems to work": extended-real
+  interval arithmetic (caught a real release-mode overflow bug),
+  Krawczyk verification on the spline solver, validity-by-construction
+  topology, a determinism contract + FNV hash, the M4 orientation audit
+  and M6b/M7a winding soundness gates that independently cross-check
+  conventions. Sound by construction + proof, not by accumulated scars.
+  Punches above its weight for its age.
+
+- ROBUST? Only partially, and this is the brutal Parasolid gap. Keel is
+  robust ON WHAT IT COVERS and robust-by-DECLINING on degeneracies (the
+  never-lie partial-success model). But Parasolid's crown jewel is the
+  thing Keel does NOT do: swallow arbitrary DIRTY real-world input
+  (near-tangent, near-coincident, sliver, mm-vs-km scale, self-
+  intersecting imports) and still return a usable answer. Keel's fuzzers
+  found exactly those cases and the response was to decline cleanly --
+  correct for now, but DECLINING IS NOT COMPETING. A CAD user wants the
+  boolean to succeed on their messy part.
+
+- COVERAGE / FEATURE-COMPLETE? Not close. Keel = booleans + primitives
+  (analytic + just-started NURBS). Parasolid = ~40 yrs, full trimmed-
+  NURBS booleans + blending/chamfer/shell/loft/sweep/sheet-metal/
+  healing/draft, dozens of subsystems. Low-single-digit % of the surface
+  area. Curved-volume verification is still a COARSE tessellated oracle
+  (no exact trimmed mass props); no differential testing vs OCCT/ABC
+  corpus yet -- robustness evidence is fuzzing-strong but real-world-
+  corpus-untested.
+
+VERDICT: NOT a Parasolid competitor today -- a legitimately sound, well-
+architected FOUNDATION that has proven the conceptual CORE (robust
+booleans, the hardest part) correctly on a tiny slice of the domain.
+
+BUT "is it a Parasolid competitor" is slightly the wrong question. Head-
+to-head nobody beats Parasolid (a billions-of-parts moat, not a code-
+quality gap). The real question is a DEFENSIBLE NICHE Parasolid doesn't
+serve well -- and Keel has one: the exact-topology/tolerant-geometry
+hybrid (file 11) that per the literature NO kernel fully ships. If M7b
+lands it (certified SSI error bounds riding into the topology, epsilon-
+solidity as a checkable contract), Keel could credibly claim PROVABLY-
+BOUNDED booleans -- a wedge for verification/simulation-meshing/
+regulated-aerospace where "empirically robust" isn't good enough. A
+wedge, not a frontal assault.
+
+One line: sound enough to be taken seriously, nowhere near robust or
+broad enough to compete yet -- but making the RIGHT architectural bets,
+with a differentiation thesis that is real rather than marketing. The
+risk isn't a wrong foundation; it's the multi-year robustness-and-
+coverage grind, and whether the niche is worth it.
+
+## Addendum 32 (2026-06-08): M7a COMPLETE (NURBS-faced solid plumbing); merged
+
+- First step of the proof milestone (M7, robust booleans on NURBS-
+  bounded solids): make the winding-classified pipeline accept NURBS
+  FACES. Branch m7a-nurbs.
+- Delivered:
+  - tessellate_nurbs (tessellate.rs): grid over the NURBS parameter
+    domain into outward triangles (outward = local_geometry normal,
+    sense-adjusted; quad-normal fallback at poles). tessellate_face now
+    dispatches on the face's SurfaceGeom (Analytic vs Nurbs), not just
+    face_surface3 (which only returns analytics).
+  - nurbs_sphere (construct.rs): the first NURBS-faced solid -- the
+    sphere TOPOLOGY of sphere() (V2E1F1) but with a genuine curved NURBS
+    surface (revolve_full of a rational quadratic semicircle meridian
+    profile about frame.z) and a NURBS meridian seam curve.
+  - Task 0 MANDATE (soundness before classifying on it): the NURBS
+    sphere's generalized winding number is ~1 inside / ~0 outside across
+    a magnitude ladder, +1 orientation audit (the revolved surface's
+    local_geometry normal points outward). Proven on a real curved NURBS
+    surface, not a degree-1 planar fake.
+- SCOPE DECISION (during execution): the NURBS BOOLEAN moved to M7b,
+  which becomes the NURBS-boolean-WITH-TOLERANT-EDGES centerpiece. A
+  working NURBS boolean needs three M7b-grade pieces (NURBS imprint
+  pcurve via project_point_surface; trimmed-NURBS fragment tessellation
+  with a parameter-space cap-side filter; the NURBS cap interior point)
+  -- and that is exactly where the exact-topology/tolerant-geometry
+  hybrid (file 11, the project's sharpest differentiation per the user)
+  gets delivered. M7a is the clean soundness-gated PLUMBING those build
+  on; aligning the milestone boundary with the thesis.
+- M7b CENTERPIECE (planned): the SSI engine ALREADY computes the curve
+  error bound (SsiCurve.tol_achieved) and currently THROWS IT AWAY when
+  the curve becomes a topology edge -- M7b plumbs it into Edge.tolerance,
+  propagates the bound through booleans, and adopts Qi/Shapiro epsilon-
+  solidity as a CHECKABLE validity contract. "Exact topology decisions
+  with tolerant geometry" -- the hybrid no kernel fully ships.
+- GATE: exact CI triplet GREEN (fmt --all --check; clippy --workspace
+  --all-targets -- -D warnings; cargo test --workspace = 238 tests:
+  90 geom + 77 math + 71 topo). No new fuzz target (M7a adds no mutation
+  path: nurbs_sphere is a constructor, tessellation is a read). Merged.
