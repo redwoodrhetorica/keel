@@ -1,6 +1,13 @@
-# Keel -> Parasolid Capability Parity Roadmap
+# Keel Capability Roadmap (Parasolid map as the ruler)
 
-**Goal:** close the capabilities/features gap between Keel and Parasolid as far as a single-maintainer, patent-safe, OSS kernel realistically can. Measured against the researcher's 144-item Parasolid capability map (`docs/research/kernel/25-parasolid-capability-map.md`).
+**Goal:** close the capabilities/features gap so Keel covers as much of a
+kernel's job as a single maintainer realistically can. Parasolid is the
+**measuring stick, not a commercial target** -- Keel is a private/OSS
+library with no intent to compete commercially; the 144-item Parasolid
+capability map (`docs/research/kernel/25-parasolid-capability-map.md`) is
+simply the most complete published inventory of "what a kernel should do."
+Patent-safety (below) is kept as a prudent default because OSS distribution
+is on the table; it is a lighter constraint if Keel stays private.
 
 ## Honest framing of "parity"
 
