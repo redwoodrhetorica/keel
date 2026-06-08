@@ -1904,3 +1904,55 @@ variable/asymmetric setback, and fillets (arc section) are follow-ups.
 RUNNING TOTAL: 55 -> 56/144. First operation of the blend/chamfer family
 (items 47-61).
 GATE: exact CI triplet green. Merged.
+
+## Addendum 56 (2026-06-08): PARTIAL-OVERLAP coincident booleans (file 39 §1); the coincident keystone completes (map 56 -> 57/144)
+
+The Addendum 53-54 coincident booleans handled FULL coincidence (faces
+that overlap entirely: abutting/identical solids). The remaining gap was
+PARTIAL coincidence -- two coplanar faces overlapping on a sub-region,
+where one face is partly on-the-other-body and partly free. The simplest
+on-on rule mis-selects these, so they were declined by the positive-volume
+post-condition. This addendum closes that gap.
+
+New module crates/keel-topo/src/coincident.rs -- the 2D overlap geometry
+(research file 39 §1.2, "the genuinely hard part"):
+  - clip_convex: Sutherland-Hodgman convex polygon intersection in a
+    shared-plane 2D basis (auto-orients the clip CCW).
+  - overlap_interior_segments(face_a, face_b, n): clips the two coplanar
+    face polygons, lifts the overlap boundary back to 3D, and keeps only
+    the edges INTERIOR to face_a (midpoint not on face_a's own boundary) --
+    exactly the cuts that must be imprinted to split face_a into its
+    on-overlap and off-overlap parts. Boundary-coincident edges need no cut.
+  - coplanar_overlap_exists: positive-area overlap test (pair detection).
+Three unit tests: partial overlap -> one interior cut at the dividing
+line; identical faces -> no cut; disjoint -> no overlap.
+
+Integration (boolean.rs): a PRE-PASS at the top of boolean().
+  - coincident_face_pairs(a, b): finds coplanar (parallel normals + shared
+    plane) planar faces with positive-area overlap.
+  - preimprint_coincident_overlaps: clones both operands and imprints each
+    overlap's interior cuts onto the respective face via the existing
+    imprint_open_curve (boundary-to-boundary face split). Returns None
+    (originals flow through unchanged) when no coincident faces exist, so
+    transversal booleans are completely unaffected. Best-effort imprint;
+    the positive-volume post-condition still guards a bad selection. The
+    rest of boolean() is untouched -- a, b rebind to &Body either way.
+After the pre-pass the partial overlap is split into fragments that the
+existing on-on tables (Addendum 54) classify correctly.
+
+Test: L-SHAPE UNION. A = 2x2x1 base block; B = 1x2x1 block stacked on its
+LEFT half. The z=1 plane is a partial coincidence (A's top 2x2 vs B's
+bottom 1x2). Pre-pass cuts A's top along x=1; the left half drops as
+interior, the right half stays -> a valid L-solid, volume 4+2 = 6.
+Previously this was declined. Full workspace green (107/77/106), fmt +
+clippy -D warnings clean, fuzz_boolean re-soaked (new pre-pass path).
+
+Scope/deferrals (honest): planar + CONVEX faces only (Sutherland-Hodgman
+needs convex operands); curved coincident carriers and non-convex/holed
+overlaps (a fully-interior overlap island needs a hole loop, not a
+crossing cut) remain follow-ups per file 39 §1.4/§5. Multiple cuts on one
+face use the first-imprint key (best-effort) -- robust multi-segment key
+remapping is a follow-up.
+RUNNING TOTAL: 56 -> 57/144. The coincident-boolean keystone (full +
+partial) is now complete for the planar-convex case.
+GATE: exact CI triplet green. Merged.

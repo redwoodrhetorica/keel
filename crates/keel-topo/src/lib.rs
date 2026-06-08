@@ -9,6 +9,7 @@ pub mod arena;
 pub mod body;
 pub mod boolean;
 pub mod chamfer;
+pub mod coincident;
 pub mod construct;
 pub mod entity;
 pub mod euler;
