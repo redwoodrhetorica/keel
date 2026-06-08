@@ -9,6 +9,36 @@ use crate::nurbs_surface::{BezierPatch, NurbsSurface};
 use crate::surface::SurfaceProjection;
 use keel_math::bbox::Aabb3;
 use keel_math::vec::Vec3;
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+
+/// A patch on the closest-point search frontier, keyed by the lower
+/// bound `lb` = distance from the query point to the patch's control
+/// AABB (which contains the patch, weights being positive). Ordered so
+/// the BinaryHeap (a max-heap) pops the SMALLEST `lb` first -> best-first
+/// branch-and-bound.
+struct PatchFront {
+    lb: f64,
+    patch: BezierPatch,
+}
+impl PartialEq for PatchFront {
+    fn eq(&self, other: &Self) -> bool {
+        self.lb == other.lb
+    }
+}
+impl Eq for PatchFront {}
+impl PartialOrd for PatchFront {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for PatchFront {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Smaller lb = higher priority: reverse the natural order so the
+        // max-heap surfaces the closest patch.
+        other.lb.partial_cmp(&self.lb).unwrap_or(Ordering::Equal)
+    }
+}
 
 /// Result of a closest-point query.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -155,37 +185,46 @@ pub fn project_point_surface(
             };
         }
     }
-    // Seed the interior upper bound from every patch midpoint (polished).
-    for pc in &patches {
-        polish_and_update(srf, pc, p, &mut best);
-    }
-    let mut stack: Vec<BezierPatch> = patches;
-    let mut guard = 0usize;
-    while let Some(pc) = stack.pop() {
-        guard += 1;
-        if guard > 100_000 {
-            break; // pathological subdivision; return best-so-far
-        }
+    // Best-first branch-and-bound. Seed `best` from every patch midpoint,
+    // then expand the patch whose control-AABB is CLOSEST to p first, so
+    // `best` tightens quickly and exclusion is strong. Soundness: a
+    // patch's control AABB contains the patch (positive weights), so a
+    // patch with lower bound > best cannot hold a closer point. With
+    // best-first ordering, the first popped patch whose lower bound
+    // exceeds `best` proves every remaining patch is at least as far ->
+    // the current `best` is the certified global minimum. (The previous
+    // DFS stack + iteration guard could exit early with a non-global
+    // result on high-derivative surfaces; this cannot.)
+    let mut heap: BinaryHeap<PatchFront> = BinaryHeap::new();
+    for pc in patches {
+        polish_and_update(srf, &pc, p, &mut best);
         let (lo, hi) = pc.control_aabb();
-        if dist_to_aabb(p, &Aabb3 { min: lo, max: hi }) > best.distance + 1e-12 {
-            continue; // provably no closer point in this patch
+        let lb = dist_to_aabb(p, &Aabb3 { min: lo, max: hi });
+        heap.push(PatchFront { lb, patch: pc });
+    }
+    while let Some(PatchFront { lb, patch }) = heap.pop() {
+        if lb > best.distance + 1e-12 {
+            break; // closest remaining patch is farther than best: done.
         }
-        let du = pc.u1 - pc.u0;
-        let dv = pc.v1 - pc.v0;
+        let du = patch.u1 - patch.u0;
+        let dv = patch.v1 - patch.v0;
         if du <= width_tol && dv <= width_tol {
-            polish_and_update(srf, &pc, p, &mut best);
-            continue;
+            continue; // leaf already polished when pushed.
         }
         let (a, b) = if du >= dv {
-            pc.subdivide_u(0.5)
+            patch.subdivide_u(0.5)
         } else {
-            pc.subdivide_v(0.5)
+            patch.subdivide_v(0.5)
         };
         for half in [a, b] {
             polish_and_update(srf, &half, p, &mut best);
             let (lo, hi) = half.control_aabb();
-            if dist_to_aabb(p, &Aabb3 { min: lo, max: hi }) <= best.distance + 1e-12 {
-                stack.push(half);
+            let hlb = dist_to_aabb(p, &Aabb3 { min: lo, max: hi });
+            if hlb <= best.distance + 1e-12 {
+                heap.push(PatchFront {
+                    lb: hlb,
+                    patch: half,
+                });
             }
         }
     }

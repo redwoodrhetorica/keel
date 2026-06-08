@@ -1566,3 +1566,89 @@ GATE: exact CI triplet GREEN (fmt; clippy --workspace --all-targets -D
 warnings; cargo test --workspace = 262 tests: 107 geom + 77 math + 78
 topo). No new fuzz target (attributes are a pure data store, no geometric
 mutation path). Merged.
+
+## Addendum 39 (2026-06-08): Peer review of crusst -- borrowable ideas logged
+
+Read-only review of crussella0129/crusst (~6845 LOC, pure-Rust nalgebra
+B-rep peer; cloned to ../crusst-peer, nothing changed). It is the mirror
+image of where Keel started: ALL representation, NO operations. Real:
+coedge/half-edge topology (MANIFOLD-ONLY), analytic surfaces + NURBS
+(faithful NURBS-Book de Boor basis), curves, primitives, adaptive
+tessellation, topology validation (2-coedges/edge + Euler/genus), a fluent
+Shape builder, and multi-format export. STUBBED: booleans (StubBooleanEngine
+-> NotImplemented), fillet, chamfer, shell, loft, sweep -- all
+NotImplemented. Placeholder (dummy linear) pcurves; shallow tests.
+
+BORROW (worth pulling into Keel; Keel is far ahead on the modeling spine,
+so only the interchange/ergonomics layer is worth taking):
+1. STEP AP203 EXPORT -- the single highest-value takeaway. Keel has ZERO
+   interchange today (an adoption blocker). crusst's src/export/step.rs is
+   a working blueprint: direct topology->STEP entity mapping with NO
+   tessellation -- MANIFOLD_SOLID_BREP + CLOSED_SHELL, ADVANCED_FACE +
+   FACE_OUTER_BOUND, EDGE_CURVE, and B_SPLINE_SURFACE_WITH_KNOTS /
+   B_SPLINE_CURVE_WITH_KNOTS with real multiplicities+knots, under
+   AUTOMOTIVE_DESIGN + ADVANCED_BREP_SHAPE_REPRESENTATION. Keel's geometry
+   is MORE faithful (real pcurves, certified SSI seams, canonical
+   recovery), so Keel STEP output would be strictly better. Pull forward
+   as an early, cheap, high-visibility milestone -> roadmap.
+2. Export breadth STL/OBJ/3MF -- thin writers over Keel's existing
+   tessellation; 3MF is the additive-manufacturing lingua franca.
+3. A fluent Shape-style builder over the low-level Body/Euler API
+   (Shape::sphere(r).translate(..).difference(..)) -- usability, no kernel
+   change.
+4. A `mint`/glam math-interop feature -- lowers downstream-graphics
+   adoption friction (Keel uses its own keel-math).
+5. pcurve-as-first-class-coedge-field with a Curve2 (incl. NURBS2) type --
+   Parasolid-style always-present pcurve, done FAITHFULLY (unlike crusst's
+   placeholders), cleans up trimmed-face + STEP/trim export.
+
+DO NOT borrow: the modeling core. crusst has no booleans/fillet/shell,
+manifold-only topology, placeholder pcurves. Keel leads decisively there.
+See memory [[peer-kernels]].
+
+## Addendum 40 (2026-06-08): FOUNDATION FIX -- certified surface projector made globally correct + 25x faster
+
+A proptest soundness oracle (project::tests::surface_projection_is_global)
+caught project_point_surface returning a NON-GLOBAL (local) minimum on a
+high-derivative degree-(2,3) rational NURBS surface; proptest persisted the
+counterexample to proptest-regressions/project.txt (a permanent golden
+case). User directive: fix the foundation before building further.
+
+ROOT CAUSE: the certified projector used the correct Selimovic/Ma-Hewitt
+subdivide-with-convex-hull-exclusion architecture (research b-nurbs-freeform
+section "Closest-point projection"), but explored patches with a DFS STACK
+plus a `guard > 100_000` hard break. On a wild surface, DFS visits far
+regions before near ones, so `best` stays loose, AABB exclusion is weak, the
+stack explodes, the guard fires, and it returns an UNDER-CONVERGED best.
+This caused both the wrong answer AND the 376s runtime.
+
+FIX: best-first branch-and-bound. Replace the stack with a BinaryHeap
+keyed by the patch's control-AABB lower bound to p (PatchFront), expanding
+the CLOSEST patch first. `best` tightens immediately, exclusion becomes
+strong, and the first popped patch whose lower bound exceeds `best` proves
+every remaining patch is at least as far -> the current best is the
+CERTIFIED GLOBAL minimum (early, provable termination; no guard, no
+explosion). Soundness unchanged (control AABB contains the patch; positive
+weights). RESULT: the proptest (persisted counterexample + 16 random cases)
+passes in 14.67s (was 376s, 25x); the whole keel-geom suite dropped 348s ->
+23s since everything using the projector is now fast. 107/107 geom green.
+The persisted regression seed is KEPT as a permanent golden case.
+
+## Addendum 41 (2026-06-08): Parity Phase 0a (partial) -- multiple tool bodies + imprint-only (map 35 -> 37/144)
+
+The tractable general-position-boolean wins that do not need the hard
+coincident/tangent machinery (which remains the next milestone, to be built
+on the Zhou/Jacobson winding-number-VECTOR + coincidence-first + symbolic
+perturbation approach from research d-booleans-tolerant). Closed items:
+- 30 MULTIPLE TOOL BODIES: boolean_multi(target, &[tools], op, tol) applies
+  tools in order (union/intersection accumulate, difference subtracts each).
+  Tested: empty list = unchanged; single = direct boolean; two-tool sphere
+  dimple. (Found a coincidence false-positive when two cylinder blind-holes
+  share a floor plane -> used spheres, which avoids coplanar faces.)
+- 32 IMPRINT-ONLY: imprint(a, b, tol) imprints the SSI intersection onto
+  BOTH operands as shared edges without combining (reuses imprint_operand).
+  Tested: two spheres each split 1 face -> 2, both still valid.
+RUNNING TOTAL: capability map 35 -> 37/144.
+REMAINING in 0a (next milestone): coincident/tangent (33), sheet booleans
+(28), general/non-manifold bodies (29), local face-pair (31). GATE: exact CI
+triplet green. Merged.

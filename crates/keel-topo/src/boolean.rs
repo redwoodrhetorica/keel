@@ -1443,6 +1443,50 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, B
     Ok(BoolResult { body, faults, op })
 }
 
+/// Apply `op` against `target` for each tool in `tools`, in order
+/// (parity item 30: multiple tool bodies per boolean). Union and
+/// intersection accumulate; difference subtracts each tool in turn. An
+/// empty tool list returns the target unchanged.
+pub fn boolean_multi(
+    target: &Body,
+    tools: &[&Body],
+    op: BoolOp,
+    tol: f64,
+) -> Result<BoolResult, BoolFault> {
+    let mut faults = Vec::new();
+    let mut acc: Option<Body> = None;
+    for &tool in tools {
+        let base = acc.as_ref().unwrap_or(target);
+        let res = boolean(base, tool, op, tol)?;
+        faults.extend(res.faults);
+        acc = Some(res.body);
+    }
+    Ok(BoolResult {
+        body: acc.unwrap_or_else(|| target.clone()),
+        faults,
+        op,
+    })
+}
+
+/// Imprint the surface-surface intersection of two bodies onto BOTH as
+/// shared edges, WITHOUT combining them (parity item 32: boolean
+/// imprint-only / PK_BODY_imprint). Returns the two operands, each split
+/// along the intersection curve. Coincident/tangent face pairs decline
+/// as for a full boolean.
+pub fn imprint(a: &Body, b: &Body, tol: f64) -> Result<(Body, Body), BoolFault> {
+    let (seams, mut faults) = seam_curves(a, b, tol);
+    if let Some(f) = faults
+        .iter()
+        .find(|f| matches!(f, BoolFault::Coincident(..) | BoolFault::Tangent(..)))
+        .cloned()
+    {
+        return Err(f);
+    }
+    let ia = imprint_operand(a, &seams, |s| s.face_a, tol, &mut faults);
+    let ib = imprint_operand(b, &seams, |s| s.face_b, tol, &mut faults);
+    Ok((ia.body, ib.body))
+}
+
 /// Endpoints of a seam curve (sample at the parameter ends; closed
 /// curves return the seam point twice).
 fn curve_endpoints(c: &keel_geom::curve::Curve3) -> (keel_math::vec::Vec3, keel_math::vec::Vec3) {
@@ -2601,6 +2645,52 @@ mod tests {
             (v - v_lens).abs() < 0.05 * v_lens,
             "nurbs-nurbs lens volume {v} vs {v_lens}"
         );
+    }
+
+    #[test]
+    fn boolean_multi_empty_single_and_two_tools() {
+        // Empty tool list returns the target unchanged.
+        let a = z_sphere(Vec3::ZERO, 1.0);
+        let r0 = boolean_multi(&a, &[], BoolOp::Intersection, 1e-7).unwrap();
+        assert!((r0.body.tessellated_volume() - a.tessellated_volume()).abs() < 1e-6);
+
+        // A single tool equals the direct boolean.
+        let b = z_sphere(Vec3::new(0.0, 0.0, 1.5), 1.0);
+        let r1 = boolean_multi(&a, &[&b], BoolOp::Intersection, 1e-7).unwrap();
+        let direct = boolean(&a, &b, BoolOp::Intersection, 1e-7).unwrap();
+        assert!((r1.body.tessellated_volume() - direct.body.tessellated_volume()).abs() < 1e-6);
+
+        // Two tools: the proven sphere-difference config (unit spheres
+        // at distance 1.5) applied at both poles -- a sphere with two
+        // independent dimples. Spheres avoid the coplanar-face
+        // coincidence two same-depth cylinder floors would trigger.
+        let core = z_sphere(Vec3::ZERO, 1.0);
+        let v_core = core.tessellated_volume();
+        let s1 = z_sphere(Vec3::new(0.0, 0.0, 1.5), 1.0);
+        let s2 = z_sphere(Vec3::new(0.0, 0.0, -1.5), 1.0);
+        let res = boolean_multi(&core, &[&s1, &s2], BoolOp::Difference, 1e-7).unwrap();
+        assert!(
+            res.body.validate().is_ok(),
+            "two-tool result invalid: {:?}",
+            res.faults
+        );
+        let v = res.body.tessellated_volume();
+        assert!(
+            v.is_finite() && v < v_core && v > 0.0,
+            "two-tool volume {v} vs core {v_core}"
+        );
+    }
+
+    #[test]
+    fn imprint_only_shares_intersection_edge() {
+        // Imprint-only: the intersection circle splits each sphere's
+        // single face into two, leaving both bodies valid and separate.
+        let a = z_sphere(Vec3::ZERO, 1.0);
+        let b = z_sphere(Vec3::new(0.0, 0.0, 1.5), 1.0);
+        let (ia, ib) = imprint(&a, &b, 1e-7).unwrap();
+        assert_eq!(ia.counts().f, 2, "operand a not imprinted");
+        assert_eq!(ib.counts().f, 2, "operand b not imprinted");
+        assert!(ia.validate().is_ok() && ib.validate().is_ok());
     }
 
     #[test]
