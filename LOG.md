@@ -2222,3 +2222,39 @@ RUNNING TOTAL: stays 61/144 (infrastructure; fixes the torus primitive +
 unblocks the torus-rung fillet surgery).
 GATE: exact CI triplet green (119 keel-topo). tessellate shared with the
 winding classifier -> fuzz_boolean re-soaked. Merged.
+
+## Addendum 66 (2026-06-08): TORUS FILLET complete -- cap-rim rounding to exact torus (file 40 rung 2; map 61 -> 62/144)
+
+Completed the second rung of the exact-analytic blend ladder: fillet_cap_rim(
+edge, radius) rounds a CYLINDRICAL-BOSS RIM (a planar cap meeting a cylinder
+perpendicular to its axis) with an exact torus blend. Both fillet rungs now
+work end to end (rung 1 plane-plane -> cylinder; rung 2 plane-cylinder -> torus).
+
+Surgery (file 40 §3 for the circle-spine case): imprint the two SPRING CIRCLES
+(spring_plane on the cap via imprint_closed_curve; spring_cyl on the periodic
+lateral via imprint_closed_curve_crossing -- it crosses the cylinder seam),
+trimming the cap to radius R-r and the cylinder to the offset height; then
+remove the sharp rim and form the torus ring.
+KEY TOPOLOGY INSIGHT: imprinting the interior spring_plane circle makes the cap
+annulus a HOLED face (rim outer loop + spring_plane hole loop), and kef refuses
+a multi-loop dying face. Fix: mekr(fin_outer, fin_ring) (the inverse of kemr)
+bridges the spring_plane hole to the rim outer loop, making the annulus single-
+loop (the bridge becomes the seam of the periodic torus ring); THEN kef(rim)
+merges the annulus and the cylinder top band into the ring, which gets the exact
+Torus3. This periodic-ring construction is what the cylinder fillet did not need
+(its open-line spring curves gave simple non-holed strips). imprint_ring helper
+dispatches crossing-vs-interior like the boolean does.
+
+Test: cylinder R=1 h=2, round the top rim r=0.3 -> validate() ok, exactly one
+torus blend face (minor 0.3). The torus fillet OPERATION produces a valid B-rep.
+
+Scope/deferrals: cap case (plane perpendicular to cylinder axis), R > 2r,
+convex. Trimmed-TORUS tessellation (partial tube -> mesh_volume on the result;
+tessellate_torus is full-tube so the ring is not yet measured -- validate proves
+topology + exact surface), general non-perpendicular plane-cylinder (cyclide),
+concave, variable radius, and vertex blends remain follow-ups.
+RUNNING TOTAL: 61 -> 62/144. Constant-radius fillet now covers BOTH the
+plane-plane and the plane-cylinder (curved-support rim) cases exactly.
+GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D
+warnings + workspace test 120 keel-topo). Euler-op surgery (imprint/mekr/kef)
+covered by fuzz_topo_ops + fuzz_imprint; no boolean/tessellate change. Merged.
