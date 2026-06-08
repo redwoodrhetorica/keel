@@ -1540,3 +1540,29 @@ offset (sample-displace-refit-certify) is the follow-up 0b-ii. This is an
 ENABLER -- it does not tick a 144-map item by itself (offsets surface in
 items 37/41/45 as OPERATIONS, built later). CI triplet green (260 tests:
 107 geom + 77 math + 76 topo). Capability map unchanged at baseline.
+
+## Addendum 38 (2026-06-08): Parity Phase 0c -- attribute system COMPLETE (map 30 -> 35/144)
+
+Closed Parasolid capability-map items 117-121. The Body already had a
+minimal attr store (BTreeMap<EntityId, BTreeMap<String, AttrValue>> + basic
+set_attr/attr + cleanup on delete); completed it to a real system:
+- AttrValue extended with Vec3([f64;3]) (colors/directions) and Bytes
+  (raw user fields) alongside F64/I64/Bool/Str. [117, 119]
+- Full API: set_attr/attr/remove_attr/attr_keys, plus face_id/edge_id/
+  vertex_id (key -> stable EntityId) so callers can attribute entities
+  they hold a key to.
+- System attributes [118, 120]: set_color/color ([f64;3] RGB), set_name/
+  name, set_density/density, set_user_field/user_field convenience
+  accessors over well-known keys.
+- PROPAGATION [121]: a single central hook in Body::register -- a
+  SplitChild or Modified entity inherits its parent's attributes, a
+  MergeResult inherits from its primary source, Generated (lower-dim
+  spawn) does NOT inherit; the child's own sets override. Because every
+  operation registers entities through this path, attributes propagate
+  through ALL operations (split/boolean/euler) for free. Tested: split a
+  block edge -> both children inherit the parent's color+name.
+RUNNING TOTAL: capability map 30 -> 35/144 (items 117-121).
+GATE: exact CI triplet GREEN (fmt; clippy --workspace --all-targets -D
+warnings; cargo test --workspace = 262 tests: 107 geom + 77 math + 78
+topo). No new fuzz target (attributes are a pure data store, no geometric
+mutation path). Merged.

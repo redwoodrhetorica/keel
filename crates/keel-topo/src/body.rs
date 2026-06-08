@@ -201,6 +201,71 @@ impl Body {
         self.attrs.get(&id).and_then(|m| m.get(key))
     }
 
+    /// Remove one attribute; returns the previous value if present.
+    pub fn remove_attr(&mut self, id: EntityId, key: &str) -> Option<AttrValue> {
+        self.attrs.get_mut(&id).and_then(|m| m.remove(key))
+    }
+
+    /// All attribute keys on an entity (deterministic order).
+    pub fn attr_keys(&self, id: EntityId) -> Vec<String> {
+        self.attrs
+            .get(&id)
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    // Key -> stable EntityId, so callers can attribute entities they hold
+    // a key to (items 117-120).
+    pub fn face_id(&self, f: FaceKey) -> Option<EntityId> {
+        self.faces.get(f).map(|x| x.id)
+    }
+    pub fn edge_id(&self, e: EdgeKey) -> Option<EntityId> {
+        self.edges.get(e).map(|x| x.id)
+    }
+    pub fn vertex_id(&self, v: VertexKey) -> Option<EntityId> {
+        self.vertices.get(v).map(|x| x.id)
+    }
+
+    // System attributes (item 118/120): well-known names with typed
+    // convenience accessors. Colors are RGB in [0,1].
+    pub fn set_color(&mut self, id: EntityId, rgb: [f64; 3]) {
+        self.set_attr(id, "color", AttrValue::Vec3(rgb));
+    }
+    pub fn color(&self, id: EntityId) -> Option<[f64; 3]> {
+        match self.attr(id, "color") {
+            Some(AttrValue::Vec3(c)) => Some(*c),
+            _ => None,
+        }
+    }
+    pub fn set_name(&mut self, id: EntityId, name: &str) {
+        self.set_attr(id, "name", AttrValue::Str(name.into()));
+    }
+    pub fn name(&self, id: EntityId) -> Option<&str> {
+        match self.attr(id, "name") {
+            Some(AttrValue::Str(s)) => Some(s),
+            _ => None,
+        }
+    }
+    pub fn set_density(&mut self, id: EntityId, density: f64) {
+        self.set_attr(id, "density", AttrValue::F64(density));
+    }
+    pub fn density(&self, id: EntityId) -> Option<f64> {
+        match self.attr(id, "density") {
+            Some(AttrValue::F64(d)) => Some(*d),
+            _ => None,
+        }
+    }
+    /// Per-entity raw user field (item 119).
+    pub fn set_user_field(&mut self, id: EntityId, bytes: Vec<u8>) {
+        self.set_attr(id, "user", AttrValue::Bytes(bytes));
+    }
+    pub fn user_field(&self, id: EntityId) -> Option<&[u8]> {
+        match self.attr(id, "user") {
+            Some(AttrValue::Bytes(b)) => Some(b),
+            _ => None,
+        }
+    }
+
     // ---- geometry attachment --------------------------------------------
 
     pub fn add_curve(&mut self, c: CurveGeom) -> CurveKey {
@@ -354,6 +419,26 @@ impl Body {
             Derivation::SplitChild { from, .. } => rec.note_split(*from, id),
             Derivation::MergeResult { from } => rec.report.merged.push((from.clone(), id)),
         }
+        // Attribute propagation (parity item 121): a split piece or a
+        // modified entity inherits its parent's attributes; a merge
+        // result inherits from its primary source. A `Generated` entity
+        // (a lower-dimensional spawn, e.g. a fin off a face) does NOT
+        // inherit -- it is a different entity. The child's own later
+        // sets override. Done at register time, before the parent is
+        // unregistered, so the source attributes are still present.
+        let inherit_from = match &d {
+            Derivation::Modified { from } | Derivation::SplitChild { from, .. } => Some(*from),
+            Derivation::MergeResult { from } => from.first().copied(),
+            Derivation::Created | Derivation::Generated { .. } => None,
+        };
+        if let Some(src) = inherit_from
+            && let Some(parent) = self.attrs.get(&src).cloned()
+        {
+            let child = self.attrs.entry(id).or_default();
+            for (k, v) in parent {
+                child.entry(k).or_insert(v);
+            }
+        }
         self.lineage.insert(
             id,
             Lineage {
@@ -420,6 +505,52 @@ impl OpRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attributes_typed_set_get_remove_list() {
+        let mut b = Body::new();
+        let out = b.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let fid = b.face_id(out.faces[0]).unwrap();
+        b.set_attr(fid, "count", AttrValue::I64(7));
+        b.set_color(fid, [1.0, 0.0, 0.0]);
+        b.set_name(fid, "top");
+        b.set_density(fid, 2.7);
+        b.set_user_field(fid, vec![9, 8, 7]);
+        assert_eq!(b.attr(fid, "count"), Some(&AttrValue::I64(7)));
+        assert_eq!(b.color(fid), Some([1.0, 0.0, 0.0]));
+        assert_eq!(b.name(fid), Some("top"));
+        assert_eq!(b.density(fid), Some(2.7));
+        assert_eq!(b.user_field(fid), Some(&[9u8, 8, 7][..]));
+        let mut keys = b.attr_keys(fid);
+        keys.sort();
+        assert_eq!(keys, vec!["color", "count", "density", "name", "user"]);
+        assert_eq!(b.remove_attr(fid, "count"), Some(AttrValue::I64(7)));
+        assert!(b.attr(fid, "count").is_none());
+    }
+
+    #[test]
+    fn attributes_propagate_on_split() {
+        // Item 121: a split edge's children inherit the parent's
+        // attributes through the lineage register hook.
+        let mut b = Body::new();
+        let out = b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let ek = out.edges[0];
+        let eid = b.edge_id(ek).unwrap();
+        b.set_color(eid, [0.0, 1.0, 0.0]);
+        b.set_name(eid, "seam");
+        let (v0, v1) = b.edges.get(ek).unwrap().bounds;
+        let mid = (b.vertices.get(v0).unwrap().point + b.vertices.get(v1).unwrap().point) * 0.5;
+        let sp = b.split_edge(ek, mid).unwrap();
+        for child in [sp.edge_a, sp.edge_b] {
+            let cid = b.edge_id(child).unwrap();
+            assert_eq!(
+                b.color(cid),
+                Some([0.0, 1.0, 0.0]),
+                "split child inherits color"
+            );
+            assert_eq!(b.name(cid), Some("seam"), "split child inherits name");
+        }
+    }
 
     #[test]
     fn entity_ids_are_monotonic_and_stable() {
