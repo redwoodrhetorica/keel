@@ -454,11 +454,14 @@ mod tests {
             .unwrap(),
         );
         b.imprint_closed_curve(top, &circle, 1e-9).unwrap();
-        // Mass properties now need trimmed-face integration (Task 6);
-        // until then the annulus face (outer loop + inner ring) is not
-        // integrable, so this asserts the topology is valid and defers
-        // the volume re-check to the Green-theorem task.
-        let _ = (v_before, Surface3::Cylinder, Cylinder3::new, Frame3::from_z);
         assert!(b.validate().is_ok());
+        // Trimmed-face mass properties (Green's theorem, Task 6): the
+        // imprint splits a coplanar face, so the volume is unchanged.
+        let v_after = b.mass_properties().unwrap().volume;
+        assert!(
+            (v_after - v_before).abs() < 1e-9 * v_before,
+            "volume changed by imprint: {v_before} -> {v_after}"
+        );
+        let _ = (Surface3::Cylinder, Cylinder3::new, Frame3::from_z);
     }
 }
