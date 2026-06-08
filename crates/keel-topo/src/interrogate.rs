@@ -310,6 +310,32 @@ mod tests {
     }
 
     #[test]
+    fn torus_is_first_class_in_tessellation() {
+        // Before tessellate_torus the lateral gave no triangles. Torus
+        // major 3, minor 1: bbox xy +/-4, z +/-1; volume 2 pi^2 R r^2.
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut b = Body::new();
+        b.torus(frame, 3.0, 1.0).unwrap();
+        let bb = b.bounding_box();
+        assert!(
+            (bb.min - Vec3::new(-4.0, -4.0, -1.0)).norm() < 1e-2,
+            "torus bbox min {:?}",
+            bb.min
+        );
+        assert!(
+            (bb.max - Vec3::new(4.0, 4.0, 1.0)).norm() < 1e-2,
+            "torus bbox max {:?}",
+            bb.max
+        );
+        let v = b.mesh_volume();
+        let expect = 2.0 * core::f64::consts::PI.powi(2) * 3.0 * 1.0;
+        assert!(
+            (v - expect).abs() < expect * 0.01,
+            "torus mesh_volume {v} != ~{expect}"
+        );
+    }
+
+    #[test]
     fn surface_area_of_block_is_exact() {
         // 2x3x4 block: area = 2(2*3 + 3*4 + 2*4) = 2(6+12+8) = 52.
         let mut b = Body::new();
