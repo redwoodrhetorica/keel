@@ -44,6 +44,47 @@ pub struct EdgeBlend {
 }
 
 impl Body {
+    /// Is `edge` convex (the material occupies the small dihedral) or
+    /// concave/reentrant? Probes the generalized winding number just off
+    /// the edge along the in-face bisector (the direction into both
+    /// faces' interiors): inside the material means convex. Returns None
+    /// if the edge is not a clean two-face manifold edge.
+    pub(crate) fn edge_is_convex(&self, edge: EdgeKey) -> Option<bool> {
+        let faces = self.faces_around_edge(edge);
+        if faces.len() != 2 {
+            return None;
+        }
+        let (va, vb) = self.edges.get(edge)?.bounds;
+        let pa = self.vertices.get(va)?.point;
+        let pb = self.vertices.get(vb)?.point;
+        let m = (pa + pb) * 0.5;
+        let t = (pb - pa).try_normalize()?;
+        let n0 = self.face_outward_normal(faces[0])?;
+        let n1 = self.face_outward_normal(faces[1])?;
+        let cen = |pts: &[Vec3]| -> Vec3 {
+            if pts.is_empty() {
+                Vec3::ZERO
+            } else {
+                pts.iter().fold(Vec3::ZERO, |a, &p| a + p) * (1.0 / pts.len() as f64)
+            }
+        };
+        let c0 = cen(&self.face_outer_loop_points(faces[0]));
+        let c1 = cen(&self.face_outer_loop_points(faces[1]));
+        // In-face directions into each face's interior (perp to the edge).
+        let mut u0 = t.cross(n0);
+        if (c0 - m).dot(u0) < 0.0 {
+            u0 = u0 * -1.0;
+        }
+        let mut u1 = t.cross(n1);
+        if (c1 - m).dot(u1) < 0.0 {
+            u1 = u1 * -1.0;
+        }
+        let bis = (u0 + u1).try_normalize()?;
+        let scale = (c0 - m).norm().min((c1 - m).norm()).max(1e-3);
+        let probe = m + bis * (scale * 0.05);
+        Some(self.generalized_winding_number(probe) > 0.5)
+    }
+
     /// Generate the exact-cylinder blend surface for a convex `edge`
     /// between two planar faces, rolling a ball of `radius` r (file 40
     /// rung 1). Returns the spine, both spring lines, and the cylinder.
@@ -93,11 +134,16 @@ impl Body {
             .copied()
             .ok_or(TopoError::Precondition("blend: face point"))?;
 
-        // Offset each support plane by r toward the material (the side
-        // opposite its outward normal): { x : n . x = n . p - r }. The
-        // spine is the intersection line of the two offset planes.
-        let d1 = n1.dot(p1) - radius;
-        let d2 = n2.dot(p2) - radius;
+        // Offset each support plane by r: toward the material for a
+        // convex edge ({n.x = n.p - r}, the ball sits in the material), or
+        // away from it for a concave/reentrant edge (the ball fills the
+        // notch). The spine is the intersection line of the two offsets.
+        let convex = self
+            .edge_is_convex(edge)
+            .ok_or(TopoError::Precondition("blend: cannot determine convexity"))?;
+        let off = if convex { -radius } else { radius };
+        let d1 = n1.dot(p1) + off;
+        let d2 = n2.dot(p2) + off;
         let dir = n1
             .cross(n2)
             .try_normalize()
@@ -598,6 +644,14 @@ impl Body {
         if cylinders == 1 {
             return self.fillet_cap_rim(edge, radius);
         }
+        // The plane-plane surgery below is convex-only; the concave
+        // (reentrant) trim-and-stitch differs (it adds material) and is a
+        // follow-up, though the blend geometry already handles both.
+        if self.edge_is_convex(edge) == Some(false) {
+            return Err(TopoError::Precondition(
+                "fillet: concave-edge surgery is a follow-up",
+            ));
+        }
         let blend = self.blend_cylinder_for_edge(edge, radius)?;
         let (f1, f2) = (faces[0], faces[1]);
         let (va_k, vb_k) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
@@ -1006,6 +1060,69 @@ mod tests {
         let v = filleted.mesh_volume();
         // Symmetric to the top-rim case: same removed corner, so 6.170.
         assert!((v - 6.16998).abs() < 0.08, "bottom rim fillet volume {v}");
+    }
+
+    #[test]
+    fn concave_blend_geometry_and_convexity() {
+        // L-prism (a non-convex profile) has a reentrant vertical edge at
+        // (1,1) and convex corners elsewhere.
+        let lprofile = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(2.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(1.0, 2.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+        ];
+        let mut b = Body::new();
+        b.prism(&lprofile, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        assert!(b.validate().is_ok(), "L-prism invalid");
+        let vert_at = |b: &Body, x: f64, y: f64| {
+            b.edges.iter().map(|(k, _)| k).find(move |&e| {
+                let bd = b.edges.get(e).unwrap().bounds;
+                let (pa, pb) = (
+                    b.vertices.get(bd.0).unwrap().point,
+                    b.vertices.get(bd.1).unwrap().point,
+                );
+                (pa.x - x).abs() < 1e-9
+                    && (pa.y - y).abs() < 1e-9
+                    && (pb.x - x).abs() < 1e-9
+                    && (pb.y - y).abs() < 1e-9
+            })
+        };
+        let concave = vert_at(&b, 1.0, 1.0).expect("no reentrant edge");
+        let convex = vert_at(&b, 2.0, 0.0).expect("no convex corner edge");
+        assert_eq!(
+            b.edge_is_convex(concave),
+            Some(false),
+            "reentrant edge is concave"
+        );
+        assert_eq!(
+            b.edge_is_convex(convex),
+            Some(true),
+            "corner edge is convex"
+        );
+        // Concave blend: the ball fills the notch, so the spine sits at
+        // (1+r, 1+r) = (1.3, 1.3), with the cylinder tangent to both faces.
+        let blend = b.blend_cylinder_for_edge(concave, 0.3).unwrap();
+        assert!(
+            (blend.spine.origin.x - 1.3).abs() < 1e-9 && (blend.spine.origin.y - 1.3).abs() < 1e-9,
+            "concave spine {:?}",
+            blend.spine.origin
+        );
+        assert!((blend.surface.radius - 0.3).abs() < 1e-12);
+        // The convex blend (corner edge) still lands inside the material.
+        let cb = b.blend_cylinder_for_edge(convex, 0.3).unwrap();
+        assert!(
+            (cb.spine.origin.x - 1.7).abs() < 1e-9 && (cb.spine.origin.y - 0.3).abs() < 1e-9,
+            "convex spine {:?}",
+            cb.spine.origin
+        );
+        // The concave trim-and-stitch surgery is gated (follow-up).
+        assert!(
+            b.fillet_edge(concave, 0.3).is_err(),
+            "concave surgery gated"
+        );
     }
 
     #[test]
