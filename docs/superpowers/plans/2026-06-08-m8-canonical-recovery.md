@@ -12,15 +12,17 @@
 
 **Branch:** `m8-canonical-recovery` off master.
 
-**STATUS (2026-06-08):** CORE slice SHIPPED (see LOG Addendum 34) -- Tasks
-1-3 (plane/sphere/cylinder/cone recovery + certifier), Task 7 (boolean
-integration via the `seam_curves` recovery pre-pass) which RETIRES the
-M7c blocker (NURBS x NURBS 190s -> 0.68s, exact), and the Task 8
-rejection gate (`freeform_is_kept`) + Task 9 `fuzz_recover`. DEFERRED to
-M8-completion: Task 4 (torus), Task 5 (curve recovery), Task 6
-(`Body::simplify` public HEAL pass -- needs curve recovery + pcurve
-refit), and the full free-form-faced-SOLID boolean capstone (needs a
-free-form solid constructor that does not exist yet).
+**STATUS (2026-06-08):** COMPLETE except the free-form-solid capstone.
+Core slice shipped in Addendum 34 (Tasks 1-3 plane/sphere/cylinder/cone +
+certifier; Task 7 boolean integration retiring the M7c blocker, NURBS x
+NURBS 190s -> 0.68s; Task 8 rejection gate; Task 9 fuzz_recover). M8
+completion in Addendum 35: Task 4 (torus -- full quadric family now
+recovers), Task 5 (curve recovery line/circle), Task 6 (`Body::simplify`
+public HEAL pass, orientation-preserving). STILL DEFERRED: ellipse curve
+recovery; the full free-form-faced-SOLID boolean capstone (needs a
+free-form solid constructor that does not exist yet -- a separate
+milestone); face-merge; constraint-aware re-fit; interval-certified
+tighter bound.
 
 ---
 

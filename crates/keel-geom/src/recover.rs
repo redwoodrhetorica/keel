@@ -12,9 +12,63 @@
 //! active tolerance; the "keep" verdict is itself the certificate that a
 //! surface is genuinely tolerant.
 
+use crate::curve::{Circle3, Curve3, Line3};
+use crate::nurbs_curve::NurbsCurve;
 use crate::nurbs_surface::NurbsSurface;
-use crate::surface::{Cone3, Cylinder3, Frame3, Plane3, Sphere3, Surface3};
+use crate::surface::{Cone3, Cylinder3, Frame3, Plane3, Sphere3, Surface3, Torus3};
 use keel_math::vec::Vec3;
+
+/// Eigenvector of the smallest eigenvalue of a 3x3 symmetric matrix, by
+/// cyclic Jacobi rotation. Used to recover a surface-of-revolution axis
+/// from the point covariance (the axis is the symmetry direction).
+#[allow(clippy::needless_range_loop)]
+fn smallest_eigenvector_sym3(mut a: [[f64; 3]; 3]) -> Vec3 {
+    let mut v = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    for _ in 0..50 {
+        // Largest off-diagonal.
+        let (mut p, mut q, mut max) = (0, 1, 0.0);
+        for (i, j) in [(0, 1), (0, 2), (1, 2)] {
+            if a[i][j].abs() > max {
+                max = a[i][j].abs();
+                p = i;
+                q = j;
+            }
+        }
+        if max < 1e-14 {
+            break;
+        }
+        let theta = 0.5 * (a[q][q] - a[p][p]) / a[p][q];
+        let t = theta.signum() / (theta.abs() + (theta * theta + 1.0).sqrt());
+        let c = 1.0 / (t * t + 1.0).sqrt();
+        let s = t * c;
+        // Apply rotation J^T A J and accumulate V J.
+        for k in 0..3 {
+            let (akp, akq) = (a[k][p], a[k][q]);
+            a[k][p] = c * akp - s * akq;
+            a[k][q] = s * akp + c * akq;
+        }
+        for k in 0..3 {
+            let (apk, aqk) = (a[p][k], a[q][k]);
+            a[p][k] = c * apk - s * aqk;
+            a[q][k] = s * apk + c * aqk;
+        }
+        for k in 0..3 {
+            let (vkp, vkq) = (v[k][p], v[k][q]);
+            v[k][p] = c * vkp - s * vkq;
+            v[k][q] = s * vkp + c * vkq;
+        }
+    }
+    let diag = [a[0][0], a[1][1], a[2][2]];
+    let mut imin = 0;
+    for i in 1..3 {
+        if diag[i] < diag[imin] {
+            imin = i;
+        }
+    }
+    Vec3::new(v[0][imin], v[1][imin], v[2][imin])
+        .try_normalize()
+        .unwrap_or(Vec3::new(0.0, 0.0, 1.0))
+}
 
 /// Solve a 3x3 system by padding into the 4x4 solver (identity 4th
 /// row/col), returning the leading 3 unknowns.
@@ -391,13 +445,69 @@ fn fit_cone(rulings: &[(Vec3, Vec3)], samples: &[(f64, f64, Vec3)]) -> Option<Su
     }))
 }
 
+/// Fit a torus: axis = the surface-of-revolution symmetry direction
+/// (smallest covariance eigenvector); centre = centroid; major/minor
+/// radii from the radial extent in the axis frame. The most fragile fit
+/// (research file 24); the certifier gates correctness.
+fn fit_torus(samples: &[(f64, f64, Vec3)]) -> Option<Surface3> {
+    if samples.len() < 8 {
+        return None;
+    }
+    let n = samples.len() as f64;
+    let centroid = samples.iter().fold(Vec3::ZERO, |a, &(_, _, p)| a + p) * (1.0 / n);
+    let mut cov = [[0.0f64; 3]; 3];
+    for &(_, _, p) in samples {
+        let d = [p.x - centroid.x, p.y - centroid.y, p.z - centroid.z];
+        for r in 0..3 {
+            for c in 0..3 {
+                cov[r][c] += d[r] * d[c];
+            }
+        }
+    }
+    let axis = smallest_eigenvector_sym3(cov);
+    // Fit the tube circle in (rho, z) space, where rho is the radial
+    // distance from the axis and z the axial coordinate: the tube is a
+    // 2D circle centred (major, z0) with radius minor. A linear circle
+    // fit (rows [2 rho, 2 z, 1] = rho^2 + z^2).
+    let mut ata = [[0.0f64; 3]; 3];
+    let mut atb = [0.0f64; 3];
+    for &(_, _, p) in samples {
+        let d = p - centroid;
+        let z = d.dot(axis);
+        let rho = (d - axis * z).norm();
+        let row = [2.0 * rho, 2.0 * z, 1.0];
+        let b = rho * rho + z * z;
+        for r in 0..3 {
+            for c in 0..3 {
+                ata[r][c] += row[r] * row[c];
+            }
+            atb[r] += row[r] * b;
+        }
+    }
+    let sol = solve3(ata, atb)?;
+    let (major, z0) = (sol.x, sol.y);
+    let minor2 = sol.z + major * major + z0 * z0;
+    if !major.is_finite() || major <= 0.0 || minor2 <= 0.0 || !minor2.is_finite() {
+        return None;
+    }
+    let minor = minor2.sqrt();
+    // Shift the centre to the torus equatorial plane (axial offset z0).
+    let center = centroid + axis * z0;
+    let frame = Frame3::from_z(center, axis).ok()?;
+    Some(Surface3::Torus(Torus3 {
+        frame,
+        major,
+        minor,
+    }))
+}
+
 /// Recognize -> fit -> certify a NURBS surface against the analytic
 /// family. Returns `Some(recovery)` only when the certified deviation is
 /// within `tol`; `None` means keep the spline (genuinely free-form, or
 /// an analytic that does not certify within tolerance). The certifier is
 /// the real discriminator: a wrong-type fit will not certify.
 ///
-/// M8 Tasks 1-3 cover plane, sphere, cylinder, cone; torus is Task 4.
+/// M8 covers plane, sphere, cylinder, cone, torus.
 pub fn recover_surface(nurbs: &NurbsSurface, tol: f64) -> Option<SurfaceRecovery> {
     let samples = sample_grid(nurbs, 8);
     let size = extent(&samples).max(1e-12);
@@ -435,6 +545,158 @@ pub fn recover_surface(nurbs: &NurbsSurface, tol: f64) -> Option<SurfaceRecovery
         return fit_sphere(&dense).and_then(accept);
     }
 
+    // Torus: doubly-curved, not umbilic, not developable.
+    let dense = sample_grid(nurbs, 16);
+    fit_torus(&dense).and_then(accept)
+}
+
+// ---------------------------------------------------------------------
+// Curve recovery (NURBS curve -> line / circle). Ellipse recovery is
+// noted for later (plane-cylinder seams); line and circle are what the
+// analytic booleans actually produce (plane-plane -> line, sphere/plane
+// quadric pairs -> circle).
+// ---------------------------------------------------------------------
+
+/// A recovered analytic curve and the certified upper bound on its max
+/// deviation from the source spline.
+#[derive(Clone, Debug)]
+pub struct CurveRecovery {
+    pub curve: Curve3,
+    pub deviation: f64,
+}
+
+fn sample_curve(nurbs: &NurbsCurve, n: usize) -> Vec<Vec3> {
+    let (t0, t1) = nurbs.domain();
+    let eps = 1e-6;
+    (0..n)
+        .map(|i| {
+            let f = (i as f64 + 0.5) / n as f64;
+            nurbs.point(t0 + (t1 - t0) * (eps + f * (1.0 - 2.0 * eps)))
+        })
+        .collect()
+}
+
+fn dist_to_curve(c: &Curve3, p: Vec3) -> f64 {
+    match c {
+        Curve3::Line(l) => (p - l.point(l.project(p))).norm(),
+        Curve3::Circle(ci) => (p - ci.point(ci.project(p))).norm(),
+        Curve3::Ellipse(e) => (p - e.point(e.project(p))).norm(),
+        Curve3::Nurbs(_) => f64::INFINITY,
+    }
+}
+
+/// Dense-sampled max deviation of the spline curve from the candidate
+/// analytic (the curve analogue of `surface_deviation`).
+pub fn curve_deviation(nurbs: &NurbsCurve, cand: &Curve3) -> f64 {
+    let (t0, t1) = nurbs.domain();
+    let n = 200;
+    let mut worst = 0.0f64;
+    for i in 0..n {
+        let t = t0 + (t1 - t0) * (0.001 + 0.998 * i as f64 / (n - 1) as f64);
+        worst = worst.max(dist_to_curve(cand, nurbs.point(t)));
+    }
+    worst
+}
+
+/// Max curvature kappa = |r' x r''| / |r'|^3 and its variation over
+/// interior samples; returns (max_kappa, kappa_range).
+fn curve_curvature(nurbs: &NurbsCurve, n: usize) -> Option<(f64, f64, f64)> {
+    let (t0, t1) = nurbs.domain();
+    let eps = 1e-4;
+    let mut ks = Vec::new();
+    for i in 0..n {
+        let t = t0 + (t1 - t0) * (eps + (1.0 - 2.0 * eps) * (i as f64 + 0.5) / n as f64);
+        let d = nurbs.derivatives(t, 2);
+        let (d1, d2) = (d[1], d[2]);
+        let s = d1.norm();
+        if s > 1e-12 {
+            ks.push(d1.cross(d2).norm() / (s * s * s));
+        }
+    }
+    if ks.is_empty() {
+        return None;
+    }
+    let kmax = ks.iter().cloned().fold(0.0f64, f64::max);
+    let kmin = ks.iter().cloned().fold(f64::INFINITY, f64::min);
+    let mean = ks.iter().sum::<f64>() / ks.len() as f64;
+    Some((kmax, kmax - kmin, mean))
+}
+
+fn fit_line(pts: &[Vec3]) -> Option<Curve3> {
+    let p0 = *pts.first()?;
+    let p1 = *pts.last()?;
+    Line3::new(p0, p1 - p0).ok().map(Curve3::Line)
+}
+
+/// Fit a circle through 3D coplanar points: plane from three spread
+/// points, then a 2D circle fit in that plane.
+fn fit_circle(pts: &[Vec3]) -> Option<Curve3> {
+    if pts.len() < 3 {
+        return None;
+    }
+    let a = pts[0];
+    let b = pts[pts.len() / 2];
+    let c = pts[pts.len() - 1];
+    let normal = (b - a).cross(c - a).try_normalize()?;
+    let (ux, uy) = ortho_basis(normal);
+    let origin = pts.iter().fold(Vec3::ZERO, |s, &p| s + p) * (1.0 / pts.len() as f64);
+    let mut ata = [[0.0f64; 3]; 3];
+    let mut atb = [0.0f64; 3];
+    for &p in pts {
+        let d = p - origin;
+        let (x, y) = (d.dot(ux), d.dot(uy));
+        let row = [2.0 * x, 2.0 * y, 1.0];
+        let rhs = x * x + y * y;
+        for r in 0..3 {
+            for cc in 0..3 {
+                ata[r][cc] += row[r] * row[cc];
+            }
+            atb[r] += row[r] * rhs;
+        }
+    }
+    let sol = solve3(ata, atb)?;
+    let (cx, cy) = (sol.x, sol.y);
+    let r2 = sol.z + cx * cx + cy * cy;
+    if !r2.is_finite() || r2 <= 0.0 {
+        return None;
+    }
+    let center = origin + ux * cx + uy * cy;
+    Circle3::new(center, ux, uy, r2.sqrt())
+        .ok()
+        .map(Curve3::Circle)
+}
+
+/// Recognize -> fit -> certify a NURBS curve as a line or circle. None =
+/// keep the spline.
+pub fn recover_curve(nurbs: &NurbsCurve, tol: f64) -> Option<CurveRecovery> {
+    let pts = sample_curve(nurbs, 16);
+    if pts.len() < 2 {
+        return None;
+    }
+    let mut lo = pts[0];
+    let mut hi = pts[0];
+    for &p in &pts {
+        lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+        hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+    }
+    let size = (hi - lo).norm().max(1e-12);
+    let (kmax, krange, _mean) = curve_curvature(nurbs, 12)?;
+    let accept = |cand: Curve3| -> Option<CurveRecovery> {
+        let dev = curve_deviation(nurbs, &cand);
+        (dev <= tol).then_some(CurveRecovery {
+            curve: cand,
+            deviation: dev,
+        })
+    };
+
+    // Line: curvature vanishes.
+    if kmax * size < 1e-6 {
+        return fit_line(&pts).and_then(accept);
+    }
+    // Circle: curvature roughly constant and nonzero.
+    if krange * size < 1e-3 {
+        return fit_circle(&sample_curve(nurbs, 24)).and_then(accept);
+    }
     None
 }
 
@@ -564,6 +826,53 @@ mod tests {
         revolve_full(&profile, Vec3::ZERO, az).unwrap()
     }
 
+    /// A genuine NURBS torus: revolve a full rational-quadratic tube
+    /// circle (centre (R,0,0), radius r, in the xz-plane) about z.
+    fn nurbs_torus_surface(major: f64, minor: f64) -> NurbsSurface {
+        use crate::nurbs_curve::NurbsCurve;
+        use crate::nurbs_surface::revolve_full;
+        let s = core::f64::consts::FRAC_1_SQRT_2;
+        let (rr, r) = (major, minor);
+        let ctrl = vec![
+            Vec3::new(rr + r, 0., 0.),
+            Vec3::new(rr + r, 0., r),
+            Vec3::new(rr, 0., r),
+            Vec3::new(rr - r, 0., r),
+            Vec3::new(rr - r, 0., 0.),
+            Vec3::new(rr - r, 0., -r),
+            Vec3::new(rr, 0., -r),
+            Vec3::new(rr + r, 0., -r),
+            Vec3::new(rr + r, 0., 0.),
+        ];
+        let profile = NurbsCurve::new(
+            2,
+            vec![0., 0., 0., 1., 1., 2., 2., 3., 3., 4., 4., 4.],
+            ctrl,
+            Some(vec![1., s, 1., s, 1., s, 1., s, 1.]),
+        )
+        .unwrap();
+        revolve_full(&profile, Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap()
+    }
+
+    #[test]
+    fn torus_recovers() {
+        let (rr, r) = (3.0, 0.8);
+        let s = nurbs_torus_surface(rr, r);
+        let rec = recover_surface(&s, 1e-5).expect("nurbs torus must recover");
+        match rec.surface {
+            Surface3::Torus(t) => {
+                assert!(
+                    (t.major - rr).abs() < 1e-3,
+                    "torus major {} vs {rr}",
+                    t.major
+                );
+                assert!((t.minor - r).abs() < 1e-3, "torus minor {} vs {r}", t.minor);
+            }
+            other => panic!("expected a torus, got {other:?}"),
+        }
+        assert!(rec.deviation < 1e-5, "torus deviation {}", rec.deviation);
+    }
+
     #[test]
     fn cylinder_recovers() {
         let s = nurbs_cylinder_surface(1.3, 2.0);
@@ -638,6 +947,78 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    fn nurbs_segment(p0: Vec3, p1: Vec3) -> NurbsCurve {
+        NurbsCurve::new(1, vec![0., 0., 1., 1.], vec![p0, p1], None).unwrap()
+    }
+
+    fn nurbs_quarter_circle(r: f64) -> NurbsCurve {
+        let s = core::f64::consts::FRAC_1_SQRT_2;
+        NurbsCurve::new(
+            2,
+            vec![0., 0., 0., 1., 1., 1.],
+            vec![
+                Vec3::new(r, 0., 0.),
+                Vec3::new(r, r, 0.),
+                Vec3::new(0., r, 0.),
+            ],
+            Some(vec![1.0, s, 1.0]),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn line_recovers() {
+        let p0 = Vec3::new(1.0, 2.0, -1.0);
+        let p1 = Vec3::new(4.0, -2.0, 3.0);
+        let rec = recover_curve(&nurbs_segment(p0, p1), 1e-6).expect("line recovers");
+        match rec.curve {
+            Curve3::Line(l) => {
+                let want = (p1 - p0).try_normalize().unwrap();
+                assert!(l.dir.cross(want).norm() < 1e-9, "line dir {:?}", l.dir);
+            }
+            other => panic!("expected a line, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn circle_recovers() {
+        let r = 1.7;
+        let rec = recover_curve(&nurbs_quarter_circle(r), 1e-6).expect("circle recovers");
+        match rec.curve {
+            Curve3::Circle(c) => {
+                assert!(
+                    c.center.norm() < 1e-7,
+                    "circle center {:?} not origin",
+                    c.center
+                );
+                assert!(
+                    (c.radius - r).abs() < 1e-7,
+                    "circle radius {} vs {r}",
+                    c.radius
+                );
+            }
+            other => panic!("expected a circle, got {other:?}"),
+        }
+        assert!(rec.deviation < 1e-6, "circle deviation {}", rec.deviation);
+    }
+
+    #[test]
+    fn wavy_curve_is_kept() {
+        // A degree-3 wiggly curve is no line or circle.
+        let pts = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(2.0, -1.0, 0.5),
+            Vec3::new(3.0, 0.8, -0.3),
+            Vec3::new(4.0, -0.5, 0.2),
+        ];
+        let c = NurbsCurve::new(3, vec![0., 0., 0., 0., 0.5, 1., 1., 1., 1.], pts, None).unwrap();
+        assert!(
+            recover_curve(&c, 1e-6).is_none(),
+            "wavy curve wrongly recovered"
+        );
     }
 
     #[test]

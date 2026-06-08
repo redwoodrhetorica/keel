@@ -18,6 +18,7 @@ pub mod ops;
 pub mod pmc;
 pub mod query;
 pub mod session;
+pub mod simplify;
 pub mod tessellate;
 pub mod validate;
 pub mod winding;
