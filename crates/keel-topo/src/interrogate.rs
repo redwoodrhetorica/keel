@@ -101,6 +101,65 @@ impl Body {
         }
         best
     }
+
+    /// Do two bodies clash / interfere (parity item 102)? True if their
+    /// surfaces cross or touch (the SSI yields seam curves, or a
+    /// coincident/tangent contact), or one is nested in the other (a
+    /// surface point of one lies inside the other by the generalized
+    /// winding number). A bounding-box miss is the cheap reject. Fast:
+    /// the analytic SSI plus two winding-number probes, not an O(n*m)
+    /// tessellation sweep.
+    pub fn clashes(&self, other: &Body) -> bool {
+        use crate::boolean::BoolFault;
+        if !self.bounding_box().intersects(other.bounding_box()) {
+            return false;
+        }
+        // Surfaces cross or are in coincident/tangent contact.
+        let (seams, faults) = crate::boolean::seam_curves(self, other, 1e-7);
+        if !seams.is_empty()
+            || faults
+                .iter()
+                .any(|f| matches!(f, BoolFault::Coincident(..) | BoolFault::Tangent(..)))
+        {
+            return true;
+        }
+        // No surface contact: test nesting with one representative point
+        // from each body against the other's interior.
+        if let Some(p) = self.all_triangles().first().map(|t| t[0])
+            && other.generalized_winding_number(p) > 0.5
+        {
+            return true;
+        }
+        if let Some(p) = other.all_triangles().first().map(|t| t[0])
+            && self.generalized_winding_number(p) > 0.5
+        {
+            return true;
+        }
+        false
+    }
+
+    /// Coarse geometric/topological equivalence (parity item 108): equal
+    /// entity counts, genus, and (within `tol`) bounding box and volume.
+    /// This is the cheap CAx-IF validation-property comparison stage
+    /// (research file 22), position-sensitive; an exact B-rep equality
+    /// oracle is a later refinement.
+    pub fn approx_equals(&self, other: &Body, tol: f64) -> bool {
+        let (ca, cb) = (self.counts(), other.counts());
+        if ca.v != cb.v
+            || ca.e != cb.e
+            || ca.f != cb.f
+            || ca.regions != cb.regions
+            || ca.genus != cb.genus
+        {
+            return false;
+        }
+        let (ba, bb) = (self.bounding_box(), other.bounding_box());
+        if (ba.min - bb.min).norm() > tol || (ba.max - bb.max).norm() > tol {
+            return false;
+        }
+        let (va, vb) = (self.tessellated_volume(), other.tessellated_volume());
+        (va - vb).abs() <= tol * (1.0 + va.abs())
+    }
 }
 
 #[cfg(test)]
@@ -168,5 +227,31 @@ mod tests {
         let a = z_sphere(Vec3::ZERO, 1.0);
         let b = z_sphere(Vec3::new(1.0, 0.0, 0.0), 1.0);
         assert!(a.min_distance(&b) < 0.1, "overlapping spheres should be ~0");
+    }
+
+    #[test]
+    fn clash_detection() {
+        let a = z_sphere(Vec3::ZERO, 1.0);
+        // Overlapping -> clash.
+        assert!(a.clashes(&z_sphere(Vec3::new(1.0, 0.0, 0.0), 1.0)));
+        // Separated -> no clash.
+        assert!(!a.clashes(&z_sphere(Vec3::new(5.0, 0.0, 0.0), 1.0)));
+        // Fully nested (small inside big, no surface contact) -> clash.
+        let big = z_sphere(Vec3::ZERO, 2.0);
+        assert!(big.clashes(&z_sphere(Vec3::ZERO, 0.5)));
+    }
+
+    #[test]
+    fn body_equivalence() {
+        let a = z_sphere(Vec3::ZERO, 1.0);
+        assert!(a.approx_equals(&a.clone(), 1e-6), "body equals its clone");
+        // Different radius -> not equivalent (volume + box differ).
+        assert!(!a.approx_equals(&z_sphere(Vec3::ZERO, 2.0), 1e-6));
+        // Two identically-built blocks are equivalent.
+        let mut p = Body::new();
+        p.block(Vec3::ZERO, 2.0, 3.0, 4.0).unwrap();
+        let mut q = Body::new();
+        q.block(Vec3::ZERO, 2.0, 3.0, 4.0).unwrap();
+        assert!(p.approx_equals(&q, 1e-6), "identical blocks equivalent");
     }
 }
