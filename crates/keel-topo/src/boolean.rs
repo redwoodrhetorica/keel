@@ -1134,16 +1134,26 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, B
         stitch_by_import(&ia, &ib, &kept, tol)?
     };
     // Post-condition: a real solid has positive, finite volume. The
-    // scalar Euler identity is necessary but not sufficient (a few
-    // faces can satisfy it without bounding a solid), so near-degenerate
-    // configurations -- thin slivers, large scale disparities where a
-    // small seam fails to imprint -- can slip through as Euler-valid yet
-    // geometrically degenerate. Decline those honestly. The tessellated
-    // boundary volume is surface-type-agnostic (works for curved results
-    // where the exact trimmed mass-properties integral is not yet
-    // available), so it is the uniform degeneracy guard.
-    let v = body.tessellated_volume();
-    if !(v.is_finite() && v > 1e-9 * (1.0 + v.abs())) {
+    // scalar Euler identity is necessary but not sufficient (a few faces
+    // can satisfy it without bounding a solid), so near-degenerate
+    // configurations -- thin slivers, near-coincident touches -- can
+    // slip through as Euler-valid yet geometrically degenerate. Decline
+    // those honestly rather than return a wrong answer. For a PLANAR
+    // result the exact mass-properties volume is the gate (it rejects
+    // the slivers the coarse tessellation would accept); for a CURVED
+    // result (lens) mass-properties cannot yet integrate the trimmed
+    // caps, so the surface-agnostic tessellated volume guards it.
+    let curved = body
+        .face_keys()
+        .iter()
+        .any(|&f| !matches!(body.face_surface3(f), Some(Surface3::Plane(_))));
+    let ok = if curved {
+        let v = body.tessellated_volume();
+        v.is_finite() && v > 1e-9 * (1.0 + v.abs())
+    } else {
+        matches!(body.mass_properties(), Ok(m) if m.volume.is_finite() && m.volume > 0.0)
+    };
+    if !ok {
         return Err(BoolFault::AssemblyFailed(
             "degenerate result (non-positive volume)",
         ));
@@ -1917,6 +1927,24 @@ mod tests {
             assert!(
                 matches!(v, Ok(vol) if vol.is_finite() && vol > 0.0),
                 "Ok result must have positive finite volume, got {v:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn near_coincident_touch_declines() {
+        // Tall thin box touched by a small box at a near-coincident face
+        // (fuzz finding): the planar mass-properties post-condition must
+        // reject the zero/sliver-volume result rather than return it.
+        let a = block(Vec3::ZERO, Vec3::new(0.5, 0.5, 20.0));
+        let b = block(Vec3::new(0.0, 0.0, 20.0), Vec3::new(0.5, 0.5, 0.5));
+        if let Ok(res) = boolean(&a, &b, BoolOp::Intersection, 1e-7) {
+            // If anything comes back, mass properties must be computable
+            // and positive (never a wrong "valid" body).
+            let v = res.body.mass_properties().map(|m| m.volume);
+            assert!(
+                matches!(v, Ok(vol) if vol.is_finite() && vol > 0.0),
+                "got {v:?}"
             );
         }
     }
