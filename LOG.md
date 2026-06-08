@@ -1684,3 +1684,24 @@ GATE: exact CI triplet green. Merged.
   different-radius unequal, identical blocks equal.
 RUNNING TOTAL: capability map 39 -> 41/144.
 GATE: exact CI triplet green. Merged.
+
+## Addendum 44 (2026-06-08): Parity Phase 1 -- TWEAK / local-ops keystone (planar) (map 41 -> 45/144)
+
+The file-03 foundation local operation (change-surface + reintersect),
+the keystone OCCT lacks. keel-topo tweak.rs, PLANAR/polyhedral slice:
+- tweak_face_to_plane(face, new_plane, sense): change/replace a planar
+  face's surface (items 35, 39). Each corner of the face is recomputed as
+  new_plane intersected with its two neighbour planes (closed-form
+  three-plane point); incident straight edges are rebuilt through the
+  moved corners; topology unchanged. Declines non-planar neighbours and
+  non-simple (!=2-neighbour-plane) corners.
+- offset_face(face, distance) (item 37): shift the plane along the OUTWARD
+  normal (reuses the offset-surface sense), re-intersect.
+- move_face(face, t) (item 36): translate the plane, re-intersect.
+Tested on a 2x2x2 block: offset top +1 -> vol 12 (exact mass-properties);
+offset -0.5 -> vol 6; move top +2 -> vol 16; all validate.
+RUNNING TOTAL: capability map 41 -> 45/144 (items 35,36,37,39 planar).
+DEFERRED (next tweak slices): CURVED tweak (cylinder/sphere faces
+re-intersected by SSI, reusing offset_surface + ssi); taper/draft (38,78);
+delete-face-with-heal (40); non-simple corners.
+GATE: exact CI triplet green. Merged.
