@@ -190,6 +190,71 @@ impl Body {
         self.surfaces.get(sk).cloned()
     }
 
+    /// Outward unit normal of a face at its interior sample (the surface
+    /// normal, flipped to the face's sense).
+    pub(crate) fn face_outward_normal(&self, face: FaceKey) -> Option<keel_math::vec::Vec3> {
+        let p = self.face_interior_point(face)?;
+        self.face_outward_normal_at(face, p)
+    }
+
+    fn face_outward_normal_at(
+        &self,
+        face: FaceKey,
+        p: keel_math::vec::Vec3,
+    ) -> Option<keel_math::vec::Vec3> {
+        let (sk, sense) = self.faces.get(face).and_then(|f| f.surface)?;
+        let n = match self.surfaces.get(sk)? {
+            SurfaceGeom::Analytic(s) => {
+                let pr = s.project(p).ok()?;
+                s.local_geometry(pr.u, pr.v).ok()?.normal
+            }
+            SurfaceGeom::Nurbs(nb) => {
+                let pr = keel_geom::project::project_point_surface_fast(nb, p);
+                nb.local_geometry(pr.u, pr.v).ok()?.normal
+            }
+        };
+        Some(if sense { n } else { n * -1.0 })
+    }
+
+    /// Orientation sense (file 39 §2.1) of THIS body's face that is
+    /// coincident at `p` with an external face of outward normal
+    /// `n_other`: `Same` if the normals agree, `Opposite` if they oppose.
+    /// `Unknown` if no coincident carrier is found here.
+    pub(crate) fn coincident_sense_at(
+        &self,
+        p: keel_math::vec::Vec3,
+        n_other: keel_math::vec::Vec3,
+    ) -> OnSense {
+        for f in self.face_keys() {
+            // The face's surface must pass through p AND its normal be
+            // parallel to n_other (a coincident carrier, not a transversal
+            // face that merely contains p).
+            let on_surface = match self.face_surface_geom(f) {
+                Some(SurfaceGeom::Analytic(s)) => {
+                    s.project(p).map(|pr| pr.distance < 1e-6).unwrap_or(false)
+                }
+                Some(SurfaceGeom::Nurbs(nb)) => {
+                    let pr = keel_geom::project::project_point_surface_fast(&nb, p);
+                    (pr.point - p).norm() < 1e-6
+                }
+                None => false,
+            };
+            if !on_surface {
+                continue;
+            }
+            if let Some(n_f) = self.face_outward_normal_at(f, p)
+                && n_f.cross(n_other).norm() < 1e-6
+            {
+                return if n_f.dot(n_other) >= 0.0 {
+                    OnSense::Same
+                } else {
+                    OnSense::Opposite
+                };
+            }
+        }
+        OnSense::Unknown
+    }
+
     /// The analytic surface backing a face, if any (M6a is analytic).
     pub(crate) fn face_surface3(&self, face: FaceKey) -> Option<Surface3> {
         let (sk, _) = self.faces.get(face).and_then(|f| f.surface)?;
@@ -331,51 +396,88 @@ pub(crate) fn select_faces(
     class_a: &[(FaceKey, FaceClass)],
     class_b: &[(FaceKey, FaceClass)],
 ) -> Vec<KeptFace> {
+    // The Laidlaw-Trumbore-Hughes / Requicha on-on selection tables
+    // (research file 39 §2.3). Coincident overlaps contribute ONE copy,
+    // kept from operand A (lower-indexed) by convention; B's duplicate is
+    // dropped. Same-sense (on+) survives union/intersection; opposite-
+    // sense (on-) survives difference.
     let mut keep = Vec::new();
-    let want = |operand,
-                want_inside: bool,
-                reversed: bool,
-                list: &[(FaceKey, FaceClass)],
-                keep: &mut Vec<KeptFace>| {
-        for &(face, c) in list {
-            let take = match c {
-                FaceClass::InsideOther => want_inside,
-                FaceClass::OutsideOther => !want_inside,
-                _ => false,
-            };
-            if take {
-                keep.push(KeptFace {
-                    operand,
-                    face,
-                    reversed,
-                });
-            }
-        }
+    let mut emit = |operand, face, reversed| {
+        keep.push(KeptFace {
+            operand,
+            face,
+            reversed,
+        });
     };
     match op {
         BoolOp::Union => {
-            want(Operand::A, false, false, class_a, &mut keep);
-            want(Operand::B, false, false, class_b, &mut keep);
+            for &(f, c) in class_a {
+                if matches!(
+                    c,
+                    FaceClass::OutsideOther | FaceClass::OnOther(OnSense::Same)
+                ) {
+                    emit(Operand::A, f, false);
+                }
+            }
+            for &(f, c) in class_b {
+                if c == FaceClass::OutsideOther {
+                    emit(Operand::B, f, false);
+                }
+            }
         }
         BoolOp::Intersection => {
-            want(Operand::A, true, false, class_a, &mut keep);
-            want(Operand::B, true, false, class_b, &mut keep);
+            for &(f, c) in class_a {
+                if matches!(
+                    c,
+                    FaceClass::InsideOther | FaceClass::OnOther(OnSense::Same)
+                ) {
+                    emit(Operand::A, f, false);
+                }
+            }
+            for &(f, c) in class_b {
+                if c == FaceClass::InsideOther {
+                    emit(Operand::B, f, false);
+                }
+            }
         }
         BoolOp::Difference => {
-            want(Operand::A, false, false, class_a, &mut keep);
-            want(Operand::B, true, true, class_b, &mut keep);
+            for &(f, c) in class_a {
+                if matches!(
+                    c,
+                    FaceClass::OutsideOther | FaceClass::OnOther(OnSense::Opposite)
+                ) {
+                    emit(Operand::A, f, false);
+                }
+            }
+            for &(f, c) in class_b {
+                if c == FaceClass::InsideOther {
+                    emit(Operand::B, f, true);
+                }
+            }
         }
     }
     keep
 }
 
 /// A face fragment's position relative to the OTHER operand solid.
+/// Relative orientation of two coincident faces (research file 39 §2.1):
+/// the outward normals agree (`Same`, `on+`) or oppose (`Opposite`,
+/// `on-`) on the overlap; `Unknown` when the coincident partner / sense
+/// could not be determined.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OnSense {
+    Same,
+    Opposite,
+    Unknown,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FaceClass {
     InsideOther,
     OutsideOther,
-    /// On the other operand's boundary (coincident) -> M6b.
-    OnOther,
+    /// On the other operand's boundary (coincident), with the relative
+    /// orientation of the coincident pair (research file 39).
+    OnOther(OnSense),
     /// Could not find an interior sample / classify.
     Unknown,
 }
@@ -816,7 +918,14 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, _tol: f64) -> Vec<(Fa
             Some(p) => {
                 let w = other.generalized_winding_number(p);
                 if (w - 0.5).abs() < COINCIDENCE_BAND {
-                    FaceClass::OnOther
+                    // On the other body's boundary: resolve the
+                    // coincident-pair orientation (file 39 §1.4/§2.1) by
+                    // the sign of the two faces' outward normals.
+                    let sense = match working.face_outward_normal(face) {
+                        Some(n) => other.coincident_sense_at(p, n),
+                        None => OnSense::Unknown,
+                    };
+                    FaceClass::OnOther(sense)
                 } else if w > 0.5 {
                     FaceClass::InsideOther
                 } else {
@@ -2285,7 +2394,7 @@ mod tests {
             .count();
         let bad_a = ca
             .iter()
-            .filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther))
+            .filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther(_)))
             .count();
         assert_eq!(bad_a, 0, "A unclassified/coincident: {ca:?}");
         // 4 cut side-faces -> 4 inside fragments + 4 outside fragments;
@@ -2300,7 +2409,7 @@ mod tests {
             .count();
         let bad_b = cb
             .iter()
-            .filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther))
+            .filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther(_)))
             .count();
         assert_eq!(bad_b, 0, "B unclassified/coincident: {cb:?}");
         assert_eq!(
@@ -2673,6 +2782,49 @@ mod tests {
     }
 
     #[test]
+    fn coincident_identical_union_keeps_one_copy() {
+        // Two identical unit boxes: every face pair is same-sense (on+).
+        // Union keeps ONE copy of each -> a single box (volume 1, not 2).
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let res = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
+        assert!(
+            res.body.validate().is_ok(),
+            "identical union invalid: {:?}",
+            res.faults
+        );
+        let v = res.body.mass_properties().unwrap().volume;
+        assert!(
+            (v - 1.0).abs() < 1e-9,
+            "identical-box union volume {v} != 1"
+        );
+    }
+
+    #[test]
+    fn coincident_difference_abutting_keeps_wall() {
+        // A=[0,1]^3, B abuts OUTSIDE at x=1. A - B removes nothing -> A
+        // unchanged (volume 1). Exercises the on- difference rule: the
+        // shared opposite-sense face survives on A.
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::new(1.0, 0.0, 0.0), 1.0, 1.0, 1.0).unwrap();
+        let res = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
+        assert!(
+            res.body.validate().is_ok(),
+            "coincident diff invalid: {:?}",
+            res.faults
+        );
+        let v = res.body.mass_properties().unwrap().volume;
+        assert!(
+            (v - 1.0).abs() < 1e-9,
+            "coincident difference volume {v} != 1"
+        );
+    }
+
+    #[test]
     fn boolean_multi_empty_single_and_two_tools() {
         // Empty tool list returns the target unchanged.
         let a = z_sphere(Vec3::ZERO, 1.0);
@@ -2774,7 +2926,7 @@ mod tests {
             .count();
         let bad = ca
             .iter()
-            .filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther))
+            .filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther(_)))
             .count();
         assert_eq!(bad, 0, "sphere A caps unclassified: {ca:?}");
         assert_eq!((inside, outside), (1, 1), "sphere A cap classes {ca:?}");

@@ -1864,3 +1864,29 @@ faces -- deferred to when it lands.
 GATE: exact CI triplet green (283 tests). fuzz_boolean re-soak validates
 the new coincident path (the existing target now exercises coincident
 inputs; post-condition + validity invariants hold). Merged.
+
+## Addendum 54 (2026-06-08): Coincident booleans -- FULL on-on tables (file 39); the keystone is real (map 55/144)
+
+Implemented research file 39 §2.3 (Laidlaw-Trumbore-Hughes / Requicha on-on
+selection tables) -- the coincident-boolean keystone, now proper not just
+the one abutting case. Changes:
+- FaceClass::OnOther now carries OnSense (Same/Opposite/Unknown).
+- classify_faces: for the winding ~0.5 (on-boundary) band, resolve the
+  coincident-pair orientation via the sign of the two faces' outward
+  normals (new helpers face_outward_normal + coincident_sense_at: find the
+  other body's face sharing the carrier at p with a parallel normal, take
+  n_self . n_other).
+- select_faces: encode the tables. UNION/INTERSECTION keep same-sense (on+)
+  overlaps ONE copy (from A, the lower-indexed body), drop opposite-sense
+  (on-) -- interior walls cancel. DIFFERENCE keeps opposite-sense (on-) one
+  copy, drops same-sense; B's inside-A faces kept reversed. Unknown-sense
+  coincidence drops (conservative).
+Tested: identical-box UNION -> vol 1 (on+ keep one, not 2); abutting UNION
+-> vol 2 (on- drop both); abutting DIFFERENCE -> vol 1 (on- keep the wall);
+all 28 prior transversal tests green; tangent still declines. This unblocks
+chamfer-by-boolean and hollow (both need coincident difference/union).
+RUNNING TOTAL: 55/144 (item 33 now properly done, sans partial-overlap
+imprint / tangent-edge / curved-coincidence, which file 39 §1/§3/§5 specify
+as follow-ups).
+GATE: exact CI triplet green (285 tests). fuzz_boolean re-soak validates
+the new classification on random inputs. Merged.
