@@ -457,16 +457,26 @@ fn winding_nonzero(poly: &[(f64, f64)], q: (f64, f64)) -> bool {
 /// Classify every face of `working` against the `other` operand solid:
 /// sample the face interior and test containment in `other`.
 pub(crate) fn classify_faces(working: &Body, other: &Body, _tol: f64) -> Vec<(FaceKey, FaceClass)> {
-    use crate::pmc::Containment;
+    // Generalized winding number is the PRIMARY classifier (the
+    // d-booleans-tolerant.md mandate): robust at on-boundary/tangential
+    // contacts and surface-type-agnostic (no pcurve/periodicity
+    // dependency), where ray-cast PMC was fragile. w ~ 1 inside other,
+    // ~ 0 outside; the band around 0.5 means the sample sits on/near
+    // other's boundary (coincident -> M6c).
+    const COINCIDENCE_BAND: f64 = 0.25;
     let mut out = Vec::new();
     for face in working.face_keys() {
         let class = match working.face_interior_point(face) {
-            Some(p) => match other.classify_point(p) {
-                Ok(Containment::In(_)) => FaceClass::InsideOther,
-                Ok(Containment::Out) => FaceClass::OutsideOther,
-                Ok(Containment::On(_)) => FaceClass::OnOther,
-                Err(_) => FaceClass::Unknown,
-            },
+            Some(p) => {
+                let w = other.generalized_winding_number(p);
+                if (w - 0.5).abs() < COINCIDENCE_BAND {
+                    FaceClass::OnOther
+                } else if w > 0.5 {
+                    FaceClass::InsideOther
+                } else {
+                    FaceClass::OutsideOther
+                }
+            }
             None => FaceClass::Unknown,
         };
         out.push((face, class));
