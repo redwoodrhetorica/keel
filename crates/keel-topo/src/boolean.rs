@@ -205,7 +205,11 @@ pub(crate) fn select_faces(
     class_b: &[(FaceKey, FaceClass)],
 ) -> Vec<KeptFace> {
     let mut keep = Vec::new();
-    let want = |operand, want_inside: bool, reversed: bool, list: &[(FaceKey, FaceClass)], keep: &mut Vec<KeptFace>| {
+    let want = |operand,
+                want_inside: bool,
+                reversed: bool,
+                list: &[(FaceKey, FaceClass)],
+                keep: &mut Vec<KeptFace>| {
         for &(face, c) in list {
             let take = match c {
                 FaceClass::InsideOther => want_inside,
@@ -213,7 +217,11 @@ pub(crate) fn select_faces(
                 _ => false,
             };
             if take {
-                keep.push(KeptFace { operand, face, reversed });
+                keep.push(KeptFace {
+                    operand,
+                    face,
+                    reversed,
+                });
             }
         }
     };
@@ -278,13 +286,18 @@ impl Body {
                     continue;
                 }
                 let p = keel_math::vec::Vec3::new(h.x / h.w, h.y / h.w, h.z / h.w);
-                if corners.last().map(|q| (*q - p).norm() > 1e-9).unwrap_or(true) {
+                if corners
+                    .last()
+                    .map(|q| (*q - p).norm() > 1e-9)
+                    .unwrap_or(true)
+                {
                     corners.push(p);
                 }
             }
             // Drop the closing duplicate of the first corner.
-            if corners.len() >= 2
-                && (corners[0] - *corners.last().unwrap()).norm() <= 1e-9
+            if let Some(&last) = corners.last()
+                && corners.len() >= 2
+                && (corners[0] - last).norm() <= 1e-9
             {
                 corners.pop();
             }
@@ -329,8 +342,11 @@ impl Body {
     /// UV box and winding-tests against every loop. Analytic faces only.
     pub(crate) fn face_interior_point(&self, face: FaceKey) -> Option<keel_math::vec::Vec3> {
         let surf = self.face_surface3(face)?;
-        let loops: Vec<crate::entity::LoopKey> =
-            self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default();
+        let loops: Vec<crate::entity::LoopKey> = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
         // Build each loop's UV polygon by sampling its fins' EDGE 3D
         // curves (handles closed-curve edges like the ring, which have
         // only one vertex) and projecting to the surface.
@@ -362,8 +378,12 @@ impl Body {
             }
         }
         let outer = uv_loops.first()?;
-        let (mut umin, mut umax, mut vmin, mut vmax) =
-            (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
+        let (mut umin, mut umax, mut vmin, mut vmax) = (
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        );
         for &(u, v) in outer {
             umin = umin.min(u);
             umax = umax.max(u);
@@ -389,7 +409,7 @@ impl Body {
                     .iter()
                     .map(|poly| dist_to_polyline(poly, (u, v)))
                     .fold(f64::INFINITY, f64::min);
-                if best.is_none() || d > best.unwrap().1 {
+                if best.is_none_or(|(_, bd)| d > bd) {
                     best = Some(((u, v), d));
                 }
             }
@@ -436,11 +456,7 @@ fn winding_nonzero(poly: &[(f64, f64)], q: (f64, f64)) -> bool {
 
 /// Classify every face of `working` against the `other` operand solid:
 /// sample the face interior and test containment in `other`.
-pub(crate) fn classify_faces(
-    working: &Body,
-    other: &Body,
-    _tol: f64,
-) -> Vec<(FaceKey, FaceClass)> {
+pub(crate) fn classify_faces(working: &Body, other: &Body, _tol: f64) -> Vec<(FaceKey, FaceClass)> {
     use crate::pmc::Containment;
     let mut out = Vec::new();
     for face in working.face_keys() {
@@ -576,22 +592,28 @@ fn build_result_solid(polys: &[ResultPoly], tol: f64) -> Result<Body, BoolFault>
         if newell_normal(&ring).dot(poly.outward) < 0.0 {
             ring.reverse();
         }
-        let vis: Vec<usize> = ring.into_iter().map(|p| vindex(p, &mut b, &mut rec)).collect();
+        let vis: Vec<usize> = ring
+            .into_iter()
+            .map(|p| vindex(p, &mut b, &mut rec))
+            .collect();
         faces_vi.push(vis);
     }
 
     // Edge sharing: undirected (min,max) vertex id -> edge + bounds.
     let mut edge_of: BTreeMap<(usize, usize), (EdgeKey, (usize, usize))> = BTreeMap::new();
-    let mut get_edge =
-        |vi: usize, vj: usize, b: &mut Body, rec: &mut crate::body::OpRecorder| -> (EdgeKey, bool) {
-            let key = (vi.min(vj), vi.max(vj));
-            if let Some(&(ek, (a, _))) = edge_of.get(&key) {
-                return (ek, a == vi); // forward iff bounds.0 == vi
-            }
-            let ek = b.new_edge(rec, (vkeys[vi], vkeys[vj]), Derivation::Created);
-            edge_of.insert(key, (ek, (vi, vj)));
-            (ek, true)
-        };
+    let mut get_edge = |vi: usize,
+                        vj: usize,
+                        b: &mut Body,
+                        rec: &mut crate::body::OpRecorder|
+     -> (EdgeKey, bool) {
+        let key = (vi.min(vj), vi.max(vj));
+        if let Some(&(ek, (a, _))) = edge_of.get(&key) {
+            return (ek, a == vi); // forward iff bounds.0 == vi
+        }
+        let ek = b.new_edge(rec, (vkeys[vi], vkeys[vj]), Derivation::Created);
+        edge_of.insert(key, (ek, (vi, vj)));
+        (ek, true)
+    };
 
     let mut face_keys = Vec::new();
     for (fi, vis) in faces_vi.iter().enumerate() {
@@ -825,7 +847,9 @@ impl Body {
             let AnyKey::Edge(ek) = self.lookup(id)? else {
                 continue;
             };
-            let Some(e) = self.edges.get(ek) else { continue };
+            let Some(e) = self.edges.get(ek) else {
+                continue;
+            };
             let (Some(a), Some(b)) = (
                 self.vertices.get(e.bounds.0).map(|v| v.point),
                 self.vertices.get(e.bounds.1).map(|v| v.point),
@@ -856,7 +880,10 @@ impl Body {
         p: keel_math::vec::Vec3,
         tol: f64,
     ) -> Option<FinKey> {
-        let lp = self.faces.get(face).and_then(|f| f.loops.first().copied())?;
+        let lp = self
+            .faces
+            .get(face)
+            .and_then(|f| f.loops.first().copied())?;
         let entry = self.loops.get(lp).and_then(|l| l.fin)?;
         let mut cur = entry;
         loop {
@@ -921,8 +948,8 @@ fn imprint_operand(
     tol: f64,
     faults: &mut Vec<BoolFault>,
 ) -> ImprintedOperand {
-    use std::collections::BTreeMap;
     use keel_math::vec::Vec3;
+    use std::collections::BTreeMap;
     let mut working = body.clone();
     let mut seam_edges = Vec::new();
     let etol = tol.max(1e-7);
@@ -1020,8 +1047,8 @@ fn imprint_operand(
 }
 
 /// Two-body imprint (M3 pipeline steps 1-3, per-operand form): localize
-/// + intersect, then imprint the seams onto independent clones of each
-/// operand. Each returned body is itself a valid solid (the imprint
+/// and intersect, then imprint the seams onto independent clones of
+/// each operand. Each returned body is itself a valid solid (the imprint
 /// only splits faces along on-surface curves); they are glued into one
 /// result at stitch time, after selection discards the unwanted sides.
 pub fn imprint_pair(
@@ -1039,11 +1066,7 @@ pub fn imprint_pair(
 /// collecting transversal SSI curves. Coincident/tangent/failed pairs
 /// become faults. (All-pairs for M6a's small analytic bodies; AABB/BVH
 /// localization is a perf concern deferred until a fuzz/scale need.)
-pub fn seam_curves(
-    a: &Body,
-    b: &Body,
-    tol: f64,
-) -> (Vec<SeamCurve>, Vec<BoolFault>) {
+pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFault>) {
     let mut seams = Vec::new();
     let mut faults = Vec::new();
     for fa in a.face_keys() {
@@ -1067,8 +1090,11 @@ pub fn seam_curves(
                         // to both trimmed faces to get the real seam
                         // segment. Self-bounding curves (e.g. the SSI
                         // circle of two spheres) pass through unclipped.
-                        if let (keel_geom::curve::Curve3::Line(line), Surface3::Plane(pa), Surface3::Plane(pb)) =
-                            (&c.curve, &sa, &sb)
+                        if let (
+                            keel_geom::curve::Curve3::Line(line),
+                            Surface3::Plane(pa),
+                            Surface3::Plane(pb),
+                        ) = (&c.curve, &sa, &sb)
                         {
                             let pts_a = a.face_outer_loop_points(fa);
                             let pts_b = b.face_outer_loop_points(fb);
@@ -1157,13 +1183,26 @@ mod tests {
         // A's x-faces are parallel to the cut (coincident/empty); the
         // parallel pair may report a coincidence fault, which is fine.
         let segs: Vec<_> = seams.iter().collect();
-        assert_eq!(segs.len(), 4, "expected 4 clipped seam segments, got {} (faults {:?})", segs.len(), faults);
+        assert_eq!(
+            segs.len(),
+            4,
+            "expected 4 clipped seam segments, got {} (faults {:?})",
+            segs.len(),
+            faults
+        );
         // Every seam segment lies in the plane x = 2 and is length 4.
         for s in &segs {
             let p0 = sample_curve(&s.curve, 0.0);
             let p1 = sample_curve(&s.curve, 1.0);
-            assert!((p0.x - 2.0).abs() < 1e-9 && (p1.x - 2.0).abs() < 1e-9, "seam off x=2: {p0:?} {p1:?}");
-            assert!((((p1 - p0).norm()) - 4.0).abs() < 1e-9, "seam length {} != 4", (p1 - p0).norm());
+            assert!(
+                (p0.x - 2.0).abs() < 1e-9 && (p1.x - 2.0).abs() < 1e-9,
+                "seam off x=2: {p0:?} {p1:?}"
+            );
+            assert!(
+                (((p1 - p0).norm()) - 4.0).abs() < 1e-9,
+                "seam length {} != 4",
+                (p1 - p0).norm()
+            );
         }
     }
 
@@ -1209,9 +1248,18 @@ mod tests {
         assert!(faults.is_empty(), "faults: {faults:?}");
         // A's faces vs B: the x>2 fragments are inside B, x<2 outside.
         let ca = classify_faces(&ia.body, &b, 1e-7);
-        let inside_a = ca.iter().filter(|(_, c)| *c == FaceClass::InsideOther).count();
-        let outside_a = ca.iter().filter(|(_, c)| *c == FaceClass::OutsideOther).count();
-        let bad_a = ca.iter().filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther)).count();
+        let inside_a = ca
+            .iter()
+            .filter(|(_, c)| *c == FaceClass::InsideOther)
+            .count();
+        let outside_a = ca
+            .iter()
+            .filter(|(_, c)| *c == FaceClass::OutsideOther)
+            .count();
+        let bad_a = ca
+            .iter()
+            .filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther))
+            .count();
         assert_eq!(bad_a, 0, "A unclassified/coincident: {ca:?}");
         // 4 cut side-faces -> 4 inside fragments + 4 outside fragments;
         // x=4 face inside, x=0 face outside. => 5 inside, 5 outside.
@@ -1219,10 +1267,19 @@ mod tests {
         // B's faces vs A: the inner rectangle on x=2 is inside A; its
         // outer remainder and the far faces are outside A.
         let cb = classify_faces(&ib.body, &a, 1e-7);
-        let inside_b = cb.iter().filter(|(_, c)| *c == FaceClass::InsideOther).count();
-        let bad_b = cb.iter().filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther)).count();
+        let inside_b = cb
+            .iter()
+            .filter(|(_, c)| *c == FaceClass::InsideOther)
+            .count();
+        let bad_b = cb
+            .iter()
+            .filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther))
+            .count();
         assert_eq!(bad_b, 0, "B unclassified/coincident: {cb:?}");
-        assert_eq!(inside_b, 1, "only B's inner x=2 rectangle is inside A: {cb:?}");
+        assert_eq!(
+            inside_b, 1,
+            "only B's inner x=2 rectangle is inside A: {cb:?}"
+        );
     }
 
     #[test]
@@ -1254,6 +1311,44 @@ mod tests {
     }
 
     #[test]
+    fn intersection_is_commutative_by_volume() {
+        let a = block(Vec3::ZERO, Vec3::new(4., 4., 4.));
+        let b = block(Vec3::new(2., -1., -1.), Vec3::new(4., 6., 6.));
+        let ab = boolean(&a, &b, BoolOp::Intersection, 1e-7).unwrap();
+        let ba = boolean(&b, &a, BoolOp::Intersection, 1e-7).unwrap();
+        let va = ab.body.mass_properties().unwrap().volume;
+        let vb = ba.body.mass_properties().unwrap().volume;
+        assert!((va - vb).abs() < 1e-6, "A∩B vol {va} != B∩A vol {vb}");
+        assert!((va - 32.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn intersection_translation_invariant() {
+        // Translating both operands translates the result; volume holds.
+        let a = block(Vec3::ZERO, Vec3::new(4., 4., 4.));
+        let b = block(Vec3::new(2., -1., -1.), Vec3::new(4., 6., 6.));
+        let shift = Vec3::new(10.0, -3.0, 7.0);
+        let a2 = block(shift, Vec3::new(4., 4., 4.));
+        let b2 = block(Vec3::new(2., -1., -1.) + shift, Vec3::new(4., 6., 6.));
+        let v1 = boolean(&a, &b, BoolOp::Intersection, 1e-7)
+            .unwrap()
+            .body
+            .mass_properties()
+            .unwrap()
+            .volume;
+        let v2 = boolean(&a2, &b2, BoolOp::Intersection, 1e-7)
+            .unwrap()
+            .body
+            .mass_properties()
+            .unwrap()
+            .volume;
+        assert!(
+            (v1 - v2).abs() < 1e-6,
+            "translation changed volume: {v1} vs {v2}"
+        );
+    }
+
+    #[test]
     fn guillotine_selection_counts() {
         let a = block(Vec3::ZERO, Vec3::new(4., 4., 4.));
         let b = block(Vec3::new(2., -1., -1.), Vec3::new(4., 6., 6.));
@@ -1266,7 +1361,11 @@ mod tests {
         // Difference A-B [0,2]x[0,4]x[0,4] = a box: 6 faces (1 reversed).
         let diff = select_faces(BoolOp::Difference, &ca, &cb);
         assert_eq!(diff.len(), 6, "difference keeps 6 faces");
-        assert_eq!(diff.iter().filter(|k| k.reversed).count(), 1, "one reversed B face");
+        assert_eq!(
+            diff.iter().filter(|k| k.reversed).count(),
+            1,
+            "one reversed B face"
+        );
         // Union keeps A-outside(5) + B-outside(6) = 11 faces.
         let uni = select_faces(BoolOp::Union, &ca, &cb);
         assert_eq!(uni.len(), 11, "union keeps 11 faces");
