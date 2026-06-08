@@ -177,6 +177,63 @@ pub struct ImprintedOperand {
     pub seam_edges: Vec<crate::entity::EdgeKey>,
 }
 
+/// Which operand a kept face came from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Operand {
+    A,
+    B,
+}
+
+/// A face selected into the result: which operand, its key in that
+/// operand's imprinted body, and whether its orientation must be
+/// reversed (difference flips the subtracted solid's walls inward).
+#[derive(Clone, Copy, Debug)]
+pub struct KeptFace {
+    pub operand: Operand,
+    pub face: FaceKey,
+    pub reversed: bool,
+}
+
+/// Regularized selection tables (Requicha r-sets). Given each operand's
+/// face classifications, choose the result face-set per operation:
+/// - Union: A-faces outside B + B-faces outside A.
+/// - Intersection: A-faces inside B + B-faces inside A.
+/// - Difference A-B: A-faces outside B + B-faces inside A, B reversed.
+pub(crate) fn select_faces(
+    op: BoolOp,
+    class_a: &[(FaceKey, FaceClass)],
+    class_b: &[(FaceKey, FaceClass)],
+) -> Vec<KeptFace> {
+    let mut keep = Vec::new();
+    let want = |operand, want_inside: bool, reversed: bool, list: &[(FaceKey, FaceClass)], keep: &mut Vec<KeptFace>| {
+        for &(face, c) in list {
+            let take = match c {
+                FaceClass::InsideOther => want_inside,
+                FaceClass::OutsideOther => !want_inside,
+                _ => false,
+            };
+            if take {
+                keep.push(KeptFace { operand, face, reversed });
+            }
+        }
+    };
+    match op {
+        BoolOp::Union => {
+            want(Operand::A, false, false, class_a, &mut keep);
+            want(Operand::B, false, false, class_b, &mut keep);
+        }
+        BoolOp::Intersection => {
+            want(Operand::A, true, false, class_a, &mut keep);
+            want(Operand::B, true, false, class_b, &mut keep);
+        }
+        BoolOp::Difference => {
+            want(Operand::A, false, false, class_a, &mut keep);
+            want(Operand::B, true, true, class_b, &mut keep);
+        }
+    }
+    keep
+}
+
 /// A face fragment's position relative to the OTHER operand solid.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FaceClass {
@@ -884,6 +941,25 @@ mod tests {
         let bad_b = cb.iter().filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther)).count();
         assert_eq!(bad_b, 0, "B unclassified/coincident: {cb:?}");
         assert_eq!(inside_b, 1, "only B's inner x=2 rectangle is inside A: {cb:?}");
+    }
+
+    #[test]
+    fn guillotine_selection_counts() {
+        let a = block(Vec3::ZERO, Vec3::new(4., 4., 4.));
+        let b = block(Vec3::new(2., -1., -1.), Vec3::new(4., 6., 6.));
+        let (ia, ib, _) = imprint_pair(&a, &b, 1e-7);
+        let ca = classify_faces(&ia.body, &b, 1e-7);
+        let cb = classify_faces(&ib.body, &a, 1e-7);
+        // Intersection [2,4]x[0,4]x[0,4] = a box: 6 faces.
+        let inter = select_faces(BoolOp::Intersection, &ca, &cb);
+        assert_eq!(inter.len(), 6, "intersection keeps 6 faces");
+        // Difference A-B [0,2]x[0,4]x[0,4] = a box: 6 faces (1 reversed).
+        let diff = select_faces(BoolOp::Difference, &ca, &cb);
+        assert_eq!(diff.len(), 6, "difference keeps 6 faces");
+        assert_eq!(diff.iter().filter(|k| k.reversed).count(), 1, "one reversed B face");
+        // Union keeps A-outside(5) + B-outside(6) = 11 faces.
+        let uni = select_faces(BoolOp::Union, &ca, &cb);
+        assert_eq!(uni.len(), 11, "union keeps 11 faces");
     }
 
     #[test]
