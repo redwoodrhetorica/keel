@@ -202,43 +202,53 @@ impl Body {
             "crossing imprint: non-planar curve",
         ))?;
         let (crossed_edge, p) = self.find_planar_seam_crossing(face, pt, n, tol.max(1e-7))?;
-        // Split the seam line at the crossing.
+        // The wrap circle is a NON-contractible loop, so a single closed
+        // mef would bound a degenerate disc. Split it into TWO ARCS at
+        // the seam crossing P and its antipode Q (= 2*center - P, on the
+        // circle): the lateral then splits cleanly into the two bands,
+        // each sharing both arcs, and the result circle carries two
+        // vertices P, Q (which the cross-operand glue matches against).
+        let q = pt * 2.0 - p;
+        // Split the seam line at P.
         let se = self.split_edge(crossed_edge, p)?;
-        // The crossing vertex P now has TWO loop fins ending at it (the
-        // lower and upper seam pieces). mef between THEM closes the full
-        // wrap circle from P to P, splitting the periodic face into the
-        // lower and upper bands. (mef with the same fin twice would
-        // instead bound a degenerate disc, leaving the band unsplit.)
         let lp = self
             .faces
             .get(face)
             .and_then(|f| f.loops.first().copied())
             .ok_or(TopoError::StaleKey)?;
-        let fins_at_p = self.loop_fins_ending_at_vertex(lp, se.vertex);
-        if fins_at_p.len() != 2 {
+        let seam_fins = self.loop_fins_ending_at_vertex(lp, se.vertex);
+        if seam_fins.len() != 2 {
             return Err(TopoError::Precondition(
                 "crossing imprint: expected two seam fins at the crossing",
             ));
         }
+        let (fin_a, fin_b) = (seam_fins[0], seam_fins[1]);
+        // Spur arc1 (P -> Q).
+        let m = self.mev(MevSite::AfterFin(fin_a), q)?;
+        let arc1_edge = m.edge;
+        let fin_arc1_out = self.fin_ending_at_vertex(lp, m.vertex)?;
+        // Arc2 (Q -> P) closes the circle and splits the face into bands.
         let surf_key = self.faces.get(face).and_then(|f| f.surface);
-        let mef = self.mef(fins_at_p[0], fins_at_p[1], surf_key)?;
-        let circle_edge = mef.edge;
+        let mef = self.mef(fin_arc1_out, fin_b, surf_key)?;
+        let arc2_edge = mef.edge;
         let new_face = mef.face;
-        // Geometry: 3D curve + pcurves on both fins; both faces keep the
-        // surface.
-        let ckey = self.add_curve(curve.clone());
-        if let Some(e) = self.edges.get_mut(circle_edge) {
-            e.curve = Some((ckey, true));
-        }
+        // Geometry: the full circle curve + pcurve on both arc edges'
+        // fins; both faces keep the surface.
         let pkey = self.add_curve(Curve3::Nurbs(pcurve));
-        let radial = self
-            .edges
-            .get(circle_edge)
-            .map(|e| e.radial.clone())
-            .unwrap_or_default();
-        for fk in radial {
-            if let Some(f) = self.fins.get_mut(fk) {
-                f.pcurve = Some((pkey, true));
+        for arc in [arc1_edge, arc2_edge] {
+            let ckey = self.add_curve(curve.clone());
+            if let Some(e) = self.edges.get_mut(arc) {
+                e.curve = Some((ckey, true));
+            }
+            let radial = self
+                .edges
+                .get(arc)
+                .map(|e| e.radial.clone())
+                .unwrap_or_default();
+            for fk in radial {
+                if let Some(f) = self.fins.get_mut(fk) {
+                    f.pcurve = Some((pkey, true));
+                }
             }
         }
         if let Some((sk, sense)) = surf_key
@@ -248,7 +258,7 @@ impl Body {
         }
         self.debug_validate();
         Ok(ImprintReport {
-            edge: circle_edge,
+            edge: arc1_edge,
             faces: vec![face, new_face],
         })
     }
@@ -552,15 +562,35 @@ mod tests {
             .unwrap();
         assert!(b.validate().is_ok(), "crossing imprint invalid");
         let after = b.counts();
-        // One new vertex (seam crossing), the split seam (+1 edge) and
-        // the slice circle (+1 edge), and one new face.
-        assert_eq!(after.v, before.v + 1);
+        // Two new vertices (seam crossing P + antipode Q), the slice
+        // circle as two arcs, and one new face (the band split).
+        assert_eq!(after.v, before.v + 2);
         assert_eq!(after.f, before.f + 1);
+        // Each arc is shared by the two bands (radial 2) with pcurves.
         let radial = b.edge(rep.edge).map(|e| e.radial.clone()).unwrap();
-        assert_eq!(radial.len(), 2, "slice circle should be manifold");
+        assert_eq!(radial.len(), 2, "arc should be shared by both bands");
         for fk in radial {
             assert!(b.fin(fk).and_then(|f| f.pcurve).is_some());
         }
+        // The two lateral fragments are the bands [0,2.5] and [2.5,5]:
+        // each interior point sits at its own mid-height.
+        let lat_faces: Vec<_> = b
+            .face_keys()
+            .into_iter()
+            .filter(|&fk| matches!(b.face_surface3(fk), Some(Surface3::Cylinder(_))))
+            .collect();
+        assert_eq!(lat_faces.len(), 2, "lateral split into two band faces");
+        let mut zs: Vec<f64> = lat_faces
+            .iter()
+            .filter_map(|&fk| b.face_interior_point(fk))
+            .map(|p| p.z)
+            .collect();
+        zs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(zs.len(), 2, "both bands have interior points");
+        assert!(
+            (zs[0] - 1.25).abs() < 1e-6 && (zs[1] - 3.75).abs() < 1e-6,
+            "band mid-heights {zs:?}"
+        );
     }
 
     #[test]

@@ -43,7 +43,6 @@ impl Body {
         cyl: &keel_geom::surface::Cylinder3,
         sense: bool,
     ) -> Vec<[Vec3; 3]> {
-        use keel_geom::curve::Curve3;
         let (origin, ex, ey, ez, radius) = (
             cyl.frame.origin,
             cyl.frame.x,
@@ -51,33 +50,9 @@ impl Body {
             cyl.frame.z,
             cyl.radius,
         );
-        // Heights of the face's closed circle edges along the axis.
-        let mut heights: Vec<f64> = Vec::new();
-        for lk in self
-            .faces
-            .get(face)
-            .map(|f| f.loops.clone())
-            .unwrap_or_default()
-        {
-            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
-                continue;
-            };
-            let mut cur = entry;
-            loop {
-                let Some(fin) = self.fins.get(cur) else { break };
-                let closed = self.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true);
-                if closed
-                    && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
-                    && let Some(Curve3::Circle(circle)) = self.curves.get(ck)
-                {
-                    heights.push((circle.center - origin).dot(ez));
-                }
-                cur = fin.next;
-                if cur == entry {
-                    break;
-                }
-            }
-        }
+        // Axial band from the face's circle/arc edges (cap circles and
+        // SSI arcs).
+        let heights = self.cyl_circle_heights(face, origin, ez);
         if heights.len() < 2 {
             return Vec::new();
         }
@@ -170,7 +145,7 @@ impl Body {
                 && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
                 && let Some(Curve3::Circle(c)) = self.curves.get(ck)
             {
-                circle_edge = Some(c.clone());
+                circle_edge = Some(*c);
             }
             let Some(next) = self.fins.get(cur).map(|f| f.next) else {
                 break;
