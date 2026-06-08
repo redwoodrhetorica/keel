@@ -7,6 +7,7 @@
 
 pub mod arena;
 pub mod body;
+pub mod boolean;
 pub mod construct;
 pub mod entity;
 pub mod euler;
