@@ -23,7 +23,7 @@
 use crate::Body;
 use crate::body::TopoError;
 use crate::entity::{EdgeKey, SurfaceGeom};
-use keel_geom::curve::Line3;
+use keel_geom::curve::{Curve3, Line3};
 use keel_geom::surface::{Cylinder3, Frame3, Surface3};
 use keel_math::vec::Vec3;
 
@@ -145,6 +145,302 @@ impl Body {
     }
 }
 
+impl Body {
+    /// All faces incident to a vertex (a face whose outer loop ends a fin
+    /// at `v`).
+    fn faces_at_vertex(&self, v: crate::entity::VertexKey) -> Vec<crate::entity::FaceKey> {
+        let mut out = Vec::new();
+        for (fk, f) in self.faces.iter() {
+            'face: for &lk in &f.loops {
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                loop {
+                    if self.fin_end_vertex(cur) == Some(v) {
+                        out.push(fk);
+                        break 'face;
+                    }
+                    let Some(next) = self.fins.get(cur).map(|x| x.next) else {
+                        break;
+                    };
+                    cur = next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The edge whose two bound vertices are exactly `{u, w}`, if any.
+    fn edge_between(
+        &self,
+        u: crate::entity::VertexKey,
+        w: crate::entity::VertexKey,
+    ) -> Option<crate::entity::EdgeKey> {
+        self.edges
+            .iter()
+            .find(|(_, e)| {
+                let (a, b) = e.bounds;
+                (a == u && b == w) || (a == w && b == u)
+            })
+            .map(|(k, _)| k)
+    }
+
+    /// Does `face` use edge `e` in one of its loops?
+    fn face_has_edge(&self, face: crate::entity::FaceKey, e: EdgeKey) -> bool {
+        self.edges
+            .get(e)
+            .map(|edge| {
+                edge.radial.iter().any(|&rf| {
+                    self.fins
+                        .get(rf)
+                        .and_then(|x| self.loops.get(x.owner))
+                        .map(|l| l.face)
+                        == Some(face)
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    /// The boundary edge of `face` incident to vertex `v`, excluding
+    /// `exclude` (used to find the cap-side edge other than the sharp edge).
+    fn boundary_edge_at_vertex_excluding(
+        &self,
+        face: crate::entity::FaceKey,
+        v: crate::entity::VertexKey,
+        exclude: EdgeKey,
+    ) -> Option<EdgeKey> {
+        let lp = self.faces.get(face).map(|f| f.loops[0])?;
+        let entry = self.loops.get(lp).and_then(|l| l.fin)?;
+        let mut cur = entry;
+        loop {
+            let fin = self.fins.get(cur)?;
+            let e = fin.edge;
+            if e != exclude
+                && let Some(edge) = self.edges.get(e)
+            {
+                let (a, c) = edge.bounds;
+                if a == v || c == v {
+                    return Some(e);
+                }
+            }
+            cur = fin.next;
+            if cur == entry {
+                break;
+            }
+        }
+        None
+    }
+
+    /// Where an in-plane line (origin `o`, in-plane perpendicular `m`)
+    /// crosses edge `e`'s segment, if it straddles it.
+    fn line_crosses_edge(&self, e: EdgeKey, o: Vec3, m: Vec3) -> Option<Vec3> {
+        let edge = self.edges.get(e)?;
+        let (u0k, u1k) = edge.bounds;
+        let u0 = self.vertices.get(u0k)?.point;
+        let u1 = self.vertices.get(u1k)?.point;
+        let s0 = (u0 - o).dot(m);
+        let s1 = (u1 - o).dot(m);
+        if (s0 > 0.0) != (s1 > 0.0) && (s0 - s1).abs() > 1e-12 {
+            let t = s0 / (s0 - s1);
+            Some(u0 + (u1 - u0) * t)
+        } else {
+            None
+        }
+    }
+
+    /// Trim `face` to `spring` by splitting its two cap-side boundary
+    /// edges (at the vertices near `va`/`vb`) at the spring crossings and
+    /// splitting the face. Returns (spring edge, strip face still carrying
+    /// `sharp`, kept support face, spring vertex near va, near vb).
+    #[allow(clippy::type_complexity)]
+    fn imprint_spring_line(
+        &mut self,
+        face: crate::entity::FaceKey,
+        sharp: EdgeKey,
+        va: crate::entity::VertexKey,
+        vb: crate::entity::VertexKey,
+        spring: &Line3,
+        n: Vec3,
+    ) -> Result<
+        (
+            EdgeKey,
+            crate::entity::FaceKey,
+            crate::entity::FaceKey,
+            crate::entity::VertexKey,
+            crate::entity::VertexKey,
+        ),
+        TopoError,
+    > {
+        let e_va = self
+            .boundary_edge_at_vertex_excluding(face, va, sharp)
+            .ok_or(TopoError::Precondition("fillet: no cap edge at va"))?;
+        let e_vb = self
+            .boundary_edge_at_vertex_excluding(face, vb, sharp)
+            .ok_or(TopoError::Precondition("fillet: no cap edge at vb"))?;
+        let m = n.cross(spring.dir);
+        let aa_pt =
+            self.line_crosses_edge(e_va, spring.origin, m)
+                .ok_or(TopoError::Precondition(
+                    "fillet: spring misses cap edge (overflow?)",
+                ))?;
+        let ab_pt =
+            self.line_crosses_edge(e_vb, spring.origin, m)
+                .ok_or(TopoError::Precondition(
+                    "fillet: spring misses cap edge (overflow?)",
+                ))?;
+        let sva = self.split_edge(e_va, aa_pt)?;
+        let svb = self.split_edge(e_vb, ab_pt)?;
+        let lp = self
+            .faces
+            .get(face)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let fa = self.fin_ending_at_vertex(lp, sva.vertex)?;
+        let fb = self.fin_ending_at_vertex(lp, svb.vertex)?;
+        let split = self.split_face(fa, fb, None)?;
+        let (strip, kept) = if self.face_has_edge(split.face_new, sharp) {
+            (split.face_new, split.face_old)
+        } else {
+            (split.face_old, split.face_new)
+        };
+        self.attach_edge_curve(split.edge, Curve3::Line(*spring), true);
+        Ok((split.edge, strip, kept, sva.vertex, svb.vertex))
+    }
+
+    /// Round a convex `edge` between two planar faces with a constant-
+    /// radius rolling-ball fillet (parity items 47-61; research file 40
+    /// rung 1). Returns the filleted body: the exact cylinder blend face
+    /// is inserted by the local trim-and-stitch surgery of file 40 §3
+    /// (imprint the spring lines, split the cap faces along the end arcs,
+    /// then dissolve the sharp-corner fragments with kef/kev), with the
+    /// support faces trimmed back to the spring curves and the sharp edge
+    /// removed.
+    ///
+    /// Scope: the edge's two end vertices must each be a simple degree-3
+    /// corner (two supports + one cap face), the box-like case. The blend
+    /// face carries its exact `Cylinder3` surface; trimmed (partial-angle)
+    /// cylinder tessellation and the blend-face pcurves (so mesh_volume /
+    /// analytic mass_properties cover the result) are follow-ups, as are
+    /// concave edges, non-planar supports, and overflow handling (file 41).
+    pub fn fillet_edge(&self, edge: EdgeKey, radius: f64) -> Result<Body, TopoError> {
+        let blend = self.blend_cylinder_for_edge(edge, radius)?;
+        let faces = self.faces_around_edge(edge);
+        if faces.len() != 2 {
+            return Err(TopoError::Precondition("fillet: edge needs two faces"));
+        }
+        let (f1, f2) = (faces[0], faces[1]);
+        let (va_k, vb_k) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
+        let p_a = self.vertices.get(va_k).ok_or(TopoError::StaleKey)?.point;
+        let p_b = self.vertices.get(vb_k).ok_or(TopoError::StaleKey)?.point;
+        let dir = blend.spine.dir;
+        let spine_pt = blend.spine.origin;
+
+        let mut b = self.clone();
+
+        // --- Phase 1: trim each support to its spring line. ---
+        let n1 = b
+            .face_outward_normal(f1)
+            .ok_or(TopoError::Precondition("fillet: face normal"))?;
+        let n2 = b
+            .face_outward_normal(f2)
+            .ok_or(TopoError::Precondition("fillet: face normal"))?;
+        let (spring_a_edge, strip1, f1k, aa, ab) =
+            b.imprint_spring_line(f1, edge, va_k, vb_k, &blend.spring_a, n1)?;
+        let (spring_b_edge, strip2, _f2k, ba, bb) =
+            b.imprint_spring_line(f2, edge, va_k, vb_k, &blend.spring_b, n2)?;
+        let _ = (p_a, p_b);
+
+        // --- Phase 2: split each cap face along its end arc. ---
+        // Cap at the A end: the face incident to va_k that is neither strip.
+        let split_cap =
+            |b: &mut Body,
+             v_corner: crate::entity::VertexKey,
+             a_end: crate::entity::VertexKey,
+             b_end: crate::entity::VertexKey|
+             -> Result<(crate::entity::FaceKey, crate::entity::EdgeKey), TopoError> {
+                let cap = b
+                    .faces_at_vertex(v_corner)
+                    .into_iter()
+                    .find(|f| *f != strip1 && *f != strip2)
+                    .ok_or(TopoError::Precondition("fillet: no cap face"))?;
+                let lp = b
+                    .faces
+                    .get(cap)
+                    .map(|f| f.loops[0])
+                    .ok_or(TopoError::StaleKey)?;
+                let fin_a = b.fin_ending_at_vertex(lp, a_end)?;
+                let fin_b = b.fin_ending_at_vertex(lp, b_end)?;
+                let split = b.split_face(fin_a, fin_b, None)?;
+                // Arc on the new edge: a quarter circle in the cap plane,
+                // centred at the spine projected into that plane.
+                let pc = b
+                    .vertices
+                    .get(v_corner)
+                    .map(|x| x.point)
+                    .unwrap_or(spine_pt);
+                let centre = spine_pt + dir * ((pc - spine_pt).dot(dir));
+                let pa_end = b
+                    .vertices
+                    .get(a_end)
+                    .map(|x| x.point)
+                    .ok_or(TopoError::StaleKey)?;
+                let ex = (pa_end - centre)
+                    .try_normalize()
+                    .ok_or(TopoError::Precondition("fillet: arc axis"))?;
+                let arc = keel_geom::curve::Circle3::new(centre, ex, dir.cross(ex), radius)
+                    .map_err(|_| TopoError::Precondition("fillet: bad arc"))?;
+                b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+                Ok((split.face_new, split.edge))
+            };
+        let (_corner_a, _arc_a) = split_cap(&mut b, va_k, aa, ba)?;
+        let (_corner_b, _arc_b) = split_cap(&mut b, vb_k, ab, bb)?;
+
+        // --- Phase 3: dissolve the four corner fragments into one face. ---
+        // Merge the two strips across the sharp edge.
+        b.kef(edge)?;
+        // Merge each cap corner in, then kill the resulting degree-1 spur.
+        let e_a = b
+            .edge_between(aa, va_k)
+            .ok_or(TopoError::Precondition("fillet: no A spring stub"))?;
+        b.kef(e_a)?;
+        let spur_a = b
+            .edge_between(va_k, ba)
+            .ok_or(TopoError::Precondition("fillet: no A spur"))?;
+        b.kev(spur_a)?;
+        let e_b = b
+            .edge_between(ab, vb_k)
+            .ok_or(TopoError::Precondition("fillet: no B spring stub"))?;
+        b.kef(e_b)?;
+        let spur_b = b
+            .edge_between(vb_k, bb)
+            .ok_or(TopoError::Precondition("fillet: no B spur"))?;
+        b.kev(spur_b)?;
+
+        // --- Phase 4: the surviving face on the spring-a edge (other than
+        // the trimmed support) is the blend face; give it the cylinder. ---
+        let blend_face = b
+            .faces_around_edge(spring_a_edge)
+            .into_iter()
+            .find(|f| *f != f1k)
+            .ok_or(TopoError::Precondition("fillet: no blend face"))?;
+        b.attach_face_surface(
+            blend_face,
+            SurfaceGeom::Analytic(Surface3::Cylinder(blend.surface.clone())),
+            true,
+        );
+        b.attach_edge_curve(spring_a_edge, Curve3::Line(blend.spring_a), true);
+        b.attach_edge_curve(spring_b_edge, Curve3::Line(blend.spring_b), true);
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("fillet: result invalid"))?;
+        Ok(b)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,6 +515,38 @@ mod tests {
         // each face at distance r from its centre).
         assert!(((blend.spring_a.origin - axis_pt).norm() - 0.5).abs() < 1e-9);
         assert!(((blend.spring_b.origin - axis_pt).norm() - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn fillet_box_edge_produces_valid_cylinder_blend() {
+        // Round the top-right edge of a 2x2x2 block by 0.5. The trim-and-
+        // stitch surgery removes the sharp edge + its two end vertices,
+        // adds 4 spring vertices, 2 spring edges + 2 arc edges, and the
+        // cylinder blend face: V8->10, E12->15, F6->7 (Euler 2). The blend
+        // face carries the exact rolling-ball cylinder.
+        let mut base = Body::new();
+        base.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e = top_right_edge(&base);
+        let filleted = base.fillet_edge(e, 0.5).unwrap();
+        assert!(filleted.validate().is_ok(), "filleted body invalid");
+        let c = filleted.counts();
+        assert_eq!(
+            (c.v, c.e, c.f),
+            (10, 15, 7),
+            "fillet counts {:?}",
+            (c.v, c.e, c.f)
+        );
+        // Exactly one cylindrical face (the blend), radius 0.5.
+        let cyl: Vec<f64> = filleted
+            .faces
+            .iter()
+            .filter_map(|(fk, _)| match filleted.face_surface_geom(fk) {
+                Some(SurfaceGeom::Analytic(Surface3::Cylinder(c))) => Some(c.radius),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(cyl.len(), 1, "expected one cylinder blend face");
+        assert!((cyl[0] - 0.5).abs() < 1e-12, "blend radius {}", cyl[0]);
     }
 
     #[test]
