@@ -39,9 +39,8 @@ impl Body {
         tol: f64,
     ) -> Result<ImprintReport, TopoError> {
         // Verify the curve lies on the face surface and build the
-        // pcurve by inversion.
-        let surf = self.face_analytic_surface(face)?;
-        let (pcurve, seam3) = self.curve_pcurve_on(face, curve, &surf, tol)?;
+        // pcurve by inversion (analytic or NURBS).
+        let (pcurve, seam3) = self.curve_pcurve_on_any(face, curve, tol)?;
 
         // Outer loop and a fin to spur from.
         let lp = self
@@ -454,6 +453,83 @@ impl Body {
         }
     }
 
+    /// Verify `curve` lies on `face`'s surface (analytic OR NURBS) within
+    /// tol, compute its pcurve, and return (pcurve, a seam point on the
+    /// curve). The NURBS path projects samples via `project_point_surface`
+    /// and fits a pcurve through the (u, v) parameters (M7b).
+    pub(crate) fn curve_pcurve_on_any(
+        &self,
+        face: FaceKey,
+        curve: &Curve3,
+        tol: f64,
+    ) -> Result<(keel_geom::nurbs_curve::NurbsCurve, Vec3), TopoError> {
+        let (sk, _) = self
+            .faces
+            .get(face)
+            .and_then(|f| f.surface)
+            .ok_or(TopoError::Precondition("imprint: face has no surface"))?;
+        match self.surfaces.get(sk) {
+            Some(SurfaceGeom::Analytic(a)) => {
+                let a = a.clone();
+                self.curve_pcurve_on(face, curve, &a, tol)
+            }
+            Some(SurfaceGeom::Nurbs(n)) => {
+                let n = n.clone();
+                let sample = |t: f64| -> Vec3 {
+                    match curve {
+                        Curve3::Line(l) => l.point(t),
+                        Curve3::Circle(c) => c.point(core::f64::consts::TAU * t),
+                        Curve3::Ellipse(e) => e.point(core::f64::consts::TAU * t),
+                        Curve3::Nurbs(nc) => {
+                            let (a, b) = nc.domain();
+                            nc.point(a + t * (b - a))
+                        }
+                    }
+                };
+                let ptol = tol.max(1e-7);
+                let ((u0, u1), _) = n.domain();
+                let uperiod = u1 - u0;
+                // Project a modest number of samples (project_point_surface
+                // is heavy: it re-decomposes Bezier patches each call), and
+                // UNWRAP the periodic u so the fit sees a continuous curve
+                // instead of a 2pi seam jump (which makes fit_cubic
+                // escalate control points without bound).
+                const N: usize = 24;
+                let mut uvpts: Vec<Vec3> = Vec::new();
+                let mut prev_u: Option<f64> = None;
+                for k in 0..=N {
+                    let p = sample(k as f64 / N as f64);
+                    // Fast local inversion: the SSI curve is on the
+                    // surface, so a grid-seeded Newton suffices (the
+                    // certified global projector is ~100x slower).
+                    let pr = keel_geom::project::project_point_surface_fast(&n, p);
+                    if pr.distance > ptol * 100.0 {
+                        return Err(TopoError::Precondition(
+                            "nurbs imprint: curve not on face surface",
+                        ));
+                    }
+                    let mut u = pr.u;
+                    if let Some(pu) = prev_u
+                        && uperiod > 0.0
+                    {
+                        while u - pu > 0.5 * uperiod {
+                            u -= uperiod;
+                        }
+                        while pu - u > 0.5 * uperiod {
+                            u += uperiod;
+                        }
+                    }
+                    prev_u = Some(u);
+                    uvpts.push(Vec3::new(u, pr.v, 0.0));
+                }
+                let fit = keel_geom::fit::fit_cubic(&uvpts, ptol.max(1e-4))
+                    .map_err(|_| TopoError::Precondition("nurbs imprint: pcurve fit failed"))?;
+                Ok((fit.curve, sample(0.0)))
+            }
+            None => Err(TopoError::StaleKey),
+        }
+    }
+
     /// Verify the curve lies on the surface within tol, compute its
     /// pcurve, and return (pcurve, a representative seam point on the
     /// curve in 3D).
@@ -534,6 +610,43 @@ mod tests {
     use super::*;
     use keel_geom::curve::Circle3;
     use keel_geom::surface::{Cylinder3, Frame3, Surface3};
+
+    #[test]
+    fn imprint_circle_on_nurbs_sphere() {
+        // The NURBS imprint path (M7b Task 1): a latitude circle on a
+        // NURBS sphere splits its single face into a cap + the rest, with
+        // a pcurve fitted in NURBS parameter space.
+        use keel_geom::curve::Circle3;
+        let mut b = Body::new();
+        // Poles on x (frame.z=(1,0,0)) so the seam is in the world z=0
+        // plane -- the latitude circle at z=0.5 stays crossing-free.
+        let frame = Frame3 {
+            origin: Vec3::ZERO,
+            x: Vec3::new(0., 1., 0.),
+            y: Vec3::new(0., 0., 1.),
+            z: Vec3::new(1., 0., 0.),
+        };
+        let out = b.nurbs_sphere(frame, 1.0).unwrap();
+        let face = out.faces[0];
+        let r = 0.75f64.sqrt();
+        let circle = Curve3::Circle(
+            Circle3::new(
+                Vec3::new(0., 0., 0.5),
+                Vec3::new(1., 0., 0.),
+                Vec3::new(0., 1., 0.),
+                r,
+            )
+            .unwrap(),
+        );
+        let rep = b.imprint_closed_curve(face, &circle, 1e-6).unwrap();
+        assert!(b.validate().is_ok(), "nurbs imprint invalid");
+        assert_eq!(b.counts().f, 2, "nurbs sphere splits into cap + rest");
+        let radial = b.edge(rep.edge).map(|e| e.radial.clone()).unwrap();
+        assert_eq!(radial.len(), 2);
+        for fk in radial {
+            assert!(b.fin(fk).and_then(|f| f.pcurve).is_some());
+        }
+    }
 
     #[test]
     fn imprint_crossing_circle_on_cylinder_lateral() {

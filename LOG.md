@@ -1229,3 +1229,96 @@ coverage grind, and whether the niche is worth it.
   --all-targets -- -D warnings; cargo test --workspace = 238 tests:
   90 geom + 77 math + 71 topo). No new fuzz target (M7a adds no mutation
   path: nurbs_sphere is a constructor, tessellation is a read). Merged.
+
+## Addendum 33 (2026-06-08): M7b -- FIRST NURBS BOOLEAN + the tolerant-edge CENTERPIECE delivered (inexact NURBS x NURBS deferred to M7c)
+
+The proof milestone's payload, in two halves. Branch m7b-nurbs-booleans.
+
+PART A -- the first NURBS boolean end-to-end:
+- NURBS-sphere INTERSECT analytic-sphere (both x-axis seamed ->
+  crossing-free), distance 1.5 -> a valid two-cap lens, tessellated
+  volume within 6% of the exact lens formula, midpoint inside / above
+  outside by GWN. The winding-classified pipeline (localize -> SSI ->
+  imprint both -> classify -> select -> import-and-glue stitch) now runs
+  with a genuinely curved NURBS operand, not just analytic primitives.
+- Plumbing this needed three M7b-grade pieces (per the M7a scope split):
+  - NURBS imprint pcurve: curve_pcurve_on_any (imprint.rs) handles
+    analytic AND NURBS faces -- sample the SSI seam, project each sample
+    onto the NURBS surface, UNWRAP the periodic u, fit a cubic pcurve.
+  - project_point_surface_fast (geom/project.rs): coarse 8x8 grid seed +
+    clamped Newton, ~100x faster than the certified global projector
+    (which re-decomposes Bezier patches every call, ~2.5s on a pole-
+    degenerate revolved sphere). The imprint hung >180s on the certified
+    projector + a seam-wrapping fit that escalated forever; fast project
+    + u-unwrap brought it to 0.32s.
+  - Trimmed-NURBS fragment tessellation + interior point: tessellate_nurbs
+    gained a cap-side trim (nurbs_cap_trim) and face_interior_point
+    dispatches NURBS faces to nurbs_face_interior_point (cap apex via
+    fast-project along the SSI-circle axis, side from loop kind). BUG
+    fixed: nurbs_cap_trim originally matched only Circle3 seams, so the
+    fitted-NURBS SSI seam fell through and the lens tessellated as a FULL
+    sphere (volume 3.99 not 0.36); generalized via closed_curve_center_axis
+    (Circle3/Ellipse3 exact x-cross-y; NURBS sampled-centroid + Newell
+    normal) -> lens volume within 6%.
+
+PART B -- TOLERANT EDGES, the differentiation centerpiece ("exact
+topology decisions with tolerant geometry", file 11's hybrid no kernel
+fully ships):
+- The SSI engine already computes the curve's certified error bound
+  (SsiCurve.tol_achieved) and USED TO THROW IT AWAY when the curve became
+  a topology edge. M7b plumbs it through:
+  - SeamCurve gained `tol`, set from c.tol_achieved at both seam_curves
+    construction sites.
+  - imprint_operand sets each seam edge's tolerance to the max seam tol.
+  - import_vertex / import_edge (the import-and-glue stitch) now COPY
+    vertex/edge tolerance into the result body (e.tolerance.max(etol)), so
+    the bound survives stitching.
+  - Body::epsilon_solid(eps) -> bool: a CHECKABLE validity predicate
+    (every edge/vertex tolerance <= eps); Body::achieved_tolerance() ->
+    the max tolerance carried. set_seam_edge_tolerance for the plumbing.
+- PROVEN (test nurbs_boolean_is_epsilon_solid): the tier-2 analytic-
+  sphere x NURBS-sphere SSI is solved by certified-numeric FITTING, so
+  the intersection circle is reproduced to a GENUINELY NONZERO certified
+  bound (4.02e-7) -- not exactly. That bound now rides onto Edge.tolerance,
+  and the lens is provably epsilon_solid(4.02e-7) while its COMBINATORIAL
+  topology (two valid caps, Euler-valid) stays EXACT. The test asserts the
+  bound is nonzero (eps > 0) so a regression that silently drops the bound
+  back to the floor fails loudly. This is the thesis, demonstrated on a
+  real curved NURBS boolean: exact combinatorics, geometry carrying its
+  own certified deviation.
+
+DEFERRED to M7c (honest ledger -- attempted in M7b, not shipped):
+- The INEXACT tier-3 NURBS-sphere x NURBS-sphere boolean (Task 5). Built
+  the test; it FAILS for two empirically-found reasons (not theory):
+  1. Correctness: the tier-3 FITTED seam (a general NurbsCurve, not a
+     clean Circle3) is not split onto either NURBS sphere by the crossing
+     imprint -- diagnostic showed ia.f=1, ib.f=1 (neither face cut), so
+     both whole faces classify OutsideOther and kept=0 (then the empty
+     kept-set hits the vacuous-true all_planar path and builds a garbage
+     body -> AssemblyFailed). The M6c crossing/two-arc imprint relies on
+     clean-conic seam geometry (center/axis/antipode) to locate the seam
+     crossing; it must be generalized to fitted NURBS seams. (Tier-2
+     analytic-vs-NURBS works because its seam, though carrying a nonzero
+     fitted BOUND, is still produced as a clean circle the crossing logic
+     can split.)
+  2. Performance: one such boolean runs ~190s (the certified solver re-
+     decomposes both pole-degenerate revolved spheres into Bezier patches
+     and Krawczyk-verifies every patch pair) -- un-shippable as a default
+     cargo test; needs SSI patch-pair pruning/caching first.
+  CRUCIALLY: the centerpiece is NOT blocked by this. The tier-2 lens
+  already carries a genuinely nonzero (4e-7) fitted bound, so tolerant
+  geometry is really exercised today; NURBS x NURBS is a harder SECOND
+  demonstration, not a prerequisite for the thesis.
+- Also deferred (unchanged): general trimmed-NURBS faces (multiple/curved
+  trim loops); exact trimmed-NURBS mass properties (the coarse tessellated
+  volume is the curved oracle for now); tolerance-GROWTH theory under
+  chained booleans; differential testing vs OCCT over the ABC corpus.
+
+FUZZ: fuzz_nurbs_boolean added (NURBS-sphere x analytic-sphere, random
+radii/separation/op) -- asserts never-panic, valid + epsilon_solid at
+achieved tolerance + bounded volume on Ok. Compiles under nightly; soak
+clean. (Per standing mandate, any finding becomes a golden regression.)
+
+GATE: exact CI triplet GREEN (fmt --all --check; clippy --workspace
+--all-targets -- -D warnings; cargo test --workspace = 241 tests: 90 geom
++ 77 math + 74 topo). Merged.

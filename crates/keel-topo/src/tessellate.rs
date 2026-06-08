@@ -28,7 +28,9 @@ impl Body {
                 Surface3::Cylinder(c) => self.tessellate_cylinder(face, &c.clone(), sense),
                 _ => Vec::new(),
             },
-            Some(crate::entity::SurfaceGeom::Nurbs(n)) => self.tessellate_nurbs(&n.clone(), sense),
+            Some(crate::entity::SurfaceGeom::Nurbs(n)) => {
+                self.tessellate_nurbs(face, &n.clone(), sense)
+            }
             None => Vec::new(),
         }
     }
@@ -41,6 +43,7 @@ impl Body {
     /// M7b.
     pub(crate) fn tessellate_nurbs(
         &self,
+        face: FaceKey,
         nurbs: &keel_geom::nurbs_surface::NurbsSurface,
         sense: bool,
     ) -> Vec<[Vec3; 3]> {
@@ -48,6 +51,16 @@ impl Body {
         const NU: usize = 40;
         const NV: usize = 28;
         let sgn = if sense { 1.0 } else { -1.0 };
+        // A trimmed cap fragment keeps only triangles on the cap side of
+        // its bounding SSI circle plane (the NURBS analogue of the sphere
+        // cap-side filter); a whole-surface face meshes fully.
+        let cap = self.nurbs_cap_trim(face);
+        let on_cap = |q: Vec3| -> bool {
+            match cap {
+                Some((cc, ax, side)) => ((q - cc).dot(ax) * side) >= 0.0,
+                None => true,
+            }
+        };
         let mut tris = Vec::new();
         let pt = |i: usize, n: usize, lo: f64, hi: f64| lo + (hi - lo) * i as f64 / n as f64;
         for i in 0..NU {
@@ -60,23 +73,52 @@ impl Body {
                 let b = nurbs.point(ub, va);
                 let c = nurbs.point(ub, vb);
                 let d = nurbs.point(ua, vb);
-                // Outward at the cell centre.
                 let (uc, vc) = (0.5 * (ua + ub), 0.5 * (va + vb));
                 let outward = nurbs
                     .local_geometry(uc, vc)
                     .ok()
                     .map(|g| g.normal * sgn)
-                    .unwrap_or_else(|| {
-                        // Pole fallback: away from the surface centre is
-                        // ill-defined here; use the quad's own normal.
-                        (b - a).cross(d - a) * sgn
-                    });
+                    .unwrap_or_else(|| (b - a).cross(d - a) * sgn);
                 for tri in [[a, b, c], [a, c, d]] {
-                    tris.push(orient(tri, outward));
+                    let cen = (tri[0] + tri[1] + tri[2]) * (1.0 / 3.0);
+                    if on_cap(cen) {
+                        tris.push(orient(tri, outward));
+                    }
                 }
             }
         }
         tris
+    }
+
+    /// If a NURBS `face` is a cap trimmed by a CLOSED SSI circle, return
+    /// the circle plane (point, unit normal) and the cap-side sign.
+    fn nurbs_cap_trim(&self, face: FaceKey) -> Option<(Vec3, Vec3, f64)> {
+        for lk in self.faces.get(face).map(|f| f.loops.clone())? {
+            let entry = self.loops.get(lk).and_then(|l| l.fin)?;
+            let mut cur = entry;
+            loop {
+                let fin = self.fins.get(cur)?;
+                let closed = self.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true);
+                if closed
+                    && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                    && let Some(cv) = self.curves.get(ck)
+                    && let Some((center_c, ax)) = crate::boolean::closed_curve_center_axis(cv)
+                {
+                    let apex = self.face_interior_point(face)?;
+                    let side = if (apex - center_c).dot(ax) >= 0.0 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    return Some((center_c, ax, side));
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        None
     }
 
     /// Lat-band tessellate a cylindrical face. The axial band [hlo,hhi]
@@ -278,7 +320,6 @@ impl Body {
     /// circle plane (point on it, unit normal) and the sign such that
     /// `(q - point).dot(normal) * sign >= 0` selects the cap side.
     fn sphere_cap_trim(&self, face: FaceKey) -> Option<(Vec3, Vec3, f64)> {
-        use keel_geom::curve::Curve3;
         let loops = self.faces.get(face).map(|f| f.loops.clone())?;
         for lk in loops {
             let entry = self.loops.get(lk).and_then(|l| l.fin)?;
@@ -291,16 +332,16 @@ impl Body {
                 let closed = self.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true);
                 if closed
                     && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
-                    && let Some(Curve3::Circle(circle)) = self.curves.get(ck)
+                    && let Some(cv) = self.curves.get(ck)
+                    && let Some((center_c, ax)) = crate::boolean::closed_curve_center_axis(cv)
                 {
-                    let ax = circle.x_axis.cross(circle.y_axis).try_normalize()?;
                     let apex = self.face_interior_point(face)?;
-                    let side = if (apex - circle.center).dot(ax) >= 0.0 {
+                    let side = if (apex - center_c).dot(ax) >= 0.0 {
                         1.0
                     } else {
                         -1.0
                     };
-                    return Some((circle.center, ax, side));
+                    return Some((center_c, ax, side));
                 }
                 cur = fin.next;
                 if cur == entry {

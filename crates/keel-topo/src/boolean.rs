@@ -50,6 +50,11 @@ pub struct SeamCurve {
     pub face_b: FaceKey,
     pub curve: keel_geom::curve::Curve3,
     pub closed: bool,
+    /// Certified bound on the curve's deviation from the true surface-
+    /// surface intersection (`SsiCurve::tol_achieved`): ~0 for exact
+    /// conics, ~the fit error for marched NURBS. This rides onto the
+    /// imprinted edge's tolerance (the tolerant-geometry contract, M7b).
+    pub tol: f64,
 }
 
 impl Body {
@@ -132,6 +137,57 @@ impl Body {
         let hhi = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let t = tol.max(1e-7);
         curve_h >= hlo - t && curve_h <= hhi + t
+    }
+
+    /// Raise a seam edge's tolerance (and its bound vertices') to at
+    /// least `tol` -- the SSI error bound rides onto the topology.
+    pub(crate) fn set_seam_edge_tolerance(&mut self, edge: crate::entity::EdgeKey, tol: f64) {
+        let bounds = self.edges.get(edge).map(|e| e.bounds);
+        if let Some(e) = self.edges.get_mut(edge) {
+            e.tolerance = e.tolerance.max(tol);
+        }
+        if let Some((v0, v1)) = bounds {
+            for v in [v0, v1] {
+                if let Some(vt) = self.vertices.get_mut(v) {
+                    vt.tolerance = vt.tolerance.max(tol);
+                }
+            }
+        }
+    }
+
+    /// Epsilon-solidity (Qi/Shapiro): a CHECKABLE validity contract --
+    /// the body is epsilon-solid iff every edge and vertex tolerance is
+    /// within `eps`. The boolean's geometry may be approximate (an
+    /// inexact NURBS SSI), but the topology is exact and every entity's
+    /// deviation is bounded by its stored tolerance; epsilon-solidity
+    /// asserts that bound is no worse than `eps`. This is the formal
+    /// handle the literature says NURBS kernels usually lack.
+    pub fn epsilon_solid(&self, eps: f64) -> bool {
+        let slack = eps + 1e-15;
+        self.edges.iter().all(|(_, e)| e.tolerance <= slack)
+            && self.vertices.iter().all(|(_, v)| v.tolerance <= slack)
+    }
+
+    /// The largest edge/vertex tolerance in the body -- the achieved
+    /// epsilon (the body is epsilon-solid at exactly this value).
+    pub fn achieved_tolerance(&self) -> f64 {
+        let e = self
+            .edges
+            .iter()
+            .map(|(_, e)| e.tolerance)
+            .fold(0.0f64, f64::max);
+        let v = self
+            .vertices
+            .iter()
+            .map(|(_, v)| v.tolerance)
+            .fold(0.0f64, f64::max);
+        e.max(v)
+    }
+
+    /// The full surface geometry backing a face (analytic OR NURBS).
+    pub(crate) fn face_surface_geom(&self, face: FaceKey) -> Option<SurfaceGeom> {
+        let (sk, _) = self.faces.get(face).and_then(|f| f.surface)?;
+        self.surfaces.get(sk).cloned()
     }
 
     /// The analytic surface backing a face, if any (M6a is analytic).
@@ -415,6 +471,64 @@ impl Body {
     /// vertices onto the surface (exact for planes, no dependency on
     /// stored pcurve completeness), then grid-samples the outer loop's
     /// UV box and winding-tests against every loop. Analytic faces only.
+    /// Interior point of a NURBS face fragment. For a NURBS sphere cap
+    /// bounded by a CLOSED SSI circle: the cap apex, found by fast-
+    /// projecting a far point along the circle axis (side from the
+    /// boundary fin's loop kind, mirroring the analytic sphere) onto the
+    /// NURBS surface. A whole NURBS sphere (no circle edge): a surface
+    /// mid-parameter point.
+    fn nurbs_face_interior_point(
+        &self,
+        face: FaceKey,
+        nurbs: &keel_geom::nurbs_surface::NurbsSurface,
+    ) -> Option<keel_math::vec::Vec3> {
+        for lp in self.faces.get(face).map(|f| f.loops.clone())? {
+            let Some(entry) = self.loops.get(lp).and_then(|l| l.fin) else {
+                continue;
+            };
+            let inner = self
+                .loops
+                .get(lp)
+                .map(|l| l.kind == crate::entity::LoopKind::Inner)
+                == Some(true);
+            let mut cur = entry;
+            loop {
+                let fin = self.fins.get(cur)?;
+                let closed = self.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true);
+                if closed
+                    && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                    && let Some(cv) = self.curves.get(ck)
+                    && let Some((center_c, ax)) = closed_curve_center_axis(cv)
+                    && let Some((m, t)) = closed_curve_point_tangent(cv, 0.25)
+                {
+                    // Outward normal at m via the NURBS surface.
+                    let pm = keel_geom::project::project_point_surface_fast(nurbs, m);
+                    let n = nurbs
+                        .local_geometry(pm.u, pm.v)
+                        .ok()
+                        .map(|g| g.normal)
+                        .unwrap_or(t);
+                    let mut into = n.cross(t);
+                    if inner {
+                        into = into * -1.0;
+                    }
+                    let sign = if into.dot(ax) >= 0.0 { 1.0 } else { -1.0 };
+                    let big = 4.0 * ((m - center_c).norm() + 1.0);
+                    let far = center_c + ax * (sign * big);
+                    let apex = keel_geom::project::project_point_surface_fast(nurbs, far);
+                    return Some(apex.point);
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        // Whole-surface NURBS face: a mid-parameter point.
+        let ((u0, u1), (v0, v1)) = nurbs.domain();
+        Some(nurbs.point(0.5 * (u0 + u1), 0.5 * (v0 + v1)))
+    }
+
     /// Interior point of a cylindrical lateral fragment: a point on the
     /// lateral at the fragment's mid-height (the band bounded by its
     /// CLOSED circle edges), at the angle opposite the seam (which sits
@@ -441,7 +555,6 @@ impl Body {
     /// by the boundary fin's into-face direction). Robust for the
     /// periodic sphere where UV winding fails.
     fn sphere_face_interior_point(&self, face: FaceKey) -> Option<keel_math::vec::Vec3> {
-        use keel_geom::curve::Curve3;
         let Surface3::Sphere(s) = self.face_surface3(face)? else {
             return None;
         };
@@ -470,15 +583,10 @@ impl Body {
                 let closed = self.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true);
                 if closed
                     && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
-                    && let Some(Curve3::Circle(circle)) = self.curves.get(ck)
+                    && let Some(cv) = self.curves.get(ck)
+                    && let Some((_center_c, ax)) = closed_curve_center_axis(cv)
+                    && let Some((m, t)) = closed_curve_point_tangent(cv, 0.25)
                 {
-                    let ax = circle.x_axis.cross(circle.y_axis).try_normalize()?;
-                    // Circle point + tangent in the curve's increasing
-                    // parameter direction.
-                    let theta = core::f64::consts::FRAC_PI_2;
-                    let m = circle.point(theta);
-                    let t = (circle.x_axis * (-theta.sin()) + circle.y_axis * theta.cos())
-                        .try_normalize()?;
                     let n = (m - center).try_normalize()?; // sphere outward at m
                     // Into-face = surface-tangent to the LEFT of the
                     // traversal for an outer loop; flipped for an inner
@@ -489,7 +597,7 @@ impl Body {
                     }
                     let sign = if into.dot(ax) >= 0.0 { 1.0 } else { -1.0 };
                     let apex = center + ax * (radius * sign);
-                    if ((apex - center).norm() - radius).abs() < 1e-7 * radius.max(1.0) {
+                    if ((apex - center).norm() - radius).abs() < 1e-6 * radius.max(1.0) {
                         return Some(apex);
                     }
                 }
@@ -503,6 +611,13 @@ impl Body {
     }
 
     pub(crate) fn face_interior_point(&self, face: FaceKey) -> Option<keel_math::vec::Vec3> {
+        // NURBS faces (no analytic Surface3): handled via the NURBS
+        // surface directly (M7b).
+        if let Some((sk, _)) = self.faces.get(face).and_then(|f| f.surface)
+            && let Some(crate::entity::SurfaceGeom::Nurbs(n)) = self.surfaces.get(sk)
+        {
+            return self.nurbs_face_interior_point(face, &n.clone());
+        }
         let surf = self.face_surface3(face)?;
         // Curved faces need a 3D interior point: their periodic
         // parameterization defeats the planar UV-winding path.
@@ -606,6 +721,67 @@ fn dist_to_polyline(poly: &[(f64, f64)], q: (f64, f64)) -> f64 {
         best = best.min((cx * cx + cy * cy).sqrt());
     }
     best
+}
+
+/// Center and unit axis of a CLOSED planar seam curve (a Circle3/
+/// Ellipse3 exactly, or a fitted NURBS circle via its sample centroid +
+/// Newell normal). The NURBS case is what an analytic-vs-spline or
+/// spline-vs-spline SSI produces. None for a Line.
+pub(crate) fn closed_curve_center_axis(
+    curve: &keel_geom::curve::Curve3,
+) -> Option<(keel_math::vec::Vec3, keel_math::vec::Vec3)> {
+    use keel_geom::curve::Curve3;
+    use keel_math::vec::Vec3;
+    match curve {
+        Curve3::Circle(c) => Some((c.center, c.x_axis.cross(c.y_axis).try_normalize()?)),
+        Curve3::Ellipse(e) => Some((e.center, e.x_axis.cross(e.y_axis).try_normalize()?)),
+        Curve3::Nurbs(n) => {
+            let (a, b) = n.domain();
+            const N: usize = 32;
+            let pts: Vec<Vec3> = (0..N)
+                .map(|k| n.point(a + (b - a) * k as f64 / N as f64))
+                .collect();
+            let centroid = pts.iter().fold(Vec3::ZERO, |s, p| s + *p) * (1.0 / N as f64);
+            // Newell normal of the sample polygon.
+            let mut nrm = Vec3::ZERO;
+            for i in 0..N {
+                let (p, q) = (pts[i], pts[(i + 1) % N]);
+                nrm = nrm
+                    + Vec3::new(
+                        (p.y - q.y) * (p.z + q.z),
+                        (p.z - q.z) * (p.x + q.x),
+                        (p.x - q.x) * (p.y + q.y),
+                    );
+            }
+            Some((centroid, nrm.try_normalize()?))
+        }
+        Curve3::Line(_) => None,
+    }
+}
+
+/// A point on a closed curve at parameter fraction `t` and the unit
+/// tangent there (finite difference). For the cap-side sign.
+fn closed_curve_point_tangent(
+    curve: &keel_geom::curve::Curve3,
+    t: f64,
+) -> Option<(keel_math::vec::Vec3, keel_math::vec::Vec3)> {
+    use keel_geom::curve::Curve3;
+    use keel_math::vec::Vec3;
+    let s = |x: f64| -> Vec3 {
+        match curve {
+            Curve3::Circle(c) => c.point(core::f64::consts::TAU * x),
+            Curve3::Ellipse(e) => e.point(core::f64::consts::TAU * x),
+            Curve3::Nurbs(n) => {
+                let (a, b) = n.domain();
+                n.point(a + (b - a) * x)
+            }
+            Curve3::Line(l) => l.point(x),
+        }
+    };
+    let dt = 1e-4;
+    let m = s(t);
+    let tangent = (s(t + dt) - s(t - dt)).try_normalize()?;
+    Some((m, tangent))
 }
 
 /// Nonzero-winding point-in-polygon (signed angle sum).
@@ -1003,7 +1179,11 @@ fn import_vertex(
     if let Some(&dv) = vmap.get(&key) {
         return Some(dv);
     }
+    let stol = sv.tolerance;
     let dv = dst.new_vertex(rec, sv.point);
+    if let Some(vt) = dst.vertices.get_mut(dv) {
+        vt.tolerance = vt.tolerance.max(stol);
+    }
     vmap.insert(key, dv);
     Some(dv)
 }
@@ -1022,13 +1202,16 @@ fn import_edge(
     if let Some(&de) = emap.get(&(op, sid)) {
         return Some(de);
     }
-    let (b0, b1, curve) = {
+    let (b0, b1, curve, etol) = {
         let se = src.edges.get(edge)?;
-        (se.bounds.0, se.bounds.1, se.curve)
+        (se.bounds.0, se.bounds.1, se.curve, se.tolerance)
     };
     let dv0 = import_vertex(dst, src, b0, op, rec, vmap)?;
     let dv1 = import_vertex(dst, src, b1, op, rec, vmap)?;
     let de = dst.new_edge(rec, (dv0, dv1), Derivation::Created);
+    if let Some(e) = dst.edges.get_mut(de) {
+        e.tolerance = e.tolerance.max(etol);
+    }
     if let Some((sck, scsense)) = curve
         && let Some(c) = src.curves.get(sck).cloned()
     {
@@ -1726,6 +1909,16 @@ fn imprint_operand(
         }
         faults.push(BoolFault::AssemblyFailed("unassembled face seams"));
     }
+    // Tolerant-edge contract (M7b): the imprinted seam edges carry the
+    // SSI curve's certified error bound, propagated to their vertices.
+    // The combinatorial topology stays exact; the GEOMETRY carries its
+    // bound -- "exact topology decisions with tolerant geometry".
+    let max_seam_tol = seams.iter().map(|s| s.tol).fold(0.0f64, f64::max);
+    if max_seam_tol > 0.0 {
+        for &edge in &seam_edges {
+            working.set_seam_edge_tolerance(edge, max_seam_tol);
+        }
+    }
     ImprintedOperand {
         body: working,
         seam_edges,
@@ -1756,16 +1949,24 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
     let mut seams = Vec::new();
     let mut faults = Vec::new();
     for fa in a.face_keys() {
-        let Some(sa) = a.face_surface3(fa) else {
+        let Some(ga) = a.face_surface_geom(fa) else {
             continue;
+        };
+        let ref_a = match &ga {
+            SurfaceGeom::Analytic(s) => SurfaceRef::Analytic(s),
+            SurfaceGeom::Nurbs(n) => SurfaceRef::Nurbs(n),
         };
         let id_a = a.faces.get(fa).map(|f| f.id.0).unwrap_or(0);
         for fb in b.face_keys() {
-            let Some(sb) = b.face_surface3(fb) else {
+            let Some(gb) = b.face_surface_geom(fb) else {
                 continue;
             };
+            let ref_b = match &gb {
+                SurfaceGeom::Analytic(s) => SurfaceRef::Analytic(s),
+                SurfaceGeom::Nurbs(n) => SurfaceRef::Nurbs(n),
+            };
             let id_b = b.faces.get(fb).map(|f| f.id.0).unwrap_or(0);
-            match intersect_surfaces(&SurfaceRef::Analytic(&sa), &SurfaceRef::Analytic(&sb), tol) {
+            match intersect_surfaces(&ref_a, &ref_b, tol) {
                 Ok(SsiResult::Curves(cs)) => {
                     for c in cs {
                         if c.tangential {
@@ -1778,9 +1979,9 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                         // circle of two spheres) pass through unclipped.
                         if let (
                             keel_geom::curve::Curve3::Line(line),
-                            Surface3::Plane(pa),
-                            Surface3::Plane(pb),
-                        ) = (&c.curve, &sa, &sb)
+                            SurfaceGeom::Analytic(Surface3::Plane(pa)),
+                            SurfaceGeom::Analytic(Surface3::Plane(pb)),
+                        ) = (&c.curve, &ga, &gb)
                         {
                             let pts_a = a.face_outer_loop_points(fa);
                             let pts_b = b.face_outer_loop_points(fb);
@@ -1803,6 +2004,7 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                                             face_b: fb,
                                             curve: keel_geom::curve::Curve3::Nurbs(seg),
                                             closed: false,
+                                            tol: c.tol_achieved,
                                         });
                                     }
                                 }
@@ -1823,6 +2025,7 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                             face_b: fb,
                             curve: c.curve,
                             closed: c.closed,
+                            tol: c.tol_achieved,
                         });
                     }
                 }
@@ -2268,6 +2471,82 @@ mod tests {
         assert!(
             (v - v_lens).abs() < 0.05 * v_lens,
             "lens volume {v} vs exact {v_lens}"
+        );
+    }
+
+    fn z_nurbs_sphere(center: Vec3, r: f64) -> Body {
+        let mut b = Body::new();
+        let frame = Frame3 {
+            origin: center,
+            x: Vec3::new(0., 1., 0.),
+            y: Vec3::new(0., 0., 1.),
+            z: Vec3::new(1., 0., 0.),
+        };
+        b.nurbs_sphere(frame, r).unwrap();
+        b
+    }
+
+    #[test]
+    fn nurbs_sphere_intersect_analytic_sphere() {
+        // THE FIRST NURBS BOOLEAN (M7b): a NURBS sphere intersected with
+        // an analytic sphere, both equatorially seamed (crossing-free).
+        // The SSI is the tier-2 analytic-vs-spline circle. Result = lens.
+        let a = z_nurbs_sphere(Vec3::ZERO, 1.0);
+        let b = z_sphere(Vec3::new(0.0, 0.0, 1.5), 1.0);
+        let res = boolean(&a, &b, BoolOp::Intersection, 1e-6).unwrap();
+        assert!(
+            res.body.validate().is_ok(),
+            "nurbs lens invalid: {:?}",
+            res.faults
+        );
+        assert_eq!(res.body.counts().f, 2, "lens has two cap faces");
+        let h = 0.25;
+        let v_lens = 2.0 * (core::f64::consts::PI * h * h / 3.0) * (3.0 - h);
+        let v = res.body.tessellated_volume();
+        assert!(
+            (v - v_lens).abs() < 0.06 * v_lens,
+            "nurbs lens volume {v} vs {v_lens}"
+        );
+        // Lens midpoint inside, point above outside.
+        let w_in = res
+            .body
+            .generalized_winding_number(Vec3::new(0.0, 0.0, 0.75));
+        assert!(w_in > 0.5, "nurbs lens midpoint winding {w_in}");
+    }
+
+    #[test]
+    fn nurbs_boolean_is_epsilon_solid() {
+        // THE M7b CENTERPIECE -- "exact topology decisions with tolerant
+        // geometry" on a real NURBS boolean. The tier-2 analytic-sphere x
+        // NURBS-sphere SSI is solved by certified-numeric fitting: the
+        // intersection circle is reproduced to a NONZERO certified bound
+        // (~4e-7), not exactly. That bound (SsiCurve.tol_achieved) now
+        // rides onto Edge.tolerance instead of being discarded, and the
+        // body is provably epsilon-solid at its achieved tolerance while
+        // the COMBINATORIAL topology (two valid caps) stays exact.
+        let a = z_nurbs_sphere(Vec3::ZERO, 1.0);
+        let b = z_sphere(Vec3::new(0.0, 0.0, 1.5), 1.0);
+        let res = boolean(&a, &b, BoolOp::Intersection, 1e-6).unwrap();
+        let eps = res.body.achieved_tolerance();
+        // The geometry is GENUINELY tolerant: the fitted seam carries a
+        // real, nonzero certified deviation bound (this guards against a
+        // regression that silently drops the bound back to the floor).
+        assert!(
+            eps.is_finite() && eps > 0.0,
+            "seam tolerance must be a real nonzero bound, got {eps:e}"
+        );
+        assert!(eps < 1e-4, "tier-2 fit should be tight, got {eps:e}");
+        // Exact topology: the combinatorics are a valid two-cap lens...
+        assert!(
+            res.body.validate().is_ok(),
+            "lens invalid: {:?}",
+            res.faults
+        );
+        assert_eq!(res.body.counts().f, 2, "lens has two cap faces");
+        // ...and the tolerant-geometry contract holds at the achieved bound.
+        assert!(
+            res.body.epsilon_solid(eps),
+            "must be epsilon-solid at achieved {eps:e}"
         );
     }
 
