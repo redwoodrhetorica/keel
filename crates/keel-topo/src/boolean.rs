@@ -1385,12 +1385,17 @@ fn stitch_by_import(
 
 pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, BoolFault> {
     let (seams, mut faults) = seam_curves(a, b, tol);
-    // Coplanar/coincident or tangential face pairs are M6b. Decline
-    // immediately rather than grind through degenerate edge-grazing
-    // imprints (which is both wrong and pathologically slow).
+    // Tangential face pairs (touch at a point/curve without crossing) are
+    // still declined. COINCIDENT (coplanar overlapping) faces now PROCEED:
+    // the winding classifier marks them FaceClass::OnOther and select_faces
+    // drops them, which is the correct on-on rule for the common case
+    // (abutting/face-to-face solids whose shared face is interior to the
+    // union/intersection). The final positive-volume post-condition guards
+    // partial-overlap cases that this simplest rule mis-selects, declining
+    // them honestly. (Full Requicha on-on tables -> a follow-up.)
     if let Some(f) = faults
         .iter()
-        .find(|f| matches!(f, BoolFault::Coincident(..) | BoolFault::Tangent(..)))
+        .find(|f| matches!(f, BoolFault::Tangent(..)))
         .cloned()
     {
         return Err(f);
@@ -2645,6 +2650,26 @@ mod tests {
             (v - v_lens).abs() < 0.05 * v_lens,
             "nurbs-nurbs lens volume {v} vs {v_lens}"
         );
+    }
+
+    #[test]
+    fn coincident_abutting_box_union() {
+        // Two unit boxes sharing the x=1 face (coincident, opposite-
+        // oriented). Union -> a 2x1x1 box (volume 2). Previously DECLINED
+        // (Coincident); now handled (the shared faces classify OnOther and
+        // are dropped as interior, the rest glue).
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::new(1.0, 0.0, 0.0), 1.0, 1.0, 1.0).unwrap();
+        let res = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
+        assert!(
+            res.body.validate().is_ok(),
+            "coincident union invalid: {:?}",
+            res.faults
+        );
+        let v = res.body.mass_properties().unwrap().volume;
+        assert!((v - 2.0).abs() < 1e-9, "coincident union volume {v} != 2");
     }
 
     #[test]
