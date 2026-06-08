@@ -340,8 +340,75 @@ impl Body {
     /// vertices onto the surface (exact for planes, no dependency on
     /// stored pcurve completeness), then grid-samples the outer loop's
     /// UV box and winding-tests against every loop. Analytic faces only.
+    /// Interior point of a spherical cap fragment: the cap apex, on the
+    /// side of the bounding SSI circle that this face occupies (chosen
+    /// by the boundary fin's into-face direction). Robust for the
+    /// periodic sphere where UV winding fails.
+    fn sphere_face_interior_point(&self, face: FaceKey) -> Option<keel_math::vec::Vec3> {
+        use keel_geom::curve::Curve3;
+        let Surface3::Sphere(s) = self.face_surface3(face)? else {
+            return None;
+        };
+        let center = s.frame.origin;
+        let radius = s.radius;
+        // Any loop fin whose edge is a circle (the SSI seam) determines
+        // the cap side. The two caps share this edge with the SAME
+        // forward flag and pcurve, so the side is fixed by the fin's
+        // loop kind: the disc uses the circle as its OUTER loop
+        // (interior to the left), the rest face as an INNER ring
+        // (interior to the other side).
+        for lp in self.faces.get(face).map(|f| f.loops.clone())? {
+            let Some(entry) = self.loops.get(lp).and_then(|l| l.fin) else {
+                continue;
+            };
+            let inner = self
+                .loops
+                .get(lp)
+                .map(|l| l.kind == crate::entity::LoopKind::Inner)
+                == Some(true);
+            let mut cur = entry;
+            loop {
+                let fin = self.fins.get(cur)?;
+                if let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                    && let Some(Curve3::Circle(circle)) = self.curves.get(ck)
+                {
+                    let ax = circle.x_axis.cross(circle.y_axis).try_normalize()?;
+                    // Circle point + tangent in the curve's increasing
+                    // parameter direction.
+                    let theta = core::f64::consts::FRAC_PI_2;
+                    let m = circle.point(theta);
+                    let t = (circle.x_axis * (-theta.sin()) + circle.y_axis * theta.cos())
+                        .try_normalize()?;
+                    let n = (m - center).try_normalize()?; // sphere outward at m
+                    // Into-face = surface-tangent to the LEFT of the
+                    // traversal for an outer loop; flipped for an inner
+                    // ring (whose interior is on the other side).
+                    let mut into = n.cross(t);
+                    if inner {
+                        into = into * -1.0;
+                    }
+                    let sign = if into.dot(ax) >= 0.0 { 1.0 } else { -1.0 };
+                    let apex = center + ax * (radius * sign);
+                    if ((apex - center).norm() - radius).abs() < 1e-7 * radius.max(1.0) {
+                        return Some(apex);
+                    }
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        None
+    }
+
     pub(crate) fn face_interior_point(&self, face: FaceKey) -> Option<keel_math::vec::Vec3> {
         let surf = self.face_surface3(face)?;
+        // Curved faces (M6b: spheres) need a 3D interior point: their
+        // periodic parameterization defeats the planar UV-winding path.
+        if let Surface3::Sphere(_) = surf {
+            return self.sphere_face_interior_point(face);
+        }
         let loops: Vec<crate::entity::LoopKey> = self
             .faces
             .get(face)
@@ -1631,6 +1698,40 @@ mod tests {
         assert_eq!(ib.body.counts().f, 7, "B faces after imprint");
         assert_eq!(ia.seam_edges.len(), 4);
         assert_eq!(ib.seam_edges.len(), 1);
+    }
+
+    #[test]
+    fn sphere_caps_classify_via_winding() {
+        // Two unit spheres at z=0 and z=1.5 (equatorial seam, crossing-
+        // free SSI circle at z=0.75). After imprint each sphere is two
+        // caps. Each sphere has exactly one cap inside the other and one
+        // outside, classified by the generalized winding number.
+        let a = z_sphere(Vec3::ZERO, 1.0);
+        let b = z_sphere(Vec3::new(0.0, 0.0, 1.5), 1.0);
+        let (ia, ib, faults) = imprint_pair(&a, &b, 1e-7);
+        assert!(faults.is_empty(), "faults: {faults:?}");
+        let ca = classify_faces(&ia.body, &b, 1e-7);
+        let inside = ca
+            .iter()
+            .filter(|(_, c)| *c == FaceClass::InsideOther)
+            .count();
+        let outside = ca
+            .iter()
+            .filter(|(_, c)| *c == FaceClass::OutsideOther)
+            .count();
+        let bad = ca
+            .iter()
+            .filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther))
+            .count();
+        assert_eq!(bad, 0, "sphere A caps unclassified: {ca:?}");
+        assert_eq!((inside, outside), (1, 1), "sphere A cap classes {ca:?}");
+        // Symmetric for B.
+        let cb = classify_faces(&ib.body, &a, 1e-7);
+        let inb = cb
+            .iter()
+            .filter(|(_, c)| *c == FaceClass::InsideOther)
+            .count();
+        assert_eq!(inb, 1, "sphere B cap inside A {cb:?}");
     }
 
     #[test]
