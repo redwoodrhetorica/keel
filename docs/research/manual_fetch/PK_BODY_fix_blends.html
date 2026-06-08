@@ -1,0 +1,154 @@
+
+<!-- saved from url=(0069)http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
+<title>PK_BODY_fix_blends</title>
+<link rel="stylesheet" href="./PK_BODY_fix_blends_files/ps_doc.css">
+</head>
+<body bgcolor="#ffffff" link="#006633">
+<a name="topofdoc">
+
+<p><span class="pushleft">
+<table cellpadding="0" cellspacing="0" border="0" bgcolor="#006633" width="100%">
+  <tbody><tr>
+    <td><a href="http://www.parasolid.com/">
+        <img src="./PK_BODY_fix_blends_files/psbar_l.gif" border="0"></a></td>
+    <td align="RIGHT" valign="CENTER">
+        <font color="white" face="helvetica,arial" size="5">
+        <b>PK_BODY_fix_blends</b></font></td>
+    <td>&nbsp;&nbsp;</td>
+  </tr>
+</tbody></table></span></p>
+
+</a><a name="endofcontents">
+</a><pre><a name="endofcontents">
+</a><a name="declaration"><b></b></a><b><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_error_code_t.html">PK_ERROR_code_t</a>               PK_BODY_fix_blends
+(
+<i>--- received arguments ---
+</i><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_t.html">PK_BODY_t</a>                     body,         --- edge to have blends fixed
+const <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends_o_t.html">PK_BODY_fix_blends_o_t</a> *options,      --- options structure
+
+<i>--- returned arguments ---
+</i>int                    *const n_blends,     --- number of blend faces
+<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_t.html">PK_FACE_t</a>             **const blends,       --- created blend faces
+<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_array_t.html">PK_FACE_array_t</a>       **const faces,        --- underlying faces
+int                   **const edges,        --- edges that have been replaced
+<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_t</a>       *const fault,        --- status
+<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_t.html">PK_EDGE_t</a>              *const fault_edge,   --- first edge for which blend
+                                            --- can't be fixed
+                                            --- (may be PK_ENTITY_null)
+<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_topol_t.html">PK_TOPOL_t</a>             *const fault_topol   --- topology associated with
+                                            --- fault (may be PK_ENTITY_null)
+)
+</b>
+<a name="description">
+<i>This function changes any edges of the given body which have had blends set on
+them by the PK_EDGE_set_blend_ functions, into faces with the appropriate
+surface geometry.
+</i>
+</a><a name="errors">
+<b>Specific Errors:</b>
+    PK_ERROR_cant_fix_blends    can't fix blends in body
+    PK_ERROR_general_body       general body
+
+</a><a name="documentation">
+Any edges of the body which have blend attributes are changed into full faces
+with the appropriate blending surface geometry.
+
+
+checking options
+The <b>local_check</b> flag and the <b>checks</b> data structure are used to
+control the amount of checking during the blending operation:
+
+ If <b>local_check</b> is set to <b>PK_LOGICAL_true</b>, then
+ <b>checks</b> will be ignored, and the level of local checking will be:
+
+    No surface self-intersection checks will be performed
+    Face checks will be performed
+    Face-face inconsistency checks will be performed.
+
+ If <b>local_check</b> is set to <b>PK_LOGICAL_false</b>, then the amount of local
+ checking will be determined by <b>checks</b>.
+
+
+PK_BODY_fix_blends returns the number of created blend faces,
+and three arrays:
+
+ <b>blends</b> will contain <b>n_blends</b> faces, which are the created blend faces.
+
+ <b>faces</b>  will contain the underlying faces associated with the blends.
+          The underlying faces of a blend are the faces whose
+          geometry determines the blend surface geometry. Some of the
+          face tags may be null. This occurs if there is no face in the final
+          body with the appropriate surface geometry, which can be the case if
+          a face has been entirely blended away, or for the cliff side of a
+          cliffedge blend.
+
+ <b>edges</b>  will contain <b>n_blends</b> integers. These integers are the (dead)
+          tags of the edges which were blended to produce this set of blends.
+          The same value may occur several times in this list if, for example,
+          a blend has overflowed, since all the corresponding faces in <b>blends</b>
+          were caused by the same blend attribute.
+
+The user can set the option <b>vx_twin</b> to request that the integer in <b>edges</b>
+be the (dead) tag of the appropriate vertex instead, for those blend faces
+which are generated from vertices (default is PK_LOGICAL_false).
+
+The option <b>transfer</b> is used to select whether any topology in the region
+which has been completely overlapped by the blend will be transferred into
+the blend faces or whether it will be deleted.
+
+If  the attempt to fix the blend fails due to an error which would be detected
+by </a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_check_blends.html">PK_EDGE_check_blends</a>, the edge associated with the error will be
+returned in <b>fault_edge</b> and <b>fault</b> and <b>fault_topol</b> are the same as would
+be returned if <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_check_blends.html">PK_EDGE_check_blends</a> was called with <b>fault_edge</b>. These can be
+used to locate the reason for failure to fix the blend. Note that only the
+first error will  be returned. If no errors are found <b>fault</b> will be
+<b><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_no_fault_c</a></b> and <b>fault_edge</b> and <b>fault_topol</b> will be
+PK_ENTITY_null.
+
+If the <b>local_check</b> flag is set to <b>PK_logical_false</b> and a self-intersecting
+surface or a face-face inconsistency is detected during a local check specified
+by the application, then <b>fault</b> will be set accordingly, <b>fault_edge</b> will be
+set to <b>PK_ENTITY_null</b> and <b>fault_topol</b> will be set to one of the invalid
+faces. The blend will have been attached.
+
+The option <b>preserve_notch</b> only has an effect when a sheet body is being
+blended. If it is set to PK_LOGICAL_false, PK_BODY_fix_blends will make
+a simple curve within the blend surface to bridge a laminar notch.
+If this option is set to PK_LOGICAL_true, the shape of the notch is
+projected normally onto the blend surface to bridge the notch gap.
+If a solid body is being blended this option has no effect and is ignored.
+
+The option <b>update</b> en/dis-ables some changes to the blending algorithms which
+might cause differences in model updates between versions.  It currently has
+two values:
+
+    <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_edge_update_t.html">PK_blend_edge_update_0_c</a>         for updating v9.1 to v12.1models
+    <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_edge_update_t.html">PK_blend_edge_update_1_c</a>         for updating v13.0 models
+
+Note that blends created with the property <b>draw_fix</b> set to PK_LOGICAL_false
+will not be fixed.
+
+This function is not supported for general bodies.
+
+</pre>
+
+<script type="text/JavaScript" language="JavaScript">
+<!-- 
+// Change date to a readable format
+function to_utc(date)
+{var utc = date.toUTCString();return utc;}
+
+// get last modified date of the current document.
+function date_lastmodified()
+{var mod = document.lastModified, s = "Unknown", d1;
+ if(0 != (d1=Date.parse(mod)))
+  {s = to_utc(new Date(d1));}
+ return s;}	
+// display the last modified date
+document.write("<ADDRESS>Generated on: " + date_lastmodified() + "</ADDRESS>");
+// -->
+</script><address>Generated on: Fri, 15 Dec 2023 13:14:47 GMT</address>
+
+
+</body></html>

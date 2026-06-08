@@ -1,0 +1,2748 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0//EN">
+<!-- saved from url=(0062)http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
+
+<meta http-equiv="Content-Style-Type" content="text/css">
+<meta name="GENERATOR" content="Adobe FrameMaker 6.0/HTML Export Filter">
+<link rel="STYLESHEET" href="./Parasolid v12.0_ Face-Face Blending_files/ps_doc.css" charset="ISO-8859-1" type="text/css">
+<title>Parasolid v12.0: Face-Face Blending</title>
+</head>
+<body bgcolor="#ffffff" link="#006633">
+<a name="topofdoc">
+
+
+<p><span class="pushleft">
+</span></p><table cellpadding="0" cellspacing="0" border="0" bgcolor="#006633" width="100%">
+  <tbody><tr>
+    <td><a href="http://www.parasolid.com/">
+        <img src="./Parasolid v12.0_ Face-Face Blending_files/psbar_l.gif" border="0"></a></td>
+    <td align="RIGHT" valign="CENTER">
+        <font color="white" face="helvetica,arial" size="5">
+        <b>Face-Face Blending</b></font></td>
+    <td>&nbsp;&nbsp;</td>
+  </tr>
+</tbody></table><p></p>
+
+<p></p><table border="" align="CENTER"><tbody><tr>
+  <td>&lt;&lt;&lt; <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html">Interpreting Edge Blending Error Codes</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs/fd_index.html">Chapters</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.35.html">Interpreting Face-Face Blending Error Codes</a> &gt;&gt;&gt;</td>
+</tr></tbody></table><p></p>
+
+<h1>Contents</h1>
+</a><ul><a name="topofdoc">
+</a><li><a name="topofdoc"> </a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-304654">33.1	Introduction </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-285087">33.2	Face-face blending concepts </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-332921">33.2.1	General properties of a face-face blend </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274071">33.2.2	Creating a face-face blend </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274075">33.3	Defining the cross-section plane </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274079">33.3.1	Supplying a suitable parameter spine </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-323372">33.3.2	Options for defining cross-section planes </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274082">33.4	Defining contact points </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274083">33.4.1	Specifying the size of the blend </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274089">33.4.2	Specifying the boundary of the blend </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-298951">33.4.3	Constraining a blend locally using blend size </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274093">33.4.4	Inverting cliffedges and holdlines </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274096">33.4.5	Options </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274099">33.5	Defining the cross-section shape </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274100">33.5.1	Conic cross-sections </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-315377">33.5.2	Chamfer cross-sections </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274103">33.5.3	Curvature continuous cross-sections </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-315223">33.5.4	User-defined conic and curvature continuous cross-sections </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-316625">33.5.5	Implying curve shape from other settings</a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-316299">33.5.6	Options </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-289361">33.6	Trimming face-face blends </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-289362">33.6.1	Trimming blend faces </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-289520">33.6.2	Trimming blend walls and returning the body </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-289585">33.6.3	Trimming blend to a plane </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274109">33.7	Propagating blends </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274112">33.8	Blend notches </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-289913">33.9	Dealing with multiple solutions </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-307162">33.9.1	Options </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274122">33.10	Generating blend ribs </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274123">33.10.1	Specifying when to produce ribs </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274128">33.10.2	How ribs are returned </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274130">33.11	Checking </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-274134">33.12	User-supplied surfaces </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#pgfId-110680">33.13	Face-face blending summary</a>
+</li></ul>
+<a name="endofcontents">
+
+
+</a><p align="RIGHT"><a name="endofcontents">
+</a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-304654"></a>33.1	<a name="30925"></a>Introduction 
+
+
+</h1>
+<p>
+<a name="pgfId-304665"></a>Chapters <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.30.html#17798">29</a> to <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#25674">32</a> described Parasolid's support for creating edge blends. In addition to edge blending, Parasolid provides functionality to create blends between two sets of faces. This operation is known as face-face blending.</p>
+<p>
+<a name="pgfId-328394"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#88903">Figure 33-1</a> shows an example where two disjoint sheet bodies have been joined together by creating a face-face blend between them.</p>
+<p>
+<a name="pgfId-327461"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-428.gif">
+
+<p>
+<a name="pgfId-327463"></a>Figure 33-1 <a name="88903"></a>Blending two sets of faces</p>
+<p>
+<a name="pgfId-280658"></a>Face-face blending differs from edge blending as follows:</p>
+<ul>
+<li>
+<a name="pgfId-280659"></a>The sets of faces to be blended do not need to be adjacent, or even in the same body.</li>
+<li>
+<a name="pgfId-280660"></a>Face-face blends are created and fixed in a single operation. There is no such thing as an unfixed face-face blend.</li>
+</ul>
+<p>
+<a name="pgfId-332435"></a>This chapter provides a complete description of Parasolid's support for face-face blending. <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#35907">Section 33.2, "Face-face blending concepts"</a>, explains the main concepts involved in face-face blending, and also provides a starting-point for the material in the rest of this chapter.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-285087"></a>33.2	<a name="35907"></a>Face-face blending concepts 
+
+
+</h1>
+<p>
+<a name="pgfId-285088"></a>In a face-face blend, the two sets of faces to blend are known as the left and right <strong>
+walls</strong> of the blend. You define a face-face blend between two walls using a combination of the following three independent properties.</p>
+<p>
+<a name="pgfId-328445"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-328474"></a>Property</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-328476"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-328503"></a>The <strong>
+cross-section planes</strong> of the blend.</p>
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-429.gif">
+
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-329011"></a>Cross-section planes can be either:</p>
+<ul>
+<li>
+<a name="pgfId-330985"></a>Orthogonal to the walls of the face-face blend (rolling-ball cross-section).</li>
+<li>
+<a name="pgfId-330992"></a>Orthogonal to a separate parameter spine (disc cross-section).</li>
+<li>
+<a name="pgfId-330994"></a>Derived from a set of isoparameter curves in the left hand wall. </li>
+</ul>
+<p>
+<a name="pgfId-330984"></a>See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#43352">Section 33.3, "Defining the cross-section plane"</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-328517"></a>The two <strong>
+contact points</strong> in each cross-section plane at which the blend touches the faces being blended.</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-329020"></a>Contact points can either be defined implicitly - you specify the size of the blend and let Parasolid calculate the exact contact points, or explicitly - you define a curve that must form one of the boundaries of the blend surface. Blends may be either <strong>
+symmetric </strong>(defined using a single parameter), or <strong>
+asymmetric </strong>(defined using two parameters). See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#79759">Section 33.4, "Defining contact points"</a>. </p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-328909"></a>The <strong>
+cross-section shape</strong> of the curve between the two contact points in the cross-section plane .</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-329032"></a>You can define a range of cross-section shapes in the cross-section plane. These fall into three types: </p>
+<ul>
+<li>
+<a name="pgfId-331001"></a>conic blends (such as circular, elliptic, or hyperbolic blends)</li>
+<li>
+<a name="pgfId-331009"></a>chamfers</li>
+<li>
+<a name="pgfId-331109"></a>curvature continuous blends</li>
+</ul>
+<p>
+<a name="pgfId-330996"></a>See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#83117">Section 33.5, "Defining the cross-section shape"</a>. </p>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-329357"></a>These properties are illustrated in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#65750">Figure 33-2</a>.</p>
+<p>
+<a name="pgfId-280398"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-430.gif">
+
+<p>
+<a name="pgfId-280425"></a>Figure 33-2 <a name="65750"></a>General definition of a face-face blend</p>
+<p>
+<a name="pgfId-329667"></a>In addition to these basic properties of a face-face blend, there are a number of usability factors that determine the final appearance of a blend. </p>
+<p>
+<a name="pgfId-332920"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-332507"></a>Factor</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-332509"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332555"></a>Trimming</p>
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-431.gif">
+
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332557"></a>Once a blend surface has been created, it must be trimmed to the required shape - this involves removing material from the blend surface and the walls. You can control where and how the blend surface should terminate. Often, it is sufficient to trim the blend to existing surrounding geometry, but a number of different options are possible. </p>
+<p>
+<a name="pgfId-332561"></a>See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#20242">Section 33.6, "Trimming face-face blends"</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332725"></a>Propagation</p>
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-432.gif">
+
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332727"></a>You can control what happens if a blend can be continued in the faces adjacent to those specified as blend walls. In some cases, you might want to <strong>
+propagate</strong> the blend as far as possible, and in others, you might want to blend only those walls that you have explicitly specified. </p>
+<p>
+<a name="pgfId-332731"></a>See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#49434">Section 33.7, "Propagating blends"</a>. </p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332761"></a>Notches</p>
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-433.gif">
+
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332763"></a>Sometimes, walls of faces may contain small <strong>
+notches</strong>. Parasolid can recognize these notches and lets you choose whether to stop the blend at the notch, or whether to continue the blend on the other side of the notch. </p>
+<p>
+<a name="pgfId-332770"></a>See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#40652">Section 33.8, "Blend notches"</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332772"></a>Multiple solutions</p>
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-434.gif">
+
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332852"></a>Sometimes it is possible to create blends in several places from the same set of walls. Parasolid lets you choose whether to create all of them, or just one of them. </p>
+<p>
+<a name="pgfId-332859"></a>See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#73666">Section 33.9, "Dealing with multiple solutions"</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332876"></a>Blend ribs</p>
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-435.gif">
+
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332881"></a>Parasolid cannot always create a suitable blend shape for a given set of walls - for instance, if the walls contain areas with a smaller curvature than the blend you want to create. Rather than let the blend operation fail completely, you can opt to generate <strong>
+blend ribs</strong> - sets of curves and points that describe the blend shape. You can pass blend ribs to a more general surface-creation package to approximate a blend surface. </p>
+<p>
+<a name="pgfId-332885"></a>See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#86483">Section 33.10, "Generating blend ribs"</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332887"></a>Checking</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332892"></a>Parasolid offers support for performing a range of local checks during a blending operation. Such checks minimize the risk of inconsistencies in the resulting blended body.</p>
+<p>
+<a name="pgfId-332896"></a>See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#18822">Section 33.11, "Checking"</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332898"></a>User-supplied surfaces</p>
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-436.gif">
+
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-332915"></a>Rather than have Parasolid generate a blend surface, you can supply a blend surface of your own if you prefer. This is useful if your application provides support for proprietary surface types, and allows you to create specialized blending functionality for your application.</p>
+<p>
+<a name="pgfId-332919"></a>See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#35232">Section 33.12, "User-supplied surfaces"</a>.</p>
+</td>
+</tr>
+</tbody></table>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-332921"></a>	33.2.1 	General properties of a face-face blend </h2>
+<p>
+<a name="pgfId-332922"></a>This section explains some general properties of face-face blends that have not already been mentioned.</p>
+
+<h4>
+<a name="pgfId-332404"></a>Blend sense </h4>
+<p>
+<a name="pgfId-285630"></a>When you create face-face blends between face sets from a single solid body, the blend faces can usually only be attached one way round. However, when blending between walls of sheet faces, the orientation of the blend face depends on the direction of the sheet face normals. Depending on those normals (and how you trim the blend - see <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#35907">Section 33.2</a>), you can create very different effects from the same set of walls.</p>
+<p>
+<a name="pgfId-285631"></a>You define the orientation of a face-face blend by specifying a logical <strong>
+sense</strong> for both the left and right walls. By convention, if the sense for a given wall is true, then the blend is produced to lie behind the wall, with respect to the normals of the faces in the wall. This is illustrated in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#57765">Figure 33-3</a>, which shows how four different blends can be created between the same two sets of sheet faces. </p>
+<p>
+<a name="pgfId-285844"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-437.gif">
+
+<p>
+<a name="pgfId-285846"></a>Figure 33-3 <a name="57765"></a>Specifying different blend faces from the same walls using different senses</p>
+<p>
+<a name="pgfId-285850"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-285849"></a>Note: When you create face-face blends in a solid body, always make the left and right senses equal.</address><br>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-285851"></a>Even when blending sheet bodies, there are not usually four possible options for the blend orientation. </p>
+
+
+<h4>
+<a name="pgfId-285855"></a>Master faces </h4>
+<p>
+<a name="pgfId-285858"></a><a name="marker-285857"></a>The first face in the list of faces that defines a given wall is called the <strong>
+master face</strong>. A face-face blend must pass through at least one of the two master faces for the blend to succeed.</p>
+<p>
+<a name="pgfId-285859"></a>If a wall consists of a single face, or a set of faces in a single row, this is usually not a problem. However, if a wall has a set of faces in several rows, then the blend may fail, depending on the how big the blend surface is and which faces are the master faces. <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#27753">Figure 33-4</a> shows the difference between blends that can succeed, and blends which fail because of the position of the master faces. </p>
+<p>
+<a name="pgfId-285940"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-438.gif">
+
+<p>
+<a name="pgfId-285942"></a>Figure 33-4 <a name="27753"></a>The use of master faces in face-face blends</p>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274071"></a>	33.2.2 	Creating a face-face blend </h2>
+<p>
+<a name="pgfId-275001"></a>Face-face blends are created using <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend.html">PK_FACE_make_blend</a>, which takes and returns the following arguments:</p>
+<p>
+<a name="pgfId-288129"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-288151"></a>Received</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-288153"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-288159"></a>n_left_wall_faces
+left_wall_faces</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-288161"></a>The number of faces in the left wall, and an array of those faces.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-288167"></a>n_right_wall_faces
+right_wall_faces</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-288635"></a>The number of faces in the right wall, and an array of those faces.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-288189"></a>left_sense
+right_sense</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-288191"></a>The sense of the faces in the left and right walls, respectively.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-288213"></a>options</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-288215"></a>A set of options. These are described throughout the rest of this chapter.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-288225"></a>Returned</strong></td>
+<td rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-288227"></a>Description</strong></td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-288237"></a>n_sheet_bodies
+sheet_bodies</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-288239"></a>The number of sheet bodies created, and an array of those sheet bodies.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-288261"></a>n_blend_faces
+blend_faces</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-288263"></a>The number of blend faces created, and an array of those blend faces.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-288294"></a>unders</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-288296"></a>The underlying topology of each blend face.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-288306"></a>ribs</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-288308"></a>The blend rib information returned, if any.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-288318"></a>fault</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-288320"></a>Fault information, if any.</p>
+</td>
+</tr>
+</tbody></table>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-274075"></a>33.3	<a name="43352"></a>Defining the cross-section plane 
+
+
+</h1>
+<p>
+<a name="pgfId-290351"></a>As described in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#35907">Section 33.2</a>, the cross-section planes of a face-face blend are the set of notional planes that pass through the blend surface, and contain the contact points and curve shape for the blend. You can create different blend effects by specifying the way the cross-section planes are orientated.</p>
+<p>
+<a name="pgfId-282347"></a>Cross-section planes can be orthogonal to either:</p>
+<ul>
+<li>
+<a name="pgfId-282348"></a>The walls of the face-face blend (rolling ball)</li>
+<li>
+<a name="pgfId-282349"></a>A separate parameter spine (disc)</li>
+<li>
+<a name="pgfId-282350"></a>A set of isoparameter curves in the left hand wall (isoparameter)</li>
+</ul>
+<p>
+<a name="pgfId-291619"></a>The first two of these options are by far the most common. <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#24787">Figure 33-5</a> shows the difference between them. <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#87461">Figure 33-6</a> shows an example of the third option.</p>
+<p>
+<a name="pgfId-291590"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-439.gif">
+
+<p>
+<a name="pgfId-291592"></a>Figure 33-5 <a name="24787"></a>Orientation of cross-section planes in rolling ball blends and disc blends</p>
+<p>
+<a name="pgfId-337620"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-440.gif">
+
+<p>
+<a name="pgfId-338063"></a>Figure 33-6 <a name="87461"></a>Blending faces using an isoparameter cross-section plane</p>
+<p>
+<a name="pgfId-292497"></a>More information about each type of cross-section plane is shown below:</p>
+<p>
+<a name="pgfId-292133"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-291991"></a>Cross-section</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-291993"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-291995"></a>Rolling ball</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-291997"></a>A rolling ball blend has cross-section planes that are orthogonal to the walls of the blend. </p>
+<p>
+<a name="pgfId-292119"></a>This is the default type of cross-section plane used for face-face blends.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-291999"></a>Disc</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-305689"></a>A disc blend has cross-section planes that are orthogonal to a specified parameter spine. You must supply a parameter spine.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-292003"></a>Isoparameter</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-292005"></a>Isoparameter blends are blends whose cross-section planes are derived from a set of isoparameter curves in the left-hand wall. The isoparameter is chosen to be the one whose curves are the most orthogonal to the parameter spine. If you use this type of blend, you must supply a parameter spine, and it must lie in the left-hand wall. These are specialized blends that are useful for designing turbines.</p>
+</td>
+</tr>
+</tbody></table>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274079"></a>	33.3.1 	<a name="10097"></a>Supplying a suitable parameter spine </h2>
+<p>
+<a name="pgfId-279559"></a><a name="marker-279558"></a>When specifying a blend, you may need to supply a parameter spine. This is a 3-space curve, which in general terms should follow the path of the blend. Choosing a suitable parameter spine depends on the type of cross-section plane you are using.</p>
+<p>
+<a name="pgfId-323204"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-323234"></a>Blend cross-section</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-323236"></a>Parameter spine details</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-323238"></a>Rolling ball</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-323303"></a>Rolling ball blends do not usually need a parameter spine. In cases where one is necessary, it should not be too accurate: a straight line between points near the start and the end of the intended blend is often sufficient. If you attempt to approximate to the path of the blend too accurately, the parameter spine may contain regions of tight curvature and the blend may fail.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-323242"></a>Disc</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-323339"></a>Disc blends do need a parameter spine, since the cross-section planes in the blend are orthogonal to the parameter spine. The absolute position of the parameter spine in 3-space need not be accurate, but its direction should be, since this influences the final shape of the blend, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#29189">Figure 33-7</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-323246"></a>Isoparameter</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-323389"></a>For isoparameter blends, the parameter-spine must lie in the left-hand wall.</p>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-323371"></a>For all types of cross-section plane, the general shape of the parameter spine is important. For example, if a blend is going to be a periodic, the parameter spine must be periodic.</p>
+<p>
+<a name="pgfId-323400"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-441.gif">
+
+<p>
+<a name="pgfId-323412"></a>Figure 33-7 <a name="29189"></a>Changing a disc blend using different parameter spines</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-323372"></a>	33.3.2 	Options for defining cross-section planes </h2>
+<p>
+<a name="pgfId-290380"></a>The options used to define cross-section planes are in the <code>
+shape</code>
+ sub-structure (<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_shape_t.html">PK_blend_shape_t</a>) of PK_FACE_make_blends_o_t. They are as follows:</p>
+<p>
+<a name="pgfId-290381"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-290387"></a>Option</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-290389"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-290391"></a>xsection</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-290393"></a>The type of cross-section plane to use. This is one of:</p>
+<ul>
+<li>
+<a name="pgfId-290464"></a>PK_blend_xs_rolling_ball_c (default)</li>
+<li>
+<a name="pgfId-290503"></a>PK_blend_xs_disc_c</li>
+<li>
+<a name="pgfId-290504"></a>PK_blend_xs_isoparameter_c</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-290395"></a>parameter</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-290397"></a>A 3D parameter curve that defines the parameter spine to use for the blend. Default: PK_ENTITY_null.</p>
+</td>
+</tr>
+</tbody></table>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-274082"></a>33.4	<a name="79759"></a>Defining contact points 
+
+
+</h1>
+<p>
+<a name="pgfId-292527"></a>Each cross-section plane in a blend contains two contact points, where the blend surface touches one of the blend walls. You can define where the contact point lies either</p>
+<ul>
+<li>
+<a name="pgfId-282370"></a>implicitly, by specifying the size of the blend and letting Parasolid calculate the exact contact points based on the blend shape, or</li>
+<li>
+<a name="pgfId-282371"></a>explicitly, by specifying a curve at which the blend should stop.</li>
+</ul>
+<p>
+<a name="pgfId-292542"></a>This section explains both these strategies in turn.</p>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274083"></a>	33.4.1 	<a name="11476"></a>Specifying the size of the blend </h2>
+<p>
+<a name="pgfId-292551"></a>One way of defining where the contact points lie in a cross-section plane is by specifying how large the blend should be. Based on this information, Parasolid calculates exactly where the boundary of the blend lies, and, hence, the position of the contact points on each cross-section plane. </p>
+<p>
+<a name="pgfId-293080"></a>The size of a blend is specified with reference to the <strong>
+blend spine</strong>. For example, in the case of a symmetric rolling ball blend, the blend spine is the path taken by the center of the rolling ball as it moves from one end of the blend walls to the other, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#49878">Figure 33-8</a>. In the case of a symmetric disc blend, it is the path taken by the center of the swept circle.</p>
+<p>
+<a name="pgfId-293335"></a>Do not confuse the blend spine, which describes the exact path taken by a blend, with the parameter spine, which is just a guide to the direction of the blend.</p>
+<p>
+<a name="pgfId-293115"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-442.gif">
+
+<p>
+<a name="pgfId-293231"></a>Figure 33-8 <a name="49878"></a>Comparison of blend spine and parameter spine in a rolling ball blend</p>
+<p>
+<a name="pgfId-293079"></a>There are three ways to specify the size of a blend, in terms of the distance between the blend spine and the blend walls:</p>
+<ul>
+<li>
+<a name="pgfId-293959"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#28205">Constant radius blends</a></li>
+<li>
+<a name="pgfId-293971"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#26140">Variable radius blends</a></li>
+<li>
+<a name="pgfId-293976"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#44551">Constant width blends</a></li>
+</ul>
+
+<h4>
+<a name="pgfId-293378"></a><a name="28205"></a>Constant radius blends</h4>
+<p>
+<a name="pgfId-293380"></a>You define a <strong>
+constant radius</strong> blend by specifying a single value that represents the distance of the blend spine from both blend walls. Constant radius blends<a name="marker-293390"></a> always produce symmetric blends. <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#13688">Figure 33-9</a> shows the differences between constant radius and variable radius blends.</p>
+<p>
+<a name="pgfId-322159"></a>Constant radius blends can be combined with any kind of cross-section plane.</p>
+
+
+<h4>
+<a name="pgfId-293382"></a><a name="26140"></a>Variable radius blends</h4>
+<p>
+<a name="pgfId-293384"></a>A constant radius blend is defined using a single parameter. By contrast, you can define a <strong>
+variable radius</strong> blend by specifying two parameters:</p>
+<ul>
+<li>
+<a name="pgfId-293558"></a>The first represents the distance between the blend spine and the left wall</li>
+<li>
+<a name="pgfId-293572"></a>The second represents the distance between the blend spine and the right wall.</li>
+</ul>
+<p>
+<a name="pgfId-293551"></a>These parameters are themselves not single values, but ranges of values that describe how the distance between the blend spine and the given wall varies along the extent of the blend.</p>
+<p>
+<a name="pgfId-293981"></a>Variable radius blends can be asymmetric (if the ranges are different), or symmetric (if the ranges are the same, or if only a range for the left wall is supplied).</p>
+<p>
+<a name="pgfId-322155"></a>Variable radius blends can be combined with any kind of cross-section plane.</p>
+<p>
+<a name="pgfId-294082"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-443.gif">
+
+<p>
+<a name="pgfId-294089"></a>Figure 33-9 <a name="13688"></a>Constant radius and variable radius blends</p>
+<p>
+<a name="pgfId-293920"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-293946"></a>Note: You can approximate a constant radius blend with a variable radius blend by setting the same, unvarying, range for both walls.</address><br>
+</td>
+</tr>
+</tbody></table>
+
+
+<h4>
+<a name="pgfId-293386"></a><a name="44551"></a>Constant width blends</h4>
+<p>
+<a name="pgfId-293388"></a>You can create blends that have a constant chordal width, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#52996">Figure 33-10</a>. </p>
+<p>
+<a name="pgfId-279135"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-444.gif">
+
+<p>
+<a name="pgfId-279137"></a>Figure 33-10 <a name="52996"></a>Constant radius vs. constant width blends</p>
+<p>
+<a name="pgfId-279138"></a>This type of blend is particularly useful when the angle between the faces to be blended varies along the extent of the blend, but you want to keep the amount of blend material constant along the whole blend. <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#18154">Figure 33-11</a> illustrates how the shape of the blend changes with the angle for such faces.</p>
+<p>
+<a name="pgfId-279178"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-445.gif">
+
+<p>
+<a name="pgfId-279180"></a>Figure 33-11 <a name="18154"></a>Blend shape at <strong>
+(a)</strong> the start and <strong>
+(b)</strong> the end of a constant width blend</p>
+<p>
+<a name="pgfId-279182"></a>In addition to specifying a width, you can specify a ratio of the ranges to use when creating the blend. This creates a constant width blend with an asymmetrical cross-section. The ratio is interpreted with reference to the left and right walls of the blend, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#45263">Figure 33-12</a>.</p>
+<p>
+<a name="pgfId-279249"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-446.gif">
+
+<p>
+<a name="pgfId-279251"></a>Figure 33-12 <a name="45263"></a>Creating asssymetric constant width blends using the <code>
+ratio</code>
+ field</p>
+<p>
+<a name="pgfId-294802"></a>You can only produce constant width blends with a rolling ball cross-section plane. Constant width blends cannot be used in conjunction with cliffedges or holdlines: see <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#90787">Section 33.4.2</a> and <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#69017">Section 33.4.3</a>, for details about these constraints.</p>
+
+
+<h4>
+<a name="pgfId-292564"></a>Options</h4>
+<p>
+<a name="pgfId-292584"></a>The options used to define the size of a face-face blend are in the <code>
+shape</code>
+ sub-structure (<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_shape_t.html">PK_blend_shape_t</a>) of PK_FACE_make_blends_o_t. They are as follows:</p>
+<p>
+<a name="pgfId-292589"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-292737"></a>Option</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-292739"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-292741"></a>radius</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-292743"></a>The radius of a constant radius blend. The blend spine is this distance away from both the left and right walls along the length of the blend. The default <code>
+radius</code>
+ is 0.0.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-292745"></a>range1
+range2</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-292747"></a>The ranges of a variable radius blend. These are 1-D law curves that describe how the distance from the blend spine to one of the blend faces varies along the extent of the blend:</p>
+<ul>
+<li>
+<a name="pgfId-294831"></a><code>
+range1</code>
+ describes the distance to the left wall</li>
+<li>
+<a name="pgfId-294839"></a><code>
+range2</code>
+ describes the distance to the right wall</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-292749"></a>width</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-293087"></a>The width of a constant width blend. The default <code>
+width</code>
+ is 0.0.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-292753"></a>ratio</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-292755"></a>The ratio of ranges for a constant width blend. </p>
+<p>
+<a name="pgfId-294849"></a>The default value for <code>
+ratio</code>
+ is 1.0, which ensures that a symmetric blend is created by default whenever a non-zero value is specified for the <code>
+width</code>
+ field. Specifying a different ratio creates an asymmetric constant width blend.</p>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-322218"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-322275"></a>Note: You can only specify these options in the following combinations:</address><br>
+<ul>
+<li>
+<a name="pgfId-322276"></a><code>
+radius</code>
+ only</li>
+<li>
+<a name="pgfId-322277"></a><code>
+range1</code>
+, and optionally <code>
+range2</code>
+</li>
+<li>
+<a name="pgfId-322278"></a><code>
+width</code>
+ and <code>
+ratio</code>
+</li>
+</ul>
+<p>
+<a name="pgfId-322279"></a>No other combinations are valid.</p>
+</td>
+</tr>
+</tbody></table>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274089"></a>	33.4.2 	<a name="90787"></a>Specifying the boundary of the blend </h2>
+<p>
+<a name="pgfId-294852"></a>As well as defining contact points by specifying the size of the blend, you can specify contact points explicitly, by defining one or both boundaries of the blend.</p>
+<ul>
+<li>
+<a name="pgfId-295023"></a>You can define the position of one boundary, and let Parasolid calculate the position of the other boundary</li>
+<li>
+<a name="pgfId-295030"></a>You can define the position of one boundary, and use the standard blend size controls to define the position of the other boundary, as described in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#11476">Section 33.4.1</a>.</li>
+<li>
+<a name="pgfId-294883"></a>You can define the position of both boundaries, and let Parasolid calculate the size of the blend so that it fits within them.</li>
+</ul>
+<p>
+<a name="pgfId-295046"></a>The boundary of a blend, when specified explicitly, is often referred to as a <strong>
+holdline</strong>, because it holds the blend inside the specified line. All holdlines are represented by an array of one or more edges.</p>
+<p>
+<a name="pgfId-294999"></a>You can specify the boundary of a blend using :</p>
+<ul>
+<li>
+<a name="pgfId-295003"></a>Tangent holdlines</li>
+<li>
+<a name="pgfId-295011"></a>Conic holdlines</li>
+<li>
+<a name="pgfId-295016"></a>Cliffedges</li>
+</ul>
+
+<h4>
+<a name="pgfId-274090"></a><a name="66562"></a>Tangent holdlines </h4>
+<p>
+<a name="pgfId-278003"></a>You can use tangent holdlines to create symmetric variable radius blends. However, rather than defining how the ranges vary along the extent of the blend, you specify a tangent holdline to use as one of the blend boundaries. Parasolid calculates the blend's range for the wall that the tangent holdline lies on, based on the tangent holdline and the supplied cross-section plane. Parasolid then uses this range to calculate the opposing blend boundary on the other wall, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#56709">Figure 33-13</a>.</p>
+<p>
+<a name="pgfId-295072"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-447.gif">
+
+<p>
+<a name="pgfId-295701"></a>Figure 33-13 <a name="56709"></a>Supplying tangent holdlines to create symmetric variable radius blends</p>
+<p>
+<a name="pgfId-278380"></a>You can supply more than one edge as a tangent holdline.</p>
+
+
+<h4>
+<a name="pgfId-274091"></a><a name="79406"></a>Conic holdlines </h4>
+<p>
+<a name="pgfId-277710"></a>Like tangent holdlines, you can use <a name="marker-277709"></a>conic holdlines to create variable radius blends. However, a conic holdline only specifies the range of the blend for one wall. The range of the blend for the other wall is specified either:</p>
+<ul>
+<li>
+<a name="pgfId-298573"></a>Using the standard radius and range controls described in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#11476">Section 33.4.1</a>, to form a constrained conic holdline blend. </li>
+<li>
+<a name="pgfId-296154"></a>Using another conic holdline, to form a double conic holdline blend.</li>
+</ul>
+<p>
+<a name="pgfId-277711"></a>Whereas tangent holdlines can only be used to create symmetric variable radius blends, conic holdlines can create asymmetric variable radius blends.</p>
+<p>
+<a name="pgfId-298461"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-448.gif">
+
+<p>
+<a name="pgfId-298527"></a>Figure 33-14 Supplying conic holdlines to create asymmetric variable radius blends</p>
+<p>
+<a name="pgfId-298576"></a>A double conic holdline blend is a blend in which the blend boundaries in both walls are specified using a conic holdline. To define a double conic holdline, you must specify at least two edges to use as blend boundaries.</p>
+<ul>
+<li>
+<a name="pgfId-298579"></a>If you specify two edges, each edge must lie in a different blend wall</li>
+<li>
+<a name="pgfId-298583"></a>If you specify more than two edges, the edges must form two independent sets, each of which lies in a different blend wall. </li>
+</ul>
+<p>
+<a name="pgfId-298348"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-449.gif">
+
+<p>
+<a name="pgfId-298349"></a>Figure 33-15 Double conic holdline blend</p>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-298951"></a>	33.4.3 	<a name="69017"></a>Constraining a blend locally using blend size </h2>
+<p>
+<a name="pgfId-301031"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#90787">Section 33.4.2, "Specifying the boundary of the blend"</a>, described how you can use tangent and conic holdlines to define the entire boundary of a blend. You can also use these holdlines to constrain the boundary locally, along just a part of a blend. To do this you specify both:</p>
+<ul>
+<li>
+<a name="pgfId-299440"></a>a blend size that describes the entire blend (using the radius or range controls described in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#11476">Section 33.4.1</a>)</li>
+<li>
+<a name="pgfId-299447"></a>one or more holdlines</li>
+</ul>
+<p>
+<a name="pgfId-299451"></a>Wherever the holdline falls inside the boundary of the defined blend (that is, wherever the holdline creates a smaller blend than the specified blend size), Parasolid ensures the blend follows the holdline, rather than the original blend boundary. This is illustrated in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#99730" class="XRef">Figure 33-16</a>, which shows a constant radius blend that is constrained locally using a curve. In <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#99730">Figure 33-16</a> (a), this curve is used as a tangent holdline, creating the symmetric variable radius blend shown. By contrast, in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#99730">Figure 33-16</a> (b), the same curve is used as a conic holdline, creating an asymmetric variable radius blend.</p>
+<p>
+<a name="pgfId-299458"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-450.gif">
+
+<p>
+<a name="pgfId-300138"></a>Figure 33-16 <a name="99730"></a>Constraining a blend locally using <strong>
+(a)</strong> tangent and <strong>
+(b) </strong>conic holdlines</p>
+
+<h4>
+<a name="pgfId-274092"></a><a name="27129"></a>Cliffedge blends </h4>
+<p>
+<a name="pgfId-278739"></a>A third way of constraining the boundary of a blend locally is to define a <a name="marker-278738"></a>cliffedge blend. Cliffedge blends differ from holdlines in one important respect: the blend surface does not have to join the blend wall tangentially along the cliffedge. (Blends with a chamfer cross-section shape are an exception to this, since they never join the blend wall tangentially. Any holdline or cliffedge blend may have a chamfer cross-section. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#27461">Section 33.5.2, "Chamfer cross-sections"</a>.)</p>
+<p>
+<a name="pgfId-322378"></a>Cliffedge blends do not affect the symmetry of a blend.</p>
+<p>
+<a name="pgfId-301119"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-451.gif">
+
+<p>
+<a name="pgfId-301294"></a>Figure 33-17 Constraining a blend locally using cliffedges</p>
+<p>
+<a name="pgfId-322373"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-322369"></a>Note: Cliffedge blends can only be used to constrain a blend locally within a specified area. If you want to use a cliffedge along the entire boundary of a blend, you need to specify another size control for the side that has the cliffedge. This can be either a radius, ranges, or a tangent holdline on the opposite side. This additional size control needs to be large enough that the cliffedge constraint is used along the entire extent of the blend. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#60018">Figure 33-32</a> for an example.</address><br>
+</td>
+</tr>
+</tbody></table>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274093"></a>	33.4.4 	<a name="32706"></a>Inverting cliffedges and holdlines </h2>
+<p>
+<a name="pgfId-278864"></a>By default, the holdlines and cliffedge blends described in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#90787" class="XRef">Section 33.4.2</a> and <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#69017">Section 33.4.3</a> are defined with reference to the part of the wall that lies below the specified holdline or cliffedge. Sometimes, it can be useful to specify a blend that is defined with reference to the part of the wall that lies above the holdline or cliffedge. Such a blend is known as an <strong>
+inverted</strong> holdline or cliffedge. </p>
+<p>
+<a name="pgfId-333179"></a>Inverting a holdline blend makes the blend tangent to the face above the holdline rather than the face below, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#22891">Figure 33-18</a>. </p>
+<p>
+<a name="pgfId-333226"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-452.gif">
+
+<p>
+<a name="pgfId-333299"></a>Figure 33-18 <a name="22891"></a>Using inverted holdline blends to control the tangency of a blend</p>
+<p>
+<a name="pgfId-333300"></a>Using an inverted holdline lets you create a blend when there is no face below the cliffedge or holdline (for example, on sheet edges), or replace a single face with a blend (for example on the top of a rib), such as the examples shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#61972">Figure 33-19</a>.</p>
+<p>
+<a name="pgfId-301576"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-453.gif">
+
+<p>
+<a name="pgfId-301649"></a>Figure 33-19 <a name="61972"></a>Using inverted blends to <strong>
+(a)</strong> create a blend on a sheet edge <strong>
+(b)</strong> replace a face with a blend</p>
+<p>
+<a name="pgfId-333311"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-333321"></a>Note: By default, cliffedge blends and globally constrained holdline blends are automatically inverted if this is the only valid solution using that edge. If you switch off this behavior, blends that would have inverted may fail.</address><br>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-302706"></a>Like holdlines, you can use inverted holdlines to constrain the shape of a blend locally. However, whereas a holdline constrains the blend to follow the boundary that produces the smallest blend radius, an inverted holdline constrains the blend to follow the boundary that produces the largest blend radius.</p>
+<p>
+<a name="pgfId-304213"></a>The difference between these two methods is illustrated in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#11691">Figure 33-20</a>. In general, using an inverted holdline increases the amount of blend surface that is created. In particular, it can be used to maintain the minimum height of the blend along a wall, which improves the overall appearance of the finished blend, and generally creates a more rigid structure. <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#22333">Figure 33-21</a> shows a good example of this technique in practice, where an inverted holdline has been used to let the blend surface flow smoothly over the drop.</p>
+<p>
+<a name="pgfId-302709"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-454.gif">
+
+<p>
+<a name="pgfId-302803"></a>Figure 33-20 <a name="11691"></a>Constraining the blend radius using inverted holdlines</p>
+<p>
+<a name="pgfId-302380"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-302386"></a>Note: If a normal holdline is used to constrain a blend locally, the holdline is not automatically inverted if this is the only valid solution. In order to constrain locally using an inverted holdline, you must explicitly define the holdline as inverted. </address><br>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-277330"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-455.gif">
+
+<p>
+<a name="pgfId-277332"></a>Figure 33-21 <a name="22333"></a>Using inverted holdlines to improve blend support</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274096"></a>	33.4.5 	Options </h2>
+<p>
+<a name="pgfId-304530"></a>The options used to define the boundary of a face-face blend are in the <code>
+constraints</code>
+ sub-structure (<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_constraint_t.html">PK_blend_constraint_t</a>) of PK_FACE_make_blends_o_t. They are as follows:</p>
+<p>
+<a name="pgfId-300599"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-300613"></a>Option</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-300615"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-300617"></a>tangent_edges</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-300619"></a>An array of edges to use as tangent holdlines.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-300621"></a>conic_edges</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-300665"></a>An array of edges to use as conic holdlines.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-300625"></a>cliff_edges</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-300627"></a>An array of edges to use as cliffedges.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-300629"></a>inv_tangent_edges</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-300673"></a>An array of edges to use as inverted tangent holdlines.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-300633"></a>inv_conic_edges</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-300677"></a>An array of edges to use as inverted conic holdlines.</p>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-334925"></a>In addition, the following option is in PK_FACE_make_blends_o_t:</p>
+<p>
+<a name="pgfId-334929"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-334935"></a>Option</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-334937"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-334966"></a>update</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-334968"></a>Whether or not to invert cliffedges and holdlines automatically. It has two values:</p>
+<ul>
+<li>
+<a name="pgfId-334969"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_update_t.html">PK_blend_update_1_c</a> - invert cliffedges and holdlines automatically (the default)</li>
+<li>
+<a name="pgfId-334970"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_update_t.html">PK_blend_update_0_c</a> - do not invert cliffedges and holdlines automatically</li>
+</ul>
+<p>
+<a name="pgfId-334971"></a>Tangent and conic holdlines are not inverted automatically if they are used to constrain a blend locally (as described in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#69017">Section 33.4.3</a>), regardless of this setting.</p>
+</td>
+</tr>
+</tbody></table>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-274099"></a>33.5	<a name="83117"></a>Defining the cross-section shape 
+
+
+</h1>
+<p>
+<a name="pgfId-304231"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#43352">Section 33.3, "Defining the cross-section plane"</a>, explained how you specify the cross-section planes in a face-face blend. <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#79759">Section 33.4, "Defining contact points"</a>, explained the different ways that the contact points on those planes can be defined. This section explains how you can specify the shape of the curve that joins the contact points together on the cross-section plane.</p>
+<p>
+<a name="pgfId-315291"></a>There are three general types of cross-section shape that you can specify:</p>
+<ul>
+<li>
+<a name="pgfId-315296"></a>Conic cross-sections. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#90776">Section 33.5.1</a>.</li>
+<li>
+<a name="pgfId-315303"></a>Chamfer, or linear, cross-section. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#27461">Section 33.5.2</a>.</li>
+<li>
+<a name="pgfId-315315"></a>Curvature continuous cross-sections. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#15926">Section 33.5.3</a>.</li>
+</ul>
+<p>
+<a name="pgfId-315319"></a>In addition, you can optionally control the precise shape of any conic or curvature continuous cross-section. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#68393">Section 33.5.4</a> for details.</p>
+<p>
+<a name="pgfId-333331"></a>If necessary, you can let Parasolid infer the cross-section shape from other information that you have provided. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#34190">Section 33.5.5</a>.</p>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274100"></a>	33.5.1 	<a name="90776"></a>Conic cross-sections </h2>
+<p>
+<a name="pgfId-316017"></a>You can create a conic blend between contact points that have been created using any of the methods discussed in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#79759">Section 33.4, "Defining contact points"</a>.</p>
+<p>
+<a name="pgfId-320415"></a>Without extra information, Parasolid always creates a cross-section that is either circular or a least-tension ellipse. In most cases, this is sufficient. However, if you would like to create a different cross-section, such as a hyperbola or a parabola, you need to pass a <code>
+rho</code>
+ value. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#68393">Section 33.5.4</a> for details.</p>
+<p>
+<a name="pgfId-274102"></a>If you specify a conic cross-section, Parasolid infers the precise nature of the conic based on other information that you specify.</p>
+<p>
+<a name="pgfId-315633"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-319248"></a>If you specify ...</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-319253"></a>Parasolid creates ...</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-319255"></a>More information</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319257"></a><code>
+radius</code>
+</p>
+</td>
+<td rowspan="5" colspan="1">
+<p>
+<a name="pgfId-319259"></a>a symmetric blend with a circular cross-section.</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319264"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#11476">Section 33.4.1</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319266"></a><code>
+range1</code>
+ only</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319497"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#11476">Section 33.4.1</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319272"></a><code>
+range1</code>
+ = <code>
+range2</code>
+</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319710"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#11476">Section 33.4.1</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319278"></a><code>
+width</code>
+, and <code>
+ratio=1</code>
+</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319923"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#11476">Section 33.4.1</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319284"></a>Any tangent holdline</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319291"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#90787">Section 33.4.2</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319293"></a><code>
+range1</code>
+ and <code>
+range2</code>
+, not equal</p>
+</td>
+<td rowspan="3" colspan="1">
+<p>
+<a name="pgfId-319295"></a>an asymmetric blend with a "least-tension" elliptical cross-section.</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319300"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#11476">Section 33.4.1</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319302"></a><code>
+width</code>
+, and <code>
+ratio&lt;&gt;1</code>
+</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319309"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#11476">Section 33.4.1</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319311"></a>Any conic holdline</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319318"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#90787">Section 33.4.2</a>, <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#69017">Section 33.4.3</a></p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319323"></a><code>
+rho</code>
+</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319325"></a>either a symmetric or an asymmetric blend with a cross-section shape defined by <code>
+rho</code>
+.</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-319330"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#68393">Section 33.5.4</a>.</p>
+</td>
+</tr>
+</tbody></table>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-315377"></a>	33.5.2 	<a name="27461"></a>Chamfer cross-sections </h2>
+<p>
+<a name="pgfId-304272"></a>A chamfer cross-section is perhaps the simplest type of cross-section shape, since it consists of a straight line between the contact points. Chamfer blends are unusual in that the blend is not tangent to the blend walls.</p>
+<p>
+<a name="pgfId-316004"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#65181">Figure 33-22</a> shows an example of a variable radius chamfer blend, although you can create a chamfer blend between contact points that have been created using any of the methods discussed in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#79759">Section 33.4, "Defining contact points"</a>.</p>
+<p>
+<a name="pgfId-304277"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-456.gif">
+
+<p>
+<a name="pgfId-304402"></a>Figure 33-22 <a name="65181"></a>Creating a variable radius chamfer blend between two walls</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274103"></a>	33.5.3 	<a name="15926"></a>Curvature continuous cross-sections </h2>
+<p>
+<a name="pgfId-322431"></a>Curvature continuous blends have a cross-section that has the same curvature as each wall at the contact points.</p>
+<p>
+<a name="pgfId-316063"></a>If you wish, Parasolid can calculate an appropriate curvature continuous blend from the supplied contact point data. You can have more control over the precise shape of the blend by passing a depth curve to <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend.html">PK_FACE_make_blend</a> as well. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#68393">Section 33.5.4</a> for more information.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-315223"></a>	33.5.4 	<a name="68393"></a>User-defined conic and curvature continuous cross-sections </h2>
+<p>
+<a name="pgfId-333357"></a>You can control the shape of a conic cross-section by supplying a rho value in the call to <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend.html">PK_FACE_make_blend</a>. This is a 1D law curve that defines the positions of the deepest points along the blend, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#94701">Figure 33-23</a>. </p>
+<p>
+<a name="pgfId-321344"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-457.gif">
+
+<p>
+<a name="pgfId-321403"></a>Figure 33-23 <a name="94701"></a>Using a rho value to control the curve shape</p>
+<p>
+<a name="pgfId-321343"></a>Each point on the curve is a real number between 0 and 1, that is interpreted as follows:</p>
+<p>
+<a name="pgfId-318890"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-318936"></a>Rho value</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-318938"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-318940"></a>0 &lt; rho &lt; 0.5</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-318942"></a>Cross-section is an ellipse. As rho approaches 0, the blend becomes flatter, and closer to a chamfer. The value 0 is not allowed. Use a chamfer blend if you require a true chamfer: see <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#27461">Section 33.5.2</a>.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-318944"></a>0.5</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-318946"></a>Cross-section is a parabola.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-318948"></a>0.5 &lt; rho &lt; 1</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-318950"></a>Cross-section is a hyperbola. As rho approaches 1, the blend becomes more L-shaped. A value of 1 is not allowed.</p>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-317624"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-458.gif">
+
+<p>
+<a name="pgfId-317626"></a>Figure 33-24 <a name="17379"></a>Elliptical and hyperbolic cross-section shapes in face-face blends</p>
+<p>
+<a name="pgfId-320453"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-320472"></a>Note: If you supply a rho value, you must also supply a parameter spine. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#10097">Section 33.3.1</a> for details.</address><br>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-320440"></a>You can control the shape of a curvature continuous cross-section by supplying a depth curve in the call to <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend.html">PK_FACE_make_blend</a>. This is a 2D B-curve whose parameter space is that of the portion of the parameter spine in the region of the blend. It is used to determine the point of maximum depth of the blend.</p>
+<p>
+<a name="pgfId-316967"></a>Each point along the supplied depth curve contains two parameters that set the position of the deepest point in the blend (known as the <strong>
+depth point</strong>). The parameters represent the following information respectively:</p>
+<p>
+<a name="pgfId-320606"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-320620"></a>Parameter</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-320622"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-320624"></a>X co-ordinate</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-320646"></a>The curve skew. This is the distance of the depth point along the chord between the contact points. It is a value between 0 and 1:</p>
+<ul>
+<li>
+<a name="pgfId-320649"></a>The depth point approaches the left wall as the value approaches 0</li>
+<li>
+<a name="pgfId-320653"></a>The depth point approaches the right wall as the value approaches 1</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-320628"></a>Y co-ordinate</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-320630"></a>The curve depth. This is the distance of the depth point between the chord between the contact points and the intersection of the tangents of the walls. It is a value between 0 and 1:</p>
+<ul>
+<li>
+<a name="pgfId-320669"></a>The depth point approaches the chord as the value approaches 0</li>
+<li>
+<a name="pgfId-320670"></a>The depth point approaches the intersection as the value approaches 1</li>
+</ul>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-320858"></a>These parameters are illustrated in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#83319">Figure 33-25</a>.</p>
+<p>
+<a name="pgfId-320859"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-459.gif">
+
+<p>
+<a name="pgfId-320884"></a>Figure 33-25 <a name="83319"></a>Defining the skew and depth in a curvature continuous blend</p>
+<p>
+<a name="pgfId-320491"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-320487"></a>Note: If you supply a depth curve, you must also supply a parameter spine. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#10097">Section 33.3.1</a> for details.</address><br>
+</td>
+</tr>
+</tbody></table>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-316625"></a>	33.5.5 	<a name="34190"></a>Implying curve shape from other settings</h2>
+<p>
+<a name="pgfId-316674"></a>Generally, you should specify either conic, chamfer, or curvature-continuous cross-section shape explicitly when creating face-face blends. If necessary, however, you can omit this specification, and let Parasolid infer the cross-section shape based on the other information you have provided, such as a rho value, ranges, or depth curve. </p>
+<p>
+<a name="pgfId-320145"></a>If you do this, then a number of restrictions apply to face-face blending, as follows:</p>
+<ul>
+<li>
+<a name="pgfId-320146"></a>You can only use depth curves in conjunction with rolling ball or disc cross-section planes.</li>
+<li>
+<a name="pgfId-320150"></a>You can only use depth curves with boundaries defined by double conic holdlines.</li>
+<li>
+<a name="pgfId-320164"></a>You can only use a rho value in conjunction with range1 and range2.</li>
+<li>
+<a name="pgfId-320173"></a>You cannot use a rho value in conjunction with tangent holdlines.</li>
+<li>
+<a name="pgfId-322537"></a>If you do not supply a rho value or depth curve, a least-tension ellipse is used when no cross-section shape is explicitly supplied.</li>
+</ul>
+<p>
+<a name="pgfId-320048"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-320078"></a>Note: Before Parasolid V13.0, cross-section shape could only be inferred from the supplied ranges, rho values and depth curves, and all face-face blending was subject to the restrictions above. You are strongly recommended to supply an explicit cross-section shape when defining face-face blends, thereby avoiding all these restrictions. </address><br>
+</td>
+</tr>
+</tbody></table>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-316299"></a>	33.5.6 	Options </h2>
+<p>
+<a name="pgfId-274105"></a>The options for controlling the cross section shape of a blend are all contained in the shape sub-structure (<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_shape_t.html">PK_blend_shape_t</a>) of <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend_o_t.html">PK_FACE_make_blend_o_t</a>. They are as follows:</p>
+<p>
+<a name="pgfId-315110"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-315124"></a>Option</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-315126"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-315128"></a>xs_shape</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-315130"></a>Specifies the cross-section shape of the blend. This can have one of the following values:</p>
+<ul>
+<li>
+<a name="pgfId-315196"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_xs_shape_t.html">PK_blend_xs_shape_conic_c</a> - conic cross-section, with tangent continuity. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#90776">Section 33.5.1</a>.</li>
+<li>
+<a name="pgfId-315249"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_xs_shape_t.html">PK_blend_xs_shape_chamfer_c</a> - chamfer cross-section, with position continuity. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#27461">Section 33.5.2</a></li>
+<li>
+<a name="pgfId-315198"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_xs_shape_t.html">PK_blend_xs_shape_g2_c</a> - curvature continuous cross-section. <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#15926">Section 33.5.3</a>.</li>
+<li>
+<a name="pgfId-315258"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_xs_shape_t.html">PK_blend_xs_shape_unset_c</a> - shape is not set explicitly, but is implied by other fields. To ensure that legacy data runs successfully, this is the default setting, but it is not the recommended setting. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#34190">Section 33.5.5</a>.</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-315132"></a>rho</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-315134"></a>A 1D law curve that describes a general conic cross-section shape. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#68393">Section 33.5.4</a>. You can use this to control the shape of a conic cross-section.</p>
+<p>
+<a name="pgfId-320438"></a>If you supply <code>
+rho</code>
+, then you must also supply a parameter spine. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#10097">Section 33.3.1</a> for details on parameter spines.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-315136"></a>depth</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-315138"></a>A 2D law curve that describes a curvature continuous cross-section shape. You can use this to control the shape of a curvature continuous cross-section. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#68393">Section 33.5.4</a>. </p>
+<p>
+<a name="pgfId-320437"></a>If you supply <code>
+depth</code>
+, then you must also supply a parameter spine. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#10097">Section 33.3.1</a> for details on parameter spines.</p>
+</td>
+</tr>
+</tbody></table>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-289361"></a>33.6	<a name="20242"></a>Trimming face-face blends 
+
+
+</h1>
+<p>
+<a name="pgfId-304411"></a>Once a blend has been created, it needs to be trimmed appropriately to any surrounding geometry. Parasolid supports:</p>
+<ul>
+<li>
+<a name="pgfId-304429"></a>Trimming the blend faces, either to the wall boundaries (see <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#55028">Section 33.6.1</a>) or an arbitrary plane (see <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#79234">Section 33.6.3</a>).</li>
+<li>
+<a name="pgfId-304461"></a>Trimming the blend walls to the blend face and determining how the faces should be returned. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#48099">Section 33.6.2</a>.</li>
+</ul>
+<p>
+<a name="pgfId-333629"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-460.gif">
+
+<p>
+<a name="pgfId-333901"></a>Figure 33-26 Trimming blend faces and blend walls</p>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-289362"></a>	33.6.1 	<a name="55028"></a>Trimming blend faces </h2>
+<p>
+<a name="pgfId-289363"></a>You need to specify how blend faces should be trimmed to the boundaries of the blend walls. This is done using the the <code>
+trim</code>
+ option (<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_trim_t.html">PK_blend_trim_t</a>) in PK_FACE_make_blends_o_t, which takes the following values:</p>
+<p>
+<a name="pgfId-309485"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-309491"></a>Value</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-309493"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-309495"></a>PK_blend_trim_to_walls</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-309605"></a>Trim blend faces to walls (the default). The blend is terminated by curves chosen such that the side boundaries are the correct lengths for attaching to both walls.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-309499"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_trim_t.html">PK_blend_trim_no_c</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-309544"></a>Do not trim blend faces. The blend faces are created so that they extend beyond the underlying walls.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-309503"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_trim_t.html">PK_blend_trim_long_c</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-309645"></a>Long trim to walls. The ends of the blend are created using constant parameter lines determined by the wall boundaries such that the blend is as long as possible.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-309507"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_trim_t.html">PK_blend_trim_short_c</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-309660"></a>Short trim to walls. The blend is created such that the blend end boundaries are the constant parameter lines determined by the wall boundaries such that the blend is as short as possible.</p>
+<p>
+<a name="pgfId-309662"></a>Short trim blends can be attached internally to multiple face sheet bodies and to solid bodies. Blends are capped using planar capping surfaces as required, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#51957">Figure 33-28</a>. </p>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-310202"></a>These are illustrated in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#15179">Figure 33-27</a>.</p>
+<p>
+<a name="pgfId-310319"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-461.gif">
+
+<p>
+<a name="pgfId-310321"></a>Figure 33-27 <a name="15179"></a>Trimming blend faces to walls</p>
+<p>
+<a name="pgfId-310193"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-462.gif">
+
+<p>
+<a name="pgfId-310195"></a>Figure 33-28 <a name="51957"></a>Before <strong>
+(a)</strong> and after <strong>
+(b)</strong> attaching short trim blends internally</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-289520"></a>	33.6.2 	<a name="48099"></a>Trimming blend walls and returning the body </h2>
+<p>
+<a name="pgfId-289521"></a>You need to specify whether to trim the walls back to where they meet the blend face, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#37736">Figure 33-29</a>, and in what form you want the walls and blend returned. You do this using the the <code>
+walls</code>
+ option (<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_walls_t.html">PK_blend_walls_t</a>) in PK_FACE_make_blends_o_t, which takes the following values:</p>
+<p>
+<a name="pgfId-310442"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-310448"></a>Value</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-310450"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-312971"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_walls_t.html">PK_blend_walls_trim_no_c</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-312973"></a>Does not trim either of the walls. The blend is not attached to the walls and is returned as a separate body.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-310460"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_walls_t.html">PK_blend_walls_trim_both_c</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-310633"></a>Trims both walls, but does not attach the blend to the walls. The blend is returned as a separate body. </p>
+<p>
+<a name="pgfId-312980"></a>You can only use this token if you are blending between two sheet bodies.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-312975"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_walls_t.html">PK_blend_walls_attach_c</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-312977"></a>Trims both walls and attaches the blend to the walls. If the blend is between two different bodies then they are united into a single body, with the body containing the left wall treated as the target. </p>
+<p>
+<a name="pgfId-312981"></a>This is the default.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-310464"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_walls_t.html">PK_blend_walls_solid_c</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-310759"></a>Trims both walls, attaches the blend to the walls, and creates a solid body if possible. This is the same as <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_walls_t.html">PK_blend_walls_attach_c</a>, except that if the result of the blending operation forms a closed volume, a solid body is created. </p>
+<p>
+<a name="pgfId-312996"></a>This token can only be used in conjunction with <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_trim_t.html">PK_blend_trim_to_walls_c</a>.</p>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-289575"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-463.gif">
+
+<p>
+<a name="pgfId-289576"></a>Figure 33-29 <a name="37736"></a>Trimming walls to blend faces</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-289585"></a>	33.6.3 	<a name="79234"></a>Trimming blend to a plane </h2>
+<p>
+<a name="pgfId-289588"></a><a name="marker-289587"></a>As well as supplying options to trim the blend faces and walls, you can supply a plane to trim the end of a blend. The blend face is trimmed along a constant parameter line that is calculated from the point at which the supplied plane intersects the <em>
+blend spine</em>, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#18525">Figure 33-30</a>. The blend is trimmed to lie on the positive side of the plane.</p>
+<p>
+<a name="pgfId-312375"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-464.gif">
+
+<p>
+<a name="pgfId-312377"></a>Figure 33-30 <a name="18525"></a>Blend trimmed to a limit plane</p>
+<p>
+<a name="pgfId-289589"></a>You can either supply one plane, in the field <code>
+limit_1</code>
+, or two, in <code>
+limit_1</code>
+ and <code>
+limit_2</code>
+. If you supply one plane, it can be used to determine the start or end of the blend, and if you supply two they are used to determine both ends. </p>
+<p>
+<a name="pgfId-312074"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-312133"></a>Note: These options can only be used in conjunction with the <code>
+walls</code>
+ tokens <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_walls_t.html">PK_blend_walls_trim_no_c</a> and <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_walls_t.html">PK_blend_walls_trim_both_c</a>; the blend faces created cannot be attached to the walls.</address><br>
+</td>
+</tr>
+</tbody></table>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-274109"></a>33.7	<a name="49434"></a>Propagating blends 
+
+
+</h1>
+<p>
+<a name="pgfId-313382"></a>Parasolid provides functionality for propagating face-face blends between adjoining faces in a body, provided that the faces meet smoothly at any intervening edges. This simplifies face-face blending by allowing you to specify just the master faces you want to blend; Parasolid can then choose which other faces should be included in the walls in order to propagate the blend as far as possible. </p>
+<p>
+<a name="pgfId-313676"></a>For example, <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#25770">Figure 33-31</a> shows a body in which only two faces were specified as walls. The blend that was created from these walls was then propagated as far as possible, creating the result shown. Notice that the blend has not propagated across the faces on the left, since the intervening edge is sharp.</p>
+<p>
+<a name="pgfId-313566"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-465.gif">
+
+<p>
+<a name="pgfId-313568"></a>Figure 33-31 Propagating <a name="25770"></a>face-face blends</p>
+<p>
+<a name="pgfId-314809"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-314808"></a>Note: You cannot use propagation with face-face blends that have a disc or isoparameter cross-section plane.</address><br>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-314503"></a>Propagation also works in conjunction with holdlines and cliffedges, as described in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#79759">Section 33.4</a>. Like master faces, this means that you can specify just the first edge in a chain of edges that make up a holdline or cliffedge, provided that the edges in the chain meet smoothly. If you use propagation, and you have specified holdline or cliffedge data, then size constraints are maintained across any faces that are added to the walls as a result of propagation. Inverted cliffedges or holdlines only propagate to other inverted cliffs or holdlines.</p>
+<p>
+<a name="pgfId-314510"></a>In <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#60018">Figure 33-32</a>, by providing the walls and cliffedge shown, and a large radius, propagation creates the face-face blends shown. The cliffedge is maintained along the extent of the blend because of the size of the radius.</p>
+<p>
+<a name="pgfId-314768"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-466.gif">
+
+<p>
+<a name="pgfId-314770"></a>Figure 33-32 <a name="60018"></a>Propagating cliffedges</p>
+<p>
+<a name="pgfId-313656"></a><a name="marker-313655"></a>Propagation is invoked using the <code>
+propagate</code>
+ option, which takes two values:</p>
+<ul>
+<li>
+<a name="pgfId-313852"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_propagate_t.html">PK_blend_propagate_no_c</a> - do not propagate the blend (the default)</li>
+<li>
+<a name="pgfId-313890"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_propagate_t.html">PK_blend_propagate_yes_c</a> - propagate the blend</li>
+</ul>
+<p>
+<a name="pgfId-334697"></a>You can control the tolerance to within which the edges between faces are considered smooth using the <code>
+tolerance</code>
+ option in <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend_o_t.html">PK_FACE_make_blend_o_t</a>.</p>
+<p>
+<a name="pgfId-313037"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-313130"></a>Note: Parasolid uses both tolerance information on the edges between faces and the <code>
+tolerance</code>
+ specified in <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend_o_t.html">PK_FACE_make_blend_o_t</a> to determine whether faces meet smoothly at intervening edges. </address><br>
+</td>
+</tr>
+</tbody></table>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-274112"></a>33.8	<a name="40652"></a>Blend notches 
+
+
+</h1>
+<p>
+<a name="pgfId-275508"></a>Sometimes you might want to create a face-face blend that extends past a notch, rather than one that stops as soon as it encounters the notch. You can do this using the <code>
+notch</code>
+ option in <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend_o_t.html">PK_FACE_make_blend_o_t</a>, which blends across any notches found in either the middle or the end of a wall.</p>
+<p>
+<a name="pgfId-275512"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#28058">Figure 33-33</a> illustrates a successful notch overflow in the middle of a blend. In this case, if <code>
+notch</code>
+ is PK_LOGICAL_false, the blend face that is created cannot be successfully attached to the body, and is returned as a separate sheet.</p>
+<p>
+<a name="pgfId-275533"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-467.gif">
+
+<p>
+<a name="pgfId-275535"></a>Figure 33-33 <a name="28058"></a>Notch overflow in the middle of a blend</p>
+<p>
+<a name="pgfId-275536"></a>A notch overflow at the end of a blend occurs when all of one side of a blend face at the end of the blend is trimmed away. This is shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#60791">Figure 33-34</a>. In this example, if <code>
+notch</code>
+ is PK_LOGICAL_false, then only the first face in the right wall is blended, because the notch occurs while the blend is still in this face. The next face in the right wall is then extended to cap the blend. If <code>
+notch</code>
+ is PK_LOGICAL_true, the blend is extended along all the faces in the right wall. </p>
+<p>
+<a name="pgfId-275557"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-468.gif">
+
+<p>
+<a name="pgfId-275558"></a>Figure 33-34 <a name="60791"></a>Notch overflow at the end of a blend</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-289913"></a>33.9	<a name="73666"></a>Dealing with multiple solutions 
+
+
+</h1>
+<p>
+<a name="pgfId-289915"></a>In some cases, the data you pass to <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend.html">PK_FACE_make_blend</a> may contain ambiguous information that could cause blending to fail. For example it may be possible to create more than one set of blends between two walls, or you may have supplied holdline data that describes conflicting sets of holdlines, causing confusion over which of several possible blends should be created. This section describes the options Parasolid provides to help you overcome these ambiguities.</p>
+<p>
+<a name="pgfId-306060"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#60568">Figure 33-35</a> shows an example in which there are two possible face-face blends. In order to blend the walls indicated, you must do one of the following:</p>
+<ul>
+<li>
+<a name="pgfId-306727"></a>Force Parasolid to create all the blends possible</li>
+<li>
+<a name="pgfId-306734"></a>Supply a <strong>
+help point</strong> to indicate which of the possible blends should be created.</li>
+</ul>
+<p>
+<a name="pgfId-334877"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-469.gif">
+
+<p>
+<a name="pgfId-334879"></a>Figure 33-35 <a name="60568"></a>Multiple face-face blends</p>
+<p>
+<a name="pgfId-309060"></a>If you do neither of these, Parasolid creates only one blend, but does not guarantee which blend it creates.</p>
+<p>
+<a name="pgfId-306877"></a>A help point is a 3-space vector that is used to distinguish between multiple possible solutions. Parasolid creates whichever blend lies closest to the supplied help point. You should try to make any help points lie as close to the desired blend face as possible; the further away a help point is, the harder it is for Parasolid to identify the correct blend face.</p>
+<p>
+<a name="pgfId-306887"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-306886"></a>Note: You can provide a help point in cases where there is only one solution, if you wish. If the help point is close enough to the blend face, it may help improve performance. However, if the help point is not close to the blend, it will not help, and may even hinder performance.</address><br>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-289916"></a>By default, Parasolid only returns one set of blend faces. </p>
+<p>
+<a name="pgfId-306435"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<ul>
+<address>
+<a name="pgfId-306492"></a>Performance issue: You must be careful when requesting multiple blends, since Parasolid will look for additional blends even in cases where there is only a single solution. This can cause a performance overhead, especially if the supplied walls contain many faces. </address><br>
+</ul>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-307109"></a>In cases where there are conflicting multiple blends, you must supply a help point if you want to have any control over which of the conflicting blends is attached to the body. For example, if you specify several holdlines that lie in the same wall (as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#19919">Figure 33-36</a>), you must supply a help point if you want to attach one of the blends. If you do not want to attach a blend (i.e., if <code>
+walls</code>
+ is <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_walls_t.html">PK_blend_walls_trim_no_c</a> or <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_walls_t.html">PK_blend_walls_trim_both_c</a>), then Parasolid returns all solutions if you do not supply a help point. You cannot attach multiple conflicting blends to a body.</p>
+<p>
+<a name="pgfId-307161"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-470.gif">
+
+<p>
+<a name="pgfId-307271"></a>Figure 33-36 <a name="19919"></a>Resolving conflicting holdline data using help points</p>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-307162"></a>	33.9.1 	Options </h2>
+<p>
+<a name="pgfId-306083"></a>The options used to deal with multiple solutions are in PK_FACE_make_blends_o_t. They are as follows:</p>
+<p>
+<a name="pgfId-306154"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-306205"></a>Option</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-306207"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-306209"></a>multiple</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-306211"></a>Whether or not to create multiple blend sheets. The default is PK_LOGICAL_false.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-306213"></a>have_help_point</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-306215"></a>Whether or not a help point is supplied in <code>
+help_point</code>
+. The default is PK_LOGICAL_false. This must be set to PK_LOGICAL_true for any help point to be used.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-306217"></a>help_point</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-306219"></a>A 3-space vector that represents a help point that <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend.html">PK_FACE_make_blend</a> can use to resolve any ambiguity in the supplied data. If a help point is supplied, you should set <code>
+have_help_point</code>
+ appropriately.</p>
+</td>
+</tr>
+</tbody></table>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-274122"></a>33.10	<a name="86483"></a>Generating blend ribs 
+
+
+</h1>
+<p>
+<a name="pgfId-276562"></a>Parasolid can also produce blend ribs instead of, or as well as, blend surfaces in face-face blending. Blend ribs are geometric cross-sections of a blend surface, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#63640">Figure 33-37</a>. In general blend ribs are curves, though points are returned if the blend surface is degenerate. </p>
+<p>
+<a name="pgfId-308070"></a>By passing blend ribs to a more general-purpose surface creation tool, you can use them to create surfaces in regions where true blend surfaces cannot be produced, such as regions of tight curvature. For example, if an underlying surface has a tight, narrow crease which causes blending to fail, you can generate ribs and use them to create a surface which approximates the blend. </p>
+<p>
+<a name="pgfId-307688"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-471.gif">
+
+<p>
+<a name="pgfId-308034"></a>Figure 33-37 <a name="63640"></a>Producing blend ribs instead of a blend surface</p>
+<p>
+<a name="pgfId-308696"></a>This section explains:</p>
+<ul>
+<li>
+<a name="pgfId-308701"></a>How to specify whether to produce ribs, and in what form (see <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#15314">Section 33.10.1</a>)</li>
+<li>
+<a name="pgfId-308709"></a>How ribs are returned by <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend.html">PK_FACE_make_blend</a> (see <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#69585">Section 33.10.2</a>)</li>
+</ul>
+<p>
+<a name="pgfId-276566"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-276565"></a>Note: You can only produce blend ribs if you also supply a parameter spine. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#10097">Section 33.3.1, "Supplying a suitable parameter spine"</a> for more information.</address><br>
+</td>
+</tr>
+</tbody></table>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274123"></a>	33.10.1 	<a name="15314"></a>Specifying when to produce ribs </h2>
+<p>
+<a name="pgfId-276588"></a>You can choose to produce ribs either:</p>
+<ul>
+<li>
+<a name="pgfId-308740"></a>as well as blend surfaces </li>
+<li>
+<a name="pgfId-308759"></a>instead of blend surfaces </li>
+<li>
+<a name="pgfId-308762"></a>only when blending fails to create a blend surface</li>
+</ul>
+<p>
+<a name="pgfId-308749"></a>You can also control how ribs are distributed by grouping them together in a number of ways, and specifying a maximum number of ribs to produce in each group. Ribs are distributed as evenly as possible within each group.</p>
+
+<h4>
+<a name="pgfId-274126"></a>Options</h4>
+<p>
+<a name="pgfId-308555"></a>You specify how you want blend ribs to be produced using the <code>
+rib_control</code>
+ structure (<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_rib_control_t.html">PK_blend_rib_control_t</a>) in <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend_o_t.html">PK_FACE_make_blend_o_t</a>. This contains the following options:</p>
+<p>
+<a name="pgfId-308620"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-308602"></a>Option</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-308604"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-308606"></a>output_rib</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-308608"></a>Under what conditions to generate blend ribs. This can take the following values: </p>
+<ul>
+<li>
+<a name="pgfId-308609"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_output_rib_t.html">PK_blend_output_rib_no_c</a> - No ribs are produced. (the default)</li>
+<li>
+<a name="pgfId-308610"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_output_rib_t.html">PK_blend_output_rib_on_fail_c</a> - Ribs are produced in areas where blending fails to build a surface.</li>
+<li>
+<a name="pgfId-308611"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_output_rib_t.html">PK_blend_output_rib_only_c</a> - Ribs are produced, but no blend sheets or faces. The underlying walls remain unchanged.</li>
+<li>
+<a name="pgfId-308612"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_output_rib_t.html">PK_blend_output_rib_also_c</a> - Both ribs and blend faces are produced.</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-308614"></a>group_rib</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-308616"></a>How to group the ribs that are generated. This can take the following values:</p>
+<ul>
+<li>
+<a name="pgfId-308617"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_group_rib_t.html">PK_blend_group_rib_no_c</a> - Do not group the ribs. The total number of ribs produced is no more than <code>
+max_n_ribs</code>
+ (the default).</li>
+<li>
+<a name="pgfId-308618"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_group_rib_t.html">PK_blend_group_rib_by_face_c</a> - Ribs are grouped according to the blend faces produced. No more than <code>
+max_n_ribs</code>
+ ribs are produced for each blend face.</li>
+<li>
+<a name="pgfId-308619"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_group_rib_t.html">PK_blend_group_rib_by_parms_c</a> - Ribs are grouped by the parameter intervals specified in <code>
+interval_parms</code>
+. No more than <code>
+max_n_ribs</code>
+ ribs are produced in each interval.</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-308628"></a>max_n_ribs</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-308630"></a>The maximum number of ribs to produce in each group. Ribs are distributed across the group as evenly as possible.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-308637"></a>n_interval_parms</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-308639"></a>The size of the <code>
+interval_parms</code>
+ array.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-308649"></a>interval_parms</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-308962"></a>This allows you to specify groups explicitly by defining intervals along the parameter spine that represent the boundaries of each group. The first member of the array defines the start of the first interval, the second member the end of the first interval and the start of the second, and so on. For example, a set of <code>
+interval_parms</code>
+ p1, p2, p3, p4 defines 3 intervals: p1-p2, p2-p3, and p3-p4.</p>
+<p>
+<a name="pgfId-308817"></a>The <code>
+interval_parms</code>
+ should be in order of increasing parameter. For periodic parameter spines the last member may be equal to the first plus the period of the parameterization. Other than this, all members must be distinct.</p>
+</td>
+</tr>
+</tbody></table>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274128"></a>	33.10.2 	<a name="69585"></a>How ribs are returned </h2>
+<p>
+<a name="pgfId-276532"></a>Ribs are returned in the <code>
+ribs</code>
+ field (<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_rib_r_t.html">PK_blend_rib_r_t</a>) of <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend.html">PK_FACE_make_blend</a>. This contains the following fields:</p>
+<p>
+<a name="pgfId-308978"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-308989"></a>Field</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-308991"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-308993"></a>n_ribs</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-308995"></a>The number of ribs that were created.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-308997"></a>ribs</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-308999"></a>The ribs that were created, stored as an array of geometry. These are usually curves, but may be points in areas where the blend is degenerate or has zero radius.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-309001"></a>rib_parms</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-309003"></a>An array of parameters. Each member of the array represents the position of the corresponding rib on the parameter spine you supplied.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<pre><a name="pgfId-309005"></a>rib_indices</pre>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-309007"></a>An array of indices that uniquely identifies each rib returned. </p>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-276536"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-276535"></a>Note: For blends which produce multiple sheets, two ribs may share the same parameter, but will never share the same index.</address><br>
+</td>
+</tr>
+</tbody></table>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-274130"></a>33.11	<a name="18822"></a>Checking 
+
+
+</h1>
+<p>
+<a name="pgfId-305684"></a>To ensure validity of the resulting body, Parasolid can carry out a series of local checks when creating face-face blends.</p>
+<p>
+<a name="pgfId-307370"></a>You can use the <code>
+checks</code>
+ structure (<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_local_check_t.html">PK_blend_local_check_t</a>) in <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend_o_t.html">PK_FACE_make_blend_o_t</a> to control which of these checks to perform. The default value for each field in <code>
+checks</code>
+ ensures that no local checking is performed by default, so as to maximize performance.</p>
+<p>
+<a name="pgfId-336204"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend_o_t.html">PK_FACE_make_blend_o_t</a> also contains a <code>
+local_checks</code>
+ option that provides a quick way of turning on common checking functionality. If you set <code>
+local_checks</code>
+ in <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend_o_t.html">PK_FACE_make_blend_o_t</a> to PK_LOGICAL _true, the following local checking is performed:</p>
+<ul>
+<li>
+<a name="pgfId-336205"></a>Surface self-intersections for all blend surfaces except B-surfaces</li>
+<li>
+<a name="pgfId-336206"></a>Face checks</li>
+<li>
+<a name="pgfId-336207"></a>Face-face inconsistency checks</li>
+</ul>
+<p>
+<a name="pgfId-336263"></a>The table below summaries the fields in the <code>
+checks</code>
+ structure, together with their default values and their values when <code>
+local_checks</code>
+ is PK_LOGICAL_true.</p>
+<p>
+<a name="pgfId-309130"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-336133"></a>Option</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-336135"></a>Default value</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-336137"></a><code>
+local_checks</code>
+ value</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-336139"></a><code>
+check_su_X</code>
+: Check for self-intersecting surfaces.</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-336141"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_check_su_x_t.html">PK_blend_check_su_X_no_c</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-336143"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_check_su_x_t.html">PK_blend_check_su_X_not_bsurf_c</a></p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-336145"></a><code>
+check_fa</code>
+: Check that individual faces are valid.</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-336147"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_check_fa_t.html">PK_blend_check_fa_no_c</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-336149"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_check_fa_t.html">PK_blend_check_fa_yes_c</a></p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-336151"></a><code>
+check_fa_fa</code>
+: Check for face-face inconsistencies.</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-336153"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_check_fa_fa_t.html">PK_blend_check_fa_fa_no_c</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-336155"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_check_fa_fa_t.html">PK_blend_check_fa_fa_yes_c</a></p>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-307363"></a>For more information on Parasolid's checking capability, see <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.09.html#12509">Chapter 8, "Checking"</a>.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-274134"></a>33.12	<a name="35232"></a>User-supplied surfaces 
+
+
+</h1>
+<p>
+<a name="pgfId-275426"></a>Rather than have Parasolid generate a blend surface, you can supply a surface to use in a blend operation using the <code>
+user_surface</code>
+ field of <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend_o_t.html">PK_FACE_make_blend_o_t</a>. When using this option, you should provide consistent <code>
+left_sense</code>
+ and <code>
+right_sense</code>
+ flags. If you don't, then Parasolid attempts to create a valid model, but may fail. See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#35907">Section 33.2, "Face-face blending concepts"</a>, for more information about the sense of a blend.</p>
+<p>
+<a name="pgfId-275427"></a>In order for the blend to succeed, the surface you supply must:</p>
+<ul>
+<li>
+<a name="pgfId-275428"></a>Lie within tolerance of the faces being blended.</li>
+<li>
+<a name="pgfId-275429"></a>Be parameterized such that the U=0 constant parameter lies on the left hand wall of faces for the blend, and the U=1 constant parameter lies on the right hand wall.</li>
+</ul>
+<p>
+<a name="pgfId-275476"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-472.gif">
+
+<p>
+<a name="pgfId-275477"></a>Figure 33-38 Blending faces with a user-supplied surface</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-110680"></a>33.13	Face-face blending summary
+
+
+</h1>
+<p>
+<a name="pgfId-322815"></a>In summary, this chapter has given you a complete description of Parasolid's face-face blending functionality.</p>
+<ul>
+<li>
+<a name="pgfId-322817"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#30925">Section 33.1</a> defined the basic properties of a face-face blend, explained some of the general concepts, and provided a map for the rest of the chapter.</li>
+<li>
+<a name="pgfId-322860"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#43352">Section 33.3</a> described the different sorts of cross-section plane that you can use.</li>
+<li>
+<a name="pgfId-322824"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#79759">Section 33.4</a> told you how to define the position of the contact points between a blend and its walls, both indirectly, by supplying radius or range data, and directly, by supplying holdlines or cliffedges.</li>
+<li>
+<a name="pgfId-322828"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#83117">Section 33.5</a> explained the different sorts of curve shape that you can use to join the contact points on a cross-section plane. </li>
+<li>
+<a name="pgfId-322832"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#20242">Section 33.6</a> described how a blend can be trimmed and attached to the original body.</li>
+<li>
+<a name="pgfId-322836"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#49434">Section 33.7</a> shows you how you can make face-face blending much easier by specifying just a single face in a wall, or the first edge in a holdline, and letting Parasolid continue blending as far as possible.</li>
+<li>
+<a name="pgfId-322840"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#40652">Section 33.8</a> explains how you can identify notches in a wall and blend past them.</li>
+<li>
+<a name="pgfId-322844"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#73666">Section 33.9</a> deals with the different ways you can deal with ambiguities in your input data.</li>
+<li>
+<a name="pgfId-322848"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#86483">Section 33.10</a> shows how you can create a blend "skeleton" from point and curve geometry, rather than generating a blend surface.</li>
+<li>
+<a name="pgfId-322852"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#18822">Section 33.11</a> describes the different levels of checking that Parasolid provides for face-face blending.</li>
+<li>
+<a name="pgfId-322856"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#35232">Section 33.12</a> describes how you can supply your own surface to blend two walls, rather than have Parasolid generate one for you.</li>
+</ul>
+<p>
+<a name="pgfId-328325"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Face-Face Blending_files/fd_chap-473.gif">
+
+<p>
+<a name="pgfId-328327"></a>Figure 33-39 <a name="58005"></a>Blending two walls of faces</p>
+<p>
+<a name="pgfId-328360"></a>To return to the example used at the very beginning of the chapter, the disjoint bodies shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#58005">Figure 33-39</a> have been blended as follows:</p>
+<ul>
+<li>
+<a name="pgfId-328334"></a>The <code>
+xsection</code>
+ option was set to PK_blend_xs_rolling_ball_c in order to create a rolling ball cross section plane.</li>
+<li>
+<a name="pgfId-328335"></a>The blend shape <code>
+radius</code>
+ field was set to create a constant radius blend</li>
+<li>
+<a name="pgfId-328336"></a>With the face normals pointing away from each other, both <code>
+left_sense</code>
+ and <code>
+right_sense</code>
+ were PK_LOGICAL_true.</li>
+<li>
+<a name="pgfId-328337"></a>The <code>
+trim</code>
+ option was set to <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_trim_t.html">PK_blend_trim_to_walls_c</a> in order to trim the blend faces to the specified walls.</li>
+<li>
+<a name="pgfId-328338"></a>The <code>
+walls</code>
+ option was set to <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_walls_t.html">PK_blend_walls_attach_c</a> in order to attach the blend faces to the specified walls, so that a single body could be created from the two disjoint bodies. </li>
+<li>
+<a name="pgfId-328339"></a>The <code>
+propagate</code>
+ option was set to <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_propagate_t.html">PK_blend_propagate_yes_c</a>, to ensure that the blend propagated as far as possible.</li>
+</ul>
+<p>
+<a name="pgfId-327763"></a>&nbsp;</p>
+
+<a name="endofdoc">
+
+</a><p align="RIGHT"><a name="endofdoc">
+</a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<p></p><table border="" align="CENTER"><tbody><tr>
+  <td>&lt;&lt;&lt; <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html">Interpreting Edge Blending Error Codes</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs/fd_index.html">Chapters</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.35.html">Interpreting Face-Face Blending Error Codes</a> &gt;&gt;&gt;</td>
+</tr></tbody></table><p></p>
+
+
+
+</body></html>

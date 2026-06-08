@@ -2066,3 +2066,40 @@ RUNNING TOTAL: stays 60/144 (hardening, not a new item). Revolve solids are
 now first-class for both tessellation AND analytic mass properties.
 GATE: exact CI triplet green. No boolean/tessellate pipeline change (pcurves
 only) -> no new fuzz path. Merged.
+
+## Addendum 61 (2026-06-08): BLEND/FILLET family opens -- rolling-ball blend GEOMETRY, plane-plane exact cylinder (file 40 rung 1; map stays 60/144, surgery next)
+
+Fillet research landed (docs/research/kernel/40-blend-fillet-surface-generation
++ 41-blend-overflow + Parasolid edge-blending manual fetches). Per the
+standing order, read file 40 before building. Its centerpiece (the "single
+most important procedural fact", §1.2): spine = SSI(offset(S_a,r),
+offset(S_b,r)); classify the spine -> line=Cylinder(exact), circle=Torus
+(exact), else cyclide/NURBS canal. Build order rung 1 = plane-plane -> exact
+cylinder. KEY INSIGHT from the research: a fillet is TANGENT (G1) to its
+supports along the spring curves, so it CANNOT be done by a global boolean
+(Keel's engine declines tangent faces) -- it is a local imprint/trim/stitch
+(file 40 §3), bespoke topology surgery, exactly why production kernels do it
+that way and not via booleans.
+
+New crates/keel-topo/src/blend.rs: blend_cylinder_for_edge(edge, radius) ->
+EdgeBlend { spine, spring_a, spring_b, surface: Cylinder3 } for a CONVEX
+plane-plane edge. Offsets each support plane by r toward material
+({n.x = n.p - r}), intersects them for the spine LINE (two-plane intersection,
+denom = sin^2), feet-of-perpendicular for the two spring lines, and a cylinder
+of radius r about the spine (frame x -> first spring, z = spine dir). This is
+the GEOMETRY stage; it does not yet modify the body.
+Tests: block [0,2]^3 top-right edge, r=0.5 -> spine line {x=1.5,z=1.5}||y,
+cylinder radius 0.5 EXACTLY TANGENT to both supports (axis 0.5 from z=2 and
+x=2), spring lines on z=2/x=2 at the tangency points, spring points exactly r
+from the spine. Bad-radius rejected.
+
+Scope: plane-plane convex only (rung 1 geometry). The trim-and-stitch local
+operation that inserts the blend face (imprint spring curves, trim the strip
+to the sharp edge, delete the edge, sew the cylinder in with closed-form
+pcurves -- file 40 §3) is the NEXT stage and completes the fillet capability.
+Circle-spine tori (plane-cyl/plane-sphere), cyclides, NURBS canals, variable
+radius, and vertex/setback blends are the higher rungs (file 40 §1.4/2/4).
+RUNNING TOTAL: stays 60/144 (blend geometry validated; the fillet item
+completes with the surgery). The biggest remaining family is now open.
+GATE: exact CI triplet green (115 keel-topo). Pure geometry -> no fuzz path.
+Merged.
