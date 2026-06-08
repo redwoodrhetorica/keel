@@ -183,6 +183,18 @@ impl Body {
         pts
     }
 
+    /// Planar slices at a list of offsets along `normal` from `base`
+    /// (parity item 77, additive-manufacturing slicing): one section
+    /// polygon per offset. Empty slices (offset misses the body) are kept
+    /// as empty vectors so the result aligns with `offsets`.
+    pub fn planar_slices(&self, base: Vec3, normal: Vec3, offsets: &[f64]) -> Vec<Vec<Vec3>> {
+        let n = normal.try_normalize().unwrap_or(Vec3::new(0.0, 0.0, 1.0));
+        offsets
+            .iter()
+            .map(|&o| self.section_by_plane(base + n * o, n))
+            .collect()
+    }
+
     /// Coarse geometric/topological equivalence (parity item 108): equal
     /// entity counts, genus, and (within `tol`) bounding box and volume.
     /// This is the cheap CAx-IF validation-property comparison stage
@@ -310,6 +322,21 @@ mod tests {
             "section area {} != 4",
             area.abs() * 0.5
         );
+    }
+
+    #[test]
+    fn planar_slices_of_block() {
+        // Slice a 2x2x2 block at z = 0.5, 1.0, 1.5: each a 2x2 square.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let slices = b.planar_slices(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), &[0.5, 1.0, 1.5]);
+        assert_eq!(slices.len(), 3);
+        for s in &slices {
+            assert_eq!(s.len(), 4, "each interior slice is a square");
+        }
+        // A slice above the block is empty.
+        let empty = b.planar_slices(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), &[5.0]);
+        assert!(empty[0].is_empty(), "slice above the block is empty");
     }
 
     #[test]
