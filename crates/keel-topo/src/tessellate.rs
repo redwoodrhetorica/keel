@@ -27,7 +27,7 @@ impl Body {
                 }
                 Surface3::Cylinder(c) => self.tessellate_cylinder(face, &c.clone(), sense),
                 Surface3::Cone(c) => self.tessellate_cone(face, &c.clone(), sense),
-                _ => Vec::new(),
+                Surface3::Torus(t) => self.tessellate_torus(&t.clone(), sense),
             },
             Some(crate::entity::SurfaceGeom::Nurbs(n)) => {
                 self.tessellate_nurbs(face, &n.clone(), sense)
@@ -120,6 +120,49 @@ impl Body {
             }
         }
         None
+    }
+
+    /// Tessellate a full ring torus. point(u, v) = c + (R + rr cos v)*
+    /// (ex cos u + ey sin u) + ez * rr sin v; outward points away from the
+    /// tube centreline, sense-adjusted. (Whole torus; partial-tube blend
+    /// faces are a follow-up.)
+    fn tessellate_torus(&self, torus: &keel_geom::surface::Torus3, sense: bool) -> Vec<[Vec3; 3]> {
+        let (c, ex, ey, ez, rmaj, rmin) = (
+            torus.frame.origin,
+            torus.frame.x,
+            torus.frame.y,
+            torus.frame.z,
+            torus.major,
+            torus.minor,
+        );
+        const NU: usize = 64;
+        const NV: usize = 32;
+        let tau = core::f64::consts::TAU;
+        let sgn = if sense { 1.0 } else { -1.0 };
+        let pt = |u: f64, v: f64| -> Vec3 {
+            let radial = ex * u.cos() + ey * u.sin();
+            c + radial * (rmaj + rmin * v.cos()) + ez * (rmin * v.sin())
+        };
+        let nrm = |u: f64, v: f64| -> Vec3 {
+            let radial = ex * u.cos() + ey * u.sin();
+            (radial * v.cos() + ez * v.sin()) * sgn
+        };
+        let mut tris = Vec::new();
+        for i in 0..NU {
+            let u0 = tau * i as f64 / NU as f64;
+            let u1 = tau * (i + 1) as f64 / NU as f64;
+            for j in 0..NV {
+                let v0 = tau * j as f64 / NV as f64;
+                let v1 = tau * (j + 1) as f64 / NV as f64;
+                let a = pt(u0, v0);
+                let b = pt(u0, v1);
+                let cc = pt(u1, v1);
+                let d = pt(u1, v0);
+                tris.push(orient([a, b, cc], nrm(u0 + 0.0, 0.5 * (v0 + v1))));
+                tris.push(orient([a, cc, d], nrm(0.5 * (u0 + u1), 0.5 * (v0 + v1))));
+            }
+        }
+        tris
     }
 
     /// The angular [phi_lo, phi_hi] span a cylindrical face occupies,

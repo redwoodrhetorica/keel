@@ -2204,3 +2204,21 @@ surgery (arc spring circles + trimmed-torus tessellation) are follow-ups.
 RUNNING TOTAL: stays 61/144 (extends the fillet item's reach).
 GATE: exact CI triplet green (118 keel-topo). Pure geometry -> no fuzz path.
 Merged.
+
+## Addendum 65 (2026-06-08): TORUS tessellation -> torus faces first-class (map stays 61/144; torus-fillet precursor)
+
+Like cones (Addendum 59), TORUS faces were dropped to empty in tessellate_face
+(the `_` arm), so the existing torus() primitive had broken bbox/winding/
+booleans (mass_properties worked via the analytic full-coverage path, but the
+tessellation consumers did not). tessellate_torus added and wired into the
+dispatch (now exhaustive over Plane/Sphere/Cylinder/Cone/Torus): grid mesh of
+point(u,v) = c + (R + rr cos v)(ex cos u + ey sin u) + ez rr sin v, outward =
+away from the tube centreline. Whole torus (partial-tube blend faces -- the
+torus-fillet blend -- are a follow-up with the torus surgery).
+Test: torus major 3 minor 1 -> bbox xy +/-4 z +/-1 (tight), mesh_volume = 2 pi^2
+R r^2 = 6 pi^2 within 1%. Torus is now first-class for bbox/winding/booleans,
+and the torus blend face can be measured once the surgery trims its tube.
+RUNNING TOTAL: stays 61/144 (infrastructure; fixes the torus primitive +
+unblocks the torus-rung fillet surgery).
+GATE: exact CI triplet green (119 keel-topo). tessellate shared with the
+winding classifier -> fuzz_boolean re-soaked. Merged.
