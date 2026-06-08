@@ -724,6 +724,21 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, B
     let kept = select_faces(op, &class_a, &class_b);
     let polys = kept_to_polys(&ia.body, &ib.body, &kept, &mut faults);
     let body = build_result_solid(&polys, tol)?;
+    // Post-condition: a real solid has positive, finite volume. The
+    // scalar Euler identity is necessary but not sufficient (a few
+    // faces can satisfy it without bounding a solid), so near-degenerate
+    // configurations -- thin slivers, large scale disparities where a
+    // small seam fails to imprint -- can slip through as Euler-valid yet
+    // geometrically degenerate. Decline those honestly rather than
+    // return a wrong answer (robust tolerant scaling is M6b).
+    match body.mass_properties() {
+        Ok(m) if m.volume.is_finite() && m.volume > 0.0 => {}
+        _ => {
+            return Err(BoolFault::AssemblyFailed(
+                "degenerate result (non-positive volume)",
+            ));
+        }
+    }
     Ok(BoolResult { body, faults, op })
 }
 
@@ -1473,6 +1488,29 @@ mod tests {
         assert!(res.body.validate().is_ok(), "invalid: {:?}", res.faults);
         let vol = res.body.mass_properties().unwrap().volume;
         assert!((vol - 7.0).abs() < 1e-6, "A-B volume {vol} != 7");
+    }
+
+    #[test]
+    fn near_degenerate_intersection_no_wrong_answer() {
+        // A thin sliver intersection at a large coordinate (scale
+        // disparity vs tol) found by fuzzing. M6a may decline it, but
+        // must NEVER return a wrong "valid" body: any Ok result has a
+        // positive, finite volume; otherwise it is a clean Err.
+        let mut a = Body::new();
+        a.block(Vec3::new(0.0005, 0.0005, 0.0005), 0.5, 20.0, 0.5)
+            .unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::new(0.0, 20.0, 0.0), 0.5, 0.5, 0.5).unwrap();
+        match boolean(&a, &b, BoolOp::Intersection, 1e-7) {
+            Ok(res) => {
+                let v = res.body.mass_properties().map(|m| m.volume);
+                assert!(
+                    matches!(v, Ok(vol) if vol.is_finite() && vol > 0.0),
+                    "Ok result must have positive finite volume, got {v:?}"
+                );
+            }
+            Err(_) => {} // declining a near-degenerate config is fine.
+        }
     }
 
     #[test]
