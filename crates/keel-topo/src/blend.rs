@@ -562,9 +562,11 @@ impl Body {
         Ok(b)
     }
 
-    /// Round a convex `edge` between two planar faces with a constant-
-    /// radius rolling-ball fillet (parity items 47-61; research file 40
-    /// rung 1). Returns the filleted body: the exact cylinder blend face
+    /// Round a convex `edge` with a constant-radius rolling-ball fillet
+    /// (parity items 47-61; research file 40). Dispatches by support
+    /// geometry: a plane/cylinder cap rim routes to the exact-torus rung
+    /// (fillet_cap_rim); two planar supports use the exact-cylinder rung
+    /// implemented here. Returns the filleted body: the cylinder blend face
     /// is inserted by the local trim-and-stitch surgery of file 40 §3
     /// (imprint the spring lines, split the cap faces along the end arcs,
     /// then dissolve the sharp-corner fragments with kef/kev), with the
@@ -578,11 +580,25 @@ impl Body {
     /// analytic mass_properties cover the result) are follow-ups, as are
     /// concave edges, non-planar supports, and overflow handling (file 41).
     pub fn fillet_edge(&self, edge: EdgeKey, radius: f64) -> Result<Body, TopoError> {
-        let blend = self.blend_cylinder_for_edge(edge, radius)?;
         let faces = self.faces_around_edge(edge);
         if faces.len() != 2 {
             return Err(TopoError::Precondition("fillet: edge needs two faces"));
         }
+        // Dispatch by support geometry: a plane/cylinder rim is the torus
+        // rung; two planes is the cylinder rung handled below.
+        let cylinders = faces
+            .iter()
+            .filter(|&&f| {
+                matches!(
+                    self.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )
+            })
+            .count();
+        if cylinders == 1 {
+            return self.fillet_cap_rim(edge, radius);
+        }
+        let blend = self.blend_cylinder_for_edge(edge, radius)?;
         let (f1, f2) = (faces[0], faces[1]);
         let (va_k, vb_k) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
         let p_a = self.vertices.get(va_k).ok_or(TopoError::StaleKey)?.point;
@@ -980,7 +996,9 @@ mod tests {
                             Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
                         )
                     })
-                    && fs.iter().any(|&f| matches!(base.face_outward_normal(f), Some(n) if n.z < -0.9))
+                    && fs
+                        .iter()
+                        .any(|&f| matches!(base.face_outward_normal(f), Some(n) if n.z < -0.9))
             })
             .expect("no bottom rim edge");
         let filleted = base.fillet_cap_rim(rim, 0.3).unwrap();
