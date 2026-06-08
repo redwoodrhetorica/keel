@@ -2180,3 +2180,27 @@ fragments). Analytic mass_properties on the blend still needs blend pcurves
 RUNNING TOTAL: stays 61/144 (hardening the fillet, not a new item).
 GATE: exact CI triplet green (116 keel-topo). tessellate is shared with the
 winding classifier -> fuzz_boolean re-soaked. Merged.
+
+## Addendum 64 (2026-06-08): Fillet ROBUSTNESS + TORUS-RUNG geometry (file 40 Case B; map stays 61/144)
+
+Two increments on the blend family:
+1. Fillet robustness: fillet_edge now tested on a VERTICAL box edge (+x/+y
+   supports) as well as the top-right (+z/+x) -- valid B-rep, V10 E15 F7,
+   volume 7.8927. The surgery generalizes across edge orientations.
+2. TORUS-RUNG geometry (the second rung of the exact-analytic ladder, file 40
+   Case B): blend_torus_for_edge(edge, radius) -> EdgeBlendTorus { spine,
+   spring_plane, spring_cyl, surface: Torus3 } for a CAP-RIM edge where a
+   planar face meets a cylinder perpendicular to its axis. Offsets: plane by r
+   toward material (h - sgn*r), coaxial cylinder inward to R - r; their
+   intersection is the spine CIRCLE (radius R-r); the rolling-ball envelope of
+   a circle is a TORUS (major = R-r, minor = r) -- exact native Keel torus, no
+   NURBS. Spring circles: radius R-r on the cap, radius R on the cylinder.
+   Requires R > 2r. Mirrors blend_cylinder_for_edge (geometry stage only).
+   Test: cylinder R=1 h=2, round the top rim r=0.3 -> torus major 0.7 minor
+   0.3, EXACTLY tangent (outer equator major+minor=R=1 touches the lateral;
+   top centre_z+minor=2 touches the cap), spine radius 0.7 at z=1.7.
+Non-perpendicular plane-cylinder (cyclide) and the torus trim-and-stitch
+surgery (arc spring circles + trimmed-torus tessellation) are follow-ups.
+RUNNING TOTAL: stays 61/144 (extends the fillet item's reach).
+GATE: exact CI triplet green (118 keel-topo). Pure geometry -> no fuzz path.
+Merged.

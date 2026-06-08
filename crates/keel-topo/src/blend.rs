@@ -145,7 +145,113 @@ impl Body {
     }
 }
 
+/// The analytic data of a constant-radius fillet whose spine is a circle
+/// (file 40 Case B): the spine circle, the two spring circles on the
+/// supports, and the exact torus blend surface.
+#[derive(Clone, Debug)]
+pub struct EdgeBlendTorus {
+    /// The ball-centre locus (a circle coaxial with the supports).
+    pub spine: keel_geom::curve::Circle3,
+    /// Tangency circle on the planar support.
+    pub spring_plane: keel_geom::curve::Circle3,
+    /// Tangency circle on the cylindrical support.
+    pub spring_cyl: keel_geom::curve::Circle3,
+    /// The exact blend surface: torus (major = spine radius, minor = r).
+    pub surface: keel_geom::surface::Torus3,
+}
+
 impl Body {
+    /// Generate the exact-torus blend for a convex `edge` where a PLANAR
+    /// face meets a CYLINDRICAL face perpendicular to its axis (a cap rim;
+    /// file 40 Case B / rung 2). The spine is the circle where the two
+    /// offset surfaces (offset plane, coaxial offset cylinder) intersect,
+    /// and the rolling-ball envelope of that circle is a torus of minor
+    /// radius r. Requires R > 2r (Torus3 needs major = R - r > minor = r).
+    ///
+    /// Geometry stage only (mirrors blend_cylinder_for_edge); the torus
+    /// trim-and-stitch surgery and the general (non-perpendicular) plane-
+    /// cylinder cyclide case are follow-ups.
+    pub fn blend_torus_for_edge(
+        &self,
+        edge: EdgeKey,
+        radius: f64,
+    ) -> Result<EdgeBlendTorus, TopoError> {
+        use keel_geom::curve::Circle3;
+        use keel_geom::surface::Torus3;
+        if !(radius.is_finite() && radius > 0.0) {
+            return Err(TopoError::Precondition("blend: radius must be positive"));
+        }
+        let faces = self.faces_around_edge(edge);
+        if faces.len() != 2 {
+            return Err(TopoError::Precondition("blend: edge needs two faces"));
+        }
+        // Identify the planar and the cylindrical support.
+        let mut plane_face = None;
+        let mut cyl = None;
+        for &f in &faces {
+            match self.face_surface_geom(f) {
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_))) => plane_face = Some(f),
+                Some(SurfaceGeom::Analytic(Surface3::Cylinder(c))) => cyl = Some(c),
+                _ => {}
+            }
+        }
+        let (plane_face, cyl) = match (plane_face, cyl) {
+            (Some(p), Some(c)) => (p, c),
+            _ => {
+                return Err(TopoError::Precondition(
+                    "blend_torus: needs a plane and a cylinder support",
+                ));
+            }
+        };
+        let (axis, axis_o, r_cyl) = (cyl.frame.z, cyl.frame.origin, cyl.radius);
+        let np = self
+            .face_outward_normal(plane_face)
+            .ok_or(TopoError::Precondition("blend_torus: plane normal"))?;
+        // Cap case: the plane must be perpendicular to the cylinder axis.
+        if np.cross(axis).norm() > 1e-7 {
+            return Err(TopoError::Precondition(
+                "blend_torus: non-perpendicular plane-cylinder (cyclide, follow-up)",
+            ));
+        }
+        if r_cyl <= 2.0 * radius {
+            return Err(TopoError::Precondition(
+                "blend_torus: radius too large for cylinder (needs R > 2r)",
+            ));
+        }
+        let pp = self
+            .face_outer_loop_points(plane_face)
+            .first()
+            .copied()
+            .ok_or(TopoError::Precondition("blend_torus: plane point"))?;
+        let hp = (pp - axis_o).dot(axis); // plane height along the axis
+        let sgn = np.dot(axis); // +1 cap faces +axis, -1 faces -axis
+        let h_off = hp - sgn * radius; // offset plane, toward material
+        let major = r_cyl - radius; // coaxial offset cylinder radius
+        let centre = axis_o + axis * h_off;
+        let (ex, ey) = (cyl.frame.x, cyl.frame.y);
+
+        let spine = Circle3::new(centre, ex, ey, major)
+            .map_err(|_| TopoError::Precondition("blend_torus: bad spine"))?;
+        let spring_plane = Circle3::new(axis_o + axis * hp, ex, ey, major)
+            .map_err(|_| TopoError::Precondition("blend_torus: bad plane spring"))?;
+        let spring_cyl = Circle3::new(centre, ex, ey, r_cyl)
+            .map_err(|_| TopoError::Precondition("blend_torus: bad cyl spring"))?;
+        let frame = Frame3 {
+            origin: centre,
+            x: ex,
+            y: ey,
+            z: axis,
+        };
+        let surface = Torus3::new(frame, major, radius)
+            .map_err(|_| TopoError::Precondition("blend_torus: bad torus"))?;
+        Ok(EdgeBlendTorus {
+            spine,
+            spring_plane,
+            spring_cyl,
+            surface,
+        })
+    }
+
     /// All faces incident to a vertex (a face whose outer loop ends a fin
     /// at `v`).
     fn faces_at_vertex(&self, v: crate::entity::VertexKey) -> Vec<crate::entity::FaceKey> {
@@ -602,6 +708,67 @@ mod tests {
             (v - expect).abs() < expect * 0.01,
             "vertical fillet volume {v}"
         );
+    }
+
+    #[test]
+    fn plane_cylinder_blend_is_tangent_torus() {
+        // Round the top rim of a cylinder (R=1, h=2) with r=0.3. The cap
+        // plane (z=2) meets the lateral (R=1) at the rim circle; the spine
+        // is a circle of radius R-r=0.7 at z=2-0.3=1.7, and the blend is a
+        // torus major 0.7, minor 0.3, tangent to both (outer equator at
+        // R=1, top at z=2).
+        use keel_geom::surface::Frame3;
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut b = Body::new();
+        b.cylinder(frame, 1.0, 2.0).unwrap();
+        // The top-rim edge: a plane/cylinder edge whose plane is z=+2.
+        let rim = b
+            .edges
+            .iter()
+            .map(|(k, _)| k)
+            .find(|&e| {
+                let fs = b.faces_around_edge(e);
+                fs.len() == 2
+                    && fs.iter().any(|&f| {
+                        matches!(
+                            b.face_surface_geom(f),
+                            Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                        )
+                    })
+                    && fs
+                        .iter()
+                        .any(|&f| matches!(b.face_outward_normal(f), Some(n) if n.z > 0.9))
+            })
+            .expect("no top rim edge");
+        let blend = b.blend_torus_for_edge(rim, 0.3).unwrap();
+        assert!(
+            (blend.surface.major - 0.7).abs() < 1e-9,
+            "major {}",
+            blend.surface.major
+        );
+        assert!(
+            (blend.surface.minor - 0.3).abs() < 1e-9,
+            "minor {}",
+            blend.surface.minor
+        );
+        // Tangency: outer equator = major+minor = R = 1; top = centre_z+minor = 2.
+        assert!(
+            (blend.surface.major + blend.surface.minor - 1.0).abs() < 1e-9,
+            "not tangent to cyl"
+        );
+        assert!(
+            (blend.surface.frame.origin.z + blend.surface.minor - 2.0).abs() < 1e-9,
+            "not tangent to cap"
+        );
+        // Spine radius 0.7 at z=1.7; plane spring radius 0.7 at z=2; cyl spring radius 1 at z=1.7.
+        assert!((blend.spine.radius - 0.7).abs() < 1e-9);
+        assert!(
+            (blend.spine.center.z - 1.7).abs() < 1e-9,
+            "spine z {}",
+            blend.spine.center.z
+        );
+        assert!((blend.spring_plane.center.z - 2.0).abs() < 1e-9);
+        assert!((blend.spring_cyl.radius - 1.0).abs() < 1e-9);
     }
 
     #[test]
