@@ -1492,7 +1492,97 @@ fn stitch_by_import(
     }
 }
 
+/// Coplanar, overlapping planar face pairs `(face_in_a, face_in_b, n_a)`
+/// -- the candidates whose overlap boundary must be imprinted before
+/// classification (research file 39 §1). Curved coincidence is a follow-up.
+fn coincident_face_pairs(a: &Body, b: &Body) -> Vec<(FaceKey, FaceKey, keel_math::vec::Vec3)> {
+    let is_planar = |body: &Body, f: FaceKey| {
+        matches!(
+            body.face_surface_geom(f),
+            Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+        )
+    };
+    let mut pairs = Vec::new();
+    for fa in a.face_keys() {
+        if !is_planar(a, fa) {
+            continue;
+        }
+        let na = match a.face_outward_normal(fa) {
+            Some(n) => n,
+            None => continue,
+        };
+        let pa = match a.face_outer_loop_points(fa).first().copied() {
+            Some(p) => p,
+            None => continue,
+        };
+        for fb in b.face_keys() {
+            if !is_planar(b, fb) {
+                continue;
+            }
+            let nb = match b.face_outward_normal(fb) {
+                Some(n) => n,
+                None => continue,
+            };
+            let pb = match b.face_outer_loop_points(fb).first().copied() {
+                Some(p) => p,
+                None => continue,
+            };
+            // Same plane: parallel normals and a-point lying in b's plane.
+            if na.cross(nb).norm() < 1e-7 && (pb - pa).dot(na).abs() < 1e-7 {
+                let poly_a = a.face_outer_loop_points(fa);
+                let poly_b = b.face_outer_loop_points(fb);
+                if crate::coincident::coplanar_overlap_exists(&poly_a, &poly_b, na) {
+                    pairs.push((fa, fb, na));
+                }
+            }
+        }
+    }
+    pairs
+}
+
+/// Clone `a`/`b` and imprint each coincident overlap's interior-boundary
+/// cuts onto both, so partial overlaps split into uniformly-classified
+/// fragments. Returns `None` (use the originals) when no coincident faces
+/// exist. Best-effort: imprint failures are skipped and the final
+/// positive-volume post-condition still guards a bad selection.
+fn preimprint_coincident_overlaps(a: &Body, b: &Body, tol: f64) -> Option<(Body, Body)> {
+    let pairs = coincident_face_pairs(a, b);
+    if pairs.is_empty() {
+        return None;
+    }
+    let mut a = a.clone();
+    let mut b = b.clone();
+    let imprint_cuts = |body: &mut Body,
+                        face: FaceKey,
+                        subj: &[keel_math::vec::Vec3],
+                        other: &[keel_math::vec::Vec3],
+                        n: keel_math::vec::Vec3| {
+        for (s, e) in crate::coincident::overlap_interior_segments(subj, other, n) {
+            if let Ok(line) = keel_geom::curve::Line3::new(s, e - s) {
+                let _ = body.imprint_open_curve(face, &keel_geom::curve::Curve3::Line(line), tol);
+            }
+        }
+    };
+    for (fa, fb, n) in pairs {
+        let poly_a = a.face_outer_loop_points(fa);
+        let poly_b = b.face_outer_loop_points(fb);
+        imprint_cuts(&mut a, fa, &poly_a, &poly_b, n);
+        imprint_cuts(&mut b, fb, &poly_b, &poly_a, n);
+    }
+    Some((a, b))
+}
+
 pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, BoolFault> {
+    // Pre-pass (research file 39 §1): where two coplanar faces partially
+    // overlap, imprint the overlap-boundary cuts onto the operands so each
+    // resulting fragment is uniformly inside/outside/on the other body --
+    // the on-on tables in select_faces then classify them correctly. With
+    // no coincident faces this is a no-op and the originals flow through.
+    let pre = preimprint_coincident_overlaps(a, b, tol);
+    let (a, b): (&Body, &Body) = match &pre {
+        Some((pa, pb)) => (pa, pb),
+        None => (a, b),
+    };
     let (seams, mut faults) = seam_curves(a, b, tol);
     // Tangential face pairs (touch at a point/curve without crossing) are
     // still declined. COINCIDENT (coplanar overlapping) faces now PROCEED:
@@ -2779,6 +2869,28 @@ mod tests {
         );
         let v = res.body.mass_properties().unwrap().volume;
         assert!((v - 2.0).abs() < 1e-9, "coincident union volume {v} != 2");
+    }
+
+    #[test]
+    fn partial_overlap_union_makes_l_solid() {
+        // A = 2x2x1 base block (z in [0,1]); B = 1x2x1 block stacked on its
+        // LEFT half (x in [0,1], z in [1,2]). The shared z=1 plane is a
+        // PARTIAL coincidence: A's top [0,2]x[0,2] vs B's bottom [0,1]x[0,2].
+        // The pre-imprint pass cuts A's top along x=1 so the left half
+        // classifies on-/interior (dropped) and the right half stays a face.
+        // Result: an L-shaped solid, volume 4 + 2 = 6.
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 2.0, 2.0, 1.0).unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::new(0.0, 0.0, 1.0), 1.0, 2.0, 1.0).unwrap();
+        let res = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
+        assert!(
+            res.body.validate().is_ok(),
+            "L-solid union invalid: {:?}",
+            res.faults
+        );
+        let v = res.body.mass_properties().unwrap().volume;
+        assert!((v - 6.0).abs() < 1e-9, "L-solid union volume {v} != 6");
     }
 
     #[test]
