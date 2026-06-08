@@ -835,3 +835,36 @@ REMAINING in M2a:
   ledger: general trimmed-NURBS healing, Shetty-White/Mo-Zhao
   extensions, Krawczyk imprint fitting all staged.
 - NEXT: execute M5b on branch m5b-imprint.
+
+## Addendum 26 (2026-06-07): M5b in progress, imprint core proven
+
+- Branch m5b-imprint. 205 workspace tests green, clippy clean.
+- Task 3 DONE: dihedral radial sort in glue_edges (the M3 deferral).
+  Fins ordered by their face normal's angle about the edge tangent;
+  manifold 2-cycles unaffected, non-manifold 4+ cycles get the angular
+  order M6 neighborhood classification reads.
+- Task 2 DONE: surface extension service (extend.rs). Analytic =
+  exact/unbounded no-op (the M6 boolean neighbor case). NURBS natural
+  extension STAGED behind a clean Err: correct unclamping (Piegl-
+  Tiller) is involved and serves healing not the boolean path; the
+  safe-reach cap + fold/weight validation half is built. A naive
+  knot-widening was tried and correctly rejected (produced an
+  unclamped invalid surface) before staging.
+- Task 4 CORE DONE: single-face closed-curve imprint
+  (imprint_closed_curve). Construction = MEV spur into the face + mef
+  closed-self-loop-edge (disc face) + kemr (spur becomes inner ring):
+  splits a face into disc + annulus sharing the circular edge. pcurve
+  computed by sample-invert-fit (pcurve_on_analytic in fit.rs, with
+  periodic-seam u-unwrapping). Coincidence judged here (off-surface
+  curve rejected atomically). TEST PROOF: imprint a circle on a cube
+  top face -> PMC classifies the disc interior correctly In; off-
+  surface curve rejected, body unchanged. fuzz_imprint target added,
+  10-min soak running.
+- REMAINING M5b: Task 4 crossing case (boundary-to-boundary curve via
+  split_edge + split_face); Task 5 two-body imprint (SSI + imprint
+  both + glue = the boolean precursor); Task 6 trimmed-face mass props
+  (Green's theorem over multi-loop UV regions: the annulus face is not
+  yet integrable); Task 7 full gate + merge. NOT merged to master
+  until the gate is met. Branch pushed for backup.
+- NEXT: crossing-case imprint, then two-body imprint, then Green mass
+  props, then gate + merge.
