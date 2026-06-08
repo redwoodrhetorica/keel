@@ -2044,3 +2044,25 @@ fixes the existing cone() primitive's bbox/booleans.
 GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D
 warnings + workspace test 113 keel-topo). fuzz_boolean re-soaked (tessellate
 is shared with the winding classifier). Merged.
+
+## Addendum 60 (2026-06-08): Revolve PCURVES -> analytic mass_properties first-class (map stays 60/144; closes Addendum 59's deferral)
+
+Closed the pcurve deferral from Addendum 59 so analytic mass_properties()
+works on revolve solids (not just the tessellated mesh_volume). New helper
+attach_revolve_band_pcurves(face, origin_h, o, ez): walks a band's loop and
+attaches a degree-1 NURBS UV pcurve per fin (via attach_pcurve_segment),
+matching the band surface's parameterization (u = angle [0, tau], v = height
+along ez from the band frame origin). Latitude-circle fins span u 0->tau at
+their height; seam (open-edge) fins are vertical at u = tau when ascending,
+u = 0 when descending (the cone/cylinder primitives' seam convention);
+collapsed pole edges contribute no fin. integrate_curved_face reads these
+pcurve endpoints for its UV-domain quadrature bounds.
+Proof: bicone and barrel now assert mass_properties().volume EXACT to 1e-9
+(2pi/3 and 4pi/3) -- confirming the pcurve UV mapping matches Cone3/Cylinder3
+exactly (a wrong mapping would mis-bound the integral). The two cone bands of
+the bicone share a latitude circle (not full-surface-covering), so they take
+integrate_curved_face's pcurve-bounds path -- exactly what this exercises.
+RUNNING TOTAL: stays 60/144 (hardening, not a new item). Revolve solids are
+now first-class for both tessellation AND analytic mass properties.
+GATE: exact CI triplet green. No boolean/tessellate pipeline change (pcurves
+only) -> no new fuzz path. Merged.

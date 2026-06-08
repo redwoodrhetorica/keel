@@ -1,0 +1,949 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0//EN">
+<!-- saved from url=(0062)http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
+
+<meta http-equiv="Content-Style-Type" content="text/css">
+<meta name="GENERATOR" content="Adobe FrameMaker 6.0/HTML Export Filter">
+<link rel="STYLESHEET" href="./Parasolid v12.0_ Edge Blending Functions and Options_files/ps_doc.css" charset="ISO-8859-1" type="text/css">
+<title>Parasolid v12.0: Edge Blending Functions and Options</title>
+</head>
+<body bgcolor="#ffffff" link="#006633">
+<a name="topofdoc">
+
+
+<p><span class="pushleft">
+</span></p><table cellpadding="0" cellspacing="0" border="0" bgcolor="#006633" width="100%">
+  <tbody><tr>
+    <td><a href="http://www.parasolid.com/">
+        <img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/psbar_l.gif" border="0"></a></td>
+    <td align="RIGHT" valign="CENTER">
+        <font color="white" face="helvetica,arial" size="5">
+        <b>Edge Blending Functions and Options</b></font></td>
+    <td>&nbsp;&nbsp;</td>
+  </tr>
+</tbody></table><p></p>
+
+<p></p><table border="" align="CENTER"><tbody><tr>
+  <td>&lt;&lt;&lt; <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.30.html">Edge Blending Overview</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs/fd_index.html">Chapters</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.32.html">Edge Blend Overflows</a> &gt;&gt;&gt;</td>
+</tr></tbody></table><p></p>
+
+<h1>Contents</h1>
+</a><ul><a name="topofdoc">
+</a><li><a name="topofdoc"> </a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-273788">30.1	Introduction </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-273790">30.2	Edge blending functions </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-273791">30.2.1	Attach blend attribute </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-273816">30.2.2	Enquire blend properties </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-273834">30.2.3	Check unfixed blend </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-273847">30.2.4	Remove unfixed blend </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-273850">30.2.5	Fix the blends in a body </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-273854">30.2.6	Controlling blend propagation while fixing blends</a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-273866">30.3	Edge blending options </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-273876">30.3.1	Creating cliffedge blends </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-284372">30.3.2	Creating Y-shaped blends </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-284374">30.3.3	Creating setback blends </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-273991">30.3.4	Tag of originating edge or vertex </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-273995">30.3.5	Local checking </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-274001">30.3.6	Preserving overlapped topology </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-285324">30.3.7	Preserving notch shape </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-274005">30.3.8	Blending sharp edges at vertices </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-274154">30.3.9	Blend specific options </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#pgfId-289299">30.3.10	Update control </a>
+</li></ul>
+</li></ul>
+<a name="endofcontents">
+
+
+</a><p align="RIGHT"><a name="endofcontents">
+</a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-273788"></a>30.1	Introduction 
+
+
+</h1>
+<p>
+<a name="pgfId-273789"></a>This chapter explains the functions used to create, enquire and manipulate edge blends, and the options available to control the type and shape of the blend.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-273790"></a>30.2	Edge blending functions 
+
+
+</h1>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273791"></a>	30.2.1 	Attach blend attribute </h2>
+<p>
+<a name="pgfId-273805"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-281322"></a>Function</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-281324"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-273794"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_constant.html">PK_EDGE_set_blend_constant</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-273796"></a>sets edges to have a constant radius blend</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-273798"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_chamfer.html">PK_EDGE_set_blend_chamfer</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-273800"></a>sets edges to have a chamfer blend</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-273802"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_variable.html">PK_EDGE_set_blend_variable</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-273804"></a>sets edges to have a variable radius blend</p>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-273811"></a><a name="marker-273807"></a><a name="marker-273808"></a><a name="marker-273809"></a><a name="marker-273810"></a>These functions all attach the relevant blend attribute containing the specified parameters to the given edge. Simple checks are made to ensure the parameters have sensible values.</p>
+<p>
+<a name="pgfId-281189"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-281233"></a>Note: Blend attributes are system defined attributes (see <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.47.html#42241">Chapter 46, "Attribute Definitions"</a>), but should not be manipulated using the functions provided for attribute processing. The functions detailed below, which manage the blend attribute for you, should be used.</address><br>
+</td>
+</tr>
+</tbody></table>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273816"></a>	30.2.2 	Enquire blend properties </h2>
+
+<h4>
+<a name="pgfId-273817"></a>Blend parameters</h4>
+<p>
+<a name="pgfId-273819"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_ask_blend.html">PK_EDGE_ask_blend</a> returns information about the parameters of the blending surface on a given edge:</p>
+<ul>
+<li>
+<a name="pgfId-273820"></a>the type of blend attached to the edge (if any)</li>
+<li>
+<a name="pgfId-273821"></a>the faces to the left and right of the edge</li>
+<li>
+<a name="pgfId-273822"></a>a structure detailing the shape of the blend (in the case of a variable radius blend this function only returns the end radii of the blend)</li>
+<li>
+<a name="pgfId-273823"></a>a structure detailing the blend's properties</li>
+<li>
+<a name="pgfId-273824"></a>the blend's cliff edge if used</li>
+</ul>
+
+
+<h4>
+<a name="pgfId-273825"></a>Return topology affected by an unfixed blend</h4>
+<p>
+<a name="pgfId-273827"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_find_blend_topol.html">PK_EDGE_find_blend_topol</a> returns the faces and edges which are guaranteed to be affected by the unfixed blend on the specified edge.</p>
+
+
+<h4>
+<a name="pgfId-273828"></a>Output a blending surface</h4>
+<p>
+<a name="pgfId-273830"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blendsf_ask.html">PK_BLENDSF_ask</a> returns the standard form of a rolling ball blend surface.</p>
+
+
+<h4>
+<a name="pgfId-273831"></a>Generate view independent rendering data</h4>
+<p>
+<a name="pgfId-273833"></a>The <code>
+unfix_spacing</code>
+ option to <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_topol_render_line.html">PK_TOPOL_render_line</a> may be used to override the drawing parameters in the individual blend attributes.</p>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273834"></a>	30.2.3 	Check unfixed blend </h2>
+<p>
+<a name="pgfId-273836"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_check_blends.html">PK_EDGE_check_blends</a> checks the unfixed blends. There are a number of limitations on the use of blends, as described under <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.30.html#26238">"Limitations on edge blending"</a> in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.30.html#17798">Chapter 29, "Edge Blending Overview"</a>.</p>
+<p>
+<a name="pgfId-273843"></a>This function is a diagnostic function, used to determine why <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a> failed, or whether an alteration in an unfixed blend has removed a problem. It checks that for each of the edges in the <code>
+edges</code>
+ that has a blend attribute attached, the blending surface parameters are legal. The level of checks completed are determined by the setting of the <code>
+level</code>
+ argument and look for consistency with the geometry and blend attributes attached to neighboring entities. The two levels of checking are:</p>
+<ul>
+<li>
+<a name="pgfId-273844"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_check_t.html">PK_blend_check_vertex_c</a> - the blending surface parameters are checked for consistency at the vertices</li>
+<li>
+<a name="pgfId-273845"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_check_t.html">PK_blend_check_full_c</a> - additional checks are made to ensure that the blend boundaries are legal</li>
+</ul>
+<p>
+<a name="pgfId-281256"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-281283"></a>Note: <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_check_blends.html">PK_EDGE_check_blends</a> is not foolproof, the only guaranteed test of a blend is to FIX it.</address><br>
+</td>
+</tr>
+</tbody></table>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273847"></a>	30.2.4 	Remove unfixed blend </h2>
+<p>
+<a name="pgfId-273849"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_remove_blend.html">PK_EDGE_remove_blend</a> removes an unfixed blend from the given edge.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273850"></a>	30.2.5 	Fix the blends in a body </h2>
+<p>
+<a name="pgfId-273852"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a> changes any edges of the body which have blend attributes into full faces with the appropriate blending surface geometry.</p>
+<p>
+<a name="pgfId-273853"></a>Local checking may be performed internally, this is controlled by setting the option <code>
+local_check</code>
+, which by default is set to PK_LOGICAL_false.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273854"></a>	30.2.6 	Controlling blend propagation while fixing blends</h2>
+
+<h4>
+<a name="pgfId-285758"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285759"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a>.</p>
+<p>
+<a name="pgfId-273855"></a>The <code>
+propagate</code>
+ option structure is used to control the behavior of propagation while fixing blends.</p>
+<p>
+<a name="pgfId-273856"></a>This option structure is used to identify occasions when the blend can only be fixed successfully if it is propagated onto an additional edge that </p>
+<ul>
+<li>
+<a name="pgfId-273857"></a>is nearly tangent to one of the blended edges, and</li>
+<li>
+<a name="pgfId-273858"></a>has not had a blend set on it by the user already.</li>
+</ul>
+<p>
+<a name="pgfId-273859"></a>Once a case has been identified, <code>
+propagate</code>
+ allows the user to choose between one of the following:</p>
+<ul>
+<li>
+<a name="pgfId-273860"></a>Propagate the blend onto the additional edge (the default)</li>
+<li>
+<a name="pgfId-273861"></a>Call a user-defined function on the edge</li>
+<li>
+<a name="pgfId-273862"></a>Return an error</li>
+</ul>
+<p>
+<a name="pgfId-273863"></a>The <code>
+propagate</code>
+ option structure also gives control over the angle past which propagation occurs.</p>
+<p>
+<a name="pgfId-273864"></a>If propagation is prevented, either by setting the <code>
+propagate</code>
+ option in the option structure to PK_LOGICAL_false, or because the callback function returns false, then <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a> fails, and returns <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_edge_c</a> together with the tag of the edge onto which propagation would otherwise have occurred.</p>
+
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-273866"></a>30.3	Edge blending options 
+
+
+</h1>
+<p>
+<a name="pgfId-273869"></a><a name="marker-273868"></a>Using options, the user can control the following blending properties:</p>
+<ul>
+<li>
+<a name="pgfId-273870"></a>the creation of cliffedge blends</li>
+<li>
+<a name="pgfId-273871"></a>the shape of the blend where three or more blends meet at a common vertex</li>
+<li>
+<a name="pgfId-273872"></a>whether or not the integer returned in <code>
+edges</code>
+ (corresponding to a blend face which is derived from a vertex) is the dead tag of an edge or the dead tag of the appropriate vertex</li>
+<li>
+<a name="pgfId-273873"></a>the amount of local checking performed</li>
+<li>
+<a name="pgfId-273874"></a>whether or not to preserve any topology in the region completely overlapped by the blend</li>
+<li>
+<a name="pgfId-273875"></a>blend specific options within the <code>
+properties</code>
+ argument</li>
+</ul>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273876"></a>	30.3.1 	Creating cliffedge blends </h2>
+
+<h4>
+<a name="pgfId-285740"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285741"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_constant.html">PK_EDGE_set_blend_constant</a>.</p>
+<p>
+<a name="pgfId-273879"></a><a name="marker-273878"></a>A cliffedge blend is a special case of a blended edge on which the newly created blend face is tangent to only one of the faces adjacent to the original edge and runs along an edge in the other face, i.e. edge A in face B.</p>
+<p>
+<a name="pgfId-273925"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-365.gif">
+
+<p>
+<a name="pgfId-284371"></a>Figure 30-1 <a name="18961"></a>Cliffedge blend</p>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-284372"></a>	30.3.2 	Creating Y-shaped blends </h2>
+
+<h4>
+<a name="pgfId-285724"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285725"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a>. </p>
+<p>
+<a name="pgfId-284399"></a>In cases where two blends on adjacent edges of different convexity meet at a vertex with three or more edges, you can create a Y-shaped blend, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#20353">Figure 30-2</a>. In some cases, a Y-shaped blend provides an alternative type of blend, while in others, a Y-shaped blend is the only blend that can be created at that vertex. Y-shaped blends tend to create faces with a lower curvature than default blending.</p>
+<p>
+<a name="pgfId-286283"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-366.gif">
+
+<p>
+<a name="pgfId-286314"></a>Figure 30-2 <a name="20353"></a>Y-shaped blend</p>
+<p>
+<a name="pgfId-286493"></a>The following restrictions apply to Y-shaped blends:</p>
+<ul>
+<li>
+<a name="pgfId-286494"></a>Other edges at the Y-blend vertex must have either no blend, or another Y-blend applied, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#50558">Figure 30-3</a></li>
+<li>
+<a name="pgfId-291098"></a>There can only be one or two Y-blends at any Y-blend vertex</li>
+<li>
+<a name="pgfId-286495"></a>At least three edges must meet at the Y-blend vertex</li>
+<li>
+<a name="pgfId-286496"></a>The two Y-blend edges must be adjacent, and of different convexity</li>
+<li>
+<a name="pgfId-286497"></a>The two Y-blend edges must meet smoothly at the Y-blend vertex, unless the Y-blend meets another Y-blend</li>
+</ul>
+<p>
+<a name="pgfId-291184"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-367.gif">
+
+<p>
+<a name="pgfId-291185"></a>Figure 30-3 <a name="50558"></a>Creating two Y-shaped blends at a vertex with (a) intervening smooth edge, and (b) no edge</p>
+<p>
+<a name="pgfId-286122"></a>When three edges meet at the Y-blend vertex, if the non-blended edge is smooth, it is extended to form the end of the patch if possible, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#85402">Figure 30-4</a>. </p>
+<p>
+<a name="pgfId-284823"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-368.gif">
+
+<p>
+<a name="pgfId-284824"></a>Figure 30-4 <a name="85402"></a>Three edge vertex with <strong>
+(a)</strong> unblended, <strong>
+(b)</strong> default, and <strong>
+(c)</strong> Y-shaped blends</p>
+<p>
+<a name="pgfId-286163"></a>If the smooth edge cannot be used to create the end of the patch, Parasolid creates suitable geometry automatically, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#78800">Figure 30-5</a>. When four or more edges meet, each non-blended edge is treated independently: if it can be used to create the end of a patch, it is, otherwise, Parasolid creates the necessary geometry.</p>
+<p>
+<a name="pgfId-286190"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-369.gif">
+
+<p>
+<a name="pgfId-286217"></a>Figure 30-5 <a name="78800"></a>Creating the end of a patch with new geometry</p>
+<p>
+<a name="pgfId-284433"></a>You create Y-shaped blends by specifying values for the <code>
+y_blend_data</code>
+ structure in <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends_o_t.html">PK_BODY_fix_blends_o_t</a>. This structure takes the following information: </p>
+<p>
+<a name="pgfId-284446"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-284476"></a>Option</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-284478"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-284480"></a><code>
+y_blend</code>
+ </p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-284482"></a>Whether or not to create a Y-shaped blend. Default: PK_LOGICAL_false</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-284484"></a><code>
+n_vertices</code>
+ </p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-284486"></a>The number of vertices in the <code>
+vertices</code>
+ array.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-284488"></a><code>
+vertices</code>
+ </p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-284490"></a>An array of vertices that Y-shaped blends should be created for.</p>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-284858"></a>If Y-shaped blending is switched on, but no vertices are supplied (that is, <code>
+y_blend</code>
+ is PK_LOGICAL_true, and all other values are left at their defaults), then all suitable vertices are Y-blended.</p>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-284374"></a>	30.3.3 	Creating setback blends </h2>
+<p>
+<a name="pgfId-273931"></a><a name="marker-273930"></a>It is possible to overwrite the default behavior of the shape of the blend where three or more blends meet at a common vertex by specifying a setback.</p>
+<p>
+<a name="pgfId-273932"></a>If a setback is specified on an edge which is to be blended, then the blend is trimmed back by approximately the specified distance. The remaining gap is then patched smoothly by a collection of faces. Specifying a setback creates a wider region of transition from one blend to the others. This functionality is not available for chamfers.</p>
+<p>
+<a name="pgfId-273949"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-370.gif">
+
+<p>
+<a name="pgfId-273950"></a>Figure 30-6 (a) Default behavior at a 3 edge vertex; (b) Overriding the default behavior by specifying setbacks for each edge</p>
+<p>
+<a name="pgfId-273987"></a>A setback blend can only be applied if you are blending <em>
+all</em> the edges going into a vertex that has three or more edges running into it. </p>
+<p>
+<a name="pgfId-273988"></a>Specifying a zero setback on an edge ensures that no setback blending occurs on that edge. Note that this is not the same as specifying no setback information. If no setback information is supplied, Parasolid tries to create the best surface possible. In <em>
+some</em> cases, this may involve creating a setback blend. </p>
+<p>
+<a name="pgfId-273989"></a>Please note that setback information is supplied in  <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a> (i.e. upon fixing the blend) rather than when setting the blend parameters using <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_constant.html">PK_EDGE_set_blend_constant</a>.</p>
+<p>
+<a name="pgfId-273990"></a>When specifying setback information, you need to state which end of the edge the setback should be applied to. This is done using the <code>
+which_end</code>
+ option in the options structure of <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a>.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273991"></a>	30.3.4 	Tag of originating edge or vertex </h2>
+<p>
+<a name="pgfId-273992"></a>You can specify whether or not the integer returned in <code>
+edges</code>
+ (corresponding to a blend face which is derived from a vertex) is the dead tag of an edge or the dead tag of the appropriate vertex.</p>
+<p>
+<a name="pgfId-273993"></a>For example, take a block. When three edges are blended with a common vertex with the same radius, four faces are created (one for each edge and a piece of sphere at the vertex). The tracking information returned by <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a> contains an array of blend faces and a parallel array of integers <code>
+edges</code>
+. The option <code>
+vx_twin</code>
+ enables the vertex faces to be distinguished from those derived directly from edges.</p>
+<p>
+<a name="pgfId-273994"></a>If <code>
+vx_twin</code>
+ is set to true, <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a> return the (dead) tag of the appropriate vertex for a <code>
+vertex</code>
+ face as the corresponding entry in <code>
+edges</code>
+.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273995"></a>	30.3.5 	Local checking </h2>
+
+<h4>
+<a name="pgfId-285582"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285583"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a><br>
+<a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_face_make_blend.html">PK_FACE_make_blend</a> </p>
+<p>
+<a name="pgfId-273996"></a>The <code>
+check</code>
+ option allows the following individual checks to be performed:</p>
+<ul>
+<li>
+<a name="pgfId-273997"></a>To check new surfaces created by the blending operation for self-intersections</li>
+<li>
+<a name="pgfId-273998"></a>To check for invalid faces produced by the blending operation</li>
+<li>
+<a name="pgfId-273999"></a>To check for face-face inconsistencies produced by the blending operation</li>
+</ul>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274001"></a>	30.3.6 	Preserving overlapped topology </h2>
+
+<h4>
+<a name="pgfId-285542"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285543"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a>.</p>
+<p>
+<a name="pgfId-274002"></a>The default behavior is that any topology in the region completely overlapped by the blend is deleted. For example, if the edge of a block which has a hole in it is blended with a radius sufficiently large that the blend completely overlaps the hole, the hole is deleted along with any topology connected to it.</p>
+<p>
+<a name="pgfId-274003"></a>Setting the <code>
+transfer</code>
+ option results in the hole being preserved by moving it into the new blend face (provided that the original hole is sufficiently deep that it intersects with the blend).</p>
+<p>
+<a name="pgfId-286695"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-371.gif">
+
+<p>
+<a name="pgfId-286707"></a>Figure 30-7 Preserving topology that overlaps a blend</p>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-285324"></a>	30.3.7 	Preserving notch shape </h2>
+
+<h4>
+<a name="pgfId-285506"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285507"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a>.</p>
+<p>
+<a name="pgfId-285348"></a>When blending sheet bodies, you can retain the shape of any laminar notches on a blend boundary using the <code>
+preserve_notch</code>
+ option. Setting this to PK_LOGICAL_true projects the edges that form the notch normally onto the blend surface, as shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#90640">Figure 30-8</a>.</p>
+<p>
+<a name="pgfId-285771"></a>When blending solid bodies, this option has no effect and is ignored.</p>
+<p>
+<a name="pgfId-285403"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-372.gif">
+
+<p>
+<a name="pgfId-285405"></a>Figure 30-8 <a name="90640"></a>Retaining notch shape when blending between sheets</p>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274005"></a>	30.3.8 	Blending sharp edges at vertices </h2>
+
+<h4>
+<a name="pgfId-285626"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285627"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a>.</p>
+<p>
+<a name="pgfId-285606"></a>The <code>
+vx_blend_data</code>
+ option controls whether to use <em>
+vertex blending</em> to further smooth blended edges at any vertex. Vertex blending allows smooth blending past sharp edges of opposite convexity to the blend.</p>
+<p>
+<a name="pgfId-285612"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#35953">Figure 30-9</a> shows how vertex blending removes sharp edges that may be created by a blending operation. </p>
+<p>
+<a name="pgfId-274086"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-373.gif">
+
+<p>
+<a name="pgfId-274088"></a>Figure 30-9 <a name="35953"></a>Behavior of vertex blending</p>
+<p>
+<a name="pgfId-274089"></a>Depending on the edges that are blended, vertex blending can sometimes produce more than one blend surface. In <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#33074">Figure 30-10</a>, the uppermost block tapers on two sides. The resulting vertex blend is created from two blend surfaces.</p>
+<p>
+<a name="pgfId-274135"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-374.gif">
+
+<p>
+<a name="pgfId-274137"></a>Figure 30-10 <a name="33074"></a>Creating more than one blend surface with vertex blending</p>
+<p>
+<a name="pgfId-274138"></a>To switch vertex blending on, you need to supply the following data for the <code>
+vx_blend_data</code>
+ option:</p>
+<p>
+<a name="pgfId-274152"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-281347"></a>Argument</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-281349"></a>Value</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-274141"></a>vertex_blend</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-274143"></a>If PK_LOGICAL_true, then vertex blending is switched on. The default is PK_LOGICAL_false.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-274145"></a>n_vertices</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-274147"></a>The number of vertices to apply vertex blending to. The default is 0.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-274149"></a>vertices</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-274151"></a>An array of length n_vertices that contains the vertices that vertex blending should be applied to. The default is NULL.</p>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-274153"></a>If vertex blending is switched on, but no vertices are supplied (that is, vertex_blend is PK_LOGICAL_true, and all other values are left at their defaults), then all suitable vertices are blended.</p>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274154"></a>	30.3.9 	Blend specific options </h2>
+<p>
+<a name="pgfId-274155"></a>Within the <code>
+properties</code>
+ argument the following blend specific options can be set.</p>
+
+<h4>
+<a name="pgfId-274156"></a>Ribs</h4>
+
+<h4>
+<a name="pgfId-285638"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285639"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_constant.html">PK_EDGE_set_blend_constant</a>, <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_chamfer.html">PK_EDGE_set_blend_chamfer</a>, <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_variable.html">PK_EDGE_set_blend_variable</a>.</p>
+<p>
+<a name="pgfId-274157"></a>The drawing of ribs, <code>
+render_ribs</code>
+, by the rendering functions and the approximate separation of the rib lines, <code>
+ribspace</code>
+.</p>
+
+
+
+<h4>
+<a name="pgfId-274159"></a>Overflow</h4>
+
+<h4>
+<a name="pgfId-285651"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285652"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_constant.html">PK_EDGE_set_blend_constant</a>, <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_chamfer.html">PK_EDGE_set_blend_chamfer</a>, <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_variable.html">PK_EDGE_set_blend_variable</a>.</p>
+<p>
+<a name="pgfId-274160"></a>Blend overflow behavior, <code>
+ov_smooth</code>
+, <code>
+ov_cliff</code>
+, <code>
+ov_cliff_end</code>
+ or <code>
+ov_notch</code>
+.</p>
+<p>
+<a name="pgfId-281872"></a>&nbsp;</p>
+<table>
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="pgfId-281894"></a>Note: When fixing a blend, it is possible that the blend as defined by its basic parameters would lie outside the faces adjacent to the edge being blended. If this is so, the blend must overflow.</address><br>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="pgfId-274162"></a>For further information on blend overflows please refer to <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.32.html#39578">Chapter 31, "Edge Blend Overflows"</a>.</p>
+
+
+
+<h4>
+<a name="pgfId-274168"></a><a name="16794"></a>Draw, check, fix</h4>
+
+<h4>
+<a name="pgfId-285703"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285704"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_constant.html">PK_EDGE_set_blend_constant</a>, <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_chamfer.html">PK_EDGE_set_blend_chamfer</a>, <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_variable.html">PK_EDGE_set_blend_variable</a>.</p>
+<p>
+<a name="pgfId-274173"></a><a name="marker-274170"></a><a name="marker-274171"></a><a name="marker-274172"></a>Whether or not the blend is fixed by <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a>, checked by <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_check_blends.html">PK_EDGE_check_blends</a> or drawn by the rendering functions - '<code>
+draw_fix</code>
+<a name="marker-274175"></a>.</p>
+<p>
+<a name="pgfId-274176"></a>The default action is for an unfixed blend to be fixed, checked and drawn as required. If <code>
+draw_fix</code>
+ is set to PK_LOGICAL_false, the blend is not fixed, checked, or drawn. However if another blend is set on that edge, the original attribute (with draw_fix set to false) is overwritten. In practice, this option is used by very few applications.</p>
+
+
+
+<h4>
+<a name="pgfId-274178"></a>Propagation</h4>
+
+<h4>
+<a name="pgfId-285690"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285691"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_constant.html">PK_EDGE_set_blend_constant</a>, <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_chamfer.html">PK_EDGE_set_blend_chamfer</a>, <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_variable.html">PK_EDGE_set_blend_variable</a>.</p>
+<p>
+<a name="pgfId-274179"></a>That the blend is propagated over tangent edges, or past other blends if the resultant three edge vertex would otherwise be invalid - <code>
+propagate</code>
+.</p>
+<p>
+<a name="pgfId-274181"></a>This parameter is invalid for cliff edge blends.</p>
+<p>
+<a name="pgfId-274235"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-375.gif">
+
+<p>
+<a name="pgfId-274236"></a>Figure 30-11 Propagation of a blend past an invalid vertex</p>
+
+
+
+<h4>
+<a name="pgfId-274237"></a>Tolerance</h4>
+
+<h4>
+<a name="pgfId-285664"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285665"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_chamfer.html">PK_EDGE_set_blend_chamfer</a>, <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_variable.html">PK_EDGE_set_blend_variable</a>.</p>
+<p>
+<a name="pgfId-274238"></a>Setting a user defined tolerance for the blended edge - <code>
+tolerance</code>
+.</p>
+
+
+
+<h4>
+<a name="pgfId-274240"></a>Varying ranges</h4>
+
+<h4>
+<a name="pgfId-285677"></a>Applies to:</h4>
+<p>
+<a name="pgfId-285678"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_set_blend_variable.html">PK_EDGE_set_blend_variable</a>.</p>
+<p>
+<a name="pgfId-274241"></a>The <code>
+vary</code>
+ option specifies that a variable rolling ball blend varies linearly along the length of the edge.</p>
+<p>
+<a name="pgfId-274305"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-376.gif">
+
+<p>
+<a name="pgfId-274306"></a>Figure 30-12 Causing the blend ranges to vary naturally</p>
+<p>
+<a name="pgfId-274307"></a>The default behavior of this option is for the range variation to be constrained in such a way as to ensure that the variable radius blend meets other blends smoothly (i.e. tangentially) at the vertices; by causing the radius to have a constant extension.</p>
+<p>
+<a name="pgfId-274573"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Edge Blending Functions and Options_files/fd_chap-377.gif">
+
+<p>
+<a name="pgfId-274575"></a>Figure 30-13 <a name="17452"></a>Default behavior of <code>
+vary</code>
+</p>
+
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-289299"></a>	30.3.10 	Update control </h2>
+
+<h4>
+<a name="pgfId-289305"></a>Applies to:</h4>
+<p>
+<a name="pgfId-289310"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a></p>
+<p>
+<a name="pgfId-289448"></a>If your application uses models created using Parasolid V12.1 or earlier, you can use the <code>
+update</code>
+ option to help eliminate differences in rebuild results. This option lets you turn off some of the edge blending enhancements added at Parasolid V13.0, such as advanced capping techniques, to ensure that edge blending gives the same results in the latest version of Parasolid as in Parasolid V12.1 or earlier. This option takes two values:</p>
+<p>
+<a name="pgfId-289671"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-289677"></a>Value</strong></th>
+<th rowspan="1" colspan="1">
+<strong>
+<a name="pgfId-289679"></a>Description</strong></th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-289681"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_edge_update_t.html">PK_blend_edge_update_0_c</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-289712"></a>Disables some of the enhancements added at Parasolid V13.0 (the default).</p>
+<p>
+<a name="pgfId-289796"></a>When dealing with models from old versions of Parasolid, you can use this value to ensure that <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a> will produce the Parasolid V12.1 result.</p>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-289685"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_edge_update_t.html">PK_blend_edge_update_1_c</a></p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="pgfId-289687"></a>Enables some of the enhancements added at Parasolid V13.0.</p>
+<p>
+<a name="pgfId-289897"></a>In general, you are recommended to use this value whenever possible, and only use <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_edge_update_t.html">PK_blend_edge_update_0_c</a> when it is essential that <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a> returns the Parasolid V12.1 result to the blend.</p>
+</td>
+</tr>
+</tbody></table>
+
+
+
+<a name="endofdoc">
+
+</a><p align="RIGHT"><a name="endofdoc">
+</a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.31.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<p></p><table border="" align="CENTER"><tbody><tr>
+  <td>&lt;&lt;&lt; <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.30.html">Edge Blending Overview</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs/fd_index.html">Chapters</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.32.html">Edge Blend Overflows</a> &gt;&gt;&gt;</td>
+</tr></tbody></table><p></p>
+
+
+
+</body></html>
