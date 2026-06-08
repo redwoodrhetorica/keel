@@ -1770,3 +1770,23 @@ reinforces the STEP-export borrowable already pulled into the roadmap
 numerical substrate) are quality/infra for later. None redirected the
 tweak work.
 GATE: exact CI triplet green. Merged.
+
+## Addendum 48 (2026-06-08): Parity interchange -- STEP AP203 export (roadmap 0d; map stays 49/144)
+
+keel-topo step_export.rs: to_step_string(body) -> STEP AP203 text, direct
+topology->entity mapping, NO tessellation (the crusst peer borrowable; its
+output strictly better given Keel's faithful geometry). Walks vertices ->
+VERTEX_POINT/CARTESIAN_POINT, edges -> LINE + EDGE_CURVE, faces -> PLANE +
+ADVANCED_FACE/FACE_OUTER_BOUND/EDGE_LOOP/ORIENTED_EDGE, then CLOSED_SHELL +
+MANIFOLD_SOLID_BREP + ADVANCED_BREP_SHAPE_REPRESENTATION under
+AUTOMOTIVE_DESIGN with a unit/uncertainty context. PLANAR solids this cut
+(curved analytic + NURBS B_SPLINE surfaces next). Tested: a block exports
+6 ADVANCED_FACE/8 VERTEX_POINT/12 EDGE_CURVE/6 PLANE with valid header +
+schema; a cylinder declines (Unsupported). Interchange value (roadmap 0d),
+not a numbered 144 PK item, so the counter stays 49/144.
+NOTE on sequencing: started the engine list with STEP (independent,
+completable, high-value) and am ordering by BUILDABILITY -- blends were
+recommended first but a robust blend needs coincident-capable booleans
+(the cutting wedge's faces are coplanar with the part) or intricate
+seam-band surgery, so blends move after the coincident-boolean foundation.
+GATE: exact CI triplet green. Merged.
