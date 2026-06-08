@@ -1956,3 +1956,26 @@ remapping is a follow-up.
 RUNNING TOTAL: 56 -> 57/144. The coincident-boolean keystone (full +
 partial) is now complete for the planar-convex case.
 GATE: exact CI triplet green. Merged.
+
+## Addendum 57 (2026-06-08): SWEEP/LOFT family opens -- ruled LOFT between two profiles (map 57 -> 58/144)
+
+loft(bottom, top) (construct.rs, sweep/loft items 62-69): a solid bounded
+by two parallel-ordered profile loops (same vertex count) joined by
+quadrilateral side faces + two cap faces. Pure Euler-operator construction
+mirroring prism() -- mvfs seed -> bottom rim (mev chain) -> close bottom cap
+(mef) -> raise verticals to the top profile -> close side faces, last mef
+closes the top cap -- then analytic geometry attach (cap planes from the
+profile normals, each side plane computed from its quad and oriented
+outward from the loft axis, edges as lines, plane pcurves). Constraint:
+each side quad [b_i, b_{i+1}, t_{i+1}, t_i] must be PLANAR (verified up
+front, rejected otherwise) so every face has an exact plane. Covers tapered
+boxes, frusta, prisms. Twisted/ruled lofts with non-planar sides need NURBS
+side faces -- a follow-up (the ruled-surface sweep tier).
+Tests: square frustum 2x2 -> 1x1 height 2 -> V8 E12 F6, validate ok, exact
+volume 14/3 (the frustum formula (h/3)(A1+A2+sqrt(A1A2))); a 90-degree
+twisted loft is correctly rejected as non-planar.
+RUNNING TOTAL: 57 -> 58/144. First op of the sweep/loft family. Linear
+extrude already existed as prism(); loft adds the two-profile ruled case.
+GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D
+warnings + workspace test). Pure constructor -> Euler-op fuzzing covers it.
+Merged.
