@@ -20,6 +20,7 @@ pub mod pmc;
 pub mod query;
 pub mod session;
 pub mod simplify;
+pub mod step_export;
 pub mod tessellate;
 pub mod tweak;
 pub mod validate;
