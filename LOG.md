@@ -1723,3 +1723,16 @@ DEFERRED (next tweak slices): taper/draft (38,78 -- tilt the face plane,
 reuses tweak_face_to_plane + a rotation), delete-face-with-heal (40),
 sphere/cone/torus tweak.
 GATE: exact CI triplet green. Merged.
+
+## Addendum 46 (2026-06-08): Parity tweak cont. -- taper/draft (map 45 -> 47/144)
+
+taper_face(face, pivot, axis, angle) (items 38, 78): rotate a planar
+face's plane about the parting line through `pivot` along `axis` by the
+draft `angle` (Transform3::from_rotation), then re-intersect via
+tweak_face_to_plane. Corners on the parting line stay; the rest tilt.
+Tested: draft a block's top face 0.2 rad -> valid, volume changed (exact
+mass-properties). Covers item 38 (taper/draft faces, single-sided planar)
+and 78 (draft about a parting reference). Double-sided draft and curved
+taper deferred.
+RUNNING TOTAL: capability map 45 -> 47/144.
+GATE: exact CI triplet green. Merged.
