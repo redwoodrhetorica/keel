@@ -568,7 +568,7 @@ impl Body {
         Ok((fit.curve, sample(0.0)))
     }
 
-    fn fin_ending_at_vertex(
+    pub(crate) fn fin_ending_at_vertex(
         &self,
         lp: crate::entity::LoopKey,
         v: crate::entity::VertexKey,

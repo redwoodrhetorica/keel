@@ -2103,3 +2103,52 @@ RUNNING TOTAL: stays 60/144 (blend geometry validated; the fillet item
 completes with the surgery). The biggest remaining family is now open.
 GATE: exact CI triplet green (115 keel-topo). Pure geometry -> no fuzz path.
 Merged.
+
+## Addendum 62 (2026-06-08): EDGE FILLET complete -- trim-and-stitch surgery inserts the exact cylinder blend (file 40 §3; map 60 -> 61/144)
+
+The user said "build it now". Completed the plane-plane edge fillet end to
+end: fillet_edge(edge, radius) -> filleted Body. KEY INSIGHT that unblocked
+it: no new Euler operator is needed -- the cap-corner-vertex dissolution
+(remove the sharp vertex, replace two boundary edges with the end arc) is
+achievable as kef (merge the corner triangle into the strip) THEN kev (kill
+the resulting degree-1 spur). The whole surgery uses existing operators.
+
+Pipeline (file 40 §3, the local imprint/trim/stitch; NOT a boolean, since the
+blend is tangent/G1 and the boolean engine declines tangent faces):
+ Phase 1 -- trim each support to its spring line. imprint_open_curve could
+   NOT be reused: it treats the curve as pre-bounded over t in [0,1] and Line3
+   normalizes its dir, so a Line3 only spans a unit segment. Instead
+   imprint_spring_line computes the spring's crossings with the two cap-side
+   boundary edges explicitly (in-plane perpendicular m = n x spring.dir; sign-
+   straddle test), split_edge at each crossing, split_face between them ->
+   spring edge + strip (the sliver still carrying the sharp edge) + trimmed
+   support. Attaches the spring line curve.
+ Phase 2 -- split each cap face (perpendicular end face) along its end arc via
+   split_face between the two spring vertices; attaches the quarter-circle arc
+   (centre = spine projected into the cap plane, radius r).
+ Phase 3 -- dissolve: kef(sharp edge) merges the two strips; then for each end,
+   kef(spring stub) merges the corner triangle in and kev(spur) removes the now
+   degree-1 sharp vertex. The four corner fragments become one face.
+ Phase 4 -- attach the exact Cylinder3 (axis = spine, radius r) to that face.
+Helpers added (blend.rs): faces_at_vertex, edge_between, face_has_edge,
+boundary_edge_at_vertex_excluding, line_crosses_edge, imprint_spring_line.
+Made imprint.rs fin_ending_at_vertex pub(crate).
+
+Test: 2x2x2 block, fillet top-right edge r=0.5 -> validate() ok, V8E12F6 ->
+V10 E15 F7 (Euler 2), exactly ONE cylinder blend face of radius 0.5. The
+fillet OPERATION produces a valid B-rep with the exact rolling-ball cylinder.
+
+Scope/deferrals (honest): convex plane-plane edge with simple degree-3 end
+corners (the box-like case). The blend face is a QUARTER cylinder, but
+tessellate_cylinder is full-wrap (no angular trim) and the blend face has no
+pcurves yet -> mesh_volume / analytic mass_properties do NOT yet measure
+filleted solids (validate() proves the topology + the exact surface; the
+volume oracle is the follow-up). Also follow-ups: trimmed-cylinder
+tessellation, blend pcurves, concave edges, non-planar supports, circle-spine
+torus rung (plane-cyl/plane-sphere), overflow/radius-limit handling (file 41
+LFS predictor), variable radius, vertex/setback blends.
+RUNNING TOTAL: 60 -> 61/144. The fillet (constant-radius rolling-ball, the
+headline blend op) is real: a valid filleted solid from a sharp-edged one.
+GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D
+warnings + workspace test 116 keel-topo). Surgery uses Euler ops covered by
+fuzz_topo_ops; no boolean/tessellate pipeline change. Merged.
