@@ -18,7 +18,9 @@ pub mod ops;
 pub mod pmc;
 pub mod query;
 pub mod session;
+pub mod tessellate;
 pub mod validate;
+pub mod winding;
 
 pub use body::{Body, TopoError};
 pub use entity::EntityId;
