@@ -1,0 +1,438 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0//EN">
+<!-- saved from url=(0062)http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
+
+<meta http-equiv="Content-Style-Type" content="text/css">
+<meta name="GENERATOR" content="Adobe FrameMaker 6.0/HTML Export Filter">
+<link rel="STYLESHEET" href="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/ps_doc.css" charset="ISO-8859-1" type="text/css">
+<title>Parasolid v12.0: Interpreting Edge Blending Error Codes</title>
+</head>
+<body bgcolor="#ffffff" link="#006633">
+<a name="topofdoc">
+
+
+<p><span class="pushleft">
+</span></p><table cellpadding="0" cellspacing="0" border="0" bgcolor="#006633" width="100%">
+  <tbody><tr>
+    <td><a href="http://www.parasolid.com/">
+        <img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/psbar_l.gif" border="0"></a></td>
+    <td align="RIGHT" valign="CENTER">
+        <font color="white" face="helvetica,arial" size="5">
+        <b>Interpreting Edge Blending Error Codes</b></font></td>
+    <td>&nbsp;&nbsp;</td>
+  </tr>
+</tbody></table><p></p>
+
+<p></p><table border="" align="CENTER"><tbody><tr>
+  <td>&lt;&lt;&lt; <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.32.html">Edge Blend Overflows</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs/fd_index.html">Chapters</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html">Face-Face Blending</a> &gt;&gt;&gt;</td>
+</tr></tbody></table><p></p>
+
+<h1>Contents</h1>
+</a><ul><a name="topofdoc">
+</a><li><a name="topofdoc"> </a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-273807">32.1	Introduction </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-273815">32.2	Severe errors </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-273817">32.2.1	Configuration of edges at vertex too complex </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-273872">32.2.2	Unspecified numerical problem with blend </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-273874">32.3	Configuration errors - general </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-273879">32.3.1	Blend requires invalid extension of B-surface </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-273884">32.3.2	Range inconsistent with adjacent blended edge </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-273975">32.3.3	Adjoining edge not blended </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-274022">32.3.4	Blend completely overlaps edge loop </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-274053">32.3.5	Unblended edge overlapped by blend </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-274102">32.3.6	Range of blend on face too large </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-274250">32.3.7	Illegal blend on another edge prevented full check </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-274347">32.4	Configuration errors - overlapping blends </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-274667">32.4.1	Overlapping blends </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-274970">32.4.2	Illegal overlap on end boundary </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-275154">32.4.3	Blend has illegal end boundary </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-275350">32.4.4	End boundary intersects unblended edge </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-275381">32.4.5	The blend has produced a face-face inconsistency </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#pgfId-275384">32.4.6	The blend has produced a self-intersecting surface </a>
+</li></ul>
+</li></ul>
+<a name="endofcontents">
+
+
+</a><p align="RIGHT"><a name="endofcontents">
+</a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-273807"></a>32.1	Introduction 
+
+
+</h1>
+<p>
+<a name="pgfId-273809"></a>This chapter is designed to assist with the interpretation of edge blending error codes. It is difficult to give a complete set of rules which would enable you to correctly apply blends in all circumstances. However, understanding these codes is the key to both correcting illegal blends and getting blends right the first time.</p>
+<p>
+<a name="pgfId-273810"></a>In practice blending almost certainly involves a degree of trial and error. For example: apply some blends, invoke the blend checker <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_check_blends.html">PK_EDGE_check_blends</a>, interpret the error codes and correct the relevant blends.</p>
+<p>
+<a name="pgfId-273811"></a>The error codes can be split into three groups:</p>
+<ul>
+<li>
+<a name="pgfId-273812"></a>severe errors</li>
+<li>
+<a name="pgfId-273813"></a>general configuration errors</li>
+<li>
+<a name="pgfId-273814"></a>configuration errors caused by overlapping blends</li>
+</ul>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-273815"></a>32.2	Severe errors 
+
+
+</h1>
+<p>
+<a name="pgfId-273816"></a>Severe errors indicate that the edge(s) being checked can never be blended. Severe errors either reflect strict limitations on the blending functionality or cases where Parasolid is unable to classify an error.</p>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273817"></a>	32.2.1 	Configuration of edges at vertex too complex </h2>
+<p>
+<a name="pgfId-273857"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/fd_chap-415.gif">
+
+<p>
+<a name="pgfId-273859"></a>Figure 32-1 <a name="39712"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_vertex_c</a></p>
+<p>
+<a name="pgfId-273863"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#39712">Figure 32-1</a> shows an example of a solid which is too complex to blend at a vertex. Any one of the edges connected to this vertex can be blended at any one time, but not more, at present this is a limitation of the blending functionality.</p>
+<p>
+<a name="pgfId-273864"></a>A vertex that is too complex to be blended can be regarded as two or more edges being blended at some four edge vertices and at five or more edge vertices. The exception to this is that a vertex can usually be blended if all of the edges meeting at the vertex are blended.</p>
+<p>
+<a name="pgfId-273867"></a>See <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.30.html#23995">"Blending two edges at a four edge vertex"</a> in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.30.html#17798">Chapter 29, "Edge Blending Overview"</a>, for further information on 4-edged vertices.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273872"></a>	32.2.2 	Unspecified numerical problem with blend </h2>
+<p>
+<a name="pgfId-273873"></a>The <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_unknown_c</a> error implies that the blending algorithms cannot classify the error that has been detected. This usually infers that an internal numerical algorithm has unexpectedly failed. However, when this error occurs it may be possible to blend the edge being checked if the blend radius is changed.</p>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-273874"></a>32.3	Configuration errors - general 
+
+
+</h1>
+<p>
+<a name="pgfId-273875"></a>Configuration errors report various invalid combinations of blends. It should always be possible to recover from a configuration error by:</p>
+<ul>
+<li>
+<a name="pgfId-273876"></a>changing the blend radius (possibly on several edges)</li>
+<li>
+<a name="pgfId-273877"></a>applying appropriate blends to other edges</li>
+<li>
+<a name="pgfId-273878"></a>removing blends from some edges</li>
+</ul>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273879"></a>	32.3.1 	Blend requires invalid extension of B-surface </h2>
+<p>
+<a name="pgfId-273880"></a>The <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_bsurf_c</a> error can occur for either of the following reasons:</p>
+<ul>
+<li>
+<a name="pgfId-273881"></a>A face may need to be extended to terminate a blend, e.g. when blending one out of three edges at a vertex when the convexity of one of the edges is different from the other two. If the face being extended is on a B-surface the extension may attempt to extend the edges of the face beyond the valid regions.</li>
+<li>
+<a name="pgfId-273882"></a>Rolling ball blend surfaces are defined by sweeping a circle along a spine curve. This spine curve is formed by the intersection of offsets (by the blend radius) of the surfaces of the two faces meeting at the edge being blended. If one of the surfaces is parametric then its offset is inherently bounded and therefore the offset surface may not intersect at all or may not produce a long enough spine curve.</li>
+</ul>
+<p>
+<a name="pgfId-273883"></a>Unfortunately these restrictions are difficult both for you to spot and to provide rules of thumb for work rounds. It is sometimes possible to remove the error by reducing the blend radius.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273884"></a>	32.3.2 	Range inconsistent with adjacent blended edge </h2>
+<p>
+<a name="pgfId-273968"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/fd_chap-416.gif">
+
+<p>
+<a name="pgfId-273970"></a>Figure 32-2 <a name="21330"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_range_c</a></p>
+<p>
+<a name="pgfId-273974"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#21330">Figure 32-2</a> shows an example of a solid with unfixed blends of differing sizes on selected edges. This operation would produce the above error because the third edge, edge A, is tangent.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-273975"></a>	32.3.3 	Adjoining edge not blended </h2>
+<p>
+<a name="pgfId-274015"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/fd_chap-417.gif">
+
+<p>
+<a name="pgfId-274017"></a>Figure 32-3 <a name="29616"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_edge_c</a></p>
+<p>
+<a name="pgfId-274018"></a>This error is returned for illegal configurations of two out of three edges at a vertex being blended. <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#29616">Figure 32-3</a> illustrates this problem. The solution is to either blend the third edge or remove one of the existing blends.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274022"></a>	32.3.4 	Blend completely overlaps edge loop </h2>
+<p>
+<a name="pgfId-274046"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/fd_chap-418.gif">
+
+<p>
+<a name="pgfId-274048"></a>Figure 32-4 <a name="37558"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_loop_c</a></p>
+<p>
+<a name="pgfId-274052"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#37558">Figure 32-4</a> shows an example of a solid with an unfixed blend that overlaps the edge loop. It can be seen that the range of the blend is so large that the blend extends outside the solid. This blend is not allowed on this edge although it may be possible to blend the edge if the range is reduced to the point where it doesn't overlap the edge loop.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274053"></a>	32.3.5 	Unblended edge overlapped by blend </h2>
+<p>
+<a name="pgfId-274095"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/fd_chap-419.gif">
+
+<p>
+<a name="pgfId-274097"></a>Figure 32-5 <a name="11781"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_overlap_edge_c</a></p>
+<p>
+<a name="pgfId-274101"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#11781">Figure 32-5</a> shows an example of a solid where the unfixed blend overflows unblended edge A since face F cannot be extended to intersect the blend. Though this is not allowed, if the range of the blend was reduced sufficient to ensure that the overlap does not occur it may be possible to fix the blend.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274102"></a>	32.3.6 	Range of blend on face too large </h2>
+<p>
+<a name="pgfId-274243"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/fd_chap-420.gif">
+
+<p>
+<a name="pgfId-274245"></a>Figure 32-6 <a name="23823"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_face_c</a></p>
+<p>
+<a name="pgfId-274246"></a>This error occurs when no edge can be found to terminate the boundary curve of a blend, this is either because the radius of the blend is too large or one or more edges adjacent to the edge being checked also needs to be blended (<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#23823">Figure 32-6</a>). </p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274250"></a>	32.3.7 	Illegal blend on another edge prevented full check </h2>
+<p>
+<a name="pgfId-274340"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/fd_chap-421.gif">
+
+<p>
+<a name="pgfId-274342"></a>Figure 32-7 <a name="24979"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_other_edge_c</a></p>
+<p>
+<a name="pgfId-274346"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#24979">Figure 32-7</a> shows an example of a solid with two unfixed blends on it. Although edge A is legal, it does not check because there is another blend (edge B) on the same face which is not legal causing the checks for overlaps and illegal intersections not to be completed. It may be possible to blend edge A if the blend is removed from edge B. Alternatively it may be possible to blend edge A if edge B is made legal (in this case by blending the adjoining edges).</p>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="pgfId-274347"></a>32.4	Configuration errors - overlapping blends 
+
+
+</h1>
+<p>
+<a name="pgfId-274348"></a>When an edge is blended the blend may have to interact with more than just the two faces which meet at the edge, e.g. if the blend is large it might cover part of one face and run onto a neighboring face. The blend must then be constrained to meet tangentially with this neighboring face.</p>
+<p>
+<a name="pgfId-274352"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#26666">Figure 32-8</a> shows an example when it is possible to blend successfully between non-adjacent faces, also referred to as overlapping blends, by fixing the blends independently.</p>
+<p>
+<a name="pgfId-274663"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/fd_chap-422.gif">
+
+<p>
+<a name="pgfId-274665"></a>Figure 32-8 <a name="26666"></a>Blending non-adjacent faces (overlapping blends)</p>
+<p>
+<a name="pgfId-274666"></a>The following errors occur when attempting to blend between non-adjacent faces (overlapping blends) fixing the blends simultaneously.</p>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274667"></a>	32.4.1 	Overlapping blends </h2>
+<p>
+<a name="pgfId-274960"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/fd_chap-423.gif">
+
+<p>
+<a name="pgfId-274962"></a>Figure 32-9 <a name="17957"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_overlap_c</a></p>
+<p>
+<a name="pgfId-274966"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#17957">Figure 32-9</a> shows the same example that was successfully blended in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#26666">Figure 32-8</a> but this time the operation fails because the two overlapping blends could not be fixed together.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-274970"></a>	32.4.2 	Illegal overlap on end boundary </h2>
+<p>
+<a name="pgfId-275147"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/fd_chap-424.gif">
+
+<p>
+<a name="pgfId-275149"></a>Figure 32-10 <a name="23207"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_overlap_end_c</a></p>
+<p>
+<a name="pgfId-275153"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#23207">Figure 32-10</a> shows an example of the above error occurring after an attempt has been made to fix the two blends simultaneously. Fixing each blend independently should enable both edges to be blended successfully.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-275154"></a>	32.4.3 	Blend has illegal end boundary </h2>
+<p>
+<a name="pgfId-275343"></a>&nbsp;</p>
+
+
+
+<img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/fd_chap-425.gif">
+
+<p>
+<a name="pgfId-275345"></a>Figure 32-11 <a name="28397"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_end_c</a></p>
+<p>
+<a name="pgfId-275349"></a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#28397">Figure 32-11</a> shows a typical example of when this error can occur. It occurs in this example when checking the blend on edge A, reducing the range of either or both blends so that they do not overlap should enable the check operation on edge A to be completed successfully.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-275350"></a>	32.4.4 	End boundary intersects unblended edge </h2>
+<p>
+<a name="pgfId-275374"></a>&nbsp;</p>
+
+<img src="./Parasolid v12.0_ Interpreting Edge Blending Error Codes_files/fd_chap-426.gif">
+
+<p>
+<a name="pgfId-275376"></a>Figure 32-12 <a name="41688"></a><a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_edge_intsec_c</a></p>
+<p>
+<a name="pgfId-275377"></a>A typical example of when the above error can occur is shown in <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#41688">Figure 32-12</a> In this example the unfixed blend overlaps an unblended edge. Reducing the range of the blend, so that it doesn't interfere with the unblended edge, should enable the edge to be blended.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-275381"></a>	32.4.5 	The blend has produced a face-face inconsistency </h2>
+<p>
+<a name="pgfId-275382"></a>The <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_face_face_c</a> error occurs if the blend has created a face-face inconsistency in the body. The blend is fixed to the body.</p>
+<p>
+<a name="pgfId-275383"></a>This error only occurs if the check for face-face inconsistencies has been specifically turned on while fixing the blend (it is not returned by <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_check_blends.html">PK_EDGE_check_blends</a>).</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<h2>
+<a name="pgfId-275384"></a>	32.4.6 	The blend has produced a self-intersecting surface </h2>
+<p>
+<a name="pgfId-275385"></a>The <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_blend_fault_t.html">PK_blend_fault_self_int_c</a> error occurs if one or more of the blend surfaces are self-intersecting. The blend is fixed to the body.</p>
+<p>
+<a name="pgfId-275386"></a>This error only occurs if the check for self-intersecting surfaces has been specifically turned on while fixing the blend (it is not returned by <a href="http://www.q-solid.com/Parasolid_Docs/headers/pk_edge_check_blends.html">PK_EDGE_check_blends</a>).</p>
+<p>
+<a name="pgfId-110680"></a>&nbsp;</p>
+
+
+<a name="endofdoc">
+
+</a><p align="RIGHT"><a name="endofdoc">
+</a><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.33.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<p></p><table border="" align="CENTER"><tbody><tr>
+  <td>&lt;&lt;&lt; <a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.32.html">Edge Blend Overflows</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs/fd_index.html">Chapters</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs/chapters/fd_chap.34.html">Face-Face Blending</a> &gt;&gt;&gt;</td>
+</tr></tbody></table><p></p>
+
+
+
+</body></html>

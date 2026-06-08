@@ -491,10 +491,14 @@ impl Body {
         for &(fk, lo, hi) in &bands {
             let (r_lo, h_lo) = profile[lo];
             let (r_hi, h_hi) = profile[hi];
+            // The band surface's v parameter is height along ez from its
+            // frame origin; capture that origin height for the pcurves.
+            let origin_h;
             if (r_hi - r_lo).abs() < 1e-12 {
                 // Cylinder band (constant radius).
+                origin_h = h_lo;
                 let cyl_frame = Frame3 {
-                    origin: axis_at(h_lo),
+                    origin: axis_at(origin_h),
                     x: ex,
                     y: ey,
                     z: ez,
@@ -513,6 +517,7 @@ impl Body {
                 } else {
                     (r_hi, h_hi)
                 };
+                origin_h = anchor_h;
                 let slope = (r_hi - r_lo) / (h_hi - h_lo);
                 let cone_frame = Frame3 {
                     origin: axis_at(anchor_h),
@@ -528,6 +533,7 @@ impl Body {
                     true,
                 );
             }
+            self.attach_revolve_band_pcurves(fk, origin_h, o, ez)?;
         }
 
         // Edges: closed -> latitude circle, open -> seam line.
@@ -989,6 +995,85 @@ impl Body {
         Ok(())
     }
 
+    /// Attach UV pcurves to a revolve band face so analytic
+    /// mass_properties has its parameter-domain bounds. The band surface
+    /// (cone/cylinder) is parameterized u = angle [0, tau], v = height
+    /// along `ez` from the band frame origin (at height `origin_h` on the
+    /// axis through `o`). Each latitude-circle fin spans u 0->tau at its
+    /// height; each seam (open-edge) fin is vertical at u = tau when it
+    /// ascends, u = 0 when it descends (matching the cone/cylinder
+    /// primitives' seam convention). Collapsed pole edges contribute no
+    /// fin and participate implicitly.
+    fn attach_revolve_band_pcurves(
+        &mut self,
+        face: FaceKey,
+        origin_h: f64,
+        o: Vec3,
+        ez: Vec3,
+    ) -> Result<(), TopoError> {
+        let tau = core::f64::consts::TAU;
+        let lp = self
+            .faces
+            .get(face)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let entry = self
+            .loops
+            .get(lp)
+            .and_then(|l| l.fin)
+            .ok_or(TopoError::Precondition("revolve pcurves: vertex loop"))?;
+        let v_of = |p: Vec3| (p - o).dot(ez) - origin_h;
+        // Collect (fin, uv0, uv1) first to avoid a borrow conflict with
+        // the mutating attach.
+        let mut segs: Vec<(crate::entity::FinKey, UvSegment)> = Vec::new();
+        let mut cur = entry;
+        loop {
+            let fin = self.fins.get(cur).ok_or(TopoError::StaleKey)?;
+            let edge = self.edges.get(fin.edge).ok_or(TopoError::StaleKey)?;
+            let (va, vb) = edge.bounds;
+            let closed = edge.is_closed();
+            let end_v = self.fin_end_vertex(cur).ok_or(TopoError::StaleKey)?;
+            let start_v = if closed {
+                end_v
+            } else if end_v == vb {
+                va
+            } else {
+                vb
+            };
+            let pe = self
+                .vertices
+                .get(end_v)
+                .map(|v| v.point)
+                .ok_or(TopoError::StaleKey)?;
+            let (uv0, uv1) = if closed {
+                let vc = v_of(pe);
+                ((0.0, vc), (tau, vc))
+            } else {
+                let ps = self
+                    .vertices
+                    .get(start_v)
+                    .map(|v| v.point)
+                    .ok_or(TopoError::StaleKey)?;
+                let (vs, ve) = (v_of(ps), v_of(pe));
+                let u = if ve > vs { tau } else { 0.0 };
+                ((u, vs), (u, ve))
+            };
+            segs.push((cur, (uv0, uv1)));
+            cur = self
+                .fins
+                .get(cur)
+                .map(|f| f.next)
+                .ok_or(TopoError::StaleKey)?;
+            if cur == entry {
+                break;
+            }
+        }
+        for (fin, (uv0, uv1)) in segs {
+            self.attach_pcurve_segment(fin, uv0, uv1);
+        }
+        Ok(())
+    }
+
     /// Production fin addressing: the fin of `lp` ending at `v`.
     fn fin_ending_at(
         &self,
@@ -1192,6 +1277,12 @@ mod tests {
             (v - expect).abs() < expect * 0.01,
             "bicone mesh_volume {v} != ~{expect}"
         );
+        // Analytic mass_properties (via the attached pcurves) is exact.
+        let mv = b.mass_properties().unwrap().volume;
+        assert!(
+            (mv - expect).abs() < 1e-9,
+            "bicone mass_properties vol {mv} != {expect}"
+        );
     }
 
     #[test]
@@ -1210,6 +1301,11 @@ mod tests {
         assert!(
             (v - expect).abs() < expect * 0.01,
             "barrel mesh_volume {v} != ~{expect}"
+        );
+        let mv = b.mass_properties().unwrap().volume;
+        assert!(
+            (mv - expect).abs() < 1e-9,
+            "barrel mass_properties vol {mv} != {expect}"
         );
     }
 
