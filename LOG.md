@@ -1839,3 +1839,28 @@ HLR/silhouette (96-97), sheet ops (70-72), persistence/XT (126-129),
 assemblies (82-85), foreign geometry (114-116). Next focused milestone: the
 coincident-boolean foundation.
 GATE: exact CI triplet green. Merged.
+
+## Addendum 53 (2026-06-08): Parity coincident booleans -- FIRST SLICE (map 54 -> 55/144); the keystone subsystem opens
+
+The coincident/tangent boolean core (user-directed keystone). Discovery:
+the machinery was MORE built than feared -- classify_faces already emits
+FaceClass::OnOther for coincident faces (winding ~0.5), and select_faces
+already drops OnOther (the `_ => false`), which IS the correct on-on rule
+for the COMMON case (abutting/face-to-face solids whose shared face is
+interior to a union/intersection). The only blocker was boolean() DECLINING
+on Coincident before reaching the classifier. Change: decline only on
+Tangent; let Coincident PROCEED. The positive-volume post-condition guards
+partial-overlap cases the simplest drop-rule mis-selects (declines them
+honestly). Tested: two unit boxes sharing the x=1 face, UNION -> a 2x1x1
+box (exact volume 2, valid). All 28 prior boolean tests still pass (no
+coincident faces -> unaffected). RUNNING TOTAL: 54 -> 55/144 (item 33,
+common case).
+RESEARCH REQUESTED (passed to the user for the research agent): the full
+Requicha on-on classification TABLES for coincident/coplanar/tangent faces
+in CURVED B-rep booleans (keep/drop+orientation per op; OCCT BOPAlgo gluing
+mode; coplanar->curved-coincidence generalization). That unlocks: coincident
+DIFFERENCE, same-oriented coincidence, partial-overlap imprint, and tangent
+faces -- deferred to when it lands.
+GATE: exact CI triplet green (283 tests). fuzz_boolean re-soak validates
+the new coincident path (the existing target now exercises coincident
+inputs; post-condition + validity invariants hold). Merged.
