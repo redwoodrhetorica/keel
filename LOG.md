@@ -952,3 +952,57 @@ REMAINING in M2a:
   exactly one shell, Euler-Poincare). Then Task 5 boolean() API +
   exact volume proofs (intersection/difference boxes), Task 6
   metamorphic proptests + fuzz_boolean + gate.
+
+## Addendum 29 (2026-06-07): M6a COMPLETE (boolean engine, clean transversal cases); merged
+
+- The proof-milestone CORE works: the kernel computes regularized
+  union/intersection/difference on solid bodies, and the results are
+  valid B-rep solids with EXACT volume. Branch m6a-boolean.
+- Pipeline (crates/keel-topo/src/boolean.rs): seam_curves (all-pairs
+  analytic SSI + Cyrus-Beck clip of plane-plane lines to both trimmed
+  faces) -> imprint_operand (two-phase: pre-split boundary edges at
+  seam-loop corners, then per face dispatch: single closed curve ->
+  ring; segments forming a closed loop -> one degree-1 NURBS ring;
+  otherwise one open chain -> split the face boundary-to-boundary
+  through interior corners via mev spurs + split_face) -> classify_faces
+  (most-central UV-interior sample via projected edge curves, then the
+  other operand's PMC) -> select_faces (regularized r-set tables;
+  difference reverses the subtracted walls) -> build_result_solid
+  (direct arena construction of an oriented polygon soup: vertex dedup,
+  shared edges, fin rings, a two-region inside/outside partition with
+  two shells; the Euler operators forbid the intermediate non-solid
+  states a soup passes through, so it is built then validated).
+- PROOFS (exact volumes, 16 boolean tests green):
+  - Guillotine A=[0,4]^3 vs slab B: A∩B and A-B are box solids
+    (V8 E12 F6), volume 32 to 1e-6.
+  - Corner overlap A=[0,2]^3, B=[1,3]^3 (open L-chains with interior
+    corners): A∩B = unit cube vol 1, A-B vol 7.
+  - Nested (no SSI): A∩B = inner box, A∪B = outer box.
+  - Metamorphic: intersection commutative + translation-invariant;
+    determinism (D9): identical result topology hash.
+- Partial-success fault model: coplanar/coincident and tangential
+  configs are detected from SSI and DECLINED up front (a fast clean
+  Err), never ground through. Post-condition gate: a real solid has
+  positive finite volume (the scalar Euler identity is necessary not
+  sufficient); near-degenerate results are declined, never returned as
+  a wrong "valid" body.
+- FUZZ (fuzz_boolean: random box pairs + random op): two findings, both
+  fixed and captured as golden regression tests + corpus seeds:
+  (1) coincident boxes ground for 16s through degenerate edge-grazing
+      imprints -> early decline on Coincident/Tangent faults (16135ms ->
+      29ms);
+  (2) a thin sliver at large coordinates produced a 3-face Euler-valid
+      non-solid (NaN volume) -> positive-volume post-condition declines.
+  Final 10-min soak CLEAN: 3013 runs, no crashes.
+- GATE: fmt + clippy clean, 222 workspace tests green (90 geom + 77
+  math + 55 topo), 10-min fuzz_boolean soak CLEAN. Merged to master.
+- DEFERRED to M6b (honest ledger): coplanar/coincident faces and
+  neighborhood-merge classification; tangential contact; periodic-
+  surface booleans (sphere/cylinder full pipeline -- their SSI + crossing-
+  free imprint are proven as M6a unit tests, but classification and
+  trimmed mass-props fight surface periodicity); NURBS-bounded solids
+  (the M7 bar); union of transversally-overlapping boxes (needs holed-
+  face stitch); enclosed-void difference (needs 3-region stitch);
+  tolerant scaling robustness (the sliver class); AABB/BVH localization
+  (the all-pairs O(n^2) is the throughput cost). Differential testing
+  vs OCCT over the ABC corpus remains the M6b/M7 approximate oracle.
