@@ -2304,3 +2304,38 @@ RUNNING TOTAL: stays 62/144 (concave geometry done; concave surgery completes it
 GATE: exact CI triplet green (122 keel-topo). edge_is_convex reuses the existing
 winding classifier; no tessellate/boolean pipeline change -> no new fuzz path.
 Merged.
+
+## Addendum 69 (2026-06-08): CONCAVE fillet COMPLETE -- the unified pipeline (research file 44; map 62 -> 63/144)
+
+Requested + received research file 44 (concave-fillet-topology-surgery): the
+canonical recipe. Verdict: convex (round, material removed) and concave (fillet,
+material added) are ONE pipeline that forks only on the convexity sign sigma; the
+cap-SHRINK (convex) and cap-GROW (concave) are duals sharing the kef+kev tail,
+and grow-vs-shrink happens AUTOMATICALLY via face adjacency (file 44 Q2/Q4,
+confirmed verbatim against Parasolid PK_BLENDSF, OCCT ChFi3d::ConcaveSide, ACIS).
+So the whole concave un-gate was TWO lines: drop the gate, and attach the blend
+cylinder with sense = convex (radial-out convex / radial-IN concave).
+
+CRITICAL DIAGNOSIS that unblocked it: my earlier "wrong volume" (3.0479 vs
+3.0193) was NOT a surgery bug -- the cap-loop dump proved the topology was already
+correct (the reentrant corner (1,1) is REMOVED and replaced by the arc edge
+(1.3,1)->(1,1.3), the cap grown). The 0.95% gap is the chord-vs-arc tessellation
+approximation of the cap's arc boundary edge (loop_polygon samples straight
+chords), the SAME approximation the convex fillet has and which I tolerated at 1%
+there; I had mis-attributed it via a too-tight 0.01 absolute tolerance. The
+unfilleted L-prism mesh_volume is exactly 3.0, confirming tessellation handles the
+non-convex L-cap fine. Earlier helper: the split_cap surface-copy fix (committed
+2d20959) was the real bug (the bottom cap had been vanishing).
+
+fillet_edge now rounds CONVEX and CONCAVE plane-plane edges through one unified
+surgery. Test: L-prism (non-convex profile) reentrant edge r=0.3 -> valid B-rep,
+one cylinder blend face, mesh_volume 3.0193 (L 3 + filled sliver (r^2 - pi r^2/4)h)
+within 1% (tessellation). Convex fillets unaffected (sense=true).
+Deferral: exact analytic volume needs loop_polygon to sample arc cap edges (a
+tessellation-accuracy improvement; would tighten BOTH convex and concave);
+mixed-convexity ends + bead-construct-and-sew (file 44 Q3/Q5) for harder caps.
+RUNNING TOTAL: 62 -> 63/144. Inner-corner rounding (concave fillet), ~half of all
+real fillets, now works -- the unify verdict from file 44 held exactly.
+GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D warnings +
+workspace test 122 keel-topo). Euler-op surgery; no boolean/tessellate change.
+Merged.

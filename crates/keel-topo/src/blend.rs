@@ -608,23 +608,27 @@ impl Body {
         Ok(b)
     }
 
-    /// Round a convex `edge` with a constant-radius rolling-ball fillet
-    /// (parity items 47-61; research file 40). Dispatches by support
-    /// geometry: a plane/cylinder cap rim routes to the exact-torus rung
-    /// (fillet_cap_rim); two planar supports use the exact-cylinder rung
-    /// implemented here. Returns the filleted body: the cylinder blend face
-    /// is inserted by the local trim-and-stitch surgery of file 40 §3
-    /// (imprint the spring lines, split the cap faces along the end arcs,
-    /// then dissolve the sharp-corner fragments with kef/kev), with the
-    /// support faces trimmed back to the spring curves and the sharp edge
-    /// removed.
+    /// Round a CONVEX or CONCAVE `edge` with a constant-radius rolling-ball
+    /// fillet (parity items 47-61; research files 40, 44). Dispatches by
+    /// support geometry: a plane/cylinder cap rim routes to the exact-torus
+    /// rung (fillet_cap_rim); two planar supports use the exact-cylinder
+    /// rung here. Returns the filleted body: the cylinder blend face is
+    /// inserted by the local trim-and-stitch surgery of file 40 §3 (imprint
+    /// the spring lines, split the cap faces along the end arcs, dissolve
+    /// the sharp-corner fragments with kef/kev), supports trimmed to the
+    /// spring curves and the sharp edge removed.
+    ///
+    /// Convex (round, material removed) and concave (fillet, material added)
+    /// share ONE pipeline, forking only on the convexity sign (file 44): the
+    /// offset direction flips (-r into material / +r into the void) and the
+    /// blend face's sense flips (radial-out / radial-in); the cap-shrink vs
+    /// cap-grow then happens automatically through face adjacency.
     ///
     /// Scope: the edge's two end vertices must each be a simple degree-3
     /// corner (two supports + one cap face), the box-like case. The blend
-    /// face carries its exact `Cylinder3` surface; trimmed (partial-angle)
-    /// cylinder tessellation and the blend-face pcurves (so mesh_volume /
-    /// analytic mass_properties cover the result) are follow-ups, as are
-    /// concave edges, non-planar supports, and overflow handling (file 41).
+    /// face carries its exact `Cylinder3` surface; blend-face pcurves (so
+    /// analytic mass_properties covers it) and overflow handling (file 41)
+    /// are follow-ups, as are non-planar supports and mixed-convexity ends.
     pub fn fillet_edge(&self, edge: EdgeKey, radius: f64) -> Result<Body, TopoError> {
         let faces = self.faces_around_edge(edge);
         if faces.len() != 2 {
@@ -644,14 +648,11 @@ impl Body {
         if cylinders == 1 {
             return self.fillet_cap_rim(edge, radius);
         }
-        // The plane-plane surgery below is convex-only; the concave
-        // (reentrant) trim-and-stitch differs (it adds material) and is a
-        // follow-up, though the blend geometry already handles both.
-        if self.edge_is_convex(edge) == Some(false) {
-            return Err(TopoError::Precondition(
-                "fillet: concave-edge surgery is a follow-up",
-            ));
-        }
+        // Unify on the convexity sign (file 44): the surgery body is
+        // identical; only the cap step and the blend-face sense fork. The
+        // blend's outward normal is radial-OUT for a convex round and
+        // radial-IN for a concave fillet.
+        let convex = self.edge_is_convex(edge).unwrap_or(true);
         let blend = self.blend_cylinder_for_edge(edge, radius)?;
         let (f1, f2) = (faces[0], faces[1]);
         let (va_k, vb_k) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
@@ -760,7 +761,7 @@ impl Body {
         b.attach_face_surface(
             blend_face,
             SurfaceGeom::Analytic(Surface3::Cylinder(blend.surface.clone())),
-            true,
+            convex,
         );
         b.attach_edge_curve(spring_a_edge, Curve3::Line(blend.spring_a), true);
         b.attach_edge_curve(spring_b_edge, Curve3::Line(blend.spring_b), true);
@@ -1127,10 +1128,29 @@ mod tests {
             "convex spine {:?}",
             cb.spine.origin
         );
-        // The concave trim-and-stitch surgery is gated (follow-up).
+        // Concave fillet: the surgery fills the reentrant notch with a
+        // concave round, ADDING the corner sliver (r^2 - pi r^2/4)*h. The
+        // unified surgery (file 44) forks only on the convexity sign; the
+        // cap-grow happens automatically via face adjacency.
+        let filleted = b.fillet_edge(concave, 0.3).unwrap();
+        assert!(filleted.validate().is_ok(), "concave fillet invalid");
+        let cyl: Vec<f64> = filleted
+            .faces
+            .iter()
+            .filter_map(|(fk, _)| match filleted.face_surface_geom(fk) {
+                Some(SurfaceGeom::Analytic(Surface3::Cylinder(c))) => Some(c.radius),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(cyl.len(), 1, "expected one cylinder blend face");
+        assert!((cyl[0] - 0.3).abs() < 1e-12, "blend radius {}", cyl[0]);
+        let v = filleted.mesh_volume();
+        let expect = 3.0 + (0.09 - core::f64::consts::PI * 0.09 / 4.0) * 1.0;
+        // 1% tessellation tolerance (chord-vs-arc on the cap edges), same
+        // as the convex fillet tests.
         assert!(
-            b.fillet_edge(concave, 0.3).is_err(),
-            "concave surgery gated"
+            (v - expect).abs() < expect * 0.012,
+            "concave fillet vol {v} != ~{expect}"
         );
     }
 
