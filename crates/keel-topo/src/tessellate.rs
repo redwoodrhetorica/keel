@@ -70,13 +70,23 @@ impl Body {
                     + ez * theta.cos())
                     * radius
         };
+        // If the face is a trimmed cap (bounded by an SSI circle),
+        // keep only triangles on the cap side of that circle's plane;
+        // a whole-sphere face (no circle edge) meshes fully.
+        let cap = self.sphere_cap_trim(face);
         // theta in [0, pi] (polar), phi in [0, 2pi). Coarse grid.
-        const NT: usize = 18;
-        const NP: usize = 28;
+        const NT: usize = 40;
+        const NP: usize = 60;
         let tau = core::f64::consts::TAU;
         let pi = core::f64::consts::PI;
         let mut tris = Vec::new();
         let sgn = if sense { 1.0 } else { -1.0 };
+        let on_cap = |q: Vec3| -> bool {
+            match cap {
+                Some((cc, ax, side)) => ((q - cc).dot(ax) * side) >= 0.0,
+                None => true,
+            }
+        };
         for i in 0..NT {
             let t0 = pi * i as f64 / NT as f64;
             let t1 = pi * (i + 1) as f64 / NT as f64;
@@ -87,14 +97,52 @@ impl Body {
                 let b = pt(t1, p0);
                 let c = pt(t1, p1);
                 let d = pt(t0, p1);
-                // Outward at each quad ~ radial from center.
-                let out0 = (a - center) * sgn;
-                let out1 = (c - center) * sgn;
-                tris.push(orient([a, b, c], out0));
-                tris.push(orient([a, c, d], out1));
+                for tri in [[a, b, c], [a, c, d]] {
+                    let cen = (tri[0] + tri[1] + tri[2]) * (1.0 / 3.0);
+                    if on_cap(cen) {
+                        tris.push(orient(tri, (cen - center) * sgn));
+                    }
+                }
             }
         }
         tris
+    }
+
+    /// If `face` is a spherical cap trimmed by an SSI circle, return the
+    /// circle plane (point on it, unit normal) and the sign such that
+    /// `(q - point).dot(normal) * sign >= 0` selects the cap side.
+    fn sphere_cap_trim(&self, face: FaceKey) -> Option<(Vec3, Vec3, f64)> {
+        use keel_geom::curve::Curve3;
+        let loops = self.faces.get(face).map(|f| f.loops.clone())?;
+        for lk in loops {
+            let entry = self.loops.get(lk).and_then(|l| l.fin)?;
+            let mut cur = entry;
+            loop {
+                let fin = self.fins.get(cur)?;
+                // Only a CLOSED circle edge is an SSI seam; the sphere's
+                // own meridian is an open pole-to-pole circle and must
+                // not be mistaken for a cap trim.
+                let closed = self.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true);
+                if closed
+                    && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                    && let Some(Curve3::Circle(circle)) = self.curves.get(ck)
+                {
+                    let ax = circle.x_axis.cross(circle.y_axis).try_normalize()?;
+                    let apex = self.face_interior_point(face)?;
+                    let side = if (apex - circle.center).dot(ax) >= 0.0 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    return Some((circle.center, ax, side));
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        None
     }
 }
 

@@ -38,6 +38,24 @@ impl Body {
         }
         total / (4.0 * core::f64::consts::PI)
     }
+
+    /// Volume enclosed by the boundary tessellation (signed sum of
+    /// tetrahedra from the origin; positive for an outward-oriented
+    /// closed surface). Surface-type-agnostic, so it gives a positive
+    /// volume for curved results (lenses) where the exact trimmed
+    /// mass-properties integral is not yet available; for planar results
+    /// it equals the exact volume. Coarse for spheres (the tessellation
+    /// is coarse), so it is a guard + approximate oracle, not the exact
+    /// mass-properties value.
+    pub fn tessellated_volume(&self) -> f64 {
+        let mut v = 0.0f64;
+        for face in self.face_keys() {
+            for tri in self.tessellate_face(face) {
+                v += tri[0].dot(tri[1].cross(tri[2])) / 6.0;
+            }
+        }
+        v
+    }
 }
 
 #[cfg(test)]

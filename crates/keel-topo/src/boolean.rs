@@ -178,7 +178,7 @@ pub struct ImprintedOperand {
 }
 
 /// Which operand a kept face came from.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Operand {
     A,
     B,
@@ -369,7 +369,11 @@ impl Body {
             let mut cur = entry;
             loop {
                 let fin = self.fins.get(cur)?;
-                if let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                // Only the CLOSED SSI seam circle bounds a cap; skip the
+                // sphere's open pole-to-pole meridian.
+                let closed = self.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true);
+                if closed
+                    && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
                     && let Some(Curve3::Circle(circle)) = self.curves.get(ck)
                 {
                     let ax = circle.x_axis.cross(circle.y_axis).try_normalize()?;
@@ -782,6 +786,318 @@ pub struct BoolResult {
 /// stitch the kept faces into a new solid. Partial-success: recoverable
 /// faults ride along in `BoolResult::faults`; an unbuildable result is
 /// `Err`.
+/// Import one entity-subtree (vertices, edges, fins, loops, the face,
+/// and its geometry) from `src` into `dst`, deduping by source EntityId
+/// within the same operand. `reversed` flips the face's orientation
+/// (fin senses, loop traversal order, surface sense) for difference.
+#[allow(clippy::too_many_arguments)]
+fn import_face(
+    dst: &mut Body,
+    src: &Body,
+    face: FaceKey,
+    op: Operand,
+    reversed: bool,
+    rec: &mut crate::body::OpRecorder,
+    vmap: &mut std::collections::BTreeMap<(Operand, u64), crate::entity::VertexKey>,
+    emap: &mut std::collections::BTreeMap<(Operand, u64), crate::entity::EdgeKey>,
+    inf: crate::entity::RegionKey,
+    solid: crate::entity::RegionKey,
+) -> Option<FaceKey> {
+    use crate::lineage::Derivation;
+    let sface = src.faces.get(face)?;
+    let (fr, br) = if reversed { (solid, inf) } else { (inf, solid) };
+    let dface = dst.new_face(rec, fr, br, Derivation::Created);
+    let sloops = sface.loops.clone();
+    let mut dloops = Vec::new();
+    for slk in sloops {
+        let (kind, entry) = {
+            let sl = src.loops.get(slk)?;
+            (sl.kind, sl.fin)
+        };
+        let dlk = dst.new_loop(rec, dface, kind, Derivation::Created);
+        let Some(entry) = entry else {
+            dloops.push(dlk);
+            continue;
+        };
+        // Source fins in loop order.
+        let mut sfins = Vec::new();
+        let mut cur = entry;
+        loop {
+            sfins.push(cur);
+            let f = src.fins.get(cur)?;
+            cur = f.next;
+            if cur == entry {
+                break;
+            }
+        }
+        let mut dfins = Vec::new();
+        for &sf in &sfins {
+            let sfin = src.fins.get(sf)?;
+            let dedge = import_edge(dst, src, sfin.edge, op, rec, vmap, emap)?;
+            let fwd = sfin.forward ^ reversed;
+            let dfin = dst.new_fin(rec, dedge, fwd, dlk, Derivation::Created);
+            if let Some((pck, psense)) = sfin.pcurve
+                && let Some(pc) = src.curves.get(pck).cloned()
+            {
+                let dpc = dst.add_curve(pc);
+                if let Some(df) = dst.fins.get_mut(dfin) {
+                    df.pcurve = Some((dpc, psense));
+                }
+            }
+            if let Some(e) = dst.edges.get_mut(dedge) {
+                e.radial.push(dfin);
+            }
+            dfins.push(dfin);
+        }
+        if reversed {
+            dfins.reverse();
+        }
+        let n = dfins.len();
+        for i in 0..n {
+            let (nx, pv) = (dfins[(i + 1) % n], dfins[(i + n - 1) % n]);
+            if let Some(f) = dst.fins.get_mut(dfins[i]) {
+                f.next = nx;
+                f.prev = pv;
+            }
+        }
+        if let Some(l) = dst.loops.get_mut(dlk) {
+            l.fin = Some(dfins[0]);
+        }
+        // Vertex fin back-pointers.
+        for &df in &dfins {
+            if let Some(sv) = dst.fin_start_vertex(df)
+                && let Some(v) = dst.vertices.get_mut(sv)
+                && v.fin.is_none()
+            {
+                v.fin = Some(df);
+            }
+        }
+        dloops.push(dlk);
+    }
+    if let Some(f) = dst.faces.get_mut(dface) {
+        f.loops = dloops;
+    }
+    if let Some((ssk, ssense)) = sface.surface
+        && let Some(sg) = src.surfaces.get(ssk).cloned()
+    {
+        let dsk = dst.add_surface(sg);
+        if let Some(f) = dst.faces.get_mut(dface) {
+            f.surface = Some((dsk, ssense ^ reversed));
+        }
+    }
+    Some(dface)
+}
+
+fn import_vertex(
+    dst: &mut Body,
+    src: &Body,
+    v: crate::entity::VertexKey,
+    op: Operand,
+    rec: &mut crate::body::OpRecorder,
+    vmap: &mut std::collections::BTreeMap<(Operand, u64), crate::entity::VertexKey>,
+) -> Option<crate::entity::VertexKey> {
+    let sv = src.vertices.get(v)?;
+    let key = (op, sv.id.0);
+    if let Some(&dv) = vmap.get(&key) {
+        return Some(dv);
+    }
+    let dv = dst.new_vertex(rec, sv.point);
+    vmap.insert(key, dv);
+    Some(dv)
+}
+
+fn import_edge(
+    dst: &mut Body,
+    src: &Body,
+    edge: crate::entity::EdgeKey,
+    op: Operand,
+    rec: &mut crate::body::OpRecorder,
+    vmap: &mut std::collections::BTreeMap<(Operand, u64), crate::entity::VertexKey>,
+    emap: &mut std::collections::BTreeMap<(Operand, u64), crate::entity::EdgeKey>,
+) -> Option<crate::entity::EdgeKey> {
+    use crate::lineage::Derivation;
+    let sid = src.edges.get(edge)?.id.0;
+    if let Some(&de) = emap.get(&(op, sid)) {
+        return Some(de);
+    }
+    let (b0, b1, curve) = {
+        let se = src.edges.get(edge)?;
+        (se.bounds.0, se.bounds.1, se.curve)
+    };
+    let dv0 = import_vertex(dst, src, b0, op, rec, vmap)?;
+    let dv1 = import_vertex(dst, src, b1, op, rec, vmap)?;
+    let de = dst.new_edge(rec, (dv0, dv1), Derivation::Created);
+    if let Some((sck, scsense)) = curve
+        && let Some(c) = src.curves.get(sck).cloned()
+    {
+        let dc = dst.add_curve(c);
+        if let Some(e) = dst.edges.get_mut(de) {
+            e.curve = Some((dc, scsense));
+        }
+    }
+    emap.insert((op, sid), de);
+    Some(de)
+}
+
+/// Stitch kept faces (possibly curved) from both operands into one
+/// valid solid: import each face's full topology, merge coincident
+/// vertices, glue the coincident seam edges (the SSI curves, radial-1
+/// after import) into the shared manifold seam, then build the two-
+/// region partition. Built directly in the arenas (operators forbid the
+/// intermediate non-solid states), then validated.
+fn stitch_by_import(
+    ia: &ImprintedOperand,
+    ib: &ImprintedOperand,
+    kept: &[KeptFace],
+    tol: f64,
+) -> Result<Body, BoolFault> {
+    use crate::entity::{EdgeKey, Side, VertexKey};
+    use crate::lineage::Derivation;
+    use std::collections::BTreeMap;
+    let vtol = tol.max(1e-7);
+
+    let mut dst = Body::new();
+    let inf = dst.infinite_region();
+    let mut rec = dst.begin_op();
+    let solid = dst.new_region(&mut rec, true, Derivation::Created);
+
+    let mut vmap: BTreeMap<(Operand, u64), VertexKey> = BTreeMap::new();
+    let mut emap: BTreeMap<(Operand, u64), EdgeKey> = BTreeMap::new();
+    let mut faces = Vec::new();
+    for k in kept {
+        let src = match k.operand {
+            Operand::A => &ia.body,
+            Operand::B => &ib.body,
+        };
+        let f = import_face(
+            &mut dst, src, k.face, k.operand, k.reversed, &mut rec, &mut vmap, &mut emap, inf,
+            solid,
+        )
+        .ok_or(BoolFault::AssemblyFailed("import failed"))?;
+        faces.push(f);
+    }
+
+    // Merge coincident vertices (the operands' independent seam vertices
+    // along the shared SSI curve land at the same point).
+    let vkeys: Vec<VertexKey> = dst.vertices.iter().map(|(k, _)| k).collect();
+    let mut alive = vec![true; vkeys.len()];
+    for i in 0..vkeys.len() {
+        if !alive[i] {
+            continue;
+        }
+        let pi = match dst.vertices.get(vkeys[i]) {
+            Some(v) => v.point,
+            None => continue,
+        };
+        for j in (i + 1)..vkeys.len() {
+            if !alive[j] {
+                continue;
+            }
+            let pj = match dst.vertices.get(vkeys[j]) {
+                Some(v) => v.point,
+                None => continue,
+            };
+            if (pi - pj).norm() <= vtol {
+                // Repoint edges from vkeys[j] to vkeys[i].
+                let eks: Vec<EdgeKey> = dst.edges.iter().map(|(k, _)| k).collect();
+                for ek in eks {
+                    if let Some(e) = dst.edges.get_mut(ek) {
+                        if e.bounds.0 == vkeys[j] {
+                            e.bounds.0 = vkeys[i];
+                        }
+                        if e.bounds.1 == vkeys[j] {
+                            e.bounds.1 = vkeys[i];
+                        }
+                    }
+                }
+                if let Some(id) = dst.vertices.get(vkeys[j]).map(|v| v.id) {
+                    dst.unregister(&mut rec, id);
+                }
+                dst.vertices.remove(vkeys[j]);
+                alive[j] = false;
+            }
+        }
+    }
+
+    // Glue coincident seam edges: edges that are radial-1 (dangling
+    // after import) and share bounds (post-merge) pair up.
+    let dangling: Vec<EdgeKey> = dst
+        .edges
+        .iter()
+        .filter(|(_, e)| e.radial.len() == 1)
+        .map(|(k, _)| k)
+        .collect();
+    let mut used = vec![false; dangling.len()];
+    for i in 0..dangling.len() {
+        if used[i] {
+            continue;
+        }
+        let (bi, _) = match dst.edges.get(dangling[i]) {
+            Some(e) => (e.bounds, ()),
+            None => continue,
+        };
+        for j in (i + 1)..dangling.len() {
+            if used[j] {
+                continue;
+            }
+            let bj = match dst.edges.get(dangling[j]) {
+                Some(e) => e.bounds,
+                None => continue,
+            };
+            let aligned = bi == bj;
+            let reversed = bi == (bj.1, bj.0);
+            if aligned || reversed {
+                // Move edge j's fin onto edge i; drop edge j.
+                let moved: Vec<_> = dst
+                    .edges
+                    .get(dangling[j])
+                    .map(|e| e.radial.clone())
+                    .unwrap_or_default();
+                for fk in &moved {
+                    if let Some(f) = dst.fins.get_mut(*fk) {
+                        f.edge = dangling[i];
+                        if reversed {
+                            f.forward = !f.forward;
+                        }
+                    }
+                }
+                if let Some(e) = dst.edges.get_mut(dangling[i]) {
+                    e.radial.extend(moved);
+                }
+                if let Some(id) = dst.edges.get(dangling[j]).map(|e| e.id) {
+                    dst.unregister(&mut rec, id);
+                }
+                dst.edges.remove(dangling[j]);
+                used[i] = true;
+                used[j] = true;
+                break;
+            }
+        }
+    }
+
+    // Two-region partition: front (outward) -> infinite, back -> solid.
+    let solid_shell = dst.new_shell(&mut rec, solid, Derivation::Created);
+    let inf_shell = dst.new_shell(&mut rec, inf, Derivation::Created);
+    if let Some(s) = dst.shells.get_mut(solid_shell) {
+        s.faces = faces.iter().map(|&f| (f, Side::Back)).collect();
+    }
+    if let Some(s) = dst.shells.get_mut(inf_shell) {
+        s.faces = faces.iter().map(|&f| (f, Side::Front)).collect();
+    }
+    if let Some(r) = dst.regions.get_mut(solid) {
+        r.shells.push(solid_shell);
+    }
+    if let Some(r) = dst.regions.get_mut(inf) {
+        r.shells.push(inf_shell);
+    }
+    let _ = rec.finish();
+
+    match dst.validate() {
+        Ok(()) => Ok(dst),
+        Err(_) => Err(BoolFault::AssemblyFailed("stitched (curved) body invalid")),
+    }
+}
+
 pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, BoolFault> {
     let (seams, mut faults) = seam_curves(a, b, tol);
     // Coplanar/coincident or tangential face pairs are M6b. Decline
@@ -799,22 +1115,35 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, B
     let class_a = classify_faces(&ia.body, b, tol);
     let class_b = classify_faces(&ib.body, a, tol);
     let kept = select_faces(op, &class_a, &class_b);
-    let polys = kept_to_polys(&ia.body, &ib.body, &kept, &mut faults);
-    let body = build_result_solid(&polys, tol)?;
+    // Curved results need the import-and-glue stitch (the polygon soup
+    // would flatten them); all-planar results use the soup builder.
+    let all_planar = kept.iter().all(|k| {
+        let body = match k.operand {
+            Operand::A => &ia.body,
+            Operand::B => &ib.body,
+        };
+        matches!(body.face_surface3(k.face), Some(Surface3::Plane(_)))
+    });
+    let body = if all_planar {
+        let polys = kept_to_polys(&ia.body, &ib.body, &kept, &mut faults);
+        build_result_solid(&polys, tol)?
+    } else {
+        stitch_by_import(&ia, &ib, &kept, tol)?
+    };
     // Post-condition: a real solid has positive, finite volume. The
     // scalar Euler identity is necessary but not sufficient (a few
     // faces can satisfy it without bounding a solid), so near-degenerate
     // configurations -- thin slivers, large scale disparities where a
     // small seam fails to imprint -- can slip through as Euler-valid yet
-    // geometrically degenerate. Decline those honestly rather than
-    // return a wrong answer (robust tolerant scaling is M6b).
-    match body.mass_properties() {
-        Ok(m) if m.volume.is_finite() && m.volume > 0.0 => {}
-        _ => {
-            return Err(BoolFault::AssemblyFailed(
-                "degenerate result (non-positive volume)",
-            ));
-        }
+    // geometrically degenerate. Decline those honestly. The tessellated
+    // boundary volume is surface-type-agnostic (works for curved results
+    // where the exact trimmed mass-properties integral is not yet
+    // available), so it is the uniform degeneracy guard.
+    let v = body.tessellated_volume();
+    if !(v.is_finite() && v > 1e-9 * (1.0 + v.abs())) {
+        return Err(BoolFault::AssemblyFailed(
+            "degenerate result (non-positive volume)",
+        ));
     }
     Ok(BoolResult { body, faults, op })
 }
@@ -1698,6 +2027,44 @@ mod tests {
         assert_eq!(ib.body.counts().f, 7, "B faces after imprint");
         assert_eq!(ia.seam_edges.len(), 4);
         assert_eq!(ib.seam_edges.len(), 1);
+    }
+
+    #[test]
+    fn sphere_sphere_intersection_is_a_lens() {
+        // Two unit spheres at z=0 and z=1.5. A ∩ B = a lens (two
+        // spherical caps glued at the SSI circle). Cap height
+        // h = R - d/2 = 0.25; V_lens = 2*(pi h^2/3)(3R - h) ~= 0.3601.
+        let a = z_sphere(Vec3::ZERO, 1.0);
+        let b = z_sphere(Vec3::new(0.0, 0.0, 1.5), 1.0);
+        let res = boolean(&a, &b, BoolOp::Intersection, 1e-7).unwrap();
+        assert!(
+            res.body.validate().is_ok(),
+            "lens invalid: {:?}",
+            res.faults
+        );
+        assert_eq!(res.body.counts().f, 2, "lens has two cap faces");
+        // The lens midpoint is inside both spheres -> inside the result;
+        // a point just outside the lens is out.
+        let w_in = res
+            .body
+            .generalized_winding_number(Vec3::new(0.0, 0.0, 0.75));
+        let w_out = res
+            .body
+            .generalized_winding_number(Vec3::new(0.0, 0.0, 2.0));
+        assert!(w_in > 0.5, "lens midpoint winding {w_in} should be inside");
+        assert!(
+            w_out < 0.5,
+            "point above lens winding {w_out} should be outside"
+        );
+        // Volume via the tessellated oracle (exact trimmed-cap mass
+        // properties is the staged Task-5 item); coarse, so 5% tol.
+        let h = 0.25;
+        let v_lens = 2.0 * (core::f64::consts::PI * h * h / 3.0) * (3.0 - h);
+        let v = res.body.tessellated_volume();
+        assert!(
+            (v - v_lens).abs() < 0.05 * v_lens,
+            "lens volume {v} vs exact {v_lens}"
+        );
     }
 
     #[test]
