@@ -177,6 +177,183 @@ pub struct ImprintedOperand {
     pub seam_edges: Vec<crate::entity::EdgeKey>,
 }
 
+/// A face fragment's position relative to the OTHER operand solid.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FaceClass {
+    InsideOther,
+    OutsideOther,
+    /// On the other operand's boundary (coincident) -> M6b.
+    OnOther,
+    /// Could not find an interior sample / classify.
+    Unknown,
+}
+
+impl Body {
+    /// Sample a fin's edge 3D curve in the fin's traversal direction
+    /// (`m` points, start inclusive). Returns None if the edge has no
+    /// curve.
+    fn fin_curve_samples(&self, fin: FinKey, m: usize) -> Option<Vec<keel_math::vec::Vec3>> {
+        use keel_geom::curve::Curve3;
+        let f = self.fins.get(fin)?;
+        let e = self.edges.get(f.edge)?;
+        let (ck, csense) = e.curve?;
+        let c = self.curves.get(ck)?;
+        let fwd = csense == f.forward;
+        let eval = |s: f64| -> keel_math::vec::Vec3 {
+            match c {
+                Curve3::Nurbs(n) => {
+                    let (a, b) = n.domain();
+                    n.point(a + s * (b - a))
+                }
+                Curve3::Circle(ci) => ci.point(core::f64::consts::TAU * s),
+                Curve3::Line(l) => l.point(s),
+                Curve3::Ellipse(el) => el.point(core::f64::consts::TAU * s),
+            }
+        };
+        let mut out = Vec::with_capacity(m);
+        for i in 0..m {
+            let s = i as f64 / m as f64;
+            out.push(eval(if fwd { s } else { 1.0 - s }));
+        }
+        Some(out)
+    }
+
+    /// A 3D point on `face`'s surface, strictly interior to its trim
+    /// loops. Builds each loop's UV polygon by projecting its 3D
+    /// vertices onto the surface (exact for planes, no dependency on
+    /// stored pcurve completeness), then grid-samples the outer loop's
+    /// UV box and winding-tests against every loop. Analytic faces only.
+    pub(crate) fn face_interior_point(&self, face: FaceKey) -> Option<keel_math::vec::Vec3> {
+        let surf = self.face_surface3(face)?;
+        let loops: Vec<crate::entity::LoopKey> =
+            self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default();
+        // Build each loop's UV polygon by sampling its fins' EDGE 3D
+        // curves (handles closed-curve edges like the ring, which have
+        // only one vertex) and projecting to the surface.
+        let mut uv_loops: Vec<Vec<(f64, f64)>> = Vec::new();
+        for lk in &loops {
+            let Some(entry) = self.loops.get(*lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut poly: Vec<(f64, f64)> = Vec::new();
+            let mut cur = entry;
+            loop {
+                if let Some(samples) = self.fin_curve_samples(cur, 16) {
+                    for p in samples {
+                        if let Ok(pr) = surf.project(p) {
+                            poly.push((pr.u, pr.v));
+                        }
+                    }
+                }
+                let Some(next) = self.fins.get(cur).map(|f| f.next) else {
+                    break;
+                };
+                cur = next;
+                if cur == entry {
+                    break;
+                }
+            }
+            if poly.len() >= 3 {
+                uv_loops.push(poly);
+            }
+        }
+        let outer = uv_loops.first()?;
+        let (mut umin, mut umax, mut vmin, mut vmax) =
+            (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
+        for &(u, v) in outer {
+            umin = umin.min(u);
+            umax = umax.max(u);
+            vmin = vmin.min(v);
+            vmax = vmax.max(v);
+        }
+        // Pick the MOST CENTRAL interior sample (max distance to every
+        // loop boundary), so the classification point sits well away
+        // from the seams (which lie on the other operand's boundary).
+        const N: usize = 24;
+        let mut best: Option<((f64, f64), f64)> = None;
+        for i in 1..N {
+            for j in 1..N {
+                let u = umin + (umax - umin) * (i as f64 / N as f64);
+                let v = vmin + (vmax - vmin) * (j as f64 / N as f64);
+                if !winding_nonzero(&uv_loops[0], (u, v)) {
+                    continue;
+                }
+                if uv_loops[1..].iter().any(|h| winding_nonzero(h, (u, v))) {
+                    continue;
+                }
+                let d = uv_loops
+                    .iter()
+                    .map(|poly| dist_to_polyline(poly, (u, v)))
+                    .fold(f64::INFINITY, f64::min);
+                if best.is_none() || d > best.unwrap().1 {
+                    best = Some(((u, v), d));
+                }
+            }
+        }
+        best.map(|((u, v), _)| surf.point(u, v))
+    }
+}
+
+/// Minimum distance from a point to a closed polyline's edges.
+fn dist_to_polyline(poly: &[(f64, f64)], q: (f64, f64)) -> f64 {
+    let n = poly.len();
+    let mut best = f64::INFINITY;
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        let (abx, aby) = (b.0 - a.0, b.1 - a.1);
+        let len2 = abx * abx + aby * aby;
+        let t = if len2 > 0.0 {
+            (((q.0 - a.0) * abx + (q.1 - a.1) * aby) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let (cx, cy) = (a.0 + t * abx - q.0, a.1 + t * aby - q.1);
+        best = best.min((cx * cx + cy * cy).sqrt());
+    }
+    best
+}
+
+/// Nonzero-winding point-in-polygon (signed angle sum).
+fn winding_nonzero(poly: &[(f64, f64)], q: (f64, f64)) -> bool {
+    let mut total = 0.0f64;
+    let n = poly.len();
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        let va = (a.0 - q.0, a.1 - q.1);
+        let vb = (b.0 - q.0, b.1 - q.1);
+        let cross = va.0 * vb.1 - va.1 * vb.0;
+        let dot = va.0 * vb.0 + va.1 * vb.1;
+        total += cross.atan2(dot);
+    }
+    (total / core::f64::consts::TAU).abs() > 0.5
+}
+
+/// Classify every face of `working` against the `other` operand solid:
+/// sample the face interior and test containment in `other`.
+pub(crate) fn classify_faces(
+    working: &Body,
+    other: &Body,
+    _tol: f64,
+) -> Vec<(FaceKey, FaceClass)> {
+    use crate::pmc::Containment;
+    let mut out = Vec::new();
+    for face in working.face_keys() {
+        let class = match working.face_interior_point(face) {
+            Some(p) => match other.classify_point(p) {
+                Ok(Containment::In(_)) => FaceClass::InsideOther,
+                Ok(Containment::Out) => FaceClass::OutsideOther,
+                Ok(Containment::On(_)) => FaceClass::OnOther,
+                Err(_) => FaceClass::Unknown,
+            },
+            None => FaceClass::Unknown,
+        };
+        out.push((face, class));
+    }
+    out
+}
+
 /// Endpoints of a seam curve (sample at the parameter ends; closed
 /// curves return the seam point twice).
 fn curve_endpoints(c: &keel_geom::curve::Curve3) -> (keel_math::vec::Vec3, keel_math::vec::Vec3) {
@@ -463,6 +640,12 @@ fn imprint_operand(
             };
             match working.split_face(fa, fb, None) {
                 Ok(out) => {
+                    // The new fragment inherits the parent's surface.
+                    if let Some(surf) = working.faces.get(face).and_then(|f| f.surface)
+                        && let Some(nf) = working.faces.get_mut(out.face_new)
+                    {
+                        nf.surface = Some(surf);
+                    }
                     working.attach_seam_geometry(out.edge, face, &seams[members[0]].curve, tol);
                     working.debug_validate();
                     seam_edges.push(out.edge);
@@ -677,6 +860,30 @@ mod tests {
             }
             other => panic!("expected circle, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn guillotine_classify_fragments() {
+        let a = block(Vec3::ZERO, Vec3::new(4., 4., 4.));
+        let b = block(Vec3::new(2., -1., -1.), Vec3::new(4., 6., 6.));
+        let (ia, ib, faults) = imprint_pair(&a, &b, 1e-7);
+        assert!(faults.is_empty(), "faults: {faults:?}");
+        // A's faces vs B: the x>2 fragments are inside B, x<2 outside.
+        let ca = classify_faces(&ia.body, &b, 1e-7);
+        let inside_a = ca.iter().filter(|(_, c)| *c == FaceClass::InsideOther).count();
+        let outside_a = ca.iter().filter(|(_, c)| *c == FaceClass::OutsideOther).count();
+        let bad_a = ca.iter().filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther)).count();
+        assert_eq!(bad_a, 0, "A unclassified/coincident: {ca:?}");
+        // 4 cut side-faces -> 4 inside fragments + 4 outside fragments;
+        // x=4 face inside, x=0 face outside. => 5 inside, 5 outside.
+        assert_eq!((inside_a, outside_a), (5, 5), "A class counts {ca:?}");
+        // B's faces vs A: the inner rectangle on x=2 is inside A; its
+        // outer remainder and the far faces are outside A.
+        let cb = classify_faces(&ib.body, &a, 1e-7);
+        let inside_b = cb.iter().filter(|(_, c)| *c == FaceClass::InsideOther).count();
+        let bad_b = cb.iter().filter(|(_, c)| matches!(c, FaceClass::Unknown | FaceClass::OnOther)).count();
+        assert_eq!(bad_b, 0, "B unclassified/coincident: {cb:?}");
+        assert_eq!(inside_b, 1, "only B's inner x=2 rectangle is inside A: {cb:?}");
     }
 
     #[test]
