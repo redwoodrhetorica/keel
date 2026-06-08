@@ -283,6 +283,39 @@ mod tests {
     }
 
     #[test]
+    fn non_star_convex_prism_volume_needs_earclip() {
+        // A U-shaped prism: its cap centroid (~1.5, 1.3) lands in the
+        // NOTCH (outside the material), so the old centroid-fan mis-areas
+        // the cap. Ear-clipping triangulates it correctly. U-area = 3x3
+        // outer minus the [1,2]x[1,3] notch (=2) = 7; height 1 -> vol 7.
+        let u = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(3.0, 0.0, 0.0),
+            Vec3::new(3.0, 3.0, 0.0),
+            Vec3::new(2.0, 3.0, 0.0),
+            Vec3::new(2.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(1.0, 3.0, 0.0),
+            Vec3::new(0.0, 3.0, 0.0),
+        ];
+        let mut b = Body::new();
+        b.prism(&u, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        assert!(b.validate().is_ok(), "U-prism invalid");
+        let v = b.mesh_volume();
+        assert!(
+            (v - 7.0).abs() < 1e-9,
+            "U-prism mesh_volume {v} != 7 (ear-clip)"
+        );
+        // Surface area is also exact: 2 caps (7 each) + the U perimeter
+        // (3+3+1+2+1+1+2+3 = 16) * height 1.
+        assert!(
+            (b.surface_area() - (14.0 + 16.0)).abs() < 1e-9,
+            "U-prism area {}",
+            b.surface_area()
+        );
+    }
+
+    #[test]
     fn cone_is_first_class_in_tessellation() {
         // Before tessellate_cone, the lateral contributed no triangles ->
         // bbox/area were wrong. Cone radius 1, height 1, apex at z=1.
