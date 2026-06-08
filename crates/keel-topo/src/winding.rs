@@ -1,0 +1,132 @@
+//! Generalized winding number (M6b): the robust, surface-type-agnostic
+//! point classifier the `d-booleans-tolerant.md` design mandate calls
+//! for ("the most robust and most composable classification strategy
+//! known"). For an outward-oriented closed boundary `S`,
+//! `w(p) = (1/4pi) * sum of signed solid angles` is ~1 inside the
+//! solid, ~0 outside, and varies continuously through ~0.5 across the
+//! surface (graceful degradation where ray-cast PMC is fragile).
+
+use crate::body::Body;
+use keel_math::vec::Vec3;
+
+/// Signed solid angle of triangle (a, b, c) seen from `p`
+/// (Van Oosterom-Strackee). Positive when (a, b, c) winds
+/// counterclockwise as seen from `p` (i.e. the outward face is toward
+/// p's exterior). Zero when p is coplanar within the triangle.
+pub fn tri_solid_angle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
+    let (x, y, z) = (a - p, b - p, c - p);
+    let (xl, yl, zl) = (x.norm(), y.norm(), z.norm());
+    if xl == 0.0 || yl == 0.0 || zl == 0.0 {
+        return 0.0;
+    }
+    let num = x.dot(y.cross(z));
+    let den = xl * yl * zl + x.dot(y) * zl + y.dot(z) * xl + z.dot(x) * yl;
+    2.0 * num.atan2(den)
+}
+
+impl Body {
+    /// Generalized winding number of `p` against this body's boundary:
+    /// `(1/4pi) * sum_triangles signed_solid_angle`. ~1 inside, ~0
+    /// outside, ~0.5 on the boundary. Surface-type-agnostic (works on
+    /// periodic faces with no pcurve dependency).
+    pub fn generalized_winding_number(&self, p: Vec3) -> f64 {
+        let mut total = 0.0f64;
+        for face in self.face_keys() {
+            for tri in self.tessellate_face(face) {
+                total += tri_solid_angle(p, tri[0], tri[1], tri[2]);
+            }
+        }
+        total / (4.0 * core::f64::consts::PI)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use keel_geom::surface::Frame3;
+
+    fn box_body(o: Vec3, d: f64) -> Body {
+        let mut b = Body::new();
+        b.block(o, d, d, d).unwrap();
+        b
+    }
+
+    fn sphere_body(c: Vec3, r: f64) -> Body {
+        let mut b = Body::new();
+        b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r)
+            .unwrap();
+        b
+    }
+
+    // ---- Task 0 (MANDATE): winding-number soundness -------------------
+
+    #[test]
+    fn gwn_box_inside_is_one_outside_is_zero() {
+        // Magnitude ladder of sizes and positions.
+        for &(scale, shift) in &[(1.0, 0.0), (10.0, 0.0), (0.5, 50.0), (3.0, -20.0)] {
+            let o = Vec3::new(shift, shift, shift);
+            let b = box_body(o, scale);
+            let inside = o + Vec3::new(scale * 0.5, scale * 0.5, scale * 0.5);
+            let outside = o + Vec3::new(scale * 3.0, 0.0, 0.0);
+            let wi = b.generalized_winding_number(inside);
+            let wo = b.generalized_winding_number(outside);
+            assert!((wi - 1.0).abs() < 1e-3, "box inside w={wi} (scale {scale})");
+            assert!(wo.abs() < 1e-3, "box outside w={wo} (scale {scale})");
+        }
+    }
+
+    #[test]
+    fn gwn_sphere_inside_is_one_outside_is_zero() {
+        for &(r, shift) in &[(1.0, 0.0), (5.0, 0.0), (2.0, 30.0), (0.5, -10.0)] {
+            let c = Vec3::new(shift, -shift, shift * 0.5);
+            let b = sphere_body(c, r);
+            let wi = b.generalized_winding_number(c); // center
+            let wo = b.generalized_winding_number(c + Vec3::new(r * 4.0, 0.0, 0.0));
+            assert!((wi - 1.0).abs() < 2e-3, "sphere center w={wi} (r {r})");
+            assert!(wo.abs() < 2e-3, "sphere outside w={wo} (r {r})");
+        }
+    }
+
+    #[test]
+    fn gwn_orientation_audit_is_positive_inside() {
+        // A consistently outward boundary gives +1 inside, not -1: this
+        // cross-checks the M3 face-side conventions (as M4 mass props
+        // did) on a fresh, independent computation.
+        let b = box_body(Vec3::ZERO, 2.0);
+        let w = b.generalized_winding_number(Vec3::new(1.0, 1.0, 1.0));
+        assert!(w > 0.9, "orientation: inside winding should be +1, got {w}");
+    }
+
+    #[test]
+    fn gwn_degrades_gracefully_across_a_face() {
+        // Crossing a face, w transitions continuously through ~0.5 with
+        // no jumps or NaN (the property ray-cast PMC lacks).
+        let b = box_body(Vec3::ZERO, 2.0); // [0,2]^3, face x=2
+        let mut prev = b.generalized_winding_number(Vec3::new(-1.0, 1.0, 1.0));
+        let mut crossed_half = false;
+        for k in 0..=40 {
+            let x = -1.0 + 4.0 * k as f64 / 40.0; // -1 .. 3 through x in [0,2]
+            let w = b.generalized_winding_number(Vec3::new(x, 1.0, 1.0));
+            assert!(w.is_finite(), "w NaN at x={x}");
+            assert!((w - prev).abs() < 0.6, "winding jump at x={x}: {prev}->{w}");
+            if (w - 0.5).abs() < 0.2 {
+                crossed_half = true;
+            }
+            prev = w;
+        }
+        assert!(
+            crossed_half,
+            "winding never passed through ~0.5 crossing the face"
+        );
+    }
+
+    #[test]
+    fn gwn_is_deterministic() {
+        let b = sphere_body(Vec3::ZERO, 1.0);
+        let p = Vec3::new(0.1, 0.2, 0.3);
+        assert_eq!(
+            b.generalized_winding_number(p).to_bits(),
+            b.generalized_winding_number(p).to_bits()
+        );
+    }
+}
