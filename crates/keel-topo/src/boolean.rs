@@ -63,6 +63,77 @@ impl Body {
             .collect()
     }
 
+    /// Axial heights (relative to `origin` along `ez`) of every
+    /// circle/ellipse-curved edge of `face` -- the cap circles AND the
+    /// SSI arcs that bound a cylindrical band. (Arcs are open edges, so
+    /// closed-ness is NOT required.)
+    pub(crate) fn cyl_circle_heights(
+        &self,
+        face: FaceKey,
+        origin: keel_math::vec::Vec3,
+        ez: keel_math::vec::Vec3,
+    ) -> Vec<f64> {
+        use keel_geom::curve::Curve3;
+        let mut heights = Vec::new();
+        for lk in self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default()
+        {
+            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            while let Some(fin) = self.fins.get(cur) {
+                if let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve) {
+                    match self.curves.get(ck) {
+                        Some(Curve3::Circle(c)) => heights.push((c.center - origin).dot(ez)),
+                        Some(Curve3::Ellipse(e)) => heights.push((e.center - origin).dot(ez)),
+                        _ => {}
+                    }
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        heights
+    }
+
+    /// True unless `face` is a cylindrical lateral face and the closed
+    /// `curve`'s axial height falls OUTSIDE the face's actual height band
+    /// (the surface-surface SSI uses the unbounded cylinder, so it can
+    /// produce a circle outside the trimmed lateral). Non-cylinder faces
+    /// and non-planar curves are unconstrained here.
+    pub(crate) fn curve_on_cylinder_face(
+        &self,
+        face: FaceKey,
+        curve: &keel_geom::curve::Curve3,
+        tol: f64,
+    ) -> bool {
+        use keel_geom::curve::Curve3;
+        let Some(Surface3::Cylinder(c)) = self.face_surface3(face) else {
+            return true;
+        };
+        let (origin, ez) = (c.frame.origin, c.frame.z);
+        let curve_h = match curve {
+            Curve3::Circle(ci) => (ci.center - origin).dot(ez),
+            Curve3::Ellipse(e) => (e.center - origin).dot(ez),
+            _ => return true,
+        };
+        // Band from the face's circle/arc edges.
+        let heights = self.cyl_circle_heights(face, origin, ez);
+        if heights.len() < 2 {
+            return true; // cannot determine a band; do not reject
+        }
+        let hlo = heights.iter().cloned().fold(f64::INFINITY, f64::min);
+        let hhi = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let t = tol.max(1e-7);
+        curve_h >= hlo - t && curve_h <= hhi + t
+    }
+
     /// The analytic surface backing a face, if any (M6a is analytic).
     pub(crate) fn face_surface3(&self, face: FaceKey) -> Option<Surface3> {
         let (sk, _) = self.faces.get(face).and_then(|f| f.surface)?;
@@ -309,7 +380,11 @@ impl Body {
     /// Sample a fin's edge 3D curve in the fin's traversal direction
     /// (`m` points, start inclusive). Returns None if the edge has no
     /// curve.
-    fn fin_curve_samples(&self, fin: FinKey, m: usize) -> Option<Vec<keel_math::vec::Vec3>> {
+    pub(crate) fn fin_curve_samples(
+        &self,
+        fin: FinKey,
+        m: usize,
+    ) -> Option<Vec<keel_math::vec::Vec3>> {
         use keel_geom::curve::Curve3;
         let f = self.fins.get(fin)?;
         let e = self.edges.get(f.edge)?;
@@ -340,6 +415,27 @@ impl Body {
     /// vertices onto the surface (exact for planes, no dependency on
     /// stored pcurve completeness), then grid-samples the outer loop's
     /// UV box and winding-tests against every loop. Analytic faces only.
+    /// Interior point of a cylindrical lateral fragment: a point on the
+    /// lateral at the fragment's mid-height (the band bounded by its
+    /// CLOSED circle edges), at the angle opposite the seam (which sits
+    /// at angle 0). Robust for the periodic cylinder.
+    fn cylinder_face_interior_point(
+        &self,
+        face: FaceKey,
+        cyl: &keel_geom::surface::Cylinder3,
+    ) -> Option<keel_math::vec::Vec3> {
+        let (origin, ex, ez, r) = (cyl.frame.origin, cyl.frame.x, cyl.frame.z, cyl.radius);
+        let heights = self.cyl_circle_heights(face, origin, ez);
+        if heights.len() < 2 {
+            return None;
+        }
+        let hlo = heights.iter().cloned().fold(f64::INFINITY, f64::min);
+        let hhi = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let hmid = 0.5 * (hlo + hhi);
+        // Angle pi (opposite the seam at angle 0): origin - ex*r + ez*hmid.
+        Some(origin + ex * (-r) + ez * hmid)
+    }
+
     /// Interior point of a spherical cap fragment: the cap apex, on the
     /// side of the bounding SSI circle that this face occupies (chosen
     /// by the boundary fin's into-face direction). Robust for the
@@ -408,10 +504,13 @@ impl Body {
 
     pub(crate) fn face_interior_point(&self, face: FaceKey) -> Option<keel_math::vec::Vec3> {
         let surf = self.face_surface3(face)?;
-        // Curved faces (M6b: spheres) need a 3D interior point: their
-        // periodic parameterization defeats the planar UV-winding path.
+        // Curved faces need a 3D interior point: their periodic
+        // parameterization defeats the planar UV-winding path.
         if let Surface3::Sphere(_) = surf {
             return self.sphere_face_interior_point(face);
+        }
+        if let Surface3::Cylinder(c) = &surf {
+            return self.cylinder_face_interior_point(face, c);
         }
         let loops: Vec<crate::entity::LoopKey> = self
             .faces
@@ -1560,10 +1659,16 @@ fn imprint_operand(
         groups.entry(id).or_insert((face, Vec::new())).1.push(i);
     }
 
-    // Phase 1: pre-split boundary edges at unique seam endpoints that
-    // lie on them.
+    // Phase 1: pre-split boundary edges at unique OPEN-seam endpoints
+    // (corners of open chains). Closed curves are skipped: their two
+    // "endpoints" are the same degenerate point, which for a cylinder
+    // SSI circle is exactly the seam crossing -- pre-splitting there
+    // would defeat the crossing imprint.
     let mut corners: Vec<Vec3> = Vec::new();
     for s in seams {
+        if s.closed {
+            continue;
+        }
         let (p0, p1) = curve_endpoints(&s.curve);
         for p in [p0, p1] {
             if !corners.iter().any(|q| (*q - p).norm() <= etol) {
@@ -1583,9 +1688,18 @@ fn imprint_operand(
             .iter()
             .map(|&i| curve_endpoints(&seams[i].curve))
             .collect();
-        // A single, already-closed curve (e.g. a sphere SSI circle).
+        // A single, already-closed curve. A sphere/planar SSI circle is
+        // interior to its face (ring imprint); a cylinder SSI circle
+        // wraps the lateral face and crosses its seam line (crossing
+        // imprint).
         if members.len() == 1 && seams[members[0]].closed {
-            match working.imprint_closed_curve(face, &seams[members[0]].curve, tol) {
+            let curve = &seams[members[0]].curve;
+            let res = if working.closed_curve_crosses_boundary(face, curve, tol) {
+                working.imprint_closed_curve_crossing(face, curve, tol)
+            } else {
+                working.imprint_closed_curve(face, curve, tol)
+            };
+            match res {
                 Ok(rep) => seam_edges.push(rep.edge),
                 Err(e) => faults.push(BoolFault::Topo(e)),
             }
@@ -1695,6 +1809,15 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                             }
                             continue;
                         }
+                        // Surface-surface SSI uses the UNBOUNDED surfaces;
+                        // reject a closed curve that does not lie on both
+                        // faces' trimmed extents (an infinite cylinder
+                        // meets a plane outside the actual cylinder face).
+                        if !a.curve_on_cylinder_face(fa, &c.curve, tol)
+                            || !b.curve_on_cylinder_face(fb, &c.curve, tol)
+                        {
+                            continue;
+                        }
                         seams.push(SeamCurve {
                             face_a: fa,
                             face_b: fb,
@@ -1742,6 +1865,57 @@ mod tests {
         let mut b = Body::new();
         b.block(origin, ext.x, ext.y, ext.z).unwrap();
         b
+    }
+
+    fn z_cylinder(base: Vec3, r: f64, h: f64) -> Body {
+        let mut b = Body::new();
+        b.cylinder(Frame3::from_z(base, Vec3::new(0., 0., 1.)).unwrap(), r, h)
+            .unwrap();
+        b
+    }
+
+    #[test]
+    fn block_minus_cylinder_blind_hole() {
+        // Block [0,4]^3 drilled from the top by a radius-1 cylinder on
+        // the central axis, from z=2 (hole floor) up through z=4 and out
+        // to z=6. A - B removes the cylinder segment z in [2,4]:
+        // V = 4^3 - pi*1^2*2 = 64 - 2pi.
+        let a = block(Vec3::ZERO, Vec3::new(4., 4., 4.));
+        let b = z_cylinder(Vec3::new(2., 2., 2.), 1.0, 4.0);
+        let res = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
+        assert!(
+            res.body.validate().is_ok(),
+            "drilled block invalid: {:?}",
+            res.faults
+        );
+        let v = res.body.tessellated_volume();
+        let exp = 64.0 - 2.0 * core::f64::consts::PI;
+        assert!((v - exp).abs() < 0.03 * exp, "drilled volume {v} vs {exp}");
+        let w_solid = res
+            .body
+            .generalized_winding_number(Vec3::new(0.5, 0.5, 2.0));
+        let w_hole = res
+            .body
+            .generalized_winding_number(Vec3::new(2.0, 2.0, 3.0));
+        assert!(w_solid > 0.5, "material winding {w_solid} should be inside");
+        assert!(w_hole < 0.5, "hole winding {w_hole} should be outside");
+    }
+
+    #[test]
+    fn block_intersect_cylinder_is_a_plug() {
+        // A ∩ B = the cylinder segment inside the block: radius 1,
+        // z in [2,4] plug. V = pi*1^2*2.
+        let a = block(Vec3::ZERO, Vec3::new(4., 4., 4.));
+        let b = z_cylinder(Vec3::new(2., 2., 2.), 1.0, 4.0);
+        let res = boolean(&a, &b, BoolOp::Intersection, 1e-7).unwrap();
+        assert!(
+            res.body.validate().is_ok(),
+            "plug invalid: {:?}",
+            res.faults
+        );
+        let v = res.body.tessellated_volume();
+        let exp = core::f64::consts::PI * 2.0;
+        assert!((v - exp).abs() < 0.03 * exp, "plug volume {v} vs {exp}");
     }
 
     #[test]

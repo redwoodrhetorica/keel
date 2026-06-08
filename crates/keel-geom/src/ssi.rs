@@ -1198,6 +1198,20 @@ fn plane_cylinder(plane: &Surface3, cyl: &Surface3, tol: f64) -> Result<SsiResul
     let denom = axis.dot(f.z);
     let t = (f.origin - c.frame.origin).dot(f.z) / denom;
     let center = c.frame.origin + axis * t;
+    // Perpendicular plane (the common slice / drill case): the section is
+    // a CIRCLE. `f.z.cross(axis)` is degenerate here (the plane normal is
+    // parallel to the axis), so use the cylinder's own in-plane frame
+    // axes, which lie in the plane.
+    if cos >= 1.0 - COINCIDENCE_ANG {
+        let circle = crate::curve::Circle3::new(center, c.frame.x, c.frame.y, c.radius)
+            .map_err(|_| GeomError::Degenerate)?;
+        return Ok(SsiResult::Curves(vec![SsiCurve {
+            curve: Curve3::Circle(circle),
+            closed: true,
+            tangential: false,
+            tol_achieved: 0.0,
+        }]));
+    }
     // Minor direction: in-plane and perpendicular to the axis
     // projection; major direction: in-plane along the axis tilt.
     let minor_dir =

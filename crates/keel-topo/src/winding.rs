@@ -105,6 +105,59 @@ mod tests {
         }
     }
 
+    fn cylinder_body(c: Vec3, r: f64, h: f64) -> Body {
+        let mut b = Body::new();
+        b.cylinder(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r, h)
+            .unwrap();
+        b
+    }
+
+    #[test]
+    fn gwn_cylinder_inside_is_one_outside_is_zero() {
+        // Task 0 (M6c): cylinder winding sound before classifying on it.
+        for &(r, h, shift) in &[
+            (1.0, 2.0, 0.0),
+            (3.0, 8.0, 0.0),
+            (0.5, 1.0, 25.0),
+            (2.0, 4.0, -15.0),
+        ] {
+            let c = Vec3::new(shift, shift * 0.5, -shift);
+            let b = cylinder_body(c, r, h);
+            let inside = c + Vec3::new(0.0, 0.0, h * 0.5); // on the axis, mid-height
+            let outside = c + Vec3::new(r * 4.0, 0.0, h * 0.5);
+            let wi = b.generalized_winding_number(inside);
+            let wo = b.generalized_winding_number(outside);
+            assert!((wi - 1.0).abs() < 2e-3, "cyl inside w={wi} (r {r} h {h})");
+            assert!(wo.abs() < 2e-3, "cyl outside w={wo} (r {r} h {h})");
+        }
+    }
+
+    #[test]
+    fn gwn_cylinder_orientation_and_graceful() {
+        let b = cylinder_body(Vec3::ZERO, 1.0, 2.0); // axis z, [0,2]
+        // Inside is +1 (orientation audit).
+        let w = b.generalized_winding_number(Vec3::new(0.0, 0.0, 1.0));
+        assert!(w > 0.9, "cyl inside winding should be +1, got {w}");
+        // Crossing the lateral wall it is finite throughout and passes
+        // through the ~0.5 band (the property ray-cast PMC lacks: it
+        // would jump 0->1 with no transition). The coarse curved wall is
+        // steep, so no per-step continuity bound is asserted.
+        let mut crossed = false;
+        for k in 0..=80 {
+            let x = -2.0 + 4.0 * k as f64 / 80.0;
+            let wx = b.generalized_winding_number(Vec3::new(x, 0.0, 1.0));
+            assert!(wx.is_finite(), "cyl winding NaN at x={x}");
+            assert!(
+                (-0.5..=1.5).contains(&wx),
+                "cyl winding {wx} blew up at x={x}"
+            );
+            if (wx - 0.5).abs() < 0.25 {
+                crossed = true;
+            }
+        }
+        assert!(crossed, "cyl winding never passed ~0.5 crossing the wall");
+    }
+
     #[test]
     fn gwn_orientation_audit_is_positive_inside() {
         // A consistently outward boundary gives +1 inside, not -1: this

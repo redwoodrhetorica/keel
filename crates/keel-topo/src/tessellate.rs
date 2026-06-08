@@ -28,25 +28,145 @@ impl Body {
         match surf {
             Surface3::Plane(p) => self.tessellate_planar(face, p.frame.z, sense),
             Surface3::Sphere(s) => self.tessellate_sphere(face, s.frame.origin, s.radius, sense),
+            Surface3::Cylinder(c) => self.tessellate_cylinder(face, &c, sense),
             _ => Vec::new(),
         }
     }
 
-    /// Fan-triangulate a planar face's outer-loop polygon, oriented so
-    /// each triangle normal points along the face's outward normal
-    /// (`frame.z` adjusted by `sense`). Holes (inner loops) are ignored
-    /// in M6b (the proof primitives have none).
-    fn tessellate_planar(&self, face: FaceKey, nz: Vec3, sense: bool) -> Vec<[Vec3; 3]> {
-        let ring = self.face_ring_points(face);
-        if ring.len() < 3 {
+    /// Lat-band tessellate a cylindrical face. The axial band [hlo,hhi]
+    /// is bounded by the face's CLOSED circle edges (the cap circles of
+    /// the whole lateral, or the SSI + cap circles of a trimmed band);
+    /// the lateral is full-wrap so no angular trim. Outward = radial.
+    fn tessellate_cylinder(
+        &self,
+        face: FaceKey,
+        cyl: &keel_geom::surface::Cylinder3,
+        sense: bool,
+    ) -> Vec<[Vec3; 3]> {
+        let (origin, ex, ey, ez, radius) = (
+            cyl.frame.origin,
+            cyl.frame.x,
+            cyl.frame.y,
+            cyl.frame.z,
+            cyl.radius,
+        );
+        // Axial band from the face's circle/arc edges (cap circles and
+        // SSI arcs).
+        let heights = self.cyl_circle_heights(face, origin, ez);
+        if heights.len() < 2 {
             return Vec::new();
         }
-        let outward = if sense { nz } else { nz * -1.0 };
+        let hlo = heights.iter().cloned().fold(f64::INFINITY, f64::min);
+        let hhi = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        if hhi - hlo <= 0.0 {
+            return Vec::new();
+        }
+        const NV: usize = 16;
+        const NP: usize = 64;
+        let tau = core::f64::consts::TAU;
+        let sgn = if sense { 1.0 } else { -1.0 };
+        let pt = |phi: f64, v: f64| -> Vec3 {
+            origin + (ex * phi.cos() + ey * phi.sin()) * radius + ez * v
+        };
         let mut tris = Vec::new();
-        for i in 1..ring.len() - 1 {
-            tris.push(orient([ring[0], ring[i], ring[i + 1]], outward));
+        for i in 0..NV {
+            let v0 = hlo + (hhi - hlo) * i as f64 / NV as f64;
+            let v1 = hlo + (hhi - hlo) * (i + 1) as f64 / NV as f64;
+            for j in 0..NP {
+                let p0 = tau * j as f64 / NP as f64;
+                let p1 = tau * (j + 1) as f64 / NP as f64;
+                let a = pt(p0, v0);
+                let b = pt(p0, v1);
+                let c = pt(p1, v1);
+                let d = pt(p1, v0);
+                let rad = |q: Vec3| -> Vec3 {
+                    let w = q - origin;
+                    (w - ez * w.dot(ez)) * sgn
+                };
+                tris.push(orient([a, b, c], rad((a + b + c) * (1.0 / 3.0))));
+                tris.push(orient([a, c, d], rad((a + c + d) * (1.0 / 3.0))));
+            }
         }
         tris
+    }
+
+    /// Triangulate a planar face by fanning each loop's boundary polygon
+    /// (built by sampling the loop's edge CURVES, so circle- and
+    /// NURBS-bounded discs work, not just straight polygons) from its
+    /// centroid. The outer loop fans outward; inner-ring (hole) loops fan
+    /// with reversed orientation so their solid-angle / volume
+    /// contributions subtract the hole. Star-convex loops only (the M6c
+    /// primitive caps and the box faces are).
+    fn tessellate_planar(&self, face: FaceKey, nz: Vec3, sense: bool) -> Vec<[Vec3; 3]> {
+        let outward = if sense { nz } else { nz * -1.0 };
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        let mut tris = Vec::new();
+        for (li, lk) in loops.iter().enumerate() {
+            let poly = self.loop_polygon(*lk);
+            if poly.len() < 3 {
+                continue;
+            }
+            let n = poly.len();
+            let centroid = poly.iter().fold(Vec3::ZERO, |a, p| a + *p) * (1.0 / n as f64);
+            // Inner rings (holes) get reversed orientation to subtract.
+            let loop_out = if li == 0 { outward } else { outward * -1.0 };
+            for i in 0..n {
+                tris.push(orient([centroid, poly[i], poly[(i + 1) % n]], loop_out));
+            }
+        }
+        tris
+    }
+
+    /// A loop's boundary polygon: its fins' start vertices for a straight
+    /// polygon (box faces), or the boundary circle sampled into points
+    /// for a single closed-circle loop (disc caps, holes).
+    fn loop_polygon(&self, lk: crate::entity::LoopKey) -> Vec<Vec3> {
+        use keel_geom::curve::Curve3;
+        let mut verts: Vec<Vec3> = Vec::new();
+        let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+            return verts;
+        };
+        let mut cur = entry;
+        let mut circle_edge = None;
+        loop {
+            if let Some(p) = self
+                .fin_start_vertex(cur)
+                .and_then(|v| self.vertices.get(v))
+                .map(|v| v.point)
+                && verts.last().map(|q| (*q - p).norm() > 1e-9).unwrap_or(true)
+            {
+                verts.push(p);
+            }
+            if let Some(fin) = self.fins.get(cur)
+                && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                && let Some(Curve3::Circle(c)) = self.curves.get(ck)
+            {
+                circle_edge = Some(*c);
+            }
+            let Some(next) = self.fins.get(cur).map(|f| f.next) else {
+                break;
+            };
+            cur = next;
+            if cur == entry {
+                break;
+            }
+        }
+        if verts.len() >= 3 {
+            return verts;
+        }
+        // Degenerate vertex polygon (a disc bounded by one closed
+        // circle): sample the circle.
+        if let Some(c) = circle_edge {
+            const N: usize = 32;
+            return (0..N)
+                .map(|i| c.point(core::f64::consts::TAU * i as f64 / N as f64))
+                .collect();
+        }
+        verts
     }
 
     /// Lat-long tessellate a spherical face. When the face covers the
