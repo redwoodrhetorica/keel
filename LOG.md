@@ -1979,3 +1979,15 @@ extrude already existed as prism(); loft adds the two-profile ruled case.
 GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D
 warnings + workspace test). Pure constructor -> Euler-op fuzzing covers it.
 Merged.
+
+## Addendum 58 (2026-06-08): Interrogation -- SURFACE AREA (map 58 -> 59/144)
+
+surface_area() + face_area(face) (interrogate.rs): sum of outward-triangle
+areas (0.5*|(b-a)x(c-a)|) over the same tessellation the winding classifier
+and volume oracle use -- EXACT for planar faces, tessellation-approximate
+for curved (consistent with curved volume; exact analytic area is a later
+refinement). mass_properties() already reported volume/centroid/inertia, so
+this completes the headline integral-property quartet. Test: 2x3x4 block ->
+area 2(6+12+8) = 52 exactly.
+RUNNING TOTAL: 58 -> 59/144.
+GATE: exact CI triplet green. Merged.
