@@ -1668,3 +1668,19 @@ tessellation:
   projection later). Tested: separated spheres gap ~2.5; overlapping ~0.
 RUNNING TOTAL: capability map 37 -> 39/144.
 GATE: exact CI triplet green. Merged.
+
+## Addendum 43 (2026-06-08): Parity interrogation cont. -- clash + body equivalence (map 39 -> 41/144)
+
+- 102 CLASH / INTERFERENCE: Body::clashes(other) -> bool. bbox reject;
+  then surfaces-cross/touch via the analytic SSI (seam_curves non-empty,
+  or a Coincident/Tangent fault); else nesting via one winding-number
+  probe per side. Fast (SSI + 2 GWN probes, NOT the O(n*m) tessellation
+  sweep -- first cut used min_distance and ran 76s; rewrote to ~instant).
+  Tested: overlapping clash, separated no-clash, fully-nested clash.
+- 108 BODY EQUIVALENCE: Body::approx_equals(other, tol) -> bool. Equal
+  entity counts + genus + (within tol) bounding box + volume -- the cheap
+  CAx-IF validation-property comparison stage (research file 22), position
+  sensitive; exact B-rep equality oracle later. Tested: clone equal,
+  different-radius unequal, identical blocks equal.
+RUNNING TOTAL: capability map 39 -> 41/144.
+GATE: exact CI triplet green. Merged.
