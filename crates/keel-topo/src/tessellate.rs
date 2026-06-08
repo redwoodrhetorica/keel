@@ -26,6 +26,7 @@ impl Body {
                     self.tessellate_sphere(face, s.frame.origin, s.radius, sense)
                 }
                 Surface3::Cylinder(c) => self.tessellate_cylinder(face, &c.clone(), sense),
+                Surface3::Cone(c) => self.tessellate_cone(face, &c.clone(), sense),
                 _ => Vec::new(),
             },
             Some(crate::entity::SurfaceGeom::Nurbs(n)) => {
@@ -155,6 +156,67 @@ impl Body {
         let sgn = if sense { 1.0 } else { -1.0 };
         let pt = |phi: f64, v: f64| -> Vec3 {
             origin + (ex * phi.cos() + ey * phi.sin()) * radius + ez * v
+        };
+        let mut tris = Vec::new();
+        for i in 0..NV {
+            let v0 = hlo + (hhi - hlo) * i as f64 / NV as f64;
+            let v1 = hlo + (hhi - hlo) * (i + 1) as f64 / NV as f64;
+            for j in 0..NP {
+                let p0 = tau * j as f64 / NP as f64;
+                let p1 = tau * (j + 1) as f64 / NP as f64;
+                let a = pt(p0, v0);
+                let b = pt(p0, v1);
+                let c = pt(p1, v1);
+                let d = pt(p1, v0);
+                let rad = |q: Vec3| -> Vec3 {
+                    let w = q - origin;
+                    (w - ez * w.dot(ez)) * sgn
+                };
+                tris.push(orient([a, b, c], rad((a + b + c) * (1.0 / 3.0))));
+                tris.push(orient([a, c, d], rad((a + c + d) * (1.0 / 3.0))));
+            }
+        }
+        tris
+    }
+
+    /// Lat-band tessellate a conical face. The axial band is bounded by
+    /// the face's CLOSED circle edges and, where the face reaches the
+    /// apex, the apex height (radius -> 0). Radius varies linearly with
+    /// axial parameter v: r(v) = radius + v*tan(half_angle). Outward is
+    /// radial (the dominant component of the cone normal), sense-adjusted.
+    fn tessellate_cone(
+        &self,
+        face: FaceKey,
+        cone: &keel_geom::surface::Cone3,
+        sense: bool,
+    ) -> Vec<[Vec3; 3]> {
+        let (origin, ex, ey, ez) = (cone.frame.origin, cone.frame.x, cone.frame.y, cone.frame.z);
+        let slope = cone.half_angle.tan();
+        if slope == 0.0 {
+            return Vec::new();
+        }
+        let r_at = |v: f64| (cone.radius + v * slope).max(0.0);
+        // Band bounds: circle-edge heights, plus the apex if the face
+        // reaches it (only one circle edge -> the other end is the apex).
+        let mut heights = self.cyl_circle_heights(face, origin, ez);
+        let v_apex = -cone.radius / slope;
+        if heights.len() < 2 {
+            heights.push(v_apex);
+        }
+        if heights.len() < 2 {
+            return Vec::new();
+        }
+        let hlo = heights.iter().cloned().fold(f64::INFINITY, f64::min);
+        let hhi = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        if hhi - hlo <= 0.0 {
+            return Vec::new();
+        }
+        const NV: usize = 16;
+        const NP: usize = 64;
+        let tau = core::f64::consts::TAU;
+        let sgn = if sense { 1.0 } else { -1.0 };
+        let pt = |phi: f64, v: f64| -> Vec3 {
+            origin + (ex * phi.cos() + ey * phi.sin()) * r_at(v) + ez * v
         };
         let mut tris = Vec::new();
         for i in 0..NV {

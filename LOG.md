@@ -1991,3 +1991,56 @@ this completes the headline integral-property quartet. Test: 2x3x4 block ->
 area 2(6+12+8) = 52 exactly.
 RUNNING TOTAL: 58 -> 59/144.
 GATE: exact CI triplet green. Merged.
+
+## Addendum 59 (2026-06-08): REVOLVE (solid of revolution) + cone first-classness + mesh_volume (map 59 -> 60/144)
+
+The sweep/loft family's headline op. Building revolve surfaced a real
+architecture gap: CONE faces were dropped to empty in tessellate_face (the
+`_ => Vec::new()` arm), so cone-faced solids (the existing cone() primitive
+included) had wrong bbox / broken winding / broken booleans. Revolve
+naturally makes cone bands, so it was blocked on cones being first-class.
+Three pieces, bottom-up:
+
+1. tessellate_cone (tessellate.rs): lat-band mesher mirroring
+   tessellate_cylinder but with r(v) = radius + v*tan(half_angle); band
+   bounds from the face's circle-edge heights plus the apex height (where
+   r->0) when the face reaches a pole. Wired into the tessellate_face
+   dispatch. Cones are now first-class for bbox/area/winding/booleans.
+   Test: cone(r1,h1) bbox tight to [-1,-1,0]..[1,1,1] and area ~ pi(1+sqrt2)
+   (base + lateral slant) -- both were wrong before.
+
+2. mesh_volume() (interrogate.rs): pcurve-free volume via the divergence
+   theorem (1/6 sum a.(bxc)) over the outward tessellation. Exact for
+   all-planar bodies, tessellation-approximate for curved. A companion to
+   the analytic mass_properties().volume that does not need pcurves -- the
+   oracle for revolve solids (and a genuine interrogation capability).
+
+3. revolve(frame, profile) (construct.rs): full 360-degree solid of
+   revolution of a (radius, height) meridian about frame.z. Pure Euler-op
+   construction: seed at the first off-axis point, build its circle
+   (mef_on_vertex_loop) and the bottom cone (mev down to the bottom pole),
+   then for each interior segment mev the seam up + mef(at,at) to split off
+   the band as a face (the cylinder()'s seam-then-cap trick generalized),
+   and finally mev up to the top pole for the top cone. m points ->
+   m vertices, 2m-3 edges, m-1 faces (Euler 2). Per-band geometry: cylinder
+   (equal radii) or cone (anchored v=0 at the radius>0 end, half_angle =
+   atan(dr/dh)); edges attach as latitude circles (closed) or seam lines
+   (open) by inspecting each edge.
+   Tests: bicone [(0,-1),(1,0),(0,1)] -> V3 E3 F2, valid, mesh_volume 2pi/3
+   (within 1% tessellation undershoot); barrel [(0,-1),(1,-0.5),(1,0.5),
+   (0,1)] -> V4 E5 F3 (2 cones + cylinder), mesh_volume 4pi/3; open profile
+   rejected.
+
+Scope/deferrals (honest): the profile must meet the axis at BOTH ends with
+NON-horizontal end segments (pole bands are true cones, not flat discs),
+and no interior segment may be horizontal (which would revolve to a holed
+washer face). Flat end-caps and washer faces need the holed-face/disc path
+(deferred elsewhere too). PCURVES are not attached, so analytic
+mass_properties() does not yet work on revolve solids (use mesh_volume);
+validate(), tessellation, and GWN booleans all work without them. Partial
+(<360) revolve is a follow-up.
+RUNNING TOTAL: 59 -> 60/144. Sixty. Cone tessellation also retroactively
+fixes the existing cone() primitive's bbox/booleans.
+GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D
+warnings + workspace test 113 keel-topo). fuzz_boolean re-soaked (tessellate
+is shared with the winding classifier). Merged.
