@@ -293,6 +293,76 @@ impl Body {
         self.tweak_face_to_plane(face, Plane3::new(frame), sense)
     }
 
+    /// Offset the whole body outward by `distance` (item 45): move every
+    /// planar face along its outward normal and re-intersect all corners.
+    /// Each vertex is recomputed as the intersection of its three incident
+    /// (offset) face planes. Convex polyhedra only; self-intersection
+    /// resolution for concave/curved bodies is deferred. Negative shrinks.
+    pub fn offset_body(&mut self, distance: f64) -> Result<(), TopoError> {
+        use std::collections::HashMap;
+        // New offset plane (+ sense) per face.
+        let mut planes: HashMap<FaceKey, (Plane3, bool)> = HashMap::new();
+        for f in self.face_keys() {
+            let (plane, sense) = self
+                .face_plane(f)
+                .ok_or(TopoError::Precondition("offset_body: non-planar face"))?;
+            let outward = if sense {
+                plane.frame.z
+            } else {
+                plane.frame.z * -1.0
+            };
+            let mut np = plane;
+            np.frame.origin = np.frame.origin + outward * distance;
+            planes.insert(f, (np, sense));
+        }
+        // Recompute every vertex as the meet of its three incident planes.
+        let vkeys: Vec<VertexKey> = self.vertices.iter().map(|(k, _)| k).collect();
+        let mut moves: Vec<(VertexKey, Vec3)> = Vec::new();
+        for v in vkeys {
+            let mut faces: Vec<FaceKey> = Vec::new();
+            for e in self.edges_of_vertex(v) {
+                for f in self.faces_around_edge(e) {
+                    if !faces.contains(&f) {
+                        faces.push(f);
+                    }
+                }
+            }
+            if faces.len() != 3 {
+                return Err(TopoError::Precondition("offset_body: non-simple vertex"));
+            }
+            let pl: Vec<(Vec3, f64)> = faces
+                .iter()
+                .map(|f| {
+                    let (p, _) = &planes[f];
+                    (p.frame.z, p.frame.z.dot(p.frame.origin))
+                })
+                .collect();
+            let p = three_plane_point(pl[0].0, pl[0].1, pl[1].0, pl[1].1, pl[2].0, pl[2].1)
+                .ok_or(TopoError::Precondition("offset_body: degenerate corner"))?;
+            moves.push((v, p));
+        }
+        for &(v, p) in &moves {
+            if let Some(vx) = self.vertices.get_mut(v) {
+                vx.point = p;
+            }
+        }
+        // Rebuild every edge as the line through its updated endpoints.
+        let ekeys: Vec<EdgeKey> = self.edges.iter().map(|(k, _)| k).collect();
+        for e in ekeys {
+            let (v0, v1) = self.edges.get(e).ok_or(TopoError::StaleKey)?.bounds;
+            let p0 = self.vertices.get(v0).ok_or(TopoError::StaleKey)?.point;
+            let p1 = self.vertices.get(v1).ok_or(TopoError::StaleKey)?.point;
+            if let Ok(line) = Line3::new(p0, p1 - p0) {
+                self.attach_edge_curve(e, Curve3::Line(line), true);
+            }
+        }
+        // Set each face's offset surface.
+        for (f, (np, sense)) in planes {
+            self.attach_face_surface(f, SurfaceGeom::Analytic(Surface3::Plane(np)), sense);
+        }
+        Ok(())
+    }
+
     /// Delete a face, healing the wound (item 40). This is the
     /// MERGE/absorb heal mode: the face is merged into a coplanar
     /// neighbour by killing their shared edge (`kef`), so the neighbour
@@ -409,6 +479,17 @@ mod tests {
             v.is_finite() && v > 0.0 && (v - 8.0).abs() > 1e-6,
             "taper volume {v} unchanged/invalid"
         );
+    }
+
+    #[test]
+    fn offset_body_grows_block() {
+        // A 2x2x2 block offset outward by 0.5 -> a 3x3x3 block (vol 27).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        b.offset_body(0.5).unwrap();
+        assert!(b.validate().is_ok(), "offset body invalid");
+        let v = b.mass_properties().unwrap().volume;
+        assert!((v - 27.0).abs() < 1e-9, "offset-body volume {v} != 27");
     }
 
     #[test]
