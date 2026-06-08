@@ -696,6 +696,15 @@ impl Body {
                 let fin_a = b.fin_ending_at_vertex(lp, a_end)?;
                 let fin_b = b.fin_ending_at_vertex(lp, b_end)?;
                 let split = b.split_face(fin_a, fin_b, None)?;
+                // split_face leaves the new face surfaceless; both halves
+                // lie on the cap plane, so copy it (matches every other
+                // split_face caller; needed once the concave path, where
+                // the kept cap is the new face, is un-gated).
+                if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
+                    && let Some(nf) = b.faces.get_mut(split.face_new)
+                {
+                    nf.surface = Some(surf);
+                }
                 // Arc on the new edge: a quarter circle in the cap plane,
                 // centred at the spine projected into that plane.
                 let pc = b
