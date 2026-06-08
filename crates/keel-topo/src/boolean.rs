@@ -752,6 +752,93 @@ fn closed_polyline_nurbs(
     keel_geom::nurbs_curve::NurbsCurve::new(1, knots, ctrl, None).ok()
 }
 
+/// A straight degree-1 NURBS segment between two points.
+fn seg_curve(p0: keel_math::vec::Vec3, p1: keel_math::vec::Vec3) -> Option<keel_geom::curve::Curve3> {
+    keel_geom::nurbs_curve::NurbsCurve::new(1, vec![0., 0., 1., 1.], vec![p0, p1], None)
+        .ok()
+        .map(keel_geom::curve::Curve3::Nurbs)
+}
+
+/// Assemble a face's seam segments into a single open chain (path), if
+/// they form one: exactly two degree-1 endpoints, every interior node
+/// degree 2. Returns the ordered points end-to-end. A single segment is
+/// the trivial two-node chain.
+fn assemble_open_chain(
+    segs: &[(keel_math::vec::Vec3, keel_math::vec::Vec3)],
+    tol: f64,
+) -> Option<Vec<keel_math::vec::Vec3>> {
+    use keel_math::vec::Vec3;
+    if segs.is_empty() {
+        return None;
+    }
+    let mut nodes: Vec<Vec3> = Vec::new();
+    let idx = |p: Vec3, nodes: &mut Vec<Vec3>| -> usize {
+        for (i, q) in nodes.iter().enumerate() {
+            if (*q - p).norm() <= tol.max(1e-9) {
+                return i;
+            }
+        }
+        nodes.push(p);
+        nodes.len() - 1
+    };
+    let mut adj: Vec<(usize, usize)> = Vec::new();
+    for (p0, p1) in segs {
+        let i = idx(*p0, &mut nodes);
+        let j = idx(*p1, &mut nodes);
+        if i == j {
+            return None;
+        }
+        adj.push((i, j));
+    }
+    let n = nodes.len();
+    if n != segs.len() + 1 {
+        return None; // a simple path has #nodes == #edges + 1
+    }
+    let mut deg = vec![0usize; n];
+    for &(i, j) in &adj {
+        deg[i] += 1;
+        deg[j] += 1;
+    }
+    let ends: Vec<usize> = (0..n).filter(|&i| deg[i] == 1).collect();
+    if ends.len() != 2 || (0..n).any(|i| deg[i] != 1 && deg[i] != 2) {
+        return None;
+    }
+    // Walk from one endpoint to the other.
+    let mut order = vec![ends[0]];
+    let mut used = vec![false; adj.len()];
+    let mut cur = ends[0];
+    for _ in 0..adj.len() {
+        let mut moved = false;
+        for (e, &(i, j)) in adj.iter().enumerate() {
+            if used[e] {
+                continue;
+            }
+            let nxt = if i == cur {
+                Some(j)
+            } else if j == cur {
+                Some(i)
+            } else {
+                None
+            };
+            if let Some(nx) = nxt {
+                used[e] = true;
+                cur = nx;
+                order.push(nx);
+                moved = true;
+                break;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+    if order.len() == n {
+        Some(order.into_iter().map(|i| nodes[i]).collect())
+    } else {
+        None
+    }
+}
+
 /// Assemble a face's seam segments into the ordered node cycle of a
 /// single closed loop, if they form one. Returns the corner points in
 /// order (without the closing repeat). Open or multi-component sets
@@ -900,6 +987,64 @@ impl Body {
         }
     }
 
+    /// Imprint an open chain of points onto `face`: `chain[0]` and
+    /// `chain[last]` must already be boundary vertices; interior points
+    /// are added as spurs (mev), then the face is split (split_face)
+    /// from the last interior point to the boundary end. Returns the
+    /// edges created along the chain.
+    fn imprint_open_chain(
+        &mut self,
+        face: FaceKey,
+        chain: &[keel_math::vec::Vec3],
+        tol: f64,
+    ) -> Result<Vec<crate::entity::EdgeKey>, TopoError> {
+        use crate::euler::MevSite;
+        let etol = tol.max(1e-7);
+        if chain.len() < 2 {
+            return Err(TopoError::Precondition("open chain too short"));
+        }
+        let last = chain.len() - 1;
+        // Endpoints must be on the boundary.
+        if self.loop_fin_ending_at_point(face, chain[0], etol).is_none()
+            || self.loop_fin_ending_at_point(face, chain[last], etol).is_none()
+        {
+            return Err(TopoError::Precondition("open chain end not on boundary"));
+        }
+        let mut edges = Vec::new();
+        let mut tip = chain[0];
+        // Build spurs through the interior vertices.
+        for &c in &chain[1..last] {
+            let fin = self
+                .loop_fin_ending_at_point(face, tip, etol)
+                .ok_or(TopoError::Precondition("spur start vertex lost"))?;
+            let m = self.mev(MevSite::AfterFin(fin), c)?;
+            if let Some(curve) = seg_curve(tip, c) {
+                self.attach_seam_geometry(m.edge, face, &curve, tol);
+            }
+            edges.push(m.edge);
+            tip = c;
+        }
+        // Close the cut from the last interior point to the boundary end.
+        let fa = self
+            .loop_fin_ending_at_point(face, tip, etol)
+            .ok_or(TopoError::Precondition("split start vertex lost"))?;
+        let fb = self
+            .loop_fin_ending_at_point(face, chain[last], etol)
+            .ok_or(TopoError::Precondition("split end vertex lost"))?;
+        let out = self.split_face(fa, fb, None)?;
+        if let Some(surf) = self.faces.get(face).and_then(|f| f.surface)
+            && let Some(nf) = self.faces.get_mut(out.face_new)
+        {
+            nf.surface = Some(surf);
+        }
+        if let Some(curve) = seg_curve(tip, chain[last]) {
+            self.attach_seam_geometry(out.edge, face, &curve, tol);
+        }
+        self.debug_validate();
+        edges.push(out.edge);
+        Ok(edges)
+    }
+
     /// Attach a seam edge's 3D curve and the pcurve (in the face's
     /// analytic surface) to both of its radial fins.
     fn attach_seam_geometry(
@@ -985,43 +1130,7 @@ fn imprint_operand(
             .iter()
             .map(|&i| curve_endpoints(&seams[i].curve))
             .collect();
-        // Are all endpoints now boundary vertices on this face?
-        let all_on_boundary = eps.iter().all(|(p0, p1)| {
-            working.loop_fin_ending_at_point(face, *p0, etol).is_some()
-                && working.loop_fin_ending_at_point(face, *p1, etol).is_some()
-        });
-        if all_on_boundary {
-            if members.len() != 1 {
-                // Multi-segment per face (corner overlap) is deferred.
-                faults.push(BoolFault::AssemblyFailed("multi-segment open face"));
-                continue;
-            }
-            let (p0, p1) = eps[0];
-            let (Some(fa), Some(fb)) = (
-                working.loop_fin_ending_at_point(face, p0, etol),
-                working.loop_fin_ending_at_point(face, p1, etol),
-            ) else {
-                faults.push(BoolFault::AssemblyFailed("seam endpoint vertex lost"));
-                continue;
-            };
-            match working.split_face(fa, fb, None) {
-                Ok(out) => {
-                    // The new fragment inherits the parent's surface.
-                    if let Some(surf) = working.faces.get(face).and_then(|f| f.surface)
-                        && let Some(nf) = working.faces.get_mut(out.face_new)
-                    {
-                        nf.surface = Some(surf);
-                    }
-                    working.attach_seam_geometry(out.edge, face, &seams[members[0]].curve, tol);
-                    working.debug_validate();
-                    seam_edges.push(out.edge);
-                }
-                Err(e) => faults.push(BoolFault::Topo(e)),
-            }
-            continue;
-        }
-        // Otherwise: a single closed curve, or segments forming one
-        // closed loop interior to the face -> a single interior ring.
+        // A single, already-closed curve (e.g. a sphere SSI circle).
         if members.len() == 1 && seams[members[0]].closed {
             match working.imprint_closed_curve(face, &seams[members[0]].curve, tol) {
                 Ok(rep) => seam_edges.push(rep.edge),
@@ -1029,6 +1138,7 @@ fn imprint_operand(
             }
             continue;
         }
+        // Segments forming one closed loop interior to the face: ring.
         if let Some(nodes) = assemble_closed_loop(&eps, tol)
             && let Some(ring) = closed_polyline_nurbs(&nodes)
         {
@@ -1036,9 +1146,18 @@ fn imprint_operand(
                 Ok(rep) => seam_edges.push(rep.edge),
                 Err(e) => faults.push(BoolFault::Topo(e)),
             }
-        } else {
-            faults.push(BoolFault::AssemblyFailed("unassembled face seams"));
+            continue;
         }
+        // An open chain (single segment, or a corner-overlap L): split
+        // the face boundary-to-boundary through any interior corners.
+        if let Some(chain) = assemble_open_chain(&eps, etol) {
+            match working.imprint_open_chain(face, &chain, tol) {
+                Ok(es) => seam_edges.extend(es),
+                Err(e) => faults.push(BoolFault::Topo(e)),
+            }
+            continue;
+        }
+        faults.push(BoolFault::AssemblyFailed("unassembled face seams"));
     }
     ImprintedOperand {
         body: working,
@@ -1308,6 +1427,33 @@ mod tests {
         assert_eq!((c.v, c.e, c.f), (8, 12, 6), "difference is a box");
         let vol = res.body.mass_properties().unwrap().volume;
         assert!((vol - 32.0).abs() < 1e-6, "difference volume {vol} != 32");
+    }
+
+    #[test]
+    fn corner_overlap_intersection_is_unit_cube() {
+        // A = [0,2]^3, B = [1,3]^3 overlap at the octant [1,2]^3.
+        // Every participating face is cut by an L (two segments meeting
+        // at an interior corner). A ∩ B = unit cube, volume 1.
+        let a = block(Vec3::ZERO, Vec3::new(2., 2., 2.));
+        let b = block(Vec3::new(1., 1., 1.), Vec3::new(2., 2., 2.));
+        let res = boolean(&a, &b, BoolOp::Intersection, 1e-7).unwrap();
+        assert!(res.body.validate().is_ok(), "invalid: {:?}", res.faults);
+        assert!(res.faults.is_empty(), "faults: {:?}", res.faults);
+        let c = res.body.counts();
+        assert_eq!((c.v, c.e, c.f), (8, 12, 6), "intersection is a unit cube");
+        let vol = res.body.mass_properties().unwrap().volume;
+        assert!((vol - 1.0).abs() < 1e-6, "corner-overlap volume {vol} != 1");
+    }
+
+    #[test]
+    fn corner_overlap_difference_volume() {
+        // A - B removes the [1,2]^3 octant from [0,2]^3: volume 8 - 1 = 7.
+        let a = block(Vec3::ZERO, Vec3::new(2., 2., 2.));
+        let b = block(Vec3::new(1., 1., 1.), Vec3::new(2., 2., 2.));
+        let res = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
+        assert!(res.body.validate().is_ok(), "invalid: {:?}", res.faults);
+        let vol = res.body.mass_properties().unwrap().volume;
+        assert!((vol - 7.0).abs() < 1e-6, "A-B volume {vol} != 7");
     }
 
     #[test]
