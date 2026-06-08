@@ -101,7 +101,161 @@ impl Body {
         })
     }
 
+    /// Imprint an OPEN curve crossing `face` from one boundary point to
+    /// another (the SSI of two bounded planar faces is such a segment).
+    /// The curve's endpoints must lie on the face's outer-loop edges
+    /// within `tol`. Splits the boundary edges at the endpoints and the
+    /// face along the curve into two faces sharing the new edge.
+    pub fn imprint_open_curve(
+        &mut self,
+        face: FaceKey,
+        curve: &Curve3,
+        tol: f64,
+    ) -> Result<ImprintReport, TopoError> {
+        let surf = self.face_analytic_surface(face)?;
+        let (pcurve, p_start, p_end) = self.open_curve_pcurve_on(face, curve, &surf, tol)?;
+
+        // Locate the boundary edges containing the two endpoints.
+        let lp = self
+            .faces
+            .get(face)
+            .and_then(|f| f.loops.first().copied())
+            .ok_or(TopoError::StaleKey)?;
+        let start_edge = self.boundary_edge_containing(lp, p_start, tol)?;
+        let end_edge = self.boundary_edge_containing(lp, p_end, tol)?;
+        if start_edge == end_edge {
+            return Err(TopoError::Precondition(
+                "imprint_open: both endpoints on one edge (unsupported)",
+            ));
+        }
+        // Split the two boundary edges at the endpoints.
+        let se = self.split_edge(start_edge, p_start)?;
+        let ee = self.split_edge(end_edge, p_end)?;
+        // Find the fins of the (now split) boundary ending at the new
+        // vertices, in the outer loop, and split the face between them.
+        let fin_a = self.fin_ending_at_vertex(lp, se.vertex)?;
+        let fin_b = self.fin_ending_at_vertex(lp, ee.vertex)?;
+        let split = self.split_face(fin_a, fin_b, None)?;
+        let new_edge = split.edge;
+
+        // Geometry: 3D curve + pcurves on both fins; new face inherits
+        // the surface.
+        let ckey = self.add_curve(curve.clone());
+        if let Some(e) = self.edges.get_mut(new_edge) {
+            e.curve = Some((ckey, true));
+        }
+        let pkey = self.add_curve(Curve3::Nurbs(pcurve));
+        let radial = self
+            .edges
+            .get(new_edge)
+            .map(|e| e.radial.clone())
+            .unwrap_or_default();
+        for fk in radial {
+            if let Some(f) = self.fins.get_mut(fk) {
+                f.pcurve = Some((pkey, true));
+            }
+        }
+        if let Some((sk, sense)) = self.faces.get(face).and_then(|f| f.surface)
+            && let Some(nf) = self.faces.get_mut(split.face_new)
+        {
+            nf.surface = Some((sk, sense));
+        }
+        self.debug_validate();
+        Ok(ImprintReport {
+            edge: new_edge,
+            faces: vec![split.face_old, split.face_new],
+        })
+    }
+
     // ---- helpers ---------------------------------------------------------
+
+    /// Pcurve + 3D endpoints for an open curve.
+    fn open_curve_pcurve_on(
+        &self,
+        _face: FaceKey,
+        curve: &Curve3,
+        surf: &keel_geom::surface::Surface3,
+        tol: f64,
+    ) -> Result<(keel_geom::nurbs_curve::NurbsCurve, Vec3, Vec3), TopoError> {
+        let sample = |t: f64| -> Vec3 {
+            match curve {
+                Curve3::Line(l) => l.point(t),
+                Curve3::Circle(c) => c.point(core::f64::consts::TAU * t),
+                Curve3::Ellipse(e) => e.point(core::f64::consts::TAU * t),
+                Curve3::Nurbs(n) => {
+                    let (a, b) = n.domain();
+                    n.point(a + t * (b - a))
+                }
+            }
+        };
+        // For an open imprint the curve is provided pre-bounded: t in
+        // [0,1] maps to the segment. Verify on-surface.
+        for k in 0..=12 {
+            let p = sample(k as f64 / 12.0);
+            let pr = surf
+                .project(p)
+                .map_err(|_| TopoError::Precondition("imprint_open: projection failed"))?;
+            if pr.distance > tol {
+                return Err(TopoError::Precondition(
+                    "imprint_open: curve not on face surface",
+                ));
+            }
+        }
+        let fit = keel_geom::fit::pcurve_on_analytic(curve, surf, 64, tol.max(1e-7))
+            .map_err(|_| TopoError::Precondition("imprint_open: pcurve fit failed"))?;
+        Ok((fit.curve, sample(0.0), sample(1.0)))
+    }
+
+    /// The outer-loop edge whose curve passes within tol of `p` (and p
+    /// is between its endpoints). Returns the edge key.
+    fn boundary_edge_containing(
+        &self,
+        lp: crate::entity::LoopKey,
+        p: Vec3,
+        tol: f64,
+    ) -> Result<crate::entity::EdgeKey, TopoError> {
+        let entry = self
+            .loops
+            .get(lp)
+            .and_then(|l| l.fin)
+            .ok_or(TopoError::Precondition("no boundary"))?;
+        let mut cur = entry;
+        loop {
+            let edge = self
+                .fins
+                .get(cur)
+                .map(|f| f.edge)
+                .ok_or(TopoError::StaleKey)?;
+            if let Some(e) = self.edges.get(edge) {
+                let p0 = self.vertices.get(e.bounds.0).map(|v| v.point);
+                let p1 = self.vertices.get(e.bounds.1).map(|v| v.point);
+                if let (Some(a), Some(b)) = (p0, p1) {
+                    // Distance from p to the segment [a, b].
+                    let ab = b - a;
+                    let len2 = ab.dot(ab);
+                    let t = if len2 > 0.0 {
+                        ((p - a).dot(ab) / len2).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let foot = a + ab * t;
+                    if (foot - p).norm() <= tol && t > 1e-9 && t < 1.0 - 1e-9 {
+                        return Ok(edge);
+                    }
+                }
+            }
+            cur = self
+                .fins
+                .get(cur)
+                .map(|f| f.next)
+                .ok_or(TopoError::StaleKey)?;
+            if cur == entry {
+                return Err(TopoError::Precondition(
+                    "imprint_open: endpoint not on any boundary edge interior",
+                ));
+            }
+        }
+    }
 
     fn face_analytic_surface(
         &self,
@@ -227,6 +381,39 @@ mod tests {
             b.classify_point(Vec3::new(2.0, 2.0, 3.5)).unwrap(),
             crate::pmc::Containment::In(_)
         ));
+    }
+
+    #[test]
+    fn imprint_open_curve_crossing_cube_face() {
+        use keel_geom::curve::Line3;
+        let mut b = Body::new();
+        let out = b.block(Vec3::ZERO, 4.0, 4.0, 4.0).unwrap();
+        let top = *out.faces.last().unwrap();
+        let before = b.counts();
+        // A segment crossing the top face (z = 4) from the y=0 edge to
+        // the y=4 edge at x = 2: endpoints (2,0,4) and (2,4,4).
+        let seg = Curve3::Nurbs(
+            keel_geom::nurbs_curve::NurbsCurve::new(
+                1,
+                vec![0., 0., 1., 1.],
+                vec![Vec3::new(2., 0., 4.), Vec3::new(2., 4., 4.)],
+                None,
+            )
+            .unwrap(),
+        );
+        let _ = Line3::new;
+        let rep = b.imprint_open_curve(top, &seg, 1e-9).unwrap();
+        assert!(b.validate().is_ok());
+        let after = b.counts();
+        // Two new boundary vertices, the split edges (+2 edges from the
+        // two split_edges), the imprint edge (+1), one new face.
+        assert_eq!(after.v, before.v + 2);
+        assert_eq!(after.f, before.f + 1);
+        let radial = b.edge(rep.edge).map(|e| e.radial.clone()).unwrap();
+        assert_eq!(radial.len(), 2);
+        for fk in radial {
+            assert!(b.fin(fk).and_then(|f| f.pcurve).is_some());
+        }
     }
 
     #[test]
