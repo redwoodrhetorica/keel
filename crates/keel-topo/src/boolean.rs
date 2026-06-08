@@ -753,7 +753,10 @@ fn closed_polyline_nurbs(
 }
 
 /// A straight degree-1 NURBS segment between two points.
-fn seg_curve(p0: keel_math::vec::Vec3, p1: keel_math::vec::Vec3) -> Option<keel_geom::curve::Curve3> {
+fn seg_curve(
+    p0: keel_math::vec::Vec3,
+    p1: keel_math::vec::Vec3,
+) -> Option<keel_geom::curve::Curve3> {
     keel_geom::nurbs_curve::NurbsCurve::new(1, vec![0., 0., 1., 1.], vec![p0, p1], None)
         .ok()
         .map(keel_geom::curve::Curve3::Nurbs)
@@ -1005,8 +1008,12 @@ impl Body {
         }
         let last = chain.len() - 1;
         // Endpoints must be on the boundary.
-        if self.loop_fin_ending_at_point(face, chain[0], etol).is_none()
-            || self.loop_fin_ending_at_point(face, chain[last], etol).is_none()
+        if self
+            .loop_fin_ending_at_point(face, chain[0], etol)
+            .is_none()
+            || self
+                .loop_fin_ending_at_point(face, chain[last], etol)
+                .is_none()
         {
             return Err(TopoError::Precondition("open chain end not on boundary"));
         }
