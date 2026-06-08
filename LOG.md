@@ -898,3 +898,57 @@ REMAINING in M2a:
   then classify (PMC-based fragment in/out) + select (union/intersect/
   difference tables) + stitch. Standing research re-read first
   (kernel/01 boundary evaluation, Requicha-Voelcker, Tilove SMC/PMC).
+
+## Addendum 28 (2026-06-07): M6a in progress, boolean pipeline front half built (imprint + classify + select)
+
+- M6 split into M6a (clean transversal cases, the milestone-proving
+  pipeline) and M6b (robustness: coplanar, tangency, periodic surfaces,
+  NURBS-bounded solids). Plan: docs/superpowers/plans/2026-06-07-m6a-
+  boolean-engine.md. Branch m6a-boolean.
+- ARCHITECTURE DECISION (during execution): the first end-to-end proof
+  is ALL-PLANAR (box-box), NOT sphere-sphere. Analysis showed the
+  sphere's SSI + imprint are trivial (one self-bounding circle, made
+  crossing-free by seaming each sphere in its equatorial plane) BUT its
+  fragment CLASSIFICATION and trimmed MASS-PROPERTIES fight surface
+  periodicity (seam meridian has no pcurve; latitude loops wrap the
+  u-domain) -- genuinely M6b-grade. Planar faces have watertight
+  pcurves so classify/mass-props/stitch all run on M4/M5b machinery
+  that's already proven. The planar path's price is geometry the sphere
+  got free: plane-plane SSI is an UNBOUNDED line, so seams must be
+  CLIPPED to both trimmed faces and ASSEMBLED before imprinting -- but
+  that clip+assemble code is non-periodic, robust, reused by every
+  future boolean, so it's the right investment. Sphere/cylinder
+  (periodic) booleans -> M6b. Sphere SSI + crossing-free two-body
+  imprint kept as M6a unit tests (they prove those pieces compose).
+- Built (crates/keel-topo/src/boolean.rs), TDD, 7 tests green, 45/45
+  keel-topo lib tests (no regressions):
+  - Task 1 (two-body imprint): seam_curves does all-pairs analytic SSI
+    + Cyrus-Beck clip of plane-plane lines to both faces' convex
+    polygons. imprint_pair clones each operand and imprints the seams
+    via a TWO-PHASE method: phase 1 pre-splits operand boundary edges
+    at the seam-loop corners (so a loop wrapping across faces, like A's
+    cut rectangle crossing shared box edges, gets shared corner
+    vertices); phase 2 per face: boundary-vertex-to-boundary-vertex
+    segments -> split_face; a loop interior to one face (B's cut
+    rectangle) -> one degree-1 NURBS ring via imprint_closed_curve.
+    Guillotine A=[0,4]^3, B=[2,6]x[-1,5]x[-1,5]: A->10 faces, B->7, both
+    valid.
+  - Task 2 (classify): face_interior_point builds each loop's UV
+    polygon by projecting SAMPLED EDGE CURVES (robust to closed-curve
+    edges and to split_edge child fins that carry no pcurve), then
+    picks the MOST-CENTRAL interior sample (max distance to all loop
+    boundaries) so the classification point sits well away from seams
+    (which lie on the other solid's boundary). classify_faces tests it
+    against the other operand's PMC. Guillotine: A 5 inside / 5 outside
+    B; B inner rectangle inside A.
+  - Task 3 (select): select_faces = regularized r-set tables
+    (union/intersection/difference; difference reverses the subtracted
+    walls). Guillotine: intersection 6, difference 6 (1 reversed),
+    union 11.
+- NEXT (M6a remainder): Task 4 stitch + region rebuild (the hard one:
+  import kept faces from both operands into one body, glue coincident
+  seam edges, extract shells, infer the region partition satisfying
+  every validate() invariant -- one infinite region, every face-side in
+  exactly one shell, Euler-Poincare). Then Task 5 boolean() API +
+  exact volume proofs (intersection/difference boxes), Task 6
+  metamorphic proptests + fuzz_boolean + gate.
