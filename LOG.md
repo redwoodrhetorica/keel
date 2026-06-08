@@ -1068,3 +1068,70 @@ REMAINING in M2a:
   localization (the all-pairs O(n^2) throughput cost); general sphere-
   pair fuzzing with arbitrary-axis equatorial seaming. M7 remains the
   proof bar: robust booleans on NURBS-bounded solids.
+
+## Addendum 31 (2026-06-07): M6c COMPLETE (block-cylinder boolean; periodic-topology cracked); merged
+
+- The headline: block - cylinder = a DRILLED HOLE works -- the first
+  MIXED-analytic-surface boolean, and the last analytic stop before
+  NURBS (M7). Branch m6c-cylinder.
+- THE periodic-topology breakthrough (two interacting bugs, both fixed):
+  1. A plane-cylinder SSI circle WRAPS the lateral face: a non-
+     contractible loop. A single closed-loop mef(P,P) only bounds a
+     degenerate disc, leaving the band unsplit. imprint_closed_curve_
+     crossing now splits the circle into TWO ARCS at the seam crossing P
+     AND its antipode Q (= 2*center - P): the lateral then splits cleanly
+     into the two height bands, each sharing both arcs, and the result
+     circle carries vertices P,Q that the cross-operand glue matches.
+  2. The boolean's phase-1 pre-split was splitting the seam at the
+     circle's degenerate "endpoint" (sample(0) == sample(1)), which for
+     a cylinder SSI circle is EXACTLY the seam crossing P -- making P a
+     vertex so find_planar_seam_crossing (needs a strictly-interior
+     crossing) failed and the dispatch fell back to the inner-ring
+     imprint. Phase 1 now SKIPS closed seam curves.
+- Supporting work: cylinder tessellation (lateral band from the face's
+  circle/arc heights + caps) with a Task-0 winding-soundness gate (w~1
+  in / ~0 out, +1 orientation audit, passes ~0.5 crossing the wall,
+  deterministic); tessellate_planar rewritten to fan each loop's polygon
+  (fin-vertex corners OR sampled circle for disc caps) with inner-ring
+  holes fanned reversed -- so disc caps AND holed faces both tessellate;
+  cyl_circle_heights / cylinder_face_interior_point for periodic
+  fragments; curve_on_cylinder_face rejects spurious seams outside a
+  cylinder face's actual band (the unbounded SSI surface).
+- keel-geom BUG FIX (valuable independently): plane_cylinder returned
+  Err for a plane PERPENDICULAR to the axis (the exact drill
+  orientation) because minor_dir = f.z x axis is degenerate when the
+  plane normal is parallel to the axis; the section is a circle, built
+  from the cylinder's own in-plane frame axes.
+- PROOF: block [0,4]^3 minus a radius-1 blind-hole cylinder = 64 - 2pi
+  (valid solid; material inside / hole outside by winding); block
+  intersect cylinder = the 2pi plug. Volumes within 3% (coarse
+  tessellated oracle; exact trimmed-curved mass props still staged).
+- FUZZ: fuzz_cyl_boolean (random block + axis-aligned through/blind
+  cylinder). Smoke + 10-min soak CLEAN (803 runs; low throughput as each
+  cylinder boolean tessellates many faces). Re-soaked fuzz_boolean
+  (1900 runs) and fuzz_winding (1,183,564 runs) -- the phase-1 and
+  tessellate_planar changes touch box/winding paths -- both CLEAN.
+- PROCESS NOTE: discovered (user caught it) that CI exists
+  (.github/workflows/ci.yml from M1): a `test` job runs fmt --check +
+  `clippy --workspace --all-targets -- -D warnings` + cargo test on
+  ubuntu/windows/macos, plus a `fuzz-build` job that only COMPILES the
+  fuzz targets (the SOAKS are local WSL). The M6a MERGE CI went RED on
+  clippy -D warnings --all-targets (a test/bench-target lint my narrower
+  `clippy -p keel-topo --lib` missed); M6b fixed it (M6b CI green).
+  GOING FORWARD: run the exact CI triplet (fmt --all --check; clippy
+  --workspace --all-targets -- -D warnings; test --workspace) before
+  every merge. Verified GREEN for M6c.
+- GATE: fmt + clippy(-D warnings, all-targets) clean, 236 workspace
+  tests green (90 geom + 77 math + 69 topo), three 10-min soaks CLEAN.
+  Merged to master.
+- DEFERRED to M6d / M7 (honest ledger): cone + torus booleans
+  (tessellation + their seam structures); cylinder cap meeting the block
+  (partial-depth blind holes at an angle / cap-plane coincidence);
+  through-hole with the cylinder lateral split by TWO planes (multi-seam-
+  per-periodic-face ordering); coplanar/coincident neighborhood
+  classification (winding-number-vector); EXACT trimmed-curved mass
+  properties (volume oracle stays coarse tessellation); tolerant
+  edges/vertices (Jackson, the M7 NURBS-SSI requirement); BVH GWN + AABB
+  localization (the all-pairs O(n^2) throughput cost, also why
+  fuzz_cyl_boolean throughput is low). M7 = robust booleans on NURBS-
+  bounded solids (the proof bar).
