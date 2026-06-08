@@ -219,6 +219,163 @@ impl Body {
         })
     }
 
+    /// Ruled loft (sweep/loft family, parity items 62-69): a solid
+    /// bounded by two parallel-ordered profile loops (`bottom`, `top`,
+    /// same vertex count) joined by quadrilateral side faces, plus the
+    /// two cap faces. The corresponding vertices `bottom[i]`-`top[i]`
+    /// must form PLANAR side quads (so each side has an exact plane);
+    /// this covers tapered boxes, frusta, and prisms. Twisted/ruled
+    /// lofts whose sides are non-planar need NURBS sides -- a follow-up.
+    pub fn loft(&mut self, bottom: &[Vec3], top: &[Vec3]) -> Result<PrimitiveOut, TopoError> {
+        let n = bottom.len();
+        if n < 3 || top.len() != n {
+            return Err(TopoError::Precondition(
+                "loft: profiles need 3+ matching points",
+            ));
+        }
+        if bottom.iter().chain(top).any(|p| !p.is_finite()) {
+            return Err(TopoError::Precondition("loft: non-finite point"));
+        }
+        // Each side quad [b_i, b_{i+1}, t_{i+1}, t_i] must be planar.
+        for i in 0..n {
+            let (b0, b1) = (bottom[i], bottom[(i + 1) % n]);
+            let (t0, t1) = (top[i], top[(i + 1) % n]);
+            let nrm = (b1 - b0).cross(t0 - b0);
+            if let Some(un) = nrm.try_normalize()
+                && (t1 - b0).dot(un).abs() > 1e-7
+            {
+                return Err(TopoError::Precondition("loft: non-planar side quad"));
+            }
+        }
+        let cb: Vec3 = bottom.iter().fold(Vec3::ZERO, |a, &p| a + p) / n as f64;
+        let ct: Vec3 = top.iter().fold(Vec3::ZERO, |a, &p| a + p) / n as f64;
+        let up = (ct - cb)
+            .try_normalize()
+            .ok_or(TopoError::Precondition("loft: degenerate profile offset"))?;
+
+        let mut reports = Vec::new();
+        let r = self.infinite_region();
+        let seed = self.mvfs(r, bottom[0])?;
+        reports.push(seed.report.clone());
+        let lp = self
+            .faces
+            .get(seed.face)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        // Bottom rim.
+        let mut rim = vec![seed.vertex];
+        let mut rim_edges = Vec::new();
+        let m1 = self.mev(MevSite::VertexLoop(lp), bottom[1])?;
+        rim.push(m1.vertex);
+        rim_edges.push(m1.edge);
+        reports.push(m1.report);
+        for pt in &bottom[2..] {
+            let at = self.fin_ending_at(lp, *rim.last().ok_or(TopoError::StaleKey)?)?;
+            let m = self.mev(MevSite::AfterFin(at), *pt)?;
+            rim.push(m.vertex);
+            rim_edges.push(m.edge);
+            reports.push(m.report);
+        }
+        let fa = self.fin_ending_at(lp, rim[n - 1])?;
+        let fb = self.fin_ending_at(lp, rim[0])?;
+        let bottom_face = self.mef(fa, fb, None)?;
+        rim_edges.push(bottom_face.edge);
+        reports.push(bottom_face.report.clone());
+        // Verticals to the top profile.
+        let mut tops = Vec::new();
+        let mut vert_edges = Vec::new();
+        for (i, &rv) in rim.iter().enumerate() {
+            let at = self.fin_ending_at(lp, rv)?;
+            let m = self.mev(MevSite::AfterFin(at), top[i])?;
+            tops.push(m.vertex);
+            vert_edges.push(m.edge);
+            reports.push(m.report);
+        }
+        // Side faces; the last mef also closes the top (seed face).
+        let mut faces = vec![bottom_face.face];
+        let mut top_edges = Vec::new();
+        for i in 0..n {
+            let a = self.fin_ending_at(lp, tops[i])?;
+            let c = self.fin_ending_at(lp, tops[(i + 1) % n])?;
+            let side = self.mef(a, c, None)?;
+            faces.push(side.face);
+            top_edges.push(side.edge);
+            reports.push(side.report.clone());
+        }
+        faces.push(seed.face); // top cap
+        self.debug_validate();
+
+        // ---- geometry attachment ----
+        // Caps: bottom outward = -up, top outward = +up.
+        let bottom_frame = Frame3::from_z(bottom[0], up * -1.0).map_err(geom_err)?;
+        let top_frame = Frame3::from_z(top[0], up).map_err(geom_err)?;
+        self.attach_face_surface(
+            faces[0],
+            SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(bottom_frame))),
+            true,
+        );
+        self.attach_face_surface(
+            *faces.last().ok_or(TopoError::StaleKey)?,
+            SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(top_frame))),
+            true,
+        );
+        // Side planes: normal from the quad, oriented outward (away from
+        // the loft axis).
+        for i in 0..n {
+            let (b0, b1) = (bottom[i], bottom[(i + 1) % n]);
+            let t0 = top[i];
+            let mut normal = (b1 - b0)
+                .cross(t0 - b0)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("loft: degenerate side quad"))?;
+            let mid = (b0 + b1 + t0) / 3.0;
+            let axis_pt = cb + up * (mid - cb).dot(up);
+            if normal.dot(mid - axis_pt) < 0.0 {
+                normal = normal * -1.0;
+            }
+            let frame = Frame3::from_z(b0, normal).map_err(geom_err)?;
+            self.attach_face_surface(
+                faces[1 + i],
+                SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(frame))),
+                true,
+            );
+        }
+        // Straight edges -> lines.
+        let mut all_edges = Vec::new();
+        all_edges.extend(rim_edges.iter().copied());
+        all_edges.extend(vert_edges.iter().copied());
+        all_edges.extend(top_edges.iter().copied());
+        for &ek in &all_edges {
+            let (a, bnd) = {
+                let e = self.edges.get(ek).ok_or(TopoError::StaleKey)?;
+                (e.bounds.0, e.bounds.1)
+            };
+            let (pa, pb) = (
+                self.vertices
+                    .get(a)
+                    .map(|v| v.point)
+                    .ok_or(TopoError::StaleKey)?,
+                self.vertices
+                    .get(bnd)
+                    .map(|v| v.point)
+                    .ok_or(TopoError::StaleKey)?,
+            );
+            let line = Line3::new(pa, pb - pa).map_err(geom_err)?;
+            self.attach_edge_curve(ek, Curve3::Line(line), true);
+        }
+        let mut vertices = rim;
+        vertices.extend(tops);
+        for &fk in &faces {
+            self.attach_plane_pcurves(fk)?;
+        }
+        Ok(PrimitiveOut {
+            faces,
+            edges: all_edges,
+            vertices,
+            reports,
+        })
+    }
+
     /// Solid cylinder: axis = frame.z, base disc at the frame origin,
     /// height h. Topology V2 E3 F3 (caps + lateral with seam).
     pub fn cylinder(
@@ -770,6 +927,52 @@ mod tests {
         assert_eq!((c.v, c.e, c.f), (10, 15, 7));
         assert_eq!(out.faces.len(), 7);
         edges_lie_on_adjacent_surfaces(&b, 1e-9);
+    }
+
+    #[test]
+    fn loft_square_frustum() {
+        // 2x2 base -> 1x1 top, height 2. Planar trapezoidal sides.
+        // Frustum volume = (h/3)(A1 + A2 + sqrt(A1*A2)) = (2/3)(4+1+2)=14/3.
+        let bottom = vec![
+            Vec3::new(-1.0, -1.0, 0.0),
+            Vec3::new(1.0, -1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(-1.0, 1.0, 0.0),
+        ];
+        let top = vec![
+            Vec3::new(-0.5, -0.5, 2.0),
+            Vec3::new(0.5, -0.5, 2.0),
+            Vec3::new(0.5, 0.5, 2.0),
+            Vec3::new(-0.5, 0.5, 2.0),
+        ];
+        let mut b = Body::new();
+        let out = b.loft(&bottom, &top).unwrap();
+        assert!(b.validate().is_ok(), "loft frustum invalid");
+        let c = b.counts();
+        assert_eq!((c.v, c.e, c.f), (8, 12, 6));
+        assert_eq!(out.faces.len(), 6);
+        edges_lie_on_adjacent_surfaces(&b, 1e-9);
+        let v = b.mass_properties().unwrap().volume;
+        assert!((v - 14.0 / 3.0).abs() < 1e-9, "frustum volume {v} != 14/3");
+    }
+
+    #[test]
+    fn loft_rejects_nonplanar_side() {
+        // A 90-degree twist makes the side quads non-planar -> rejected.
+        let bottom = vec![
+            Vec3::new(-1.0, -1.0, 0.0),
+            Vec3::new(1.0, -1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(-1.0, 1.0, 0.0),
+        ];
+        let top = vec![
+            Vec3::new(0.0, -1.4, 2.0),
+            Vec3::new(1.4, 0.0, 2.0),
+            Vec3::new(0.0, 1.4, 2.0),
+            Vec3::new(-1.4, 0.0, 2.0),
+        ];
+        let mut b = Body::new();
+        assert!(b.loft(&bottom, &top).is_err(), "twisted loft should reject");
     }
 
     #[test]
