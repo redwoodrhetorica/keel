@@ -73,6 +73,65 @@ impl Body {
     }
 }
 
+/// An imprinted operand: a clone of the input body with the seam
+/// curves split into it, plus the seam edges that were created (the
+/// boundary along which this operand meets the other).
+#[derive(Clone, Debug)]
+pub struct ImprintedOperand {
+    pub body: Body,
+    /// Edges created along the intersection seams (one per seam curve
+    /// imprinted on this operand).
+    pub seam_edges: Vec<crate::entity::EdgeKey>,
+}
+
+/// Imprint the given seam curves onto a clone of `body`, picking each
+/// seam's face on this operand via `pick` (face_a for operand A,
+/// face_b for operand B). Crossing-free transversal seams only (M6a):
+/// closed seams become interior rings, open seams split boundary to
+/// boundary. Faults accumulate; a failed imprint leaves that seam out.
+fn imprint_operand(
+    body: &Body,
+    seams: &[SeamCurve],
+    pick: impl Fn(&SeamCurve) -> FaceKey,
+    tol: f64,
+    faults: &mut Vec<BoolFault>,
+) -> ImprintedOperand {
+    let mut working = body.clone();
+    let mut seam_edges = Vec::new();
+    for seam in seams {
+        let face = pick(seam);
+        let res = if seam.closed {
+            working.imprint_closed_curve(face, &seam.curve, tol)
+        } else {
+            working.imprint_open_curve(face, &seam.curve, tol)
+        };
+        match res {
+            Ok(rep) => seam_edges.push(rep.edge),
+            Err(e) => faults.push(BoolFault::Topo(e)),
+        }
+    }
+    ImprintedOperand {
+        body: working,
+        seam_edges,
+    }
+}
+
+/// Two-body imprint (M3 pipeline steps 1-3, per-operand form): localize
+/// + intersect, then imprint the seams onto independent clones of each
+/// operand. Each returned body is itself a valid solid (the imprint
+/// only splits faces along on-surface curves); they are glued into one
+/// result at stitch time, after selection discards the unwanted sides.
+pub fn imprint_pair(
+    a: &Body,
+    b: &Body,
+    tol: f64,
+) -> (ImprintedOperand, ImprintedOperand, Vec<BoolFault>) {
+    let (seams, mut faults) = seam_curves(a, b, tol);
+    let ia = imprint_operand(a, &seams, |s| s.face_a, tol, &mut faults);
+    let ib = imprint_operand(b, &seams, |s| s.face_b, tol, &mut faults);
+    (ia, ib, faults)
+}
+
 /// Localize + intersect: every face of `a` against every face of `b`,
 /// collecting transversal SSI curves. Coincident/tangent/failed pairs
 /// become faults. (All-pairs for M6a's small analytic bodies; AABB/BVH
@@ -126,10 +185,20 @@ mod tests {
     use keel_geom::surface::Frame3;
     use keel_math::vec::Vec3;
 
+    /// Sphere centered at `center`, seamed with its pole on the x-axis
+    /// and meridian in the world plane z = center.z (the equatorial
+    /// plane through the center). For two such spheres displaced along
+    /// z, the SSI latitude circle (at the midplane) never crosses
+    /// either seam meridian, so imprints are crossing-free (M6a).
     fn z_sphere(center: Vec3, r: f64) -> Body {
         let mut b = Body::new();
-        b.sphere(Frame3::from_z(center, Vec3::new(0., 0., 1.)).unwrap(), r)
-            .unwrap();
+        let frame = Frame3 {
+            origin: center,
+            x: Vec3::new(0., 1., 0.),
+            y: Vec3::new(0., 0., 1.),
+            z: Vec3::new(1., 0., 0.),
+        };
+        b.sphere(frame, r).unwrap();
         b
     }
 
@@ -153,6 +222,25 @@ mod tests {
             }
             other => panic!("expected circle, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn imprint_pair_splits_both_spheres() {
+        let a = z_sphere(Vec3::ZERO, 1.0);
+        let b = z_sphere(Vec3::new(0.0, 0.0, 1.5), 1.0);
+        let (ia, ib, faults) = imprint_pair(&a, &b, 1e-7);
+        assert!(faults.is_empty(), "faults: {faults:?}");
+        // Each sphere face (1) splits into a cap disc + the rest (2).
+        assert!(ia.body.validate().is_ok());
+        assert!(ib.body.validate().is_ok());
+        assert_eq!(ia.body.counts().f, 2, "sphere A faces after imprint");
+        assert_eq!(ib.body.counts().f, 2, "sphere B faces after imprint");
+        assert_eq!(ia.seam_edges.len(), 1);
+        assert_eq!(ib.seam_edges.len(), 1);
+        // The seam edge is the imprinted circle, manifold (radial 2)
+        // within its own operand body.
+        let ra = ia.body.edge(ia.seam_edges[0]).map(|e| e.radial.len());
+        assert_eq!(ra, Some(2));
     }
 
     #[test]
