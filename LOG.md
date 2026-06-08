@@ -1790,3 +1790,13 @@ recommended first but a robust blend needs coincident-capable booleans
 (the cutting wedge's faces are coplanar with the part) or intricate
 seam-band surgery, so blends move after the coincident-boolean foundation.
 GATE: exact CI triplet green. Merged.
+
+## Addendum 49 (2026-06-08): Parity shell/offset -- whole-body offset (map 49 -> 50/144)
+
+offset_body(distance) (item 45): move every planar face along its outward
+normal and re-intersect all corners (each vertex = meet of its three
+incident offset planes), reusing the tweak machinery globally. Tested: a
+2x2x2 block offset +0.5 -> 3x3x3, exact volume 27, valid. Convex polyhedra;
+self-intersection resolution (concave) + curved-face offset deferred.
+RUNNING TOTAL: 49 -> 50/144.
+GATE: exact CI triplet green. Merged.
