@@ -1472,3 +1472,54 @@ DEFERRED (honest ledger, genuinely later / separate milestones):
 GATE: exact CI triplet GREEN (fmt --all --check; clippy --workspace
 --all-targets -- -D warnings; cargo test --workspace = 254 tests: 101 geom
 + 77 math + 76 topo). fuzz_recover re-soaked clean. Merged.
+
+## Addendum 36 (2026-06-08): Capability-gap assessment vs Parasolid + the PARITY PROGRAM kickoff
+
+The user directed a strategic pivot: after M8, close the capabilities/
+features gap toward Parasolid "as close to parity as possible." Read the
+researcher's 144-item Parasolid capability map (research file 25) and
+audited Keel's actual code against it.
+
+GAP ASSESSMENT (grounded in the pub-fn inventory, not guesses):
+- SOLID (~30 of 144): full topology hierarchy + Euler ops + non-manifold
+  PES regions (Keel's strongest area, near parity); primitives block/
+  prism/cyl/cone/sphere/torus/nurbs_sphere; analytic+NURBS curves/surfaces;
+  unite/subtract/intersect on SOLIDS for CLEAN TRANSVERSAL analytic +
+  recovered-NURBS bodies (narrow); SSI; GWN point classification; mass
+  properties; validity checking; canonical recovery/simplify (M8);
+  tolerant edges/epsilon-solidity (M7b); imprint curves onto faces;
+  in-memory session snapshot/replay + lineage.
+- MISSING (~100): the entire feature surface -- blends/chamfers (0 files),
+  sweep/loft (0), shell/offset/thicken (0), local ops/tweak (0), sheet
+  ops, sectioning, HLR/rendering, attributes (0), persistence/XT (0),
+  assemblies (0), foreign geometry (0), healing/defeaturing, mid-surface,
+  convergent/mesh.
+- BOTTOM LINE: Keel is SOUND but NARROW. It has the certified KERNEL SPINE
+  (the hard math) and ~70% of Parasolid's capability surface is absent.
+  The missing part is the breadth a CAD app consumes daily. Breadth, not
+  soundness, is now the dominant gap. The differentiation thesis (exact-
+  topology/tolerant-geometry + affordability-gradient recovery) is real
+  but a WEDGE, not parity.
+
+ROADMAP (docs/superpowers/specs/2026-06-08-parasolid-parity-roadmap.md):
+sequenced by leverage + dependency + reuse + patent-safety. Honest target
+= the kernel-appropriate, patent-safe subset (~110-120 of 144; excludes
+host/D-Cubed items, patent-fenced convergent modeling per file 18, and
+fragile mid-surface). Phases:
+- Phase 0 FOUNDATION (gates everything): 0a general-position booleans
+  (coincident/tangent/sheet/multi-tool -- today DECLINED; features
+  generate exactly these), 0b offset-surface primitive, 0c attribute
+  system.
+- Phase 1 TWEAK keystone (file 03: change-surface+reintersect -> move/
+  offset/taper/delete-heal faces; OCCT lacks it).
+- Phase 2 sweep/spin/loft constructors (file 26).
+- Phase 3 BLENDS/CHAMFERS (file 28, ~15 items, the biggest area).
+- Phase 4 shell/offset family. Phase 5 sheet ops + sectioning (file 13).
+- Phase 6 interrogation+HLR (file 06). Phase 7 persistence/XT (file 14).
+- Phase 8 healing/defeaturing (file 13). Phase 9 foreign geometry +
+  assemblies (files 16, 24).
+Each phase = milestone(s), CI-green, fuzzed, honest ledger, same bar as
+M1-M8. NEXT: pick the starting phase (recommendation: Phase 0 foundation,
+since the feature engines stand on general-position booleans + offset
+surfaces; building features first would hit "declined" on realistic
+inputs).
