@@ -1464,6 +1464,20 @@ mod tests {
     }
 
     #[test]
+    fn boolean_is_deterministic() {
+        // Same inputs -> identical result topology hash (determinism D9).
+        let build = || {
+            let a = block(Vec3::ZERO, Vec3::new(4., 4., 4.));
+            let b = block(Vec3::new(2., -1., -1.), Vec3::new(4., 6., 6.));
+            boolean(&a, &b, BoolOp::Intersection, 1e-7)
+                .unwrap()
+                .body
+                .topology_hash()
+        };
+        assert_eq!(build(), build());
+    }
+
+    #[test]
     fn nested_boxes_no_seam() {
         // B entirely inside A: no surface intersection. A ∩ B = B,
         // A ∪ B = A. (A - B would enclose a void: 3 regions, beyond the
