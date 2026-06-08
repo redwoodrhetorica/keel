@@ -1322,3 +1322,89 @@ clean. (Per standing mandate, any finding becomes a golden regression.)
 GATE: exact CI triplet GREEN (fmt --all --check; clippy --workspace
 --all-targets -- -D warnings; cargo test --workspace = 241 tests: 90 geom
 + 77 math + 74 topo). Merged.
+
+## Addendum 34 (2026-06-08): M8 canonical recovery CORE -- the M7c blocker dissolved (NURBS x NURBS 190s -> 0.68s, exact)
+
+PROMPT: the user added research (kernel files 25-33) and said "Maybe the
+answer to your blockers is there." It was. The M7c blockers (the tier-3
+NURBS-sphere x NURBS-sphere boolean: 190s and a fitted seam that would
+not split either face) were both symptoms of ONE mistake, named by file
+24 (canonical-geometry-recovery) and file 11 / headline #16 (the
+exactness affordability gradient): a `nurbs_sphere` is an EXACT quadric
+wearing a NURBS coat (Piegl-Tiller forward construction), and two spheres
+meet in an EXACT circle. I was using the heaviest spline machinery to
+re-derive a circle the kernel has a closed form for. The fix is to
+RECOGNIZE the hidden analytic and route to the exact tier -- the
+affordability gradient made real (exact for conics/quadrics, certified-
+tolerant only for genuine free-form).
+
+The user chose the FULL canonical-recovery milestone (M8). This session
+shipped the CORE slice. Branch m8-canonical-recovery.
+
+DELIVERED (keel-geom `recover` module -- recognize -> fit -> certify ->
+keep/recover):
+- `recover_surface(nurbs, tol) -> Option<SurfaceRecovery>`: curvature-
+  signature recognition (closed-form k1/k2 from `local_geometry`, no scan
+  noise) dispatched by signature -- PLANE (k1=k2=0), SPHERE (umbilic
+  k1=k2=const, algebraic center/radius fit), CYLINDER/CONE (developable,
+  one principal curvature ~0; axis from the zero-curvature principal
+  direction / ruling-line LS intersection for the cone apex). Each fit is
+  CERTIFIED before acceptance.
+- The certifier `surface_deviation` is file 24 Theme 5's endorsed cheap
+  bound: dense sampling of the spline against the analytic's closed-form
+  distance (`Surface3::project`) + local refinement around the worst
+  sample. KEY SAFETY PROPERTY: the certifier is the real discriminator,
+  so a wrong-type fit cannot certify -> the failure direction is false-
+  REJECT (keep the spline), never false-accept. (The interval-certified
+  tighter bound via `point_enclosure` is deferred; `fuzz_recover` cross-
+  checks soundness.)
+- Recovery verified exact at the geom level: sphere center/radius to
+  1e-7; cylinder radius/axis to 1e-6; cone half-angle to ~1e-4 (its
+  pole-degenerate apex limits the sampled certifier to ~2e-6, so cones
+  recover at a ~1e-5 modeling tolerance -- documented). The "keep the
+  spline" verdict is proven too: a genuine free-form bicubic patch is
+  REJECTED (`freeform_is_kept`) -- the other side of the gradient.
+
+BOOLEAN INTEGRATION (the M7c retirement): a recovery pre-pass in
+`seam_curves` uses the recovered analytic ONLY for SSI dispatch (the
+NURBS face stays for imprint/tessellation -- imprinting an exact circle
+onto a NURBS face is the proven analytic-x-NURBS path). Results:
+- NURBS-sphere INTERSECT NURBS-sphere: was 190s and FAILED (fitted seam
+  split neither face, kept=0); now both operands recover to spheres, the
+  SSI is the exact tier-1 circle, the M6c crossing-imprint splits both ->
+  a valid two-cap lens in 0.68s (280x faster), volume within ~4% of the
+  exact formula. THE M7C BLOCKER IS RETIRED.
+- NURBS-sphere INTERSECT analytic-sphere: now EXACT (was the tier-2 fit
+  carrying ~4e-7); achieved tolerance drops to the floor (1e-8). The
+  hidden quadric pays quadric prices. (The old `nurbs_boolean_is_epsilon_
+  solid` test, which asserted a genuine nonzero bound on this case, was
+  honestly rewritten to `nurbs_sphere_boolean_recovers_to_exact` -- with
+  recovery the case is exact, so that eps was the tier-2 approximation
+  recovery now removes.)
+
+FUZZ: `fuzz_recover` -- random analytic NURBS (plane/sphere/cylinder),
+recover, assert the soundness invariant: never panics, and a returned
+deviation is a genuine UPPER bound on an INDEPENDENT denser sampling and
+<= tol. Soak clean.
+
+DEFERRED to M8-completion (honest ledger -- the full milestone the user
+chose; this session shipped the core that retires M7c):
+- TORUS recovery (file 24 flags torus as the most fragile; both principal
+  curvatures nonzero + the torus relation; line-complex axis).
+- CURVE recovery (NURBS curve -> line/circle/ellipse, same certify gate).
+- `Body::simplify` -- the public HEAL "simplify" pass (topology-preserving
+  surface swap + pcurve refit); needs curve recovery and pcurve refit to
+  produce a VALID swapped body, so it follows those.
+- The full FREE-FORM-faced-SOLID boolean capstone (a genuine non-
+  recoverable surface driving a tier-3 SSI with a tolerant seam): the
+  tolerant-edge machinery is shipped (M7b) and the rejection gate is
+  proven (`freeform_is_kept`), but the end-to-end demo needs a free-form
+  SOLID constructor (lofting/skinning) that does not exist yet -- genuine
+  M-later, and arguably outside "recovery" proper.
+- Face-MERGE of split analytics (naming-coupled); constraint-aware re-fit
+  / beautification (coaxiality snapping); helical/developable/translational
+  and learned type proposals.
+
+GATE: exact CI triplet GREEN (fmt --all --check; clippy --workspace
+--all-targets -- -D warnings; cargo test --workspace = 249 tests: 97 geom
++ 77 math + 75 topo). fuzz_recover added + soak clean. Merged.

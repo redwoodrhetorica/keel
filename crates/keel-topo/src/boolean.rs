@@ -1945,25 +1945,54 @@ pub fn imprint_pair(
 /// collecting transversal SSI curves. Coincident/tangent/failed pairs
 /// become faults. (All-pairs for M6a's small analytic bodies; AABB/BVH
 /// localization is a perf concern deferred until a fuzz/scale need.)
+/// Canonical-recovery pre-pass (M8): for each NURBS face, recognize a
+/// hidden analytic surface and certify it within `tol`. The recovered
+/// analytic is used only for SSI DISPATCH, so a NURBS-sphere x
+/// NURBS-sphere intersection routes to the exact tier-1 sphere-sphere
+/// path (an exact circle) instead of grinding the tier-3 spline solver.
+/// The face itself stays NURBS for imprint/tessellation (the imprint of
+/// an exact circle onto a NURBS face is the proven analytic-x-NURBS
+/// path). This is the affordability gradient: exact where a quadric is
+/// hiding, certified-tolerant only for genuine free-form.
+fn recovered_analytics(body: &Body, tol: f64) -> Vec<(FaceKey, Surface3)> {
+    let mut out = Vec::new();
+    for f in body.face_keys() {
+        if let Some(SurfaceGeom::Nurbs(n)) = body.face_surface_geom(f)
+            && let Some(rec) = keel_geom::recover::recover_surface(&n, tol)
+        {
+            out.push((f, rec.surface));
+        }
+    }
+    out
+}
+
 pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFault>) {
     let mut seams = Vec::new();
     let mut faults = Vec::new();
+    let rec_a = recovered_analytics(a, tol);
+    let rec_b = recovered_analytics(b, tol);
     for fa in a.face_keys() {
         let Some(ga) = a.face_surface_geom(fa) else {
             continue;
         };
-        let ref_a = match &ga {
-            SurfaceGeom::Analytic(s) => SurfaceRef::Analytic(s),
-            SurfaceGeom::Nurbs(n) => SurfaceRef::Nurbs(n),
+        let ref_a = match rec_a.iter().find(|(k, _)| *k == fa) {
+            Some((_, s)) => SurfaceRef::Analytic(s),
+            None => match &ga {
+                SurfaceGeom::Analytic(s) => SurfaceRef::Analytic(s),
+                SurfaceGeom::Nurbs(n) => SurfaceRef::Nurbs(n),
+            },
         };
         let id_a = a.faces.get(fa).map(|f| f.id.0).unwrap_or(0);
         for fb in b.face_keys() {
             let Some(gb) = b.face_surface_geom(fb) else {
                 continue;
             };
-            let ref_b = match &gb {
-                SurfaceGeom::Analytic(s) => SurfaceRef::Analytic(s),
-                SurfaceGeom::Nurbs(n) => SurfaceRef::Nurbs(n),
+            let ref_b = match rec_b.iter().find(|(k, _)| *k == fb) {
+                Some((_, s)) => SurfaceRef::Analytic(s),
+                None => match &gb {
+                    SurfaceGeom::Analytic(s) => SurfaceRef::Analytic(s),
+                    SurfaceGeom::Nurbs(n) => SurfaceRef::Nurbs(n),
+                },
             };
             let id_b = b.faces.get(fb).map(|f| f.id.0).unwrap_or(0);
             match intersect_surfaces(&ref_a, &ref_b, tol) {
@@ -2515,38 +2544,62 @@ mod tests {
     }
 
     #[test]
-    fn nurbs_boolean_is_epsilon_solid() {
-        // THE M7b CENTERPIECE -- "exact topology decisions with tolerant
-        // geometry" on a real NURBS boolean. The tier-2 analytic-sphere x
-        // NURBS-sphere SSI is solved by certified-numeric fitting: the
-        // intersection circle is reproduced to a NONZERO certified bound
-        // (~4e-7), not exactly. That bound (SsiCurve.tol_achieved) now
-        // rides onto Edge.tolerance instead of being discarded, and the
-        // body is provably epsilon-solid at its achieved tolerance while
-        // the COMBINATORIAL topology (two valid caps) stays exact.
+    fn nurbs_sphere_boolean_recovers_to_exact() {
+        // M8 affordability gradient: a NURBS sphere is a hidden quadric,
+        // so canonical recovery recognizes it and the SSI routes to the
+        // EXACT tier-1 sphere-sphere circle. The result is exact (achieved
+        // tolerance at the floor), not tolerant -- the hidden quadric pays
+        // quadric prices. (Before M8 this case used the tier-2 fit and
+        // carried a ~4e-7 bound; recovery removes that approximation. The
+        // other side of the gradient -- genuine free-form geometry that
+        // recovery REJECTS, keeping the spline and its certified tolerant
+        // bound -- is the M7b tolerant-edge contract plus the recovery
+        // rejection gate `recover::tests::freeform_is_kept`.)
         let a = z_nurbs_sphere(Vec3::ZERO, 1.0);
         let b = z_sphere(Vec3::new(0.0, 0.0, 1.5), 1.0);
         let res = boolean(&a, &b, BoolOp::Intersection, 1e-6).unwrap();
-        let eps = res.body.achieved_tolerance();
-        // The geometry is GENUINELY tolerant: the fitted seam carries a
-        // real, nonzero certified deviation bound (this guards against a
-        // regression that silently drops the bound back to the floor).
-        assert!(
-            eps.is_finite() && eps > 0.0,
-            "seam tolerance must be a real nonzero bound, got {eps:e}"
-        );
-        assert!(eps < 1e-4, "tier-2 fit should be tight, got {eps:e}");
-        // Exact topology: the combinatorics are a valid two-cap lens...
         assert!(
             res.body.validate().is_ok(),
             "lens invalid: {:?}",
             res.faults
         );
         assert_eq!(res.body.counts().f, 2, "lens has two cap faces");
-        // ...and the tolerant-geometry contract holds at the achieved bound.
+        let eps = res.body.achieved_tolerance();
+        assert!(
+            eps < 1e-7,
+            "recovered-exact seam should sit at the floor, got {eps:e}"
+        );
         assert!(
             res.body.epsilon_solid(eps),
-            "must be epsilon-solid at achieved {eps:e}"
+            "epsilon-solid at the floor {eps:e}"
+        );
+    }
+
+    #[test]
+    fn nurbs_nurbs_boolean_recovers_to_exact_lens() {
+        // The retired M7c blocker: TWO NURBS spheres. Before M8 this
+        // ground the tier-3 spline solver (~190s) and the fitted seam
+        // failed to split either face (kept=0). With canonical recovery
+        // both operands are recognized as exact spheres, the SSI is the
+        // tier-1 circle, and the M6c crossing-imprint splits both into a
+        // valid two-cap lens -- fast and exact.
+        let a = z_nurbs_sphere(Vec3::ZERO, 1.0);
+        let b = z_nurbs_sphere(Vec3::new(0.0, 0.0, 1.5), 1.0);
+        let res = boolean(&a, &b, BoolOp::Intersection, 1e-6).unwrap();
+        assert!(
+            res.body.validate().is_ok(),
+            "nurbs-nurbs lens invalid: {:?}",
+            res.faults
+        );
+        assert_eq!(res.body.counts().f, 2, "lens has two cap faces");
+        let h = 0.25;
+        let v_lens = 2.0 * (core::f64::consts::PI * h * h / 3.0) * (3.0 - h);
+        let v = res.body.tessellated_volume();
+        // Coarse NURBS-cap tessellation (the curved volume oracle) is
+        // good to a few percent, as for the M7b analytic-x-NURBS lens.
+        assert!(
+            (v - v_lens).abs() < 0.05 * v_lens,
+            "nurbs-nurbs lens volume {v} vs {v_lens}"
         );
     }
 
