@@ -400,12 +400,22 @@ impl Body {
             if poly.len() < 3 {
                 continue;
             }
-            let n = poly.len();
-            let centroid = poly.iter().fold(Vec3::ZERO, |a, p| a + *p) * (1.0 / n as f64);
-            // Inner rings (holes) get reversed orientation to subtract.
             let loop_out = if li == 0 { outward } else { outward * -1.0 };
-            for i in 0..n {
-                tris.push(orient([centroid, poly[i], poly[(i + 1) % n]], loop_out));
+            if li == 0 {
+                // Outer loop: ear-clip, so NON-star-convex faces (an L-cap,
+                // a boolean fragment) triangulate correctly -- a centroid
+                // fan is only valid for star-convex loops.
+                for [ia, ib, ic] in earclip_3d(&poly, nz) {
+                    tris.push(orient([poly[ia], poly[ib], poly[ic]], loop_out));
+                }
+            } else {
+                // Inner rings (holes): reversed centroid fan to subtract
+                // their solid-angle / volume contribution.
+                let n = poly.len();
+                let centroid = poly.iter().fold(Vec3::ZERO, |a, p| a + *p) * (1.0 / n as f64);
+                for i in 0..n {
+                    tris.push(orient([centroid, poly[i], poly[(i + 1) % n]], loop_out));
+                }
             }
         }
         tris
@@ -435,7 +445,40 @@ impl Body {
                 && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
                 && let Some(Curve3::Circle(c)) = self.curves.get(ck)
             {
-                circle_edge = Some(*c);
+                let c = *c;
+                circle_edge = Some(c);
+                // Sample an OPEN arc edge (a fillet cap's spring/end arc)
+                // along its short span so the polygon follows the curve,
+                // not its chord (closed full-circle edges use the fallback).
+                if self.edges.get(fin.edge).map(|e| !e.is_closed()) == Some(true)
+                    && let (Some(ps), Some(pe)) = (
+                        self.fin_start_vertex(cur)
+                            .and_then(|v| self.vertices.get(v))
+                            .map(|v| v.point),
+                        self.fin_end_vertex(cur)
+                            .and_then(|v| self.vertices.get(v))
+                            .map(|v| v.point),
+                    )
+                {
+                    let ang = |p: Vec3| {
+                        (p - c.center)
+                            .dot(c.y_axis)
+                            .atan2((p - c.center).dot(c.x_axis))
+                    };
+                    let ts = ang(ps);
+                    let mut d = ang(pe) - ts;
+                    let pi = core::f64::consts::PI;
+                    while d > pi {
+                        d -= core::f64::consts::TAU;
+                    }
+                    while d <= -pi {
+                        d += core::f64::consts::TAU;
+                    }
+                    const SEG: usize = 8;
+                    for k in 1..SEG {
+                        verts.push(c.point(ts + d * (k as f64 / SEG as f64)));
+                    }
+                }
             }
             let Some(next) = self.fins.get(cur).map(|f| f.next) else {
                 break;
@@ -564,4 +607,85 @@ fn orient(tri: [Vec3; 3], outward: Vec3) -> [Vec3; 3] {
     } else {
         tri
     }
+}
+
+/// Ear-clip a planar 3D polygon (in the plane of unit normal `nz`) into
+/// triangles, returned as index triples into `poly`. Handles non-convex
+/// (non-star-convex) simple polygons; orientation of the output triangles
+/// is left to the caller's `orient`.
+fn earclip_3d(poly: &[Vec3], nz: Vec3) -> Vec<[usize; 3]> {
+    let seed = if nz.x.abs() < 0.9 {
+        Vec3::new(1.0, 0.0, 0.0)
+    } else {
+        Vec3::new(0.0, 1.0, 0.0)
+    };
+    let u = (seed - nz * seed.dot(nz))
+        .try_normalize()
+        .unwrap_or(Vec3::new(1.0, 0.0, 0.0));
+    let w = nz.cross(u);
+    let p: Vec<[f64; 2]> = poly.iter().map(|&q| [q.dot(u), q.dot(w)]).collect();
+    earclip_2d(&p)
+}
+
+fn earclip_2d(p: &[[f64; 2]]) -> Vec<[usize; 3]> {
+    let n = p.len();
+    if n < 3 {
+        return Vec::new();
+    }
+    let cross = |o: [f64; 2], a: [f64; 2], b: [f64; 2]| {
+        (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    };
+    let area2: f64 = (0..n)
+        .map(|i| cross([0.0, 0.0], p[i], p[(i + 1) % n]))
+        .sum();
+    let ccw = area2 > 0.0;
+    let in_tri = |q: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+        let (d1, d2, d3) = (cross(a, b, q), cross(b, c, q), cross(c, a, q));
+        let neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+        let pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+        !(neg && pos)
+    };
+    let mut idx: Vec<usize> = (0..n).collect();
+    let mut tris = Vec::new();
+    let mut guard = 0usize;
+    while idx.len() > 3 {
+        guard += 1;
+        if guard > n * n + 16 {
+            break; // degenerate / self-intersecting: bail with a partial fan
+        }
+        let m = idx.len();
+        let mut found = None;
+        for i in 0..m {
+            let (ia, ib, ic) = (idx[(i + m - 1) % m], idx[i], idx[(i + 1) % m]);
+            let (a, b, c) = (p[ia], p[ib], p[ic]);
+            let turn = cross(a, b, c);
+            // Reflex vertex (wrong turn for the winding) is not an ear tip.
+            if (ccw && turn <= 0.0) || (!ccw && turn >= 0.0) {
+                continue;
+            }
+            let mut clean = true;
+            for &j in &idx {
+                if j != ia && j != ib && j != ic && in_tri(p[j], a, b, c) {
+                    clean = false;
+                    break;
+                }
+            }
+            if clean {
+                found = Some(i);
+                break;
+            }
+        }
+        match found {
+            Some(i) => {
+                let m = idx.len();
+                tris.push([idx[(i + m - 1) % m], idx[i], idx[(i + 1) % m]]);
+                idx.remove(i);
+            }
+            None => break,
+        }
+    }
+    if idx.len() == 3 {
+        tris.push([idx[0], idx[1], idx[2]]);
+    }
+    tris
 }
