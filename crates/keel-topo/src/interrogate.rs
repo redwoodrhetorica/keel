@@ -62,6 +62,23 @@ impl Body {
             .collect()
     }
 
+    /// Area of a single face (parity interrogation), summed over its
+    /// outward triangles. Exact for planar faces; the tessellation
+    /// approximation for curved faces (consistent with the curved volume
+    /// oracle -- exact analytic area is a later refinement).
+    pub fn face_area(&self, face: crate::entity::FaceKey) -> f64 {
+        self.tessellate_face(face)
+            .iter()
+            .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
+            .sum()
+    }
+
+    /// Total surface area of the body (parity interrogation): the sum of
+    /// every face's area. Exact for all-planar bodies.
+    pub fn surface_area(&self) -> f64 {
+        self.face_keys().iter().map(|&f| self.face_area(f)).sum()
+    }
+
     /// Axis-aligned bounding box of the body (parity item 105). Tight
     /// from the tessellation: exact for planar faces, tessellation-tight
     /// for curved (a fast refinement to exact analytic extrema is a
@@ -251,6 +268,15 @@ mod tests {
             "max {:?}",
             bb.max
         );
+    }
+
+    #[test]
+    fn surface_area_of_block_is_exact() {
+        // 2x3x4 block: area = 2(2*3 + 3*4 + 2*4) = 2(6+12+8) = 52.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 3.0, 4.0).unwrap();
+        let a = b.surface_area();
+        assert!((a - 52.0).abs() < 1e-9, "block surface area {a} != 52");
     }
 
     #[test]
