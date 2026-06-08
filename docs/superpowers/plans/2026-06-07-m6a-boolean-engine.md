@@ -7,9 +7,11 @@
 **Architecture (M3-gate boolean pipeline, now built):** localize → intersect (M5a) → imprint+glue (M5b primitives, composed here) → classify → select → stitch → report. Regularized r-set semantics (Requicha): `A op* B = cl(int(A op B))`. Partial-success fault model: a result plus per-face-pair fault tags, never all-or-nothing (synthesis A: booleans report faults, never panic). Coplanar faces, tangencies, and degenerate coincidence are DEFERRED to M6b/M7 and returned as fault tags here.
 
 **Proof cases (the milestone bar):**
-- **Sphere ∪/∩/− Sphere**: the textbook boolean; SSI is one exact circle (tier 1); each sphere splits into two caps; select and stitch. Volume checked against the exact lens/union formula.
-- **Block − Cylinder** (drill a through-hole): transversal, no coplanar faces; result volume = block − cylinder-segment.
-- **Block ∩ Block (offset on all axes)**: transversal box intersection; result = the overlap box.
+- **Block ∩/− Block (guillotine + corner overlap)**: ALL-PLANAR, the primary M6a proof. Planar faces have watertight pcurves, so fragment classification (UV winding), trimmed-face mass properties (Green), and stitch are all on the reliable machinery M4/M5b already proved. Volume checked exactly against the overlap/remainder box.
+
+**Architecture decision (2026-06-07, during execution):** the first end-to-end proof is **all-planar (box)**, not sphere-sphere. Analysis during execution showed the sphere's SSI/imprint are trivial (one self-bounding circle, crossing-free if seamed equatorially) BUT its *classification* and *trimmed mass-properties* fight surface periodicity (the seam meridian has no pcurve; latitude loops wrap the u-domain) — genuinely M6b-grade. Planar faces avoid all of that. The cost the planar path pays instead is geometry the sphere got for free: the plane-plane SSI line is UNBOUNDED, so seams must be **clipped to both trimmed faces**, and segments **assembled** into chains/loops before imprinting. That clip+assemble machinery is non-periodic, robust, and reused by every future boolean, so it is the right investment. Sphere/cylinder (periodic-surface) booleans move to **M6b** with proper periodic pcurves + seam-crossing imprint. The sphere SSI and crossing-free two-body imprint remain as M6a unit tests (they prove those pieces compose).
+
+Build order of the planar pipeline: clip SSI line to faces → assemble per-face seam segments → imprint (open chains via split, closed loops as one degree-1 NURBS ring) → classify fragments (PMC) → select (r-set tables) → stitch + rebuild regions → volume proof.
 
 **Research basis:** kernel/01 Part 6 (Requicha-Voelcker boundary evaluation, Tilove SMC/PMC + neighborhood, re-read for M3 gate), wave-2 synthesis A (partial-success model, metamorphic testing, winding PMC), M3 gate section 4. Spec D3/D5/D7.
 
