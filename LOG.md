@@ -1811,3 +1811,11 @@ polyhedra/straight edges; curved-edge crossings + multi-loop sections + the
 split-into-two-bodies variant deferred.
 RUNNING TOTAL: 50 -> 51/144.
 GATE: exact CI triplet green. Merged.
+
+## Addendum 51 (2026-06-08): Parity slicing -- planar slices / AM (map 51 -> 52/144)
+
+planar_slices(base, normal, offsets) (item 77): one section polygon per
+offset plane (reuses section_by_plane), empty vectors aligned to offsets
+that miss the body -- the additive-manufacturing slicing path. Tested: a
+block sliced at z=0.5/1.0/1.5 -> three squares; a slice above is empty.
+RUNNING TOTAL: 51 -> 52/144. GATE: CI triplet green. Merged.
