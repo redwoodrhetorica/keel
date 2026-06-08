@@ -41,7 +41,8 @@ These gate almost every feature engine; features produce the exact configuration
 
 - **0a. General-position booleans.** Today booleans DECLINE coincident/tangent/touching faces. Feature ops generate these constantly (a blend is tangent to its neighbors; a shell offsets to coincident faces; a swept solid united back is coplanar). Extend the winding-classified pipeline to coincident/tangent neighborhoods (the n-ary winding-number-VECTOR classify already noted in the M6 ledger), sheet-solid and sheet-sheet booleans, multiple tool bodies, imprint-only option. Closes 28-34; unblocks everything downstream.
 - **0b. Offset-surface geometry primitive.** Exact offsets of plane/cyl/cone/sphere/torus (closed form) + certified NURBS offset (file: nurbs offsets / Piegl-Tiller). The shared primitive under blends, shell, offset-face, thicken.
-- **0c. Attribute system** (117-121). Cheap infrastructure, broadly enabling (color, names, density, feature data, and the substrate persistent naming and feature recognition need). Typed attributes + user fields + propagation-through-ops rules.
+- **0c. Attribute system** (117-121). Cheap infrastructure, broadly enabling (color, names, density, feature data, and the substrate persistent naming and feature recognition need). Typed attributes + user fields + propagation-through-ops rules. **[DONE -- Addendum 38, 30->35/144.]**
+- **0d. Interchange: STEP AP203 + mesh export** (pulled forward from the crusst peer review, Addendum 39 -- not a 144-map item but a real adoption blocker). Direct topology->STEP entity mapping (MANIFOLD_SOLID_BREP / ADVANCED_FACE / EDGE_CURVE / B_SPLINE_SURFACE_WITH_KNOTS) with NO tessellation, plus thin STL/OBJ/3MF writers over the existing tessellator. crusst's `src/export/step.rs` is a working blueprint; Keel's faithful pcurves + certified seams make its output strictly better. Cheap, high-visibility; do early.
 
 ## Phase 1 -- The local-operations keystone (tweak) [file 03]
 
