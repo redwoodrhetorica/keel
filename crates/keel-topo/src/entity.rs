@@ -165,11 +165,15 @@ pub struct Region {
     pub shells: Vec<ShellKey>,
 }
 
-/// Minimal typed attribute value (gate design 1.4).
+/// Typed attribute value (gate design 1.4; extended for parity items
+/// 117-120: `Vec3` carries colors/directions, `Bytes` carries raw
+/// per-entity user fields).
 #[derive(Clone, Debug, PartialEq)]
 pub enum AttrValue {
     F64(f64),
     I64(i64),
     Bool(bool),
     Str(String),
+    Vec3([f64; 3]),
+    Bytes(Vec<u8>),
 }
