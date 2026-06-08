@@ -1819,3 +1819,23 @@ offset plane (reuses section_by_plane), empty vectors aligned to offsets
 that miss the body -- the additive-manufacturing slicing path. Tested: a
 block sliced at z=0.5/1.0/1.5 -> three squares; a slice above is empty.
 RUNNING TOTAL: 51 -> 52/144. GATE: CI triplet green. Merged.
+
+## Addendum 52 (2026-06-08): Parity wire bodies (map 52 -> 54/144)
+
+wire(p0, p1) (items 8, 18): a first-class wire-body constructor wrapping
+embed_wire + line geometry. (The capability already existed via embed_wire
+-- undercounted at baseline; now first-class + tested.) Tested: body_class
+== Wire, valid. RUNNING TOTAL: 52 -> 54/144.
+
+INFLECTION: the clean quick wins are now exhausted. A sheet-body attempt
+this session hit the lamina/region Euler semantics (a single planar face
+must not create a second region; my mvfs+mef base made a 2-region Solid) --
+deferred rather than thrashed (standing order). The remaining ~90 map items
+are the BIG ENGINES, each a focused milestone, several research-hard and
+interdependent: coincident/tangent boolean core (28,29,31,33 -- the
+keystone unblocking blends/hollow/chamfer-by-boolean), sweep-along-path/
+spin/loft (63,64,66-69), BLENDS/chamfers (47-61), hollow/shell (41-43),
+HLR/silhouette (96-97), sheet ops (70-72), persistence/XT (126-129),
+assemblies (82-85), foreign geometry (114-116). Next focused milestone: the
+coincident-boolean foundation.
+GATE: exact CI triplet green. Merged.
