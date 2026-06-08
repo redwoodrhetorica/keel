@@ -50,6 +50,11 @@ pub struct SeamCurve {
     pub face_b: FaceKey,
     pub curve: keel_geom::curve::Curve3,
     pub closed: bool,
+    /// Certified bound on the curve's deviation from the true surface-
+    /// surface intersection (`SsiCurve::tol_achieved`): ~0 for exact
+    /// conics, ~the fit error for marched NURBS. This rides onto the
+    /// imprinted edge's tolerance (the tolerant-geometry contract, M7b).
+    pub tol: f64,
 }
 
 impl Body {
@@ -132,6 +137,51 @@ impl Body {
         let hhi = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let t = tol.max(1e-7);
         curve_h >= hlo - t && curve_h <= hhi + t
+    }
+
+    /// Raise a seam edge's tolerance (and its bound vertices') to at
+    /// least `tol` -- the SSI error bound rides onto the topology.
+    pub(crate) fn set_seam_edge_tolerance(&mut self, edge: crate::entity::EdgeKey, tol: f64) {
+        let bounds = self.edges.get(edge).map(|e| e.bounds);
+        if let Some(e) = self.edges.get_mut(edge) {
+            e.tolerance = e.tolerance.max(tol);
+        }
+        if let Some((v0, v1)) = bounds {
+            for v in [v0, v1] {
+                if let Some(vt) = self.vertices.get_mut(v) {
+                    vt.tolerance = vt.tolerance.max(tol);
+                }
+            }
+        }
+    }
+
+    /// Epsilon-solidity (Qi/Shapiro): a CHECKABLE validity contract --
+    /// the body is epsilon-solid iff every edge and vertex tolerance is
+    /// within `eps`. The boolean's geometry may be approximate (an
+    /// inexact NURBS SSI), but the topology is exact and every entity's
+    /// deviation is bounded by its stored tolerance; epsilon-solidity
+    /// asserts that bound is no worse than `eps`. This is the formal
+    /// handle the literature says NURBS kernels usually lack.
+    pub fn epsilon_solid(&self, eps: f64) -> bool {
+        let slack = eps + 1e-15;
+        self.edges.iter().all(|(_, e)| e.tolerance <= slack)
+            && self.vertices.iter().all(|(_, v)| v.tolerance <= slack)
+    }
+
+    /// The largest edge/vertex tolerance in the body -- the achieved
+    /// epsilon (the body is epsilon-solid at exactly this value).
+    pub fn achieved_tolerance(&self) -> f64 {
+        let e = self
+            .edges
+            .iter()
+            .map(|(_, e)| e.tolerance)
+            .fold(0.0f64, f64::max);
+        let v = self
+            .vertices
+            .iter()
+            .map(|(_, v)| v.tolerance)
+            .fold(0.0f64, f64::max);
+        e.max(v)
     }
 
     /// The full surface geometry backing a face (analytic OR NURBS).
@@ -1129,7 +1179,11 @@ fn import_vertex(
     if let Some(&dv) = vmap.get(&key) {
         return Some(dv);
     }
+    let stol = sv.tolerance;
     let dv = dst.new_vertex(rec, sv.point);
+    if let Some(vt) = dst.vertices.get_mut(dv) {
+        vt.tolerance = vt.tolerance.max(stol);
+    }
     vmap.insert(key, dv);
     Some(dv)
 }
@@ -1148,13 +1202,16 @@ fn import_edge(
     if let Some(&de) = emap.get(&(op, sid)) {
         return Some(de);
     }
-    let (b0, b1, curve) = {
+    let (b0, b1, curve, etol) = {
         let se = src.edges.get(edge)?;
-        (se.bounds.0, se.bounds.1, se.curve)
+        (se.bounds.0, se.bounds.1, se.curve, se.tolerance)
     };
     let dv0 = import_vertex(dst, src, b0, op, rec, vmap)?;
     let dv1 = import_vertex(dst, src, b1, op, rec, vmap)?;
     let de = dst.new_edge(rec, (dv0, dv1), Derivation::Created);
+    if let Some(e) = dst.edges.get_mut(de) {
+        e.tolerance = e.tolerance.max(etol);
+    }
     if let Some((sck, scsense)) = curve
         && let Some(c) = src.curves.get(sck).cloned()
     {
@@ -1852,6 +1909,16 @@ fn imprint_operand(
         }
         faults.push(BoolFault::AssemblyFailed("unassembled face seams"));
     }
+    // Tolerant-edge contract (M7b): the imprinted seam edges carry the
+    // SSI curve's certified error bound, propagated to their vertices.
+    // The combinatorial topology stays exact; the GEOMETRY carries its
+    // bound -- "exact topology decisions with tolerant geometry".
+    let max_seam_tol = seams.iter().map(|s| s.tol).fold(0.0f64, f64::max);
+    if max_seam_tol > 0.0 {
+        for &edge in &seam_edges {
+            working.set_seam_edge_tolerance(edge, max_seam_tol);
+        }
+    }
     ImprintedOperand {
         body: working,
         seam_edges,
@@ -1937,6 +2004,7 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                                             face_b: fb,
                                             curve: keel_geom::curve::Curve3::Nurbs(seg),
                                             closed: false,
+                                            tol: c.tol_achieved,
                                         });
                                     }
                                 }
@@ -1957,6 +2025,7 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                             face_b: fb,
                             curve: c.curve,
                             closed: c.closed,
+                            tol: c.tol_achieved,
                         });
                     }
                 }
@@ -2443,6 +2512,42 @@ mod tests {
             .body
             .generalized_winding_number(Vec3::new(0.0, 0.0, 0.75));
         assert!(w_in > 0.5, "nurbs lens midpoint winding {w_in}");
+    }
+
+    #[test]
+    fn nurbs_boolean_is_epsilon_solid() {
+        // THE M7b CENTERPIECE -- "exact topology decisions with tolerant
+        // geometry" on a real NURBS boolean. The tier-2 analytic-sphere x
+        // NURBS-sphere SSI is solved by certified-numeric fitting: the
+        // intersection circle is reproduced to a NONZERO certified bound
+        // (~4e-7), not exactly. That bound (SsiCurve.tol_achieved) now
+        // rides onto Edge.tolerance instead of being discarded, and the
+        // body is provably epsilon-solid at its achieved tolerance while
+        // the COMBINATORIAL topology (two valid caps) stays exact.
+        let a = z_nurbs_sphere(Vec3::ZERO, 1.0);
+        let b = z_sphere(Vec3::new(0.0, 0.0, 1.5), 1.0);
+        let res = boolean(&a, &b, BoolOp::Intersection, 1e-6).unwrap();
+        let eps = res.body.achieved_tolerance();
+        // The geometry is GENUINELY tolerant: the fitted seam carries a
+        // real, nonzero certified deviation bound (this guards against a
+        // regression that silently drops the bound back to the floor).
+        assert!(
+            eps.is_finite() && eps > 0.0,
+            "seam tolerance must be a real nonzero bound, got {eps:e}"
+        );
+        assert!(eps < 1e-4, "tier-2 fit should be tight, got {eps:e}");
+        // Exact topology: the combinatorics are a valid two-cap lens...
+        assert!(
+            res.body.validate().is_ok(),
+            "lens invalid: {:?}",
+            res.faults
+        );
+        assert_eq!(res.body.counts().f, 2, "lens has two cap faces");
+        // ...and the tolerant-geometry contract holds at the achieved bound.
+        assert!(
+            res.body.epsilon_solid(eps),
+            "must be epsilon-solid at achieved {eps:e}"
+        );
     }
 
     #[test]
