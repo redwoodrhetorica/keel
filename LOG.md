@@ -2339,3 +2339,28 @@ real fillets, now works -- the unify verdict from file 44 held exactly.
 GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D warnings +
 workspace test 122 keel-topo). Euler-op surgery; no boolean/tessellate change.
 Merged.
+
+## Addendum 70 (2026-06-08): EAR-CLIPPING planar tessellation + ARC-edge sampling -> near-exact fillet volumes (map stays 63/144)
+
+Two coupled tessellation fixes (the follow-up flagged in Addendum 69):
+1. EAR-CLIPPING (tessellate.rs): tessellate_planar fanned each loop from its
+   CENTROID, valid only for STAR-CONVEX loops -- a latent correctness gap for any
+   non-star-convex planar face (a fillet's L-cap, a boolean fragment) affecting
+   winding/volume/bbox. Replaced the outer-loop fan with proper ear-clipping
+   (earclip_3d projects to the plane's 2D basis; earclip_2d is the standard
+   O(n^2) reflex-aware ear removal with a degeneracy guard). Inner-ring (hole)
+   loops keep the reversed-centroid-fan subtraction.
+2. ARC-edge sampling (loop_polygon): an OPEN arc edge (a Circle3 between two
+   distinct vertices -- a fillet cap's spring/end arc) is now sampled along its
+   SHORT span (8 segments) so the boundary polygon follows the true arc, not its
+   chord. (Closed full-circle edges still use the whole-circle fallback.)
+   These had to land TOGETHER: arc sampling alone made the non-star-convex
+   concave L-cap WORSE under the centroid fan (Addendum 69's revert); with
+   ear-clipping it triangulates correctly.
+Result: fillet mesh_volume is now near-exact. Tightened the convex box/vertical
+and concave fillet volume asserts from ~1% to 0.2% (they pass at 0.08%). The
+unfilleted-solid volumes (box 8, L-prism 3) and all curved primitives unchanged.
+This hardens the winding classifier for non-star-convex faces kernel-wide.
+RUNNING TOTAL: stays 63/144 (tessellation robustness + accuracy; not a new item).
+GATE: exact CI triplet green (122 keel-topo). tessellate_planar is the winding-
+classifier hot path -> fuzz_boolean re-soaked. Merged.

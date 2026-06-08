@@ -884,7 +884,7 @@ mod tests {
         let v = filleted.mesh_volume();
         let expect = 8.0 - (0.25 - core::f64::consts::PI * 0.25 / 4.0) * 2.0;
         assert!(
-            (v - expect).abs() < expect * 0.01,
+            (v - expect).abs() < expect * 0.002,
             "fillet mesh_volume {v} != ~{expect}"
         );
     }
@@ -923,7 +923,7 @@ mod tests {
         let v = filleted.mesh_volume();
         let expect = 8.0 - (0.25 - core::f64::consts::PI * 0.25 / 4.0) * 2.0;
         assert!(
-            (v - expect).abs() < expect * 0.01,
+            (v - expect).abs() < expect * 0.002,
             "vertical fillet volume {v}"
         );
     }
@@ -1149,7 +1149,7 @@ mod tests {
         // 1% tessellation tolerance (chord-vs-arc on the cap edges), same
         // as the convex fillet tests.
         assert!(
-            (v - expect).abs() < expect * 0.012,
+            (v - expect).abs() < expect * 0.002,
             "concave fillet vol {v} != ~{expect}"
         );
     }
