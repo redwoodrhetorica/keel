@@ -14,6 +14,7 @@ pub mod intersect;
 pub mod knots;
 pub mod nurbs_curve;
 pub mod nurbs_surface;
+pub mod offset;
 pub mod project;
 pub mod recover;
 pub mod ssi;

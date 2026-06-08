@@ -1523,3 +1523,20 @@ M1-M8. NEXT: pick the starting phase (recommendation: Phase 0 foundation,
 since the feature engines stand on general-position booleans + offset
 surfaces; building features first would hit "declined" on realistic
 inputs).
+
+## Addendum 37 (2026-06-08): Parity Phase 0b-i -- analytic offset surfaces (enabler)
+
+First build of the parity program (Phase 0 foundation). keel-geom
+offset.rs: `offset_surface(&Surface3, d) -> Option<Surface3>`, the surface
+displaced by signed distance d along its outward normal -- the shared
+primitive under shelling/hollowing, body offset, offset-face, and the
+blend spring-curve. EXACT closed forms: plane stays a plane (origin += z*d);
+sphere/cylinder radius += d; CONE radius += d/cos(half_angle) (derived: the
+offset of a cone is a coaxial cone of the same half-angle, apex unchanged);
+torus minor += d. Degenerate offsets (radius -> <=0, torus tube reaching
+major) decline. Verified by the defining property (offset passes through
+point + d*normal; point sits at |d| from the offset). NURBS certified
+offset (sample-displace-refit-certify) is the follow-up 0b-ii. This is an
+ENABLER -- it does not tick a 144-map item by itself (offsets surface in
+items 37/41/45 as OPERATIONS, built later). CI triplet green (260 tests:
+107 geom + 77 math + 76 topo). Capability map unchanged at baseline.
