@@ -898,3 +898,111 @@ REMAINING in M2a:
   then classify (PMC-based fragment in/out) + select (union/intersect/
   difference tables) + stitch. Standing research re-read first
   (kernel/01 boundary evaluation, Requicha-Voelcker, Tilove SMC/PMC).
+
+## Addendum 28 (2026-06-07): M6a in progress, boolean pipeline front half built (imprint + classify + select)
+
+- M6 split into M6a (clean transversal cases, the milestone-proving
+  pipeline) and M6b (robustness: coplanar, tangency, periodic surfaces,
+  NURBS-bounded solids). Plan: docs/superpowers/plans/2026-06-07-m6a-
+  boolean-engine.md. Branch m6a-boolean.
+- ARCHITECTURE DECISION (during execution): the first end-to-end proof
+  is ALL-PLANAR (box-box), NOT sphere-sphere. Analysis showed the
+  sphere's SSI + imprint are trivial (one self-bounding circle, made
+  crossing-free by seaming each sphere in its equatorial plane) BUT its
+  fragment CLASSIFICATION and trimmed MASS-PROPERTIES fight surface
+  periodicity (seam meridian has no pcurve; latitude loops wrap the
+  u-domain) -- genuinely M6b-grade. Planar faces have watertight
+  pcurves so classify/mass-props/stitch all run on M4/M5b machinery
+  that's already proven. The planar path's price is geometry the sphere
+  got free: plane-plane SSI is an UNBOUNDED line, so seams must be
+  CLIPPED to both trimmed faces and ASSEMBLED before imprinting -- but
+  that clip+assemble code is non-periodic, robust, reused by every
+  future boolean, so it's the right investment. Sphere/cylinder
+  (periodic) booleans -> M6b. Sphere SSI + crossing-free two-body
+  imprint kept as M6a unit tests (they prove those pieces compose).
+- Built (crates/keel-topo/src/boolean.rs), TDD, 7 tests green, 45/45
+  keel-topo lib tests (no regressions):
+  - Task 1 (two-body imprint): seam_curves does all-pairs analytic SSI
+    + Cyrus-Beck clip of plane-plane lines to both faces' convex
+    polygons. imprint_pair clones each operand and imprints the seams
+    via a TWO-PHASE method: phase 1 pre-splits operand boundary edges
+    at the seam-loop corners (so a loop wrapping across faces, like A's
+    cut rectangle crossing shared box edges, gets shared corner
+    vertices); phase 2 per face: boundary-vertex-to-boundary-vertex
+    segments -> split_face; a loop interior to one face (B's cut
+    rectangle) -> one degree-1 NURBS ring via imprint_closed_curve.
+    Guillotine A=[0,4]^3, B=[2,6]x[-1,5]x[-1,5]: A->10 faces, B->7, both
+    valid.
+  - Task 2 (classify): face_interior_point builds each loop's UV
+    polygon by projecting SAMPLED EDGE CURVES (robust to closed-curve
+    edges and to split_edge child fins that carry no pcurve), then
+    picks the MOST-CENTRAL interior sample (max distance to all loop
+    boundaries) so the classification point sits well away from seams
+    (which lie on the other solid's boundary). classify_faces tests it
+    against the other operand's PMC. Guillotine: A 5 inside / 5 outside
+    B; B inner rectangle inside A.
+  - Task 3 (select): select_faces = regularized r-set tables
+    (union/intersection/difference; difference reverses the subtracted
+    walls). Guillotine: intersection 6, difference 6 (1 reversed),
+    union 11.
+- NEXT (M6a remainder): Task 4 stitch + region rebuild (the hard one:
+  import kept faces from both operands into one body, glue coincident
+  seam edges, extract shells, infer the region partition satisfying
+  every validate() invariant -- one infinite region, every face-side in
+  exactly one shell, Euler-Poincare). Then Task 5 boolean() API +
+  exact volume proofs (intersection/difference boxes), Task 6
+  metamorphic proptests + fuzz_boolean + gate.
+
+## Addendum 29 (2026-06-07): M6a COMPLETE (boolean engine, clean transversal cases); merged
+
+- The proof-milestone CORE works: the kernel computes regularized
+  union/intersection/difference on solid bodies, and the results are
+  valid B-rep solids with EXACT volume. Branch m6a-boolean.
+- Pipeline (crates/keel-topo/src/boolean.rs): seam_curves (all-pairs
+  analytic SSI + Cyrus-Beck clip of plane-plane lines to both trimmed
+  faces) -> imprint_operand (two-phase: pre-split boundary edges at
+  seam-loop corners, then per face dispatch: single closed curve ->
+  ring; segments forming a closed loop -> one degree-1 NURBS ring;
+  otherwise one open chain -> split the face boundary-to-boundary
+  through interior corners via mev spurs + split_face) -> classify_faces
+  (most-central UV-interior sample via projected edge curves, then the
+  other operand's PMC) -> select_faces (regularized r-set tables;
+  difference reverses the subtracted walls) -> build_result_solid
+  (direct arena construction of an oriented polygon soup: vertex dedup,
+  shared edges, fin rings, a two-region inside/outside partition with
+  two shells; the Euler operators forbid the intermediate non-solid
+  states a soup passes through, so it is built then validated).
+- PROOFS (exact volumes, 16 boolean tests green):
+  - Guillotine A=[0,4]^3 vs slab B: A∩B and A-B are box solids
+    (V8 E12 F6), volume 32 to 1e-6.
+  - Corner overlap A=[0,2]^3, B=[1,3]^3 (open L-chains with interior
+    corners): A∩B = unit cube vol 1, A-B vol 7.
+  - Nested (no SSI): A∩B = inner box, A∪B = outer box.
+  - Metamorphic: intersection commutative + translation-invariant;
+    determinism (D9): identical result topology hash.
+- Partial-success fault model: coplanar/coincident and tangential
+  configs are detected from SSI and DECLINED up front (a fast clean
+  Err), never ground through. Post-condition gate: a real solid has
+  positive finite volume (the scalar Euler identity is necessary not
+  sufficient); near-degenerate results are declined, never returned as
+  a wrong "valid" body.
+- FUZZ (fuzz_boolean: random box pairs + random op): two findings, both
+  fixed and captured as golden regression tests + corpus seeds:
+  (1) coincident boxes ground for 16s through degenerate edge-grazing
+      imprints -> early decline on Coincident/Tangent faults (16135ms ->
+      29ms);
+  (2) a thin sliver at large coordinates produced a 3-face Euler-valid
+      non-solid (NaN volume) -> positive-volume post-condition declines.
+  Final 10-min soak CLEAN: 3013 runs, no crashes.
+- GATE: fmt + clippy clean, 222 workspace tests green (90 geom + 77
+  math + 55 topo), 10-min fuzz_boolean soak CLEAN. Merged to master.
+- DEFERRED to M6b (honest ledger): coplanar/coincident faces and
+  neighborhood-merge classification; tangential contact; periodic-
+  surface booleans (sphere/cylinder full pipeline -- their SSI + crossing-
+  free imprint are proven as M6a unit tests, but classification and
+  trimmed mass-props fight surface periodicity); NURBS-bounded solids
+  (the M7 bar); union of transversally-overlapping boxes (needs holed-
+  face stitch); enclosed-void difference (needs 3-region stitch);
+  tolerant scaling robustness (the sliver class); AABB/BVH localization
+  (the all-pairs O(n^2) is the throughput cost). Differential testing
+  vs OCCT over the ABC corpus remains the M6b/M7 approximate oracle.

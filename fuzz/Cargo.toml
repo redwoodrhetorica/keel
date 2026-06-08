@@ -67,3 +67,9 @@ name = "fuzz_imprint"
 path = "fuzz_targets/fuzz_imprint.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_boolean"
+path = "fuzz_targets/fuzz_boolean.rs"
+test = false
+doc = false
