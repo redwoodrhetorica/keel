@@ -1408,3 +1408,67 @@ chose; this session shipped the core that retires M7c):
 GATE: exact CI triplet GREEN (fmt --all --check; clippy --workspace
 --all-targets -- -D warnings; cargo test --workspace = 249 tests: 97 geom
 + 77 math + 75 topo). fuzz_recover added + soak clean. Merged.
+
+## Addendum 35 (2026-06-08): M8 COMPLETION -- curve recovery, Body::simplify, torus; the full quadric family recovers
+
+Continued M8 (user: "Continue") through the completion items, finishing
+the canonical-recovery milestone. Branch m8-completion.
+
+DELIVERED:
+- CURVE recovery (keel-geom recover): `recover_curve(nurbs, tol) ->
+  Option<CurveRecovery>` -- line (zero curvature) and circle (constant
+  curvature, planar; plane from three spread samples + a 2D circle fit in
+  that plane), certified by `curve_deviation` (dense sample vs the curve's
+  closed-form projection). Line dir to 1e-9, circle center/radius to 1e-7;
+  a wavy degree-3 curve is correctly KEPT. (Ellipse recovery -- the
+  plane-cylinder seam case -- is noted for later; line and circle are what
+  the analytic booleans actually produce.)
+- `Body::simplify(tol)` (keel-topo simplify.rs): the public HEAL
+  "simplify" pass. Topology-preserving in-place swap of NURBS faces ->
+  analytic and NURBS edges -> line/circle, gated by the recovery
+  certifier. ORIENTATION is preserved: the swapped surface's sense is
+  chosen so the outward normal at a shared geometric point agrees with the
+  original (analytic vs NURBS du x dv normals differ). Tested: a
+  nurbs_sphere body simplifies to an analytic-Sphere3-faced body that
+  stays VALID with volume preserved (geometry only tightened). Returns a
+  SimplifyReport (counts + max certified deviation).
+- TORUS recovery (completes the quadric family plane/sphere/cylinder/
+  cone/torus): doubly-curved, not-umbilic, not-developable branch. The
+  surface-of-revolution AXIS is the smallest-eigenvalue eigenvector of the
+  point covariance via a compact 3x3 cyclic-Jacobi eigensolver; the tube
+  (major/minor radii) is a 2D circle fit in (rho, z) axis-frame
+  coordinates (rho = radial distance from axis, z = axial). FIX during
+  build: the first estimator took major/minor from the rho min/max extent,
+  but interior samples miss the exact tube extremes -> minor off by ~2%
+  and deviation 1.3e-2; the (rho,z) LS circle fit gives major/minor to
+  ~1e-11 and deviation ~6e-6. Like the cone, the sampled certifier sits at
+  ~6e-6 here, so torus recovers at a ~1e-5 modeling tolerance (documented).
+
+So the full M8 milestone the user chose is delivered: recognize ->
+fit -> certify -> substitute for the entire analytic surface family plus
+line/circle curves, exposed both as `keel_geom::recover` and the
+`Body::simplify` HEAL pass, with the boolean front-end as the first
+internal client (M7c blocker retired in Addendum 34).
+
+NUMERICS ADDED (small, self-contained, certifier-gated): a 3x3 cyclic
+Jacobi symmetric eigensolver and 3x3/4x4 Gaussian-elimination solvers in
+recover.rs. The certifier is still the discriminator everywhere: a
+wrong-type fit cannot certify, so the failure direction stays false-
+reject (keep the spline), never false-accept.
+
+DEFERRED (honest ledger, genuinely later / separate milestones):
+- ELLIPSE curve recovery (plane-cylinder seams).
+- The FREE-FORM-faced-SOLID boolean capstone (a non-recoverable surface
+  driving a tier-3 SSI with a tolerant seam end-to-end): the tolerant-edge
+  machinery is shipped (M7b) and the rejection gate is proven
+  (freeform_is_kept), but the demo needs a free-form SOLID constructor
+  (lofting/skinning) that does not exist -- a separate constructor
+  milestone, not recovery.
+- Face-MERGE of split analytics (naming-coupled); constraint-aware re-fit
+  / beautification (coaxiality snapping); helical/developable/translational
+  and learned (UV-Net) type proposals; the interval-certified tighter
+  deviation bound (the current bound is dense-sampled, fuzz-backstopped).
+
+GATE: exact CI triplet GREEN (fmt --all --check; clippy --workspace
+--all-targets -- -D warnings; cargo test --workspace = 254 tests: 101 geom
++ 77 math + 76 topo). fuzz_recover re-soaked clean. Merged.
