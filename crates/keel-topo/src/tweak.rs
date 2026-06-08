@@ -17,7 +17,8 @@ use crate::Body;
 use crate::body::TopoError;
 use crate::entity::{EdgeKey, FaceKey, SurfaceGeom, VertexKey};
 use keel_geom::curve::{Circle3, Curve3, Line3};
-use keel_geom::surface::{Cylinder3, Plane3, Surface3};
+use keel_geom::surface::{Cylinder3, Frame3, Plane3, Surface3};
+use keel_math::transform::Transform3;
 use keel_math::vec::Vec3;
 
 /// Intersection point of three planes `n_i . x = d_i`, or None if they
@@ -265,6 +266,30 @@ impl Body {
         np.frame.origin = np.frame.origin + t;
         self.tweak_face_to_plane(face, np, sense)
     }
+
+    /// Taper / draft a planar face (items 38, 78): rotate its plane by
+    /// `angle` about the parting line through `pivot` along `axis`, then
+    /// re-intersect. Corners on the parting line stay fixed; the rest
+    /// follow the tilt. The parting line is the neutral/parting
+    /// reference; the draft angle is `angle`.
+    pub fn taper_face(
+        &mut self,
+        face: FaceKey,
+        pivot: Vec3,
+        axis: Vec3,
+        angle: f64,
+    ) -> Result<(), TopoError> {
+        let (plane, sense) = self
+            .face_plane(face)
+            .ok_or(TopoError::Precondition("taper_face: non-planar"))?;
+        let rot = Transform3::from_rotation(axis, angle)
+            .ok_or(TopoError::Precondition("taper_face: bad axis"))?;
+        let new_normal = rot.apply_vector(plane.frame.z);
+        let new_origin = rot.apply_point(plane.frame.origin - pivot) + pivot;
+        let frame = Frame3::from_z(new_origin, new_normal)
+            .map_err(|_| TopoError::Precondition("taper_face: degenerate normal"))?;
+        self.tweak_face_to_plane(face, Plane3::new(frame), sense)
+    }
 }
 
 #[cfg(test)]
@@ -326,6 +351,24 @@ mod tests {
         assert!(b.validate().is_ok());
         let v = b.mass_properties().unwrap().volume;
         assert!((v - 16.0).abs() < 1e-9, "volume {v} != 16");
+    }
+
+    #[test]
+    fn taper_face_tilts_and_revalidates() {
+        // Draft the top face of a 2x2x2 block about its y=0 top edge by
+        // ~0.2 rad: corners on that edge stay, the others tilt down; the
+        // solid stays valid and the volume changes.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let top = top_face(&b);
+        b.taper_face(top, Vec3::new(0.0, 0.0, 2.0), Vec3::new(1.0, 0.0, 0.0), 0.2)
+            .unwrap();
+        assert!(b.validate().is_ok(), "tapered block invalid");
+        let v = b.mass_properties().unwrap().volume;
+        assert!(
+            v.is_finite() && v > 0.0 && (v - 8.0).abs() > 1e-6,
+            "taper volume {v} unchanged/invalid"
+        );
     }
 
     #[test]
