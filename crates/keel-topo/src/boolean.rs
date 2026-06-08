@@ -805,8 +805,11 @@ fn import_face(
 ) -> Option<FaceKey> {
     use crate::lineage::Derivation;
     let sface = src.faces.get(face)?;
-    let (fr, br) = if reversed { (solid, inf) } else { (inf, solid) };
-    let dface = dst.new_face(rec, fr, br, Derivation::Created);
+    // A solid boundary face always has its (possibly reversed) outward
+    // normal on the FRONT side facing the exterior. Reversal flips the
+    // surface sense, fin senses, and loop order below -- not the
+    // front/back region assignment.
+    let dface = dst.new_face(rec, inf, solid, Derivation::Created);
     let sloops = sface.loops.clone();
     let mut dloops = Vec::new();
     for slk in sloops {
@@ -2064,6 +2067,41 @@ mod tests {
         assert!(
             (v - v_lens).abs() < 0.05 * v_lens,
             "lens volume {v} vs exact {v_lens}"
+        );
+    }
+
+    #[test]
+    fn sphere_sphere_union_and_difference() {
+        let a = z_sphere(Vec3::ZERO, 1.0);
+        let b = z_sphere(Vec3::new(0.0, 0.0, 1.5), 1.0);
+        let h = 0.25;
+        let v_sphere = 4.0 / 3.0 * core::f64::consts::PI;
+        let v_lens = 2.0 * (core::f64::consts::PI * h * h / 3.0) * (3.0 - h);
+        // Union: two outer caps glued -> the peanut. V = 2*V_sphere - V_lens.
+        let uni = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
+        assert!(
+            uni.body.validate().is_ok(),
+            "union invalid: {:?}",
+            uni.faults
+        );
+        let vu = uni.body.tessellated_volume();
+        let exp_u = 2.0 * v_sphere - v_lens;
+        assert!(
+            (vu - exp_u).abs() < 0.05 * exp_u,
+            "union vol {vu} vs {exp_u}"
+        );
+        // Difference A-B: sphere A with a spherical dimple. V = V_sphere - V_lens.
+        let diff = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
+        assert!(
+            diff.body.validate().is_ok(),
+            "difference invalid: {:?}",
+            diff.faults
+        );
+        let vd = diff.body.tessellated_volume();
+        let exp_d = v_sphere - v_lens;
+        assert!(
+            (vd - exp_d).abs() < 0.05 * exp_d,
+            "difference vol {vd} vs {exp_d}"
         );
     }
 
