@@ -43,16 +43,45 @@ Build the sphere TOPOLOGY exactly as `sphere()` (V2 E1 F1: two poles, one seam m
 - `tessellated_volume` already sums over `tessellate_face`, so NURBS faces contribute once Task 1 lands.
 - The boolean's post-condition already routes curved results to the tessellated volume.
 
-### Task 4: NURBS pcurve for imprint + the first NURBS boolean (proof)
-- The imprint pcurve on a NURBS face: replace the M5b `face_analytic_surface` precondition with a NURBS path -- sample the SSI curve, `project_point_surface` each sample to (u, v), fit a pcurve (the M5b sample-invert-fit, generalized off the analytic-only branch). The crossing/interior-ring topology (M6b/M6c) is surface-agnostic; only the pcurve computation differs.
-- PROOF: a **NURBS sphere INTERSECT an analytic sphere** (equatorially seamed, crossing-free), distance 1.5: the SSI is the tier-2 analytic-vs-spline circle; imprint splits each sphere into caps; classify (NURBS-aware GWN); select; stitch (import-and-glue); result validates; tessellated volume within ~5% of the exact lens formula. Also the analytic-vs-analytic sphere lens must stay green (no regression).
+### Task 4 (re-scoped to M7b): the first NURBS boolean
+**Scope decision (2026-06-07, during execution):** the NURBS boolean is
+moved to M7b, which becomes the NURBS-boolean-WITH-tolerant-edges
+centerpiece (the differentiation thesis). Rationale discovered in
+execution: a working NURBS boolean needs three substantial new pieces
+that are each M7b-grade and are exactly where the exact-topology/
+tolerant-geometry hybrid gets delivered:
+  - the imprint pcurve on a NURBS face (project_point_surface +
+    NURBS pcurve fit, generalizing the M5b analytic-only branch);
+  - trimmed-NURBS FRAGMENT tessellation (the result lens has NURBS cap
+    faces trimmed by the SSI circle -- needs the cap-side filter in
+    parameter space, the NURBS analogue of tessellate_sphere's trim);
+  - the NURBS cap fragment interior point (the apex via
+    project_point_surface along the SSI circle axis, side from the loop
+    kind).
+M7a delivers the PLUMBING those three build on (tessellation of whole
+NURBS faces, a NURBS-faced solid, soundness). M7b composes them with the
+tolerant-edge core. This keeps M7a a clean soundness-gated foundation
+and aligns the milestone boundary with the differentiation.
 
-### Task 5: fuzz + gate
-- Extend a fuzz target (or add `fuzz_nurbs_boolean`) with NURBS-sphere x analytic-sphere pairs at random offsets/radii: result validates or declines cleanly, volume bounded, never panics.
-- Exit gate: the EXACT CI triplet, all prior artifacts replay, 10-min soaks CLEAN on the new/changed targets, LOG addendum, merge (verify CI green after push).
+### Task 5 (re-scoped to M7b): fuzz the NURBS boolean.
 
-## Deferred to M7b (honest ledger)
-- NURBS x NURBS booleans where the SSI is INEXACT (tier-3 marching): tolerant edges carrying the SSI error bound (Jackson local tolerance), tolerance propagation through the boolean, epsilon-solidity (Qi/Shapiro) as the validity contract.
-- General trimmed-NURBS faces with multiple/curved trim loops and their tessellation.
-- Exact trimmed-NURBS mass properties.
-- Differential testing vs OCCT over the ABC corpus.
+## M7a exit gate
+- The EXACT CI triplet (fmt --all --check; clippy --workspace
+  --all-targets -- -D warnings; cargo test --workspace); LOG addendum;
+  merge; verify CI green after push. (No new fuzz target: M7a adds no
+  new mutation path -- nurbs_sphere is a constructor, tessellation is a
+  read. The NURBS-boolean fuzz lands in M7b.)
+
+## M7b (the centerpiece): NURBS booleans + tolerant edges
+- The first NURBS boolean (NURBS sphere INTERSECT analytic sphere): the
+  three pieces above + import-and-glue stitch; volume vs the lens formula.
+- TOLERANT EDGES (the differentiation): plumb the SSI curve's
+  `tol_achieved` (already computed by the M5a engine, currently thrown
+  away) into `Edge.tolerance`; propagate the bound through the boolean;
+  adopt Qi/Shapiro epsilon-solidity as a CHECKABLE validity contract.
+  This is "exact topology decisions with tolerant geometry" -- the
+  hybrid no kernel fully ships (file 11). Treat as the project's sharpest
+  differentiation, not a checkbox.
+- NURBS x NURBS booleans where the SSI is INEXACT (tier-3 marching).
+- General trimmed-NURBS faces (multiple/curved trim loops); exact
+  trimmed-NURBS mass properties; differential testing vs OCCT/ABC.
