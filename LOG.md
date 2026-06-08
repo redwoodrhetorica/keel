@@ -1890,3 +1890,17 @@ imprint / tangent-edge / curved-coincidence, which file 39 §1/§3/§5 specify
 as follow-ups).
 GATE: exact CI triplet green (285 tests). fuzz_boolean re-soak validates
 the new classification on random inputs. Merged.
+
+## Addendum 55 (2026-06-08): Parity blends -- edge CHAMFER (map 55 -> 56/144); first blend-family op
+
+chamfer_edge(edge, distance) (item 52): constant-setback chamfer on a
+convex edge between two PLANAR faces, as a TRANSVERSAL boolean -- subtract
+a prism whose chamfer face slices the corner at the setback, its other
+faces placed OUTSIDE the body (sized from the bounding box) so the cut
+stays transversal (no coincident-face handling needed; reuses the existing
+M6a transversal boolean). Tested: a 2x2x2 block, chamfer one top edge by
+0.5 -> removes the 0.25 wedge, volume 7.75, valid. Curved-face chamfer,
+variable/asymmetric setback, and fillets (arc section) are follow-ups.
+RUNNING TOTAL: 55 -> 56/144. First operation of the blend/chamfer family
+(items 47-61).
+GATE: exact CI triplet green. Merged.
