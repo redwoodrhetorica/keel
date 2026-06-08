@@ -204,16 +204,24 @@ impl Body {
         let (crossed_edge, p) = self.find_planar_seam_crossing(face, pt, n, tol.max(1e-7))?;
         // Split the seam line at the crossing.
         let se = self.split_edge(crossed_edge, p)?;
-        // Base the closed curve edge at the new vertex (mef closing a
-        // loop there), splitting the face.
+        // The crossing vertex P now has TWO loop fins ending at it (the
+        // lower and upper seam pieces). mef between THEM closes the full
+        // wrap circle from P to P, splitting the periodic face into the
+        // lower and upper bands. (mef with the same fin twice would
+        // instead bound a degenerate disc, leaving the band unsplit.)
         let lp = self
             .faces
             .get(face)
             .and_then(|f| f.loops.first().copied())
             .ok_or(TopoError::StaleKey)?;
-        let fin_at_p = self.fin_ending_at_vertex(lp, se.vertex)?;
+        let fins_at_p = self.loop_fins_ending_at_vertex(lp, se.vertex);
+        if fins_at_p.len() != 2 {
+            return Err(TopoError::Precondition(
+                "crossing imprint: expected two seam fins at the crossing",
+            ));
+        }
         let surf_key = self.faces.get(face).and_then(|f| f.surface);
-        let mef = self.mef(fin_at_p, fin_at_p, surf_key)?;
+        let mef = self.mef(fins_at_p[0], fins_at_p[1], surf_key)?;
         let circle_edge = mef.edge;
         let new_face = mef.face;
         // Geometry: 3D curve + pcurves on both fins; both faces keep the
@@ -243,6 +251,32 @@ impl Body {
             edge: circle_edge,
             faces: vec![face, new_face],
         })
+    }
+
+    /// All fins of loop `lp` whose end vertex is `v` (in loop order).
+    fn loop_fins_ending_at_vertex(
+        &self,
+        lp: crate::entity::LoopKey,
+        v: crate::entity::VertexKey,
+    ) -> Vec<FinKey> {
+        let mut out = Vec::new();
+        let Some(entry) = self.loops.get(lp).and_then(|l| l.fin) else {
+            return out;
+        };
+        let mut cur = entry;
+        loop {
+            if self.fin_end_vertex(cur) == Some(v) {
+                out.push(cur);
+            }
+            let Some(next) = self.fins.get(cur).map(|f| f.next) else {
+                break;
+            };
+            cur = next;
+            if cur == entry {
+                break;
+            }
+        }
+        out
     }
 
     /// Find where the plane (`pt`, unit normal `n`) of a closed curve
