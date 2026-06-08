@@ -2152,3 +2152,31 @@ headline blend op) is real: a valid filleted solid from a sharp-edged one.
 GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D
 warnings + workspace test 116 keel-topo). Surgery uses Euler ops covered by
 fuzz_topo_ops; no boolean/tessellate pipeline change. Merged.
+
+## Addendum 63 (2026-06-08): TRIMMED-CYLINDER tessellation -> fillet VOLUME oracle (closes Addendum 62's deferral; map stays 61/144)
+
+Closed the volume-oracle deferral from the fillet milestone. tessellate_cylinder
+was full-wrap only; a fillet's blend face is a QUARTER cylinder, so mesh_volume
+mis-measured filleted solids. Two fixes:
+
+1. ANGULAR TRIM (tessellate.rs): new cyl_angular_span(face, ...) returns the
+   full wrap (0, TAU) when the face carries a CLOSED circle edge (whole lateral
+   or SSI-trimmed band -- existing behavior preserved), else the [phi_lo, phi_hi]
+   span of the face's boundary vertices in the cylinder (ex, ey) basis (a
+   partial-angle patch). tessellate_cylinder meshes that phi range instead of
+   the full TAU. The quarter blend now meshes exactly its 90 degrees.
+2. SURFACE-COPY BUG in the fillet surgery (blend.rs imprint_spring_line): split_face
+   leaves the NEW face with no surface (imprint_open_curve copies it manually
+   afterward; I had not). When the kept support was the new face it tessellated
+   EMPTY -> a whole support face missing from mesh_volume (the 5.85-vs-7.89
+   miss). Now copy the support plane to split.face_new.
+
+Proof: the filleted 2x2x2 block (top-right edge, r=0.5) mesh_volume now matches
+8 - (r^2 - pi r^2/4)*L = 7.89270 within 1% (tessellation). The fillet is now
+GEOMETRICALLY validated (correct volume), not just topologically. The angular-
+trim also unblocks trimmed-cylinder faces generally (cone/cyl SSI boolean
+fragments). Analytic mass_properties on the blend still needs blend pcurves
+(next); mesh_volume now covers it.
+RUNNING TOTAL: stays 61/144 (hardening the fillet, not a new item).
+GATE: exact CI triplet green (116 keel-topo). tessellate is shared with the
+winding classifier -> fuzz_boolean re-soaked. Merged.

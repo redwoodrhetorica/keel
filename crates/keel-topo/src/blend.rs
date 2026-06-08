@@ -302,6 +302,13 @@ impl Body {
         let fa = self.fin_ending_at_vertex(lp, sva.vertex)?;
         let fb = self.fin_ending_at_vertex(lp, svb.vertex)?;
         let split = self.split_face(fa, fb, None)?;
+        // split_face leaves the new face without a surface; both halves
+        // lie on the support plane, so copy it across.
+        if let Some(surf) = self.faces.get(face).and_then(|f| f.surface)
+            && let Some(nf) = self.faces.get_mut(split.face_new)
+        {
+            nf.surface = Some(surf);
+        }
         let (strip, kept) = if self.face_has_edge(split.face_new, sharp) {
             (split.face_new, split.face_old)
         } else {
@@ -547,6 +554,15 @@ mod tests {
             .collect();
         assert_eq!(cyl.len(), 1, "expected one cylinder blend face");
         assert!((cyl[0] - 0.5).abs() < 1e-12, "blend radius {}", cyl[0]);
+        // Volume: a 2^3 block minus the corner the fillet rounds off =
+        // 8 - (r^2 - pi r^2/4)*L, r=0.5 L=2 => 8 - 0.10730 = 7.89270.
+        // mesh_volume uses the now angularly-trimmed cylinder tessellation.
+        let v = filleted.mesh_volume();
+        let expect = 8.0 - (0.25 - core::f64::consts::PI * 0.25 / 4.0) * 2.0;
+        assert!(
+            (v - expect).abs() < expect * 0.01,
+            "fillet mesh_volume {v} != ~{expect}"
+        );
     }
 
     #[test]
