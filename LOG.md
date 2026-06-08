@@ -1800,3 +1800,14 @@ incident offset planes), reusing the tweak machinery globally. Tested: a
 self-intersection resolution (concave) + curved-face offset deferred.
 RUNNING TOTAL: 49 -> 50/144.
 GATE: exact CI triplet green. Merged.
+
+## Addendum 50 (2026-06-08): Parity sectioning -- section by plane (map 50 -> 51/144)
+
+section_by_plane(point, normal) (item 75): non-destructive section -- the
+ordered polygon where the plane cuts the body's straight edges (linear
+edge-plane crossings, ordered around the centroid in the cutting plane).
+Tested: a 2x2x2 block at z=1 -> a 4-point square, shoelace area 4. Convex
+polyhedra/straight edges; curved-edge crossings + multi-loop sections + the
+split-into-two-bodies variant deferred.
+RUNNING TOTAL: 50 -> 51/144.
+GATE: exact CI triplet green. Merged.

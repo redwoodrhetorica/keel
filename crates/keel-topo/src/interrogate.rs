@@ -138,6 +138,51 @@ impl Body {
         false
     }
 
+    /// Non-destructive section of the body by a plane (parity item 75):
+    /// the ordered polygon where the plane cuts the body's straight
+    /// edges. For a convex polyhedron this is the cross-section outline.
+    /// (Curved-edge crossings and multi-loop sections are a later slice.)
+    pub fn section_by_plane(&self, plane_point: Vec3, plane_normal: Vec3) -> Vec<Vec3> {
+        let Some(n) = plane_normal.try_normalize() else {
+            return Vec::new();
+        };
+        let d = n.dot(plane_point);
+        let mut pts: Vec<Vec3> = Vec::new();
+        for (_, e) in self.edges.iter() {
+            let (v0, v1) = e.bounds;
+            let (Some(a), Some(b)) = (self.vertices.get(v0), self.vertices.get(v1)) else {
+                continue;
+            };
+            let (s0, s1) = (n.dot(a.point) - d, n.dot(b.point) - d);
+            // Edge straddles the plane: linear crossing.
+            if (s0 > 0.0) != (s1 > 0.0) && (s0 - s1).abs() > 1e-12 {
+                let t = s0 / (s0 - s1);
+                let p = a.point + (b.point - a.point) * t;
+                if !pts.iter().any(|q| (*q - p).norm() < 1e-7) {
+                    pts.push(p);
+                }
+            }
+        }
+        if pts.len() < 3 {
+            return pts;
+        }
+        // Order around the centroid in the cutting plane.
+        let c = pts.iter().fold(Vec3::ZERO, |s, &p| s + p) * (1.0 / pts.len() as f64);
+        let seed = if n.x.abs() < 0.9 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0)
+        };
+        let u = (seed - n * seed.dot(n)).try_normalize().unwrap_or(seed);
+        let w = n.cross(u);
+        pts.sort_by(|p, q| {
+            let ap = (*p - c).dot(w).atan2((*p - c).dot(u));
+            let aq = (*q - c).dot(w).atan2((*q - c).dot(u));
+            ap.partial_cmp(&aq).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        pts
+    }
+
     /// Coarse geometric/topological equivalence (parity item 108): equal
     /// entity counts, genus, and (within `tol`) bounding box and volume.
     /// This is the cheap CAx-IF validation-property comparison stage
@@ -239,6 +284,32 @@ mod tests {
         // Fully nested (small inside big, no surface contact) -> clash.
         let big = z_sphere(Vec3::ZERO, 2.0);
         assert!(big.clashes(&z_sphere(Vec3::ZERO, 0.5)));
+    }
+
+    #[test]
+    fn section_of_block_is_a_square() {
+        // Section a 2x2x2 block at z=1: a 2x2 square (4 points, area 4).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let poly = b.section_by_plane(Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, 0.0, 1.0));
+        assert_eq!(
+            poly.len(),
+            4,
+            "square section has 4 corners, got {}",
+            poly.len()
+        );
+        // Shoelace area in the z=1 plane.
+        let mut area = 0.0;
+        for i in 0..poly.len() {
+            let p = poly[i];
+            let q = poly[(i + 1) % poly.len()];
+            area += p.x * q.y - q.x * p.y;
+        }
+        assert!(
+            (area.abs() * 0.5 - 4.0).abs() < 1e-9,
+            "section area {} != 4",
+            area.abs() * 0.5
+        );
     }
 
     #[test]
