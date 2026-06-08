@@ -706,7 +706,19 @@ pub struct BoolResult {
 /// faults ride along in `BoolResult::faults`; an unbuildable result is
 /// `Err`.
 pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, BoolFault> {
-    let (ia, ib, mut faults) = imprint_pair(a, b, tol);
+    let (seams, mut faults) = seam_curves(a, b, tol);
+    // Coplanar/coincident or tangential face pairs are M6b. Decline
+    // immediately rather than grind through degenerate edge-grazing
+    // imprints (which is both wrong and pathologically slow).
+    if let Some(f) = faults
+        .iter()
+        .find(|f| matches!(f, BoolFault::Coincident(..) | BoolFault::Tangent(..)))
+        .cloned()
+    {
+        return Err(f);
+    }
+    let ia = imprint_operand(a, &seams, |s| s.face_a, tol, &mut faults);
+    let ib = imprint_operand(b, &seams, |s| s.face_b, tol, &mut faults);
     let class_a = classify_faces(&ia.body, b, tol);
     let class_b = classify_faces(&ib.body, a, tol);
     let kept = select_faces(op, &class_a, &class_b);
