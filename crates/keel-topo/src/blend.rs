@@ -424,6 +424,144 @@ impl Body {
         Ok((split.edge, strip, kept, sva.vertex, svb.vertex))
     }
 
+    /// Imprint a closed ring `curve` onto `face`, dispatching to the
+    /// seam-crossing variant for periodic faces (a circle on a cylinder
+    /// crosses the seam) and the interior variant otherwise.
+    fn imprint_ring(
+        &mut self,
+        face: crate::entity::FaceKey,
+        curve: &Curve3,
+        tol: f64,
+    ) -> Result<crate::imprint::ImprintReport, TopoError> {
+        if self.closed_curve_crosses_boundary(face, curve, tol) {
+            self.imprint_closed_curve_crossing(face, curve, tol)
+        } else {
+            self.imprint_closed_curve(face, curve, tol)
+        }
+    }
+
+    /// Round a convex cap-rim `edge` (a planar face meeting a cylinder
+    /// perpendicular to its axis) with a constant-radius torus fillet
+    /// (file 40 Case B / rung 2). Imprints the two spring circles onto the
+    /// supports (trimming the cap to radius R-r and the cylinder to the
+    /// offset height), removes the sharp rim by merging the cap annulus
+    /// and the cylinder top band (kef), and gives the merged ring the
+    /// exact torus surface.
+    ///
+    /// Scope: the cap case (plane perpendicular to the cylinder axis),
+    /// R > 2r. Trimmed-torus tessellation (for mesh_volume on the result)
+    /// and the general plane-cylinder cyclide case are follow-ups.
+    pub fn fillet_cap_rim(&self, edge: EdgeKey, radius: f64) -> Result<Body, TopoError> {
+        let blend = self.blend_torus_for_edge(edge, radius)?;
+        let faces = self.faces_around_edge(edge);
+        let cap = faces
+            .iter()
+            .copied()
+            .find(|&f| {
+                matches!(
+                    self.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+                )
+            })
+            .ok_or(TopoError::Precondition("fillet_rim: no cap"))?;
+        let lat = faces
+            .iter()
+            .copied()
+            .find(|&f| {
+                matches!(
+                    self.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )
+            })
+            .ok_or(TopoError::Precondition("fillet_rim: no cylinder"))?;
+        let tol = 1e-7;
+        let mut b = self.clone();
+
+        let rep_cap = b.imprint_ring(cap, &Curve3::Circle(blend.spring_plane), tol)?;
+        let annulus = *rep_cap
+            .faces
+            .iter()
+            .find(|&&f| b.face_has_edge(f, edge))
+            .ok_or(TopoError::Precondition("fillet_rim: no cap annulus"))?;
+        let inner_disc = *rep_cap
+            .faces
+            .iter()
+            .find(|&&f| f != annulus)
+            .ok_or(TopoError::Precondition("fillet_rim: no inner disc"))?;
+        let spring_plane_edge = rep_cap.edge;
+
+        let rep_lat = b.imprint_ring(lat, &Curve3::Circle(blend.spring_cyl), tol)?;
+        let spring_cyl_edge = rep_lat.edge;
+
+        // The cap annulus is a HOLED face (rim outer loop + spring_plane
+        // hole). kef needs a one-loop dying face, so first bridge the hole
+        // to the outer loop with mekr (the spring_plane becomes part of a
+        // single loop -- the seam of the eventual periodic torus ring).
+        let alps = b
+            .faces
+            .get(annulus)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        let loop_has_edge = |b: &Body, lk: crate::entity::LoopKey, e: EdgeKey| -> bool {
+            let Some(entry) = b.loops.get(lk).and_then(|l| l.fin) else {
+                return false;
+            };
+            let mut cur = entry;
+            while let Some(fin) = b.fins.get(cur) {
+                if fin.edge == e {
+                    return true;
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+            false
+        };
+        let rim_loop = alps
+            .iter()
+            .copied()
+            .find(|&lk| loop_has_edge(&b, lk, edge))
+            .ok_or(TopoError::Precondition("fillet_rim: no rim loop"))?;
+        let ring_loop = alps
+            .iter()
+            .copied()
+            .find(|&lk| lk != rim_loop)
+            .ok_or(TopoError::Precondition("fillet_rim: no spring hole loop"))?;
+        let fin_outer = b
+            .loops
+            .get(rim_loop)
+            .and_then(|l| l.fin)
+            .ok_or(TopoError::StaleKey)?;
+        let fin_ring = b
+            .loops
+            .get(ring_loop)
+            .and_then(|l| l.fin)
+            .ok_or(TopoError::StaleKey)?;
+        b.mekr(fin_outer, fin_ring)?;
+
+        // Merge the cap annulus and the cylinder top band across the rim.
+        b.kef(edge)?;
+        // The torus ring is the face on the plane-spring edge that is not
+        // the kept inner cap disc.
+        let ring = b
+            .faces_around_edge(spring_plane_edge)
+            .into_iter()
+            .find(|&f| f != inner_disc)
+            .ok_or(TopoError::Precondition("fillet_rim: no torus ring"))?;
+        b.attach_face_surface(
+            ring,
+            SurfaceGeom::Analytic(Surface3::Torus(blend.surface)),
+            true,
+        );
+        b.attach_edge_curve(spring_plane_edge, Curve3::Circle(blend.spring_plane), true);
+        b.attach_edge_curve(spring_cyl_edge, Curve3::Circle(blend.spring_cyl), true);
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("fillet_rim: result invalid"))?;
+        Ok(b)
+    }
+
     /// Round a convex `edge` between two planar faces with a constant-
     /// radius rolling-ball fillet (parity items 47-61; research file 40
     /// rung 1). Returns the filleted body: the exact cylinder blend face
@@ -769,6 +907,48 @@ mod tests {
         );
         assert!((blend.spring_plane.center.z - 2.0).abs() < 1e-9);
         assert!((blend.spring_cyl.radius - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn fillet_cylinder_cap_rim_to_torus() {
+        // Round the top rim of a cylinder (R=1, h=2) with r=0.3: the cap
+        // shrinks to radius 0.7, the lateral shortens, and a torus ring
+        // (major 0.7, minor 0.3) joins them. Validate the resulting solid
+        // and that it carries exactly one torus face.
+        use keel_geom::surface::Frame3;
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut base = Body::new();
+        base.cylinder(frame, 1.0, 2.0).unwrap();
+        let rim = base
+            .edges
+            .iter()
+            .map(|(k, _)| k)
+            .find(|&e| {
+                let fs = base.faces_around_edge(e);
+                fs.len() == 2
+                    && fs.iter().any(|&f| {
+                        matches!(
+                            base.face_surface_geom(f),
+                            Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                        )
+                    })
+                    && fs
+                        .iter()
+                        .any(|&f| matches!(base.face_outward_normal(f), Some(n) if n.z > 0.9))
+            })
+            .expect("no top rim edge");
+        let filleted = base.fillet_cap_rim(rim, 0.3).unwrap();
+        assert!(filleted.validate().is_ok(), "rim fillet invalid");
+        let tori: Vec<f64> = filleted
+            .faces
+            .iter()
+            .filter_map(|(fk, _)| match filleted.face_surface_geom(fk) {
+                Some(SurfaceGeom::Analytic(Surface3::Torus(t))) => Some(t.minor),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tori.len(), 1, "expected one torus blend face");
+        assert!((tori[0] - 0.3).abs() < 1e-12, "torus minor {}", tori[0]);
     }
 
     #[test]
