@@ -167,6 +167,144 @@ impl Body {
         })
     }
 
+    /// True iff the closed planar `curve` crosses one of `face`'s
+    /// boundary line edges (the periodic-surface case: an SSI circle/
+    /// ellipse wrapping a cylinder crosses its vertical seam line). The
+    /// dispatch in the boolean uses this to choose the crossing imprint
+    /// over the interior-ring imprint.
+    pub(crate) fn closed_curve_crosses_boundary(
+        &self,
+        face: FaceKey,
+        curve: &Curve3,
+        tol: f64,
+    ) -> bool {
+        closed_curve_plane(curve)
+            .and_then(|(pt, n)| {
+                self.find_planar_seam_crossing(face, pt, n, tol.max(1e-7))
+                    .ok()
+            })
+            .is_some()
+    }
+
+    /// Imprint a CLOSED planar curve that CROSSES a boundary line edge
+    /// of `face` (a cylinder's vertical seam): split the seam at the
+    /// crossing point P, then base the closed curve edge at P (`mef`
+    /// closing a loop there), splitting the face into the two portions.
+    pub fn imprint_closed_curve_crossing(
+        &mut self,
+        face: FaceKey,
+        curve: &Curve3,
+        tol: f64,
+    ) -> Result<ImprintReport, TopoError> {
+        let surf = self.face_analytic_surface(face)?;
+        let (pcurve, _seam3) = self.curve_pcurve_on(face, curve, &surf, tol)?;
+        let (pt, n) = closed_curve_plane(curve).ok_or(TopoError::Precondition(
+            "crossing imprint: non-planar curve",
+        ))?;
+        let (crossed_edge, p) = self.find_planar_seam_crossing(face, pt, n, tol.max(1e-7))?;
+        // Split the seam line at the crossing.
+        let se = self.split_edge(crossed_edge, p)?;
+        // Base the closed curve edge at the new vertex (mef closing a
+        // loop there), splitting the face.
+        let lp = self
+            .faces
+            .get(face)
+            .and_then(|f| f.loops.first().copied())
+            .ok_or(TopoError::StaleKey)?;
+        let fin_at_p = self.fin_ending_at_vertex(lp, se.vertex)?;
+        let surf_key = self.faces.get(face).and_then(|f| f.surface);
+        let mef = self.mef(fin_at_p, fin_at_p, surf_key)?;
+        let circle_edge = mef.edge;
+        let new_face = mef.face;
+        // Geometry: 3D curve + pcurves on both fins; both faces keep the
+        // surface.
+        let ckey = self.add_curve(curve.clone());
+        if let Some(e) = self.edges.get_mut(circle_edge) {
+            e.curve = Some((ckey, true));
+        }
+        let pkey = self.add_curve(Curve3::Nurbs(pcurve));
+        let radial = self
+            .edges
+            .get(circle_edge)
+            .map(|e| e.radial.clone())
+            .unwrap_or_default();
+        for fk in radial {
+            if let Some(f) = self.fins.get_mut(fk) {
+                f.pcurve = Some((pkey, true));
+            }
+        }
+        if let Some((sk, sense)) = surf_key
+            && let Some(nf) = self.faces.get_mut(new_face)
+        {
+            nf.surface = Some((sk, sense));
+        }
+        self.debug_validate();
+        Ok(ImprintReport {
+            edge: circle_edge,
+            faces: vec![face, new_face],
+        })
+    }
+
+    /// Find where the plane (`pt`, unit normal `n`) of a closed curve
+    /// crosses one of `face`'s boundary LINE edges, strictly interior to
+    /// the edge. Returns (edge, crossing point).
+    fn find_planar_seam_crossing(
+        &self,
+        face: FaceKey,
+        pt: Vec3,
+        n: Vec3,
+        tol: f64,
+    ) -> Result<(crate::entity::EdgeKey, Vec3), TopoError> {
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        for lk in loops {
+            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            loop {
+                let edge = self.fins.get(cur).map(|f| f.edge);
+                if let Some(ek) = edge
+                    && let Some(e) = self.edges.get(ek)
+                {
+                    let is_line = matches!(
+                        e.curve.and_then(|(ck, _)| self.curves.get(ck)),
+                        Some(Curve3::Line(_))
+                    );
+                    let (a, b) = (
+                        self.vertices.get(e.bounds.0).map(|v| v.point),
+                        self.vertices.get(e.bounds.1).map(|v| v.point),
+                    );
+                    if is_line && let (Some(a), Some(b)) = (a, b) {
+                        let denom = (b - a).dot(n);
+                        if denom.abs() > 1e-12 {
+                            let t = (pt - a).dot(n) / denom;
+                            if t > 1e-6 && t < 1.0 - 1e-6 {
+                                let cross = a + (b - a) * t;
+                                return Ok((ek, cross));
+                            }
+                        }
+                    }
+                }
+                cur = self
+                    .fins
+                    .get(cur)
+                    .map(|f| f.next)
+                    .ok_or(TopoError::StaleKey)?;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        let _ = tol;
+        Err(TopoError::Precondition(
+            "crossing imprint: no seam crossing",
+        ))
+    }
+
     // ---- helpers ---------------------------------------------------------
 
     /// Pcurve + 3D endpoints for an open curve.
@@ -337,11 +475,59 @@ impl Body {
     }
 }
 
+/// The plane (a point on it, unit normal) of a closed planar curve.
+/// None for non-planar / unsupported curve kinds.
+fn closed_curve_plane(curve: &Curve3) -> Option<(Vec3, Vec3)> {
+    match curve {
+        Curve3::Circle(c) => Some((c.center, c.x_axis.cross(c.y_axis).try_normalize()?)),
+        Curve3::Ellipse(e) => Some((e.center, e.x_axis.cross(e.y_axis).try_normalize()?)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use keel_geom::curve::Circle3;
     use keel_geom::surface::{Cylinder3, Frame3, Surface3};
+
+    #[test]
+    fn imprint_crossing_circle_on_cylinder_lateral() {
+        // A horizontal slice of the cylinder at mid-height is a circle
+        // wrapping the lateral face and crossing its vertical seam. The
+        // crossing imprint splits the lateral into upper + lower.
+        use keel_geom::curve::Ellipse3;
+        let mut b = Body::new();
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        let out = b.cylinder(frame, 2.0, 5.0).unwrap();
+        let lateral = out.faces[0];
+        let before = b.counts();
+        let slice = Curve3::Ellipse(
+            Ellipse3::new(
+                Vec3::new(0.0, 0.0, 2.5),
+                Vec3::new(1., 0., 0.),
+                Vec3::new(0., 1., 0.),
+                2.0,
+                2.0,
+            )
+            .unwrap(),
+        );
+        assert!(b.closed_curve_crosses_boundary(lateral, &slice, 1e-7));
+        let rep = b
+            .imprint_closed_curve_crossing(lateral, &slice, 1e-7)
+            .unwrap();
+        assert!(b.validate().is_ok(), "crossing imprint invalid");
+        let after = b.counts();
+        // One new vertex (seam crossing), the split seam (+1 edge) and
+        // the slice circle (+1 edge), and one new face.
+        assert_eq!(after.v, before.v + 1);
+        assert_eq!(after.f, before.f + 1);
+        let radial = b.edge(rep.edge).map(|e| e.radial.clone()).unwrap();
+        assert_eq!(radial.len(), 2, "slice circle should be manifold");
+        for fk in radial {
+            assert!(b.fin(fk).and_then(|f| f.pcurve).is_some());
+        }
+    }
 
     #[test]
     fn imprint_circle_on_cube_top_face() {
