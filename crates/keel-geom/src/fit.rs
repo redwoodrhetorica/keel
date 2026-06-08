@@ -218,6 +218,50 @@ fn sampled_deviation(curve: &NurbsCurve, points: &[Vec3]) -> f64 {
         .fold(0.0f64, f64::max)
 }
 
+/// Compute a pcurve: invert a 3D curve (known to lie on the analytic
+/// surface) into the surface's (u, v) domain and fit a 2D pcurve in
+/// (u, v, 0) space. `period` lets callers request seam-consistent
+/// unwrapping for periodic directions (None = no unwrap).
+pub fn pcurve_on_analytic(
+    curve: &crate::curve::Curve3,
+    surface: &crate::surface::Surface3,
+    n: usize,
+    tol: f64,
+) -> Result<FitResult, GeomError> {
+    use crate::curve::Curve3;
+    let sample3 = |t: f64| -> Vec3 {
+        match curve {
+            Curve3::Line(l) => l.point(t),
+            Curve3::Circle(c) => c.point(core::f64::consts::TAU * t),
+            Curve3::Ellipse(e) => e.point(core::f64::consts::TAU * t),
+            Curve3::Nurbs(nb) => {
+                let (a, b) = nb.domain();
+                nb.point(a + t * (b - a))
+            }
+        }
+    };
+    let mut uvs: Vec<Vec3> = Vec::with_capacity(n + 1);
+    let mut prev_u: Option<f64> = None;
+    for k in 0..=n {
+        let p = sample3(k as f64 / n as f64);
+        let pr = surface.project(p)?;
+        // Unwrap u across the periodic seam so the pcurve is continuous.
+        let mut u = pr.u;
+        if let Some(pu) = prev_u {
+            let tau = core::f64::consts::TAU;
+            while u - pu > tau * 0.5 {
+                u -= tau;
+            }
+            while pu - u > tau * 0.5 {
+                u += tau;
+            }
+        }
+        prev_u = Some(u);
+        uvs.push(Vec3::new(u, pr.v, 0.0));
+    }
+    fit_cubic(&uvs, tol)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

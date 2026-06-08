@@ -61,3 +61,9 @@ name = "fuzz_ssi"
 path = "fuzz_targets/fuzz_ssi.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_imprint"
+path = "fuzz_targets/fuzz_imprint.rs"
+test = false
+doc = false

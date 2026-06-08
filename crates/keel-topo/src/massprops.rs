@@ -173,7 +173,13 @@ impl Body {
         })
     }
 
-    /// Planar face: integrate the UV region from its pcurves.
+    /// Planar face: integrate the trimmed UV region bounded by ALL the
+    /// face's loops (outer plus inner rings). Each loop is sampled to a
+    /// UV polyline, wound to match its kind (outer counterclockwise =
+    /// positive, inner ring clockwise = negative), and signed-triangle-
+    /// fanned; the degree-5 triangle rule is exact for the cubic
+    /// integrands, so the hole subtracts exactly. (Green's theorem in
+    /// triangulated form.)
     fn integrate_planar_face(
         &self,
         fk: FaceKey,
@@ -188,50 +194,15 @@ impl Body {
         let normal = f.z * orient;
         let at = |u: f64, v: f64| -> Vec3 { f.origin + f.x * u + f.y * v };
         let face = self.faces.get(fk).ok_or(TopoError::StaleKey)?;
-        if face.loops.len() != 1 {
-            return Err(TopoError::Precondition(
-                "mass_properties: planar face with rings is M5 work",
-            ));
-        }
-        let lp = face.loops[0];
-        let entry = self
-            .loops
-            .get(lp)
-            .and_then(|l| l.fin)
-            .ok_or(TopoError::Precondition("vertex loop face"))?;
-        // Disc (single closed-circle pcurve) or polygon?
-        let fins: Vec<crate::entity::FinKey> = {
-            let mut out = Vec::new();
-            let mut cur = entry;
-            while let Some(fin) = self.fins.get(cur) {
-                out.push(cur);
-                cur = fin.next;
-                if cur == entry {
-                    break;
-                }
-            }
-            out
-        };
-        let single_circle = fins.len() == 1
-            && fins.first().is_some_and(|&fk2| {
-                self.fins
-                    .get(fk2)
-                    .and_then(|fin| fin.pcurve)
-                    .and_then(|(ck, _)| self.curves.get(ck))
-                    .is_some_and(|c| matches!(c, Curve3::Circle(_)))
-            });
-        if single_circle {
-            let (ck, _) = self
-                .fins
-                .get(fins[0])
-                .and_then(|fin| fin.pcurve)
-                .ok_or(TopoError::StaleKey)?;
-            let Some(Curve3::Circle(uvc)) = self.curves.get(ck) else {
-                return Err(TopoError::StaleKey);
-            };
-            let (cu, cv, r) = (uvc.center.x, uvc.center.y, uvc.radius);
-            // Polar: periodic trapezoid in theta (exact for trig
-            // polynomials), GL8 radial.
+        // Fast path: a single-loop disc (one circular edge, e.g. a
+        // cylinder/cone cap) integrates EXACTLY via polar quadrature
+        // (GL8 radial x periodic-trapezoid angular), far better than a
+        // sampled polygon. Annulus/polygon faces fall through to the
+        // general signed-fan.
+        if face.loops.len() == 1
+            && let Some(circle) = self.single_circle_disc(face.loops[0])
+        {
+            let (cu, cv, r) = circle;
             let nt = 32usize;
             for it in 0..nt {
                 let theta = core::f64::consts::TAU * it as f64 / nt as f64;
@@ -243,35 +214,139 @@ impl Body {
                     m.add(at(u, v), normal, wt * wr * rho);
                 }
             }
-        } else {
-            // Polygon: vertex UVs in walk order; triangle fan.
-            let mut poly: Vec<(f64, f64)> = Vec::new();
-            for &fin in &fins {
-                let p = self
-                    .fin_start_vertex(fin)
-                    .and_then(|v| self.vertices.get(v).map(|x| x.point))
-                    .ok_or(TopoError::StaleKey)?;
-                let w = p - f.origin;
-                poly.push((w.dot(f.x), w.dot(f.y)));
-            }
+            return Ok(());
+        }
+        let rule = triangle_rule();
+        let signed_area = |poly: &[(f64, f64)]| -> f64 {
+            (0..poly.len())
+                .map(|i| {
+                    let a = poly[i];
+                    let b = poly[(i + 1) % poly.len()];
+                    a.0 * b.1 - b.0 * a.1
+                })
+                .sum::<f64>()
+                * 0.5
+        };
+        // The OUTER loop keeps its natural winding (the normal/orient
+        // sign convention compensates for it). Inner rings must wind
+        // OPPOSITE to the outer loop so the fan sum subtracts the hole.
+        let outer_sign = face
+            .loops
+            .first()
+            .and_then(|&l0| self.loop_uv_polyline_planar(l0, f).ok())
+            .map(|p| signed_area(&p).signum())
+            .unwrap_or(1.0);
+        for (li, &lk) in face.loops.iter().enumerate() {
+            let mut poly = self.loop_uv_polyline_planar(lk, f)?;
             if poly.len() < 3 {
                 return Err(TopoError::Precondition("degenerate planar loop"));
             }
-            let rule = triangle_rule();
+            if li > 0 {
+                // Inner ring: force opposite to the outer winding.
+                if signed_area(&poly).signum() == outer_sign {
+                    poly.reverse();
+                }
+            }
             for i in 1..poly.len() - 1 {
                 let (a, b, c) = (poly[0], poly[i], poly[i + 1]);
-                // Signed AREA (half the cross product): the rule's
-                // weights sum to 1, so the factor is the area itself;
-                // its sign handles fan orientation.
-                let area = 0.5 * ((b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0));
+                let tri_area = 0.5 * ((b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0));
                 for (bary, w) in rule {
                     let u = bary[0] * a.0 + bary[1] * b.0 + bary[2] * c.0;
                     let v = bary[0] * a.1 + bary[1] * b.1 + bary[2] * c.1;
-                    m.add(at(u, v), normal, w * area);
+                    m.add(at(u, v), normal, w * tri_area);
                 }
             }
         }
         Ok(())
+    }
+
+    /// If the loop is a single fin over a closed circular edge, return
+    /// its (center_u, center_v, radius) in the plane frame (via the
+    /// edge's pcurve, which is a UV circle). None otherwise.
+    fn single_circle_disc(&self, lk: crate::entity::LoopKey) -> Option<(f64, f64, f64)> {
+        let entry = self.loops.get(lk).and_then(|l| l.fin)?;
+        // Exactly one fin in the loop.
+        let f = self.fins.get(entry)?;
+        if f.next != entry {
+            return None;
+        }
+        let (ck, _) = f.pcurve?;
+        match self.curves.get(ck)? {
+            Curve3::Circle(c) => Some((c.center.x, c.center.y, c.radius)),
+            _ => None,
+        }
+    }
+
+    /// Sample a planar face loop into a UV polyline. Straight edges
+    /// contribute their endpoint UVs; curved pcurve edges (circle/
+    /// nurbs in the plane) are sampled. Vertex UVs come from projecting
+    /// the 3D vertex into the plane frame.
+    fn loop_uv_polyline_planar(
+        &self,
+        lk: crate::entity::LoopKey,
+        f: &keel_geom::surface::Frame3,
+    ) -> Result<Vec<(f64, f64)>, TopoError> {
+        let entry = self
+            .loops
+            .get(lk)
+            .and_then(|l| l.fin)
+            .ok_or(TopoError::Precondition("vertex loop face"))?;
+        let uv = |p: Vec3| -> (f64, f64) {
+            let w = p - f.origin;
+            (w.dot(f.x), w.dot(f.y))
+        };
+        let mut poly = Vec::new();
+        let mut cur = entry;
+        const SAMPLES: usize = 24;
+        loop {
+            let fin = self.fins.get(cur).ok_or(TopoError::StaleKey)?;
+            // Curvedness is a GEOMETRIC property of the edge's 3D
+            // curve, not the pcurve's enum variant (a degree-1 NURBS
+            // pcurve is straight). Sample only genuinely curved edges.
+            let curved = self
+                .edges
+                .get(fin.edge)
+                .and_then(|e| e.curve)
+                .and_then(|(ck, _)| self.curves.get(ck))
+                .map(|c| match c {
+                    Curve3::Line(_) => false,
+                    Curve3::Nurbs(n) => n.degree() > 1,
+                    _ => true,
+                })
+                .unwrap_or(false);
+            if curved {
+                // Sample the 3D edge curve (it lies in the plane).
+                if let Some((eck, sense)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                    && let Some(ec) = self.curves.get(eck)
+                {
+                    for i in 0..SAMPLES {
+                        let s = i as f64 / SAMPLES as f64;
+                        let s = if fin.forward == sense { s } else { 1.0 - s };
+                        let p = match ec {
+                            Curve3::Circle(c) => c.point(core::f64::consts::TAU * s),
+                            Curve3::Ellipse(e) => e.point(core::f64::consts::TAU * s),
+                            Curve3::Nurbs(n) => {
+                                let (a, b) = n.domain();
+                                n.point(a + s * (b - a))
+                            }
+                            Curve3::Line(l) => l.point(s),
+                        };
+                        poly.push(uv(p));
+                    }
+                }
+            } else {
+                let p = self
+                    .fin_start_vertex(cur)
+                    .and_then(|v| self.vertices.get(v).map(|x| x.point))
+                    .ok_or(TopoError::StaleKey)?;
+                poly.push(uv(p));
+            }
+            cur = fin.next;
+            if cur == entry {
+                break;
+            }
+        }
+        Ok(poly)
     }
 
     /// Curved face: composite GL over the parameter rectangle.

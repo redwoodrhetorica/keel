@@ -333,9 +333,10 @@ impl Body {
 
     /// Identify eb with ea (same bounds, either orientation; caller
     /// asserts geometric coincidence). eb's fins re-point to ea and
-    /// join ea's radial cycle: THE non-manifold maker. M3 radial order
-    /// is insertion order (dihedral-angle ordering lands with M5's
-    /// imprint, its first real consumer).
+    /// join ea's radial cycle: THE non-manifold maker. The merged
+    /// radial cycle is DIHEDRAL-SORTED (M5b): fins ordered by the
+    /// angle of their face's outward normal about the edge tangent, so
+    /// neighborhood classification (M6) reads a correct angular order.
     pub fn glue_edges(&mut self, ea: EdgeKey, eb: EdgeKey) -> Result<OpReport, TopoError> {
         if ea == eb {
             return Err(TopoError::Precondition("glue_edges: identical"));
@@ -367,6 +368,7 @@ impl Body {
         if let Some(e) = self.edges.get_mut(ea) {
             e.radial.extend(moved.iter().copied());
         }
+        self.dihedral_sort_radial(ea);
         rec.report.merged.push((vec![ea_id, eb_id], ea_id));
         self.lineage.insert(
             ea_id,
@@ -382,6 +384,105 @@ impl Body {
         let report = rec.finish();
         self.debug_validate();
         Ok(report)
+    }
+
+    /// Order an edge's radial cycle by dihedral angle about the edge
+    /// tangent. Each fin contributes the outward direction of its
+    /// face into the plane perpendicular to the tangent (the face
+    /// surface normal crossed appropriately, or the geometric outward
+    /// of the fin's loop interior); fins are sorted by atan2 in that
+    /// plane. Manifold 2-cycles are unaffected up to a possible swap.
+    fn dihedral_sort_radial(&mut self, edge: EdgeKey) {
+        let Some(e) = self.edges.get(edge) else {
+            return;
+        };
+        if e.radial.len() <= 2 {
+            return;
+        }
+        let radial = e.radial.clone();
+        // Edge tangent from its bound vertices.
+        let (v0, v1) = e.bounds;
+        let (Some(p0), Some(p1)) = (
+            self.vertices.get(v0).map(|v| v.point),
+            self.vertices.get(v1).map(|v| v.point),
+        ) else {
+            return;
+        };
+        let tangent = match (p1 - p0).try_normalize() {
+            Some(t) => t,
+            None => return, // closed/degenerate edge: leave order
+        };
+        // Reference frame perpendicular to the tangent.
+        let helper = if tangent.x.abs() < 0.9 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0)
+        };
+        let ref_x = match (helper - tangent * helper.dot(tangent)).try_normalize() {
+            Some(x) => x,
+            None => return,
+        };
+        let ref_y = tangent.cross(ref_x);
+        // Per fin, compute the in-plane outward direction of its face.
+        let mut keyed: Vec<(f64, FinKey)> = Vec::new();
+        for &fk in &radial {
+            let dir = self.fin_outward_in_plane(fk, tangent);
+            let dir = dir - tangent * dir.dot(tangent);
+            let (x, y) = (dir.dot(ref_x), dir.dot(ref_y));
+            let ang = if x == 0.0 && y == 0.0 {
+                0.0
+            } else {
+                y.atan2(x)
+            };
+            keyed.push((ang, fk));
+        }
+        keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some(e) = self.edges.get_mut(edge) {
+            e.radial = keyed.into_iter().map(|(_, f)| f).collect();
+        }
+    }
+
+    /// The outward direction of a fin's face in 3D: the surface normal
+    /// (sense-corrected) crossed with the edge tangent gives a vector
+    /// in the face pointing away from the edge into the face interior.
+    /// Falls back to the loop-geometry direction when no surface.
+    fn fin_outward_in_plane(&self, fin: FinKey, tangent: Vec3) -> Vec3 {
+        let face_normal = self
+            .fins
+            .get(fin)
+            .and_then(|f| self.loops.get(f.owner))
+            .and_then(|l| self.faces.get(l.face))
+            .and_then(|face| face.surface)
+            .and_then(|(sk, sense)| self.surfaces.get(sk).map(|s| (s, sense)))
+            .and_then(|(s, sense)| {
+                // Normal at the fin's edge midpoint, via the surface.
+                let mid = self.fin_edge_midpoint(fin)?;
+                let n = match s {
+                    crate::entity::SurfaceGeom::Analytic(a) => {
+                        let pr = a.project(mid).ok()?;
+                        a.local_geometry(pr.u, pr.v).ok()?.normal
+                    }
+                    crate::entity::SurfaceGeom::Nurbs(_) => return None,
+                };
+                Some(if sense { n } else { n * -1.0 })
+            });
+        match face_normal {
+            // outward-into-face = normal x tangent, oriented by fin dir.
+            Some(n) => {
+                let dir = n.cross(tangent);
+                let fwd = self.fins.get(fin).map(|f| f.forward).unwrap_or(true);
+                if fwd { dir } else { dir * -1.0 }
+            }
+            None => Vec3::new(1.0, 0.0, 0.0), // deterministic fallback
+        }
+    }
+
+    fn fin_edge_midpoint(&self, fin: FinKey) -> Option<Vec3> {
+        let f = self.fins.get(fin)?;
+        let e = self.edges.get(f.edge)?;
+        let p0 = self.vertices.get(e.bounds.0)?.point;
+        let p1 = self.vertices.get(e.bounds.1)?.point;
+        Some((p0 + p1) * 0.5)
     }
 
     /// Embed an isolated (acorn) vertex in a region.
