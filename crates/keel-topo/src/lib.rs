@@ -12,6 +12,7 @@ pub mod construct;
 pub mod entity;
 pub mod euler;
 pub mod imprint;
+pub mod interrogate;
 pub mod lineage;
 pub mod massprops;
 pub mod ops;

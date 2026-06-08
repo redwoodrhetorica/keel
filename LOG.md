@@ -1652,3 +1652,19 @@ RUNNING TOTAL: capability map 35 -> 37/144.
 REMAINING in 0a (next milestone): coincident/tangent (33), sheet booleans
 (28), general/non-manifold bodies (29), local face-pair (31). GATE: exact CI
 triplet green. Merged.
+
+## Addendum 42 (2026-06-08): Parity interrogation -- bounding box + min distance (map 37 -> 39/144)
+
+keel-topo interrogate.rs, built on the winding classifier's outward
+tessellation:
+- 105 BOUNDING BOX: Body::bounding_box() -> Aabb3, tight from the
+  tessellation (exact for planar, tessellation-tight for curved; exact
+  analytic extrema a later refinement). Tested: block bbox exact; sphere
+  bbox tight within 0.05.
+- 101 MIN DISTANCE: Body::min_distance(other) -> f64, symmetric min over
+  each body's tessellation vertices of point-to-triangle distance to the
+  other (Ericson closest-point-on-triangle); ~0 when touching/overlapping.
+  A tessellation-resolution approximation (exact face-pair surface
+  projection later). Tested: separated spheres gap ~2.5; overlapping ~0.
+RUNNING TOTAL: capability map 37 -> 39/144.
+GATE: exact CI triplet green. Merged.
