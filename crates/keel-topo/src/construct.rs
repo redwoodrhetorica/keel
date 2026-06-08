@@ -48,6 +48,18 @@ impl Body {
         }
     }
 
+    /// Wire body (items 8, 18): a single straight wire edge between two
+    /// points, in the infinite region (no faces). Wraps `embed_wire` and
+    /// attaches the line geometry.
+    pub fn wire(&mut self, p0: Vec3, p1: Vec3) -> Result<crate::ops::EmbedWireOut, TopoError> {
+        let r = self.infinite_region();
+        let out = self.embed_wire(r, None, p0, p1)?;
+        if let Ok(line) = Line3::new(p0, p1 - p0) {
+            self.attach_edge_curve(out.edge, Curve3::Line(line), true);
+        }
+        Ok(out)
+    }
+
     /// Axis-aligned block at `origin` with positive extents.
     pub fn block(
         &mut self,
@@ -669,6 +681,15 @@ impl MapErrDegenerate for Option<Vec3> {
 mod tests {
     use super::*;
     use crate::entity::AnyKey;
+
+    #[test]
+    fn wire_constructor_makes_wire_body() {
+        use crate::query::BodyClass;
+        let mut b = Body::new();
+        b.wire(Vec3::ZERO, Vec3::new(3.0, 0.0, 0.0)).unwrap();
+        assert_eq!(b.body_class(), BodyClass::Wire, "should be a wire body");
+        assert!(b.validate().is_ok(), "wire invalid: {:?}", b.validate());
+    }
 
     /// Watertightness oracle at the geometry level: sample every edge
     /// curve and check the samples lie on every adjacent face surface.
