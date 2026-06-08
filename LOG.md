@@ -2258,3 +2258,22 @@ plane-plane and the plane-cylinder (curved-support rim) cases exactly.
 GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D
 warnings + workspace test 120 keel-topo). Euler-op surgery (imprint/mekr/kef)
 covered by fuzz_topo_ops + fuzz_imprint; no boolean/tessellate change. Merged.
+
+## Addendum 67 (2026-06-08): TRIMMED-TORUS tessellation -> torus fillet VOLUME oracle (closes Addendum 66's deferral; map stays 62/144)
+
+Closed the volume-oracle deferral for the torus fillet. tessellate_torus was
+full-tube; the cap-rim blend ring is a QUARTER tube (v in [0, pi/2]), so
+mesh_volume over-counted. New torus_tube_span(face, torus): full tube (0, TAU)
+when the face covers its whole closed surface (the torus primitive), else the
+min/max tube-angle v of the face's boundary vertices (v computed per vertex as
+atan2((p - tubecentre).ez, (p - tubecentre).radial), tubecentre = c +
+radial*major). tessellate_torus now trims v to that span (u stays full
+revolution). Mirrors the trimmed-cylinder cyl_angular_span.
+Proof: the filleted cylinder (R=1 h=2, top rim r=0.3) mesh_volume now matches
+the solid-of-revolution value 1.7pi + pi*int_0^0.3 (0.7+sqrt(0.09-s^2))^2 ds =
+6.1700 (within tolerance). The torus fillet is now GEOMETRICALLY validated, not
+just topologically. The full torus primitive still meshes fully (face-covers-
+closed-surface -> no trim).
+RUNNING TOTAL: stays 62/144 (hardening the torus fillet).
+GATE: exact CI triplet green (120 keel-topo). tessellate shared with the
+winding classifier -> fuzz_boolean re-soaked. Merged.
