@@ -4,18 +4,20 @@
 //! solid stays valid, WITHOUT changing topology. OCCT lacks this; it is
 //! a deliberate differentiator.
 //!
-//! This first cut covers the PLANAR / polyhedral case: moving a planar
-//! face's plane (offset along the outward normal, translate, or replace
-//! outright) recomputes each incident corner as the intersection of the
-//! new plane with its two neighbour planes, then rebuilds the incident
-//! straight edges. Curved tweak (cylinders/spheres re-intersected by
-//! SSI) is the next slice.
+//! PLANAR case: moving a planar face's plane (offset along the outward
+//! normal, translate, or replace outright) recomputes each incident
+//! corner as the intersection of the new plane with its two neighbour
+//! planes, then rebuilds the incident straight edges. CURVED case:
+//! offsetting a cylindrical face changes its radius, recomputing the
+//! cap circles (cylinder ^ cap-plane) at the new radius and moving the
+//! seam. Taper/draft, delete-face-with-heal, and sphere/cone/torus tweak
+//! are the next slices.
 
 use crate::Body;
 use crate::body::TopoError;
-use crate::entity::{FaceKey, SurfaceGeom, VertexKey};
-use keel_geom::curve::{Curve3, Line3};
-use keel_geom::surface::{Plane3, Surface3};
+use crate::entity::{EdgeKey, FaceKey, SurfaceGeom, VertexKey};
+use keel_geom::curve::{Circle3, Curve3, Line3};
+use keel_geom::surface::{Cylinder3, Plane3, Surface3};
 use keel_math::vec::Vec3;
 
 /// Intersection point of three planes `n_i . x = d_i`, or None if they
@@ -52,6 +54,25 @@ impl Body {
                 out.push(v);
             }
             fk = fin.next;
+            if fk == first {
+                break;
+            }
+        }
+        Some(out)
+    }
+
+    /// Ordered distinct edges of a face's outer loop.
+    fn face_loop_edges(&self, face: FaceKey) -> Option<Vec<EdgeKey>> {
+        let lp = self.faces.get(face)?.loops.first().copied()?;
+        let first = self.loops.get(lp)?.fin?;
+        let mut out = Vec::new();
+        let mut fk = first;
+        loop {
+            let e = self.fins.get(fk)?.edge;
+            if !out.contains(&e) {
+                out.push(e);
+            }
+            fk = self.fins.get(fk)?.next;
             if fk == first {
                 break;
             }
@@ -137,21 +158,101 @@ impl Body {
         Ok(())
     }
 
-    /// Offset a planar face outward by `distance` (item 37): shift its
-    /// plane along the outward normal and re-intersect. Negative moves
-    /// inward.
+    /// Offset a face outward by `distance` (item 37), re-intersecting its
+    /// boundary. Planar faces shift along the outward normal; cylindrical
+    /// faces change radius (the curved slice). Negative moves inward.
     pub fn offset_face(&mut self, face: FaceKey, distance: f64) -> Result<(), TopoError> {
-        let (plane, sense) = self
-            .face_plane(face)
-            .ok_or(TopoError::Precondition("offset_face: non-planar"))?;
-        let outward = if sense {
-            plane.frame.z
-        } else {
-            plane.frame.z * -1.0
-        };
-        let mut np = plane;
-        np.frame.origin = np.frame.origin + outward * distance;
-        self.tweak_face_to_plane(face, np, sense)
+        match self.face_surface_geom(face) {
+            Some(SurfaceGeom::Analytic(Surface3::Plane(_))) => {
+                let (plane, sense) = self.face_plane(face).ok_or(TopoError::StaleKey)?;
+                let outward = if sense {
+                    plane.frame.z
+                } else {
+                    plane.frame.z * -1.0
+                };
+                let mut np = plane;
+                np.frame.origin = np.frame.origin + outward * distance;
+                self.tweak_face_to_plane(face, np, sense)
+            }
+            Some(SurfaceGeom::Analytic(Surface3::Cylinder(c))) => {
+                let sense = self
+                    .faces
+                    .get(face)
+                    .and_then(|f| f.surface)
+                    .map(|(_, s)| s)
+                    .unwrap_or(true);
+                self.tweak_cylinder_radius(face, c, distance, sense)
+            }
+            _ => Err(TopoError::Precondition("offset_face: unsupported surface")),
+        }
+    }
+
+    /// Curved tweak: change a cylindrical face's radius (offset along the
+    /// outward radial normal). Each circular boundary edge (the
+    /// cylinder ^ cap-plane circles) is recomputed at the new radius and
+    /// the seam line + corner vertices move radially. Topology unchanged.
+    fn tweak_cylinder_radius(
+        &mut self,
+        face: FaceKey,
+        cyl: Cylinder3,
+        distance: f64,
+        sense: bool,
+    ) -> Result<(), TopoError> {
+        // Outward is radially out for a solid (sense true); a hole's wall
+        // (sense false) offsets the other way.
+        let new_r = cyl.radius + if sense { distance } else { -distance };
+        if new_r <= 1e-9 {
+            return Err(TopoError::Precondition(
+                "offset_face: cylinder radius -> <= 0",
+            ));
+        }
+        let (origin, axis) = (cyl.frame.origin, cyl.frame.z);
+
+        // Move each corner radially to the new radius, keeping its height.
+        let verts = self.face_loop_vertices(face).ok_or(TopoError::StaleKey)?;
+        for &v in &verts {
+            let p = self.vertices.get(v).ok_or(TopoError::StaleKey)?.point;
+            let t = (p - origin).dot(axis);
+            let axis_pt = origin + axis * t;
+            if let Some(ru) = (p - axis_pt).try_normalize()
+                && let Some(vx) = self.vertices.get_mut(v)
+            {
+                vx.point = axis_pt + ru * new_r;
+            }
+        }
+
+        // Recompute boundary edges: cap circles at the new radius, the
+        // seam line through its moved endpoints.
+        let edges = self.face_loop_edges(face).ok_or(TopoError::StaleKey)?;
+        for e in edges {
+            let ck = self.edges.get(e).and_then(|x| x.curve).map(|(k, _)| k);
+            match ck.and_then(|k| self.curves.get(k).cloned()) {
+                Some(Curve3::Circle(c)) => {
+                    if let Ok(nc) = Circle3::new(c.center, c.x_axis, c.y_axis, new_r) {
+                        self.attach_edge_curve(e, Curve3::Circle(nc), true);
+                    }
+                }
+                Some(Curve3::Line(_)) => {
+                    let (v0, v1) = self.edges.get(e).ok_or(TopoError::StaleKey)?.bounds;
+                    let p0 = self.vertices.get(v0).ok_or(TopoError::StaleKey)?.point;
+                    let p1 = self.vertices.get(v1).ok_or(TopoError::StaleKey)?.point;
+                    if let Ok(l) = Line3::new(p0, p1 - p0) {
+                        self.attach_edge_curve(e, Curve3::Line(l), true);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        self.attach_face_surface(
+            face,
+            SurfaceGeom::Analytic(Surface3::Cylinder(Cylinder3 {
+                frame: cyl.frame,
+                radius: new_r,
+            })),
+            sense,
+        );
+        Ok(())
     }
 
     /// Translate a planar face by `t` (item 36): shift its plane origin
@@ -225,5 +326,34 @@ mod tests {
         assert!(b.validate().is_ok());
         let v = b.mass_properties().unwrap().volume;
         assert!((v - 16.0).abs() < 1e-9, "volume {v} != 16");
+    }
+
+    #[test]
+    fn offset_cylinder_face_changes_radius() {
+        // CURVED tweak: a cylinder r=1 h=2 (vol 2*pi); offsetting its
+        // lateral face out by 0.5 -> r=1.5 (vol 4.5*pi), re-intersecting
+        // the cap circles, staying valid.
+        use keel_geom::surface::Frame3;
+        let mut b = Body::new();
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        b.cylinder(frame, 1.0, 2.0).unwrap();
+        let lateral = b
+            .face_keys()
+            .into_iter()
+            .find(|&f| {
+                matches!(
+                    b.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )
+            })
+            .unwrap();
+        b.offset_face(lateral, 0.5).unwrap();
+        assert!(b.validate().is_ok(), "tweaked cylinder invalid");
+        let v = b.tessellated_volume();
+        let expect = core::f64::consts::PI * 1.5 * 1.5 * 2.0;
+        assert!(
+            (v - expect).abs() < 0.05 * expect,
+            "cyl vol {v} vs {expect}"
+        );
     }
 }

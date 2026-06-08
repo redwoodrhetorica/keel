@@ -1705,3 +1705,21 @@ DEFERRED (next tweak slices): CURVED tweak (cylinder/sphere faces
 re-intersected by SSI, reusing offset_surface + ssi); taper/draft (38,78);
 delete-face-with-heal (40); non-simple corners.
 GATE: exact CI triplet green. Merged.
+
+## Addendum 45 (2026-06-08): Parity tweak DEEPENED -- curved (cylindrical) face tweak (map stays 45/144)
+
+Deepened the tweak keystone (user: "deepen tweak") from planar-only to the
+CURVED case. offset_face now dispatches on surface type:
+- Plane -> the existing three-plane-corner planar tweak.
+- Cylinder -> tweak_cylinder_radius: offset the lateral face's radius
+  (outward = radial-out for a solid, sense-aware), recompute each circular
+  boundary edge (cylinder ^ cap-plane) at the new radius via Circle3, move
+  the seam line + corner vertices radially (keeping height), swap the face
+  surface. Topology unchanged.
+Tested: a cylinder r=1 h=2 offset +0.5 -> r=1.5, tessellated volume ~4.5*pi
+within 5%, valid. This is COVERAGE of item 37 (offset face now planar AND
+cylindrical), not a new map item, so the counter honestly stays 45/144.
+DEFERRED (next tweak slices): taper/draft (38,78 -- tilt the face plane,
+reuses tweak_face_to_plane + a rotation), delete-face-with-heal (40),
+sphere/cone/torus tweak.
+GATE: exact CI triplet green. Merged.
