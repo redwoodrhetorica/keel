@@ -11,7 +11,7 @@
 //! per-pair faults, never all-or-nothing, never a panic).
 
 use crate::body::{Body, TopoError};
-use crate::entity::{AnyKey, FaceKey, SurfaceGeom};
+use crate::entity::{AnyKey, FaceKey, FinKey, SurfaceGeom};
 use keel_geom::ssi::{SsiResult, SurfaceRef, intersect_surfaces};
 use keel_geom::surface::Surface3;
 
@@ -177,11 +177,227 @@ pub struct ImprintedOperand {
     pub seam_edges: Vec<crate::entity::EdgeKey>,
 }
 
+/// Endpoints of a seam curve (sample at the parameter ends; closed
+/// curves return the seam point twice).
+fn curve_endpoints(c: &keel_geom::curve::Curve3) -> (keel_math::vec::Vec3, keel_math::vec::Vec3) {
+    use keel_geom::curve::Curve3;
+    let s = |t: f64| match c {
+        Curve3::Nurbs(n) => {
+            let (a, b) = n.domain();
+            n.point(a + t * (b - a))
+        }
+        Curve3::Line(l) => l.point(t),
+        Curve3::Circle(ci) => ci.point(core::f64::consts::TAU * t),
+        Curve3::Ellipse(e) => e.point(core::f64::consts::TAU * t),
+    };
+    (s(0.0), s(1.0))
+}
+
+/// Build a closed degree-1 (polyline) NURBS through `nodes`, returning
+/// to the first node. point(0) == point(end) so it reads as a single
+/// closed edge to imprint_closed_curve.
+fn closed_polyline_nurbs(
+    nodes: &[keel_math::vec::Vec3],
+) -> Option<keel_geom::nurbs_curve::NurbsCurve> {
+    if nodes.len() < 3 {
+        return None;
+    }
+    let mut ctrl = nodes.to_vec();
+    ctrl.push(nodes[0]); // close
+    let m = ctrl.len();
+    let mut knots = vec![0.0, 0.0];
+    for i in 1..(m - 1) {
+        knots.push(i as f64);
+    }
+    knots.push((m - 1) as f64);
+    knots.push((m - 1) as f64);
+    keel_geom::nurbs_curve::NurbsCurve::new(1, knots, ctrl, None).ok()
+}
+
+/// Assemble a face's seam segments into the ordered node cycle of a
+/// single closed loop, if they form one. Returns the corner points in
+/// order (without the closing repeat). Open or multi-component sets
+/// return None.
+fn assemble_closed_loop(
+    segs: &[(keel_math::vec::Vec3, keel_math::vec::Vec3)],
+    tol: f64,
+) -> Option<Vec<keel_math::vec::Vec3>> {
+    use keel_math::vec::Vec3;
+    if segs.len() < 3 {
+        return None;
+    }
+    // Unique nodes.
+    let mut nodes: Vec<Vec3> = Vec::new();
+    let idx = |p: Vec3, nodes: &mut Vec<Vec3>| -> usize {
+        for (i, q) in nodes.iter().enumerate() {
+            if (*q - p).norm() <= tol.max(1e-9) {
+                return i;
+            }
+        }
+        nodes.push(p);
+        nodes.len() - 1
+    };
+    let mut adj: Vec<(usize, usize)> = Vec::new();
+    for (p0, p1) in segs {
+        let i = idx(*p0, &mut nodes);
+        let j = idx(*p1, &mut nodes);
+        if i == j {
+            return None;
+        }
+        adj.push((i, j));
+    }
+    // Every node must have degree exactly 2 for a single closed loop.
+    let n = nodes.len();
+    if n != segs.len() {
+        return None; // a clean cycle has #nodes == #edges
+    }
+    let mut deg = vec![0usize; n];
+    for &(i, j) in &adj {
+        deg[i] += 1;
+        deg[j] += 1;
+    }
+    if deg.iter().any(|&d| d != 2) {
+        return None;
+    }
+    // Walk the cycle.
+    let mut order = vec![0usize];
+    let mut used = vec![false; adj.len()];
+    let mut cur = 0usize;
+    for _ in 0..n {
+        let mut moved = false;
+        for (e, &(i, j)) in adj.iter().enumerate() {
+            if used[e] {
+                continue;
+            }
+            let nxt = if i == cur {
+                Some(j)
+            } else if j == cur {
+                Some(i)
+            } else {
+                None
+            };
+            if let Some(nx) = nxt {
+                used[e] = true;
+                cur = nx;
+                if order.len() < n {
+                    order.push(nx);
+                }
+                moved = true;
+                break;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+    if order.len() == n && cur == 0 {
+        Some(order.into_iter().map(|i| nodes[i]).collect())
+    } else {
+        None
+    }
+}
+
+impl Body {
+    /// A boundary edge whose 3D segment passes within `tol` of `p`,
+    /// with `p` strictly interior to the segment (not at an endpoint).
+    pub(crate) fn edge_containing_point(
+        &self,
+        p: keel_math::vec::Vec3,
+        tol: f64,
+    ) -> Option<crate::entity::EdgeKey> {
+        for id in self.entity_ids() {
+            let AnyKey::Edge(ek) = self.lookup(id)? else {
+                continue;
+            };
+            let Some(e) = self.edges.get(ek) else { continue };
+            let (Some(a), Some(b)) = (
+                self.vertices.get(e.bounds.0).map(|v| v.point),
+                self.vertices.get(e.bounds.1).map(|v| v.point),
+            ) else {
+                continue;
+            };
+            let ab = b - a;
+            let len2 = ab.dot(ab);
+            if len2 <= 0.0 {
+                continue;
+            }
+            let t = (p - a).dot(ab) / len2;
+            if t <= 1e-7 || t >= 1.0 - 1e-7 {
+                continue;
+            }
+            if ((a + ab * t) - p).norm() <= tol {
+                return Some(ek);
+            }
+        }
+        None
+    }
+
+    /// The outer-loop fin of `face` ending at a vertex within `tol` of
+    /// `p`.
+    pub(crate) fn loop_fin_ending_at_point(
+        &self,
+        face: FaceKey,
+        p: keel_math::vec::Vec3,
+        tol: f64,
+    ) -> Option<FinKey> {
+        let lp = self.faces.get(face).and_then(|f| f.loops.first().copied())?;
+        let entry = self.loops.get(lp).and_then(|l| l.fin)?;
+        let mut cur = entry;
+        loop {
+            if let Some(v) = self.fin_end_vertex(cur)
+                && let Some(vp) = self.vertices.get(v).map(|x| x.point)
+                && (vp - p).norm() <= tol
+            {
+                return Some(cur);
+            }
+            cur = self.fins.get(cur).map(|f| f.next)?;
+            if cur == entry {
+                return None;
+            }
+        }
+    }
+
+    /// Attach a seam edge's 3D curve and the pcurve (in the face's
+    /// analytic surface) to both of its radial fins.
+    fn attach_seam_geometry(
+        &mut self,
+        edge: crate::entity::EdgeKey,
+        face: FaceKey,
+        curve: &keel_geom::curve::Curve3,
+        tol: f64,
+    ) {
+        let ckey = self.add_curve(curve.clone());
+        if let Some(e) = self.edges.get_mut(edge) {
+            e.curve = Some((ckey, true));
+        }
+        if let Some(surf) = self.face_surface3(face)
+            && let Ok(fit) = keel_geom::fit::pcurve_on_analytic(curve, &surf, 64, tol.max(1e-7))
+        {
+            let pkey = self.add_curve(keel_geom::curve::Curve3::Nurbs(fit.curve));
+            let radial = self
+                .edges
+                .get(edge)
+                .map(|e| e.radial.clone())
+                .unwrap_or_default();
+            for fk in radial {
+                if let Some(f) = self.fins.get_mut(fk) {
+                    f.pcurve = Some((pkey, true));
+                }
+            }
+        }
+    }
+}
+
 /// Imprint the given seam curves onto a clone of `body`, picking each
-/// seam's face on this operand via `pick` (face_a for operand A,
-/// face_b for operand B). Crossing-free transversal seams only (M6a):
-/// closed seams become interior rings, open seams split boundary to
-/// boundary. Faults accumulate; a failed imprint leaves that seam out.
+/// seam's face via `pick` (face_a for operand A, face_b for operand B).
+///
+/// Two phases. Phase 1: split every operand boundary edge crossed by a
+/// seam endpoint at that point (so a seam loop that wraps across faces
+/// gets shared corner vertices). Phase 2 per face: if its seam segments
+/// run boundary-vertex to boundary-vertex, split the face along each;
+/// if they form a closed loop interior to the face, imprint one ring.
+/// Configurations needing in-face corner vertices (multi-segment open
+/// chains) are tagged and deferred to the next M6a increment.
 fn imprint_operand(
     body: &Body,
     seams: &[SeamCurve],
@@ -189,18 +405,90 @@ fn imprint_operand(
     tol: f64,
     faults: &mut Vec<BoolFault>,
 ) -> ImprintedOperand {
+    use std::collections::BTreeMap;
+    use keel_math::vec::Vec3;
     let mut working = body.clone();
     let mut seam_edges = Vec::new();
-    for seam in seams {
-        let face = pick(seam);
-        let res = if seam.closed {
-            working.imprint_closed_curve(face, &seam.curve, tol)
+    let etol = tol.max(1e-7);
+
+    // Group seam indices by their face on this operand.
+    let mut groups: BTreeMap<u64, (FaceKey, Vec<usize>)> = BTreeMap::new();
+    for (i, s) in seams.iter().enumerate() {
+        let face = pick(s);
+        let id = working.faces.get(face).map(|f| f.id.0).unwrap_or(u64::MAX);
+        groups.entry(id).or_insert((face, Vec::new())).1.push(i);
+    }
+
+    // Phase 1: pre-split boundary edges at unique seam endpoints that
+    // lie on them.
+    let mut corners: Vec<Vec3> = Vec::new();
+    for s in seams {
+        let (p0, p1) = curve_endpoints(&s.curve);
+        for p in [p0, p1] {
+            if !corners.iter().any(|q| (*q - p).norm() <= etol) {
+                corners.push(p);
+            }
+        }
+    }
+    for &p in &corners {
+        if let Some(edge) = working.edge_containing_point(p, etol) {
+            let _ = working.split_edge(edge, p);
+        }
+    }
+
+    // Phase 2: imprint per face.
+    for (_, (face, members)) in groups {
+        let eps: Vec<(Vec3, Vec3)> = members
+            .iter()
+            .map(|&i| curve_endpoints(&seams[i].curve))
+            .collect();
+        // Are all endpoints now boundary vertices on this face?
+        let all_on_boundary = eps.iter().all(|(p0, p1)| {
+            working.loop_fin_ending_at_point(face, *p0, etol).is_some()
+                && working.loop_fin_ending_at_point(face, *p1, etol).is_some()
+        });
+        if all_on_boundary {
+            if members.len() != 1 {
+                // Multi-segment per face (corner overlap) is deferred.
+                faults.push(BoolFault::AssemblyFailed("multi-segment open face"));
+                continue;
+            }
+            let (p0, p1) = eps[0];
+            let (Some(fa), Some(fb)) = (
+                working.loop_fin_ending_at_point(face, p0, etol),
+                working.loop_fin_ending_at_point(face, p1, etol),
+            ) else {
+                faults.push(BoolFault::AssemblyFailed("seam endpoint vertex lost"));
+                continue;
+            };
+            match working.split_face(fa, fb, None) {
+                Ok(out) => {
+                    working.attach_seam_geometry(out.edge, face, &seams[members[0]].curve, tol);
+                    working.debug_validate();
+                    seam_edges.push(out.edge);
+                }
+                Err(e) => faults.push(BoolFault::Topo(e)),
+            }
+            continue;
+        }
+        // Otherwise: a single closed curve, or segments forming one
+        // closed loop interior to the face -> a single interior ring.
+        if members.len() == 1 && seams[members[0]].closed {
+            match working.imprint_closed_curve(face, &seams[members[0]].curve, tol) {
+                Ok(rep) => seam_edges.push(rep.edge),
+                Err(e) => faults.push(BoolFault::Topo(e)),
+            }
+            continue;
+        }
+        if let Some(nodes) = assemble_closed_loop(&eps, tol)
+            && let Some(ring) = closed_polyline_nurbs(&nodes)
+        {
+            match working.imprint_closed_curve(face, &keel_geom::curve::Curve3::Nurbs(ring), tol) {
+                Ok(rep) => seam_edges.push(rep.edge),
+                Err(e) => faults.push(BoolFault::Topo(e)),
+            }
         } else {
-            working.imprint_open_curve(face, &seam.curve, tol)
-        };
-        match res {
-            Ok(rep) => seam_edges.push(rep.edge),
-            Err(e) => faults.push(BoolFault::Topo(e)),
+            faults.push(BoolFault::AssemblyFailed("unassembled face seams"));
         }
     }
     ImprintedOperand {
@@ -389,6 +677,24 @@ mod tests {
             }
             other => panic!("expected circle, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn guillotine_imprint_pair() {
+        let a = block(Vec3::ZERO, Vec3::new(4., 4., 4.));
+        let b = block(Vec3::new(2., -1., -1.), Vec3::new(4., 6., 6.));
+        let (ia, ib, faults) = imprint_pair(&a, &b, 1e-7);
+        assert!(faults.is_empty(), "faults: {faults:?}");
+        assert!(ia.body.validate().is_ok());
+        assert!(ib.body.validate().is_ok());
+        // A: four side faces each split by one segment => 6 + 4 = 10
+        // faces. (x-faces uncut, 4 side faces -> 8, +2 x-faces = 10.)
+        assert_eq!(ia.body.counts().f, 10, "A faces after imprint");
+        // B: the cutting face x=2 gains an interior rectangle ring,
+        // splitting into ring + outer => 6 + 1 = 7 faces.
+        assert_eq!(ib.body.counts().f, 7, "B faces after imprint");
+        assert_eq!(ia.seam_edges.len(), 4);
+        assert_eq!(ib.seam_edges.len(), 1);
     }
 
     #[test]
