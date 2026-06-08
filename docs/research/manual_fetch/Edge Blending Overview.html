@@ -1,0 +1,719 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0//EN">
+<!-- saved from url=(0067)http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+<meta http-equiv="Content-Style-Type" content="text/css">
+<meta name="GENERATOR" content="Adobe FrameMaker 2015/HTML Export Filter">
+<script language="JavaScript">
+<!--
+if (parent.theMenu) {
+    var entryID = parent.theMenu.findEntry(location.pathname, "url", "right", 0);
+    if (entryID >= 0) {
+        parent.theMenu.selectEntry(entryID);
+        if (parent.theMenu.setEntry(entryID, true)) {
+            parent.theMenu.refresh();
+        }
+    }
+}
+//-->
+</script>
+<link rel="STYLESHEET" href="./Edge Blending Overview_files/ps_doc.css" charset="UTF-8" type="text/css">
+<title>Edge Blending Overview</title></head>
+<body background="./Edge Blending Overview_files/background.gif" link="#0F3A68" vlink="#878787" alink="#FF7600" leftmargin="0" topmargin="0" marginwidth="0" marginheight="0">
+<a name="topofdoc"></a>
+
+
+<table cellpadding="0" cellspacing="0" border="0" width="100%">
+  <tbody><tr>
+    <td>&nbsp;<img src="./Edge Blending Overview_files/psbar_l.gif" border="0"></td>
+    <td align="RIGHT" valign="CENTER">
+        <font face="helvetica,arial" size="5" class="NS28pt">
+        <b>Edge Blending Overview</b></font></td>
+    <td>&nbsp;&nbsp;</td>
+  </tr>
+</tbody></table>
+
+<p></p><table border="" align="CENTER"><tbody><tr>
+  <td>&lt;&lt;&lt; <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.074.html">Introduction To Blending</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs_V35/fd_index.html">Chapters</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.076.html">Edge Blending Options</a> &gt;&gt;&gt;</td>
+</tr></tbody></table>
+
+<h1>Contents</h1>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-302966">74.1	Introduction </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-475909">74.1.1	Edge blending documentation </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-302988">74.1.2	Face-face blends </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-302996">74.1.3	Three-face blending </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-440813">74.2	Fixed and unfixed edge blends </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-303013">74.3	Types of edge blend </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-303024">74.3.1	Rolling-ball blends </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-303073">74.3.2	Chamfers </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-303125">74.3.3	Variable rolling-ball blends </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-461356">74.4	Other blending functionality </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-461360">74.4.1	Enquiring blend properties </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-461403">74.4.2	Removing unfixed blends </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-461412">74.4.3	Fix the blends in a body </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-306530">74.5	Limitations on edge blending </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-306537">74.5.1	General limitations on edge blending </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-545406">74.5.1.1	Blending facet or mixed edges </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-661618">74.5.2	Specific limitations on edge blending </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-448464">74.5.2.1	Blending one edge at a vertex </a>
+</li></ul>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-306916">74.6	Edge blending rules, theories and tips </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-306918">74.6.1	Blending one edge at a vertex </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-306928">74.6.2	Blending two edges at a three-edge vertex </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-307286">74.6.3	Blending three edges at a three-edge vertex </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-307294">74.6.4	Blending two edges at a four-edge vertex </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-309274">74.6.5	Blends and B-surfaces </a>
+</li></ul>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-309261">74.7	Variable radius blends </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-309284">74.8	Outputting fixed blend surfaces </a>
+<ul>
+<li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-309289">74.8.1	Blended edge </a>
+</li><li> <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_pgfId-309300">74.8.2	Simplification of blend surfaces </a>
+</li></ul>
+</li></ul>
+<a name="endofcontents"></a>
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="50422151_pgfId-302966"></a>74.1	Introduction 
+
+
+</h1>
+<p>
+<a name="50422151_pgfId-302967"></a>Parasolid provides three forms of blending:</p>
+<ul>
+<li>
+<a name="50422151_pgfId-302968"></a>Edge blending</li>
+<li>
+<a name="50422151_pgfId-302969"></a>Face-face blending</li>
+<li>
+<a name="50422151_pgfId-302970"></a>Three-face blending</li>
+</ul>
+<p>
+<a name="50422151_pgfId-302972"></a><a name="50422151_marker-302971"></a>Edge blending smooths off an edge or list of edges, by introducing a new face or faces to a body. The resulting blend faces are usually tangent-continuous with the adjoining faces.</p>
+<p>
+<a name="50422151_pgfId-595565"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="50422151_pgfId-514070"></a>Note:  Edge blending offers partial support for facet geometry. Face-face blending and three-face blending do not support facet geometry.</address><br>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="50422151_pgfId-506490"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="50422151_pgfId-504547"></a>Related Topics: </p>
+<ul>
+<ul>
+<li>
+<a name="50422151_pgfId-504499"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.064.html#50422139_50380">Section 63.6, “Deleting blend faces”</a></li>
+<li>
+<a name="50422151_pgfId-504598"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.076.html#50422152_39578">Chapter 75, “Edge Blending Options”</a></li>
+<li>
+<a name="50422151_pgfId-504699"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.077.html#50422153_39578">Chapter 76, “Edge Blend Overflows”</a></li>
+<li>
+<a name="50422151_pgfId-504740"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.078.html#50422154_61851">Chapter 77, “Face-Face Blending”</a></li>
+</ul>
+</ul>
+</td>
+</tr>
+</tbody></table>
+
+<h3>
+<a name="50422151_pgfId-475909"></a>	74.1.1 	Edge blending documentation </h3>
+<p>
+<a name="50422151_pgfId-475913"></a>This chapter and the next few chapters describe Parasolid’s edge blending functionality. It is split into the following sections:</p>
+<ul>
+<li>
+<a name="50422151_pgfId-302975"></a>This chapter provides an overview of the edge blending functionality, and some useful information on the current methods and limitations of edge blending.</li>
+<li>
+<a name="50422151_pgfId-302978"></a>The options supported by the various edge blending functions are described in <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.076.html#50422152_39578">Chapter 75, “Edge Blending Options”</a>.</li>
+<li>
+<a name="50422151_pgfId-302980"></a>The causes of, and solutions to, blend overflow configurations are explained in <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.077.html#50422153_39578">Chapter 76, “Edge Blend Overflows”</a>.</li>
+<li>
+<a name="50422151_pgfId-302986"></a>The common causes of errors are covered in <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.076.html#50422152_39578">Chapter 75, “Edge Blending Options”</a>.</li>
+</ul>
+
+
+<h3>
+<a name="50422151_pgfId-302988"></a>	74.1.2 	Face-face blends </h3>
+<p>
+<a name="50422151_pgfId-302992"></a>Face-face blending is described in <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.078.html#50422154_61851">Chapter 77, “Face-Face Blending”</a>.</p>
+<p>
+<a name="50422151_pgfId-302993"></a>Edge blending and face-face blending should not be thought of as alternatives, but as two approaches that work together powerfully, because their strengths and weaknesses are complementary.</p>
+
+
+<h3>
+<a name="50422151_pgfId-302996"></a>	74.1.3 	<a name="50422151_marker-302994"></a><a name="50422151_marker-302995"></a>Three-face blending </h3>
+<p>
+<a name="50422151_pgfId-440798"></a>Three-face blends are a special case of face-face blends in which a blend is created between three sets of faces, rather than two. Three-face blends are described in <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.079.html#50422155_37052">Chapter 78, “Three-Face Blending”</a>.</p>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="50422151_pgfId-440813"></a>74.2	<a name="50422151_marker-440807"></a><a name="50422151_marker-440808"></a><a name="50422151_marker-440809"></a><a name="50422151_marker-440810"></a><a name="50422151_marker-440811"></a><a name="50422151_marker-440812"></a>Fixed and unfixed edge blends 
+
+
+</h1>
+<p>
+<a name="50422151_pgfId-464298"></a><a name="50422151_marker-464295"></a>Edge blends are initially defined, or set, using one of the functions described in <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_36038">Section 74.3, “Types of edge blend”</a>. Calling these functions attaches blend data to edges on a body in the form of attributes. Blends that are attached to edges in this way are referred to as <em>
+unfixed</em>. </p>
+<p>
+<a name="50422151_pgfId-464406"></a>To actually create blends on a series of edges, the unfixed blends need to be incorporated into the body <em>
+(fixed</em>) as faces that replace the edges to which the blend attributes were attached. Edge blends are fixed using <a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a>, as described in <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_68231">Section 74.4.3, “Fix the blends in a body”</a>.</p>
+<p>
+<a name="50422151_pgfId-463343"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="50422151_pgfId-463401"></a>Warning: You are strongly recommended not to change the topology or geometry of a model between setting and fixing an edge blend. Doing so may lead to invalid results.</address><br>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="50422151_pgfId-303010"></a>Once a blend has been fixed, it may not be possible to restore the original edge, except by using rollback to unwind the modeling operation(s). See <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.098.html#50422177_36055">Chapter 97, “Rollback”</a>, for more information.</p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="50422151_pgfId-303013"></a>74.3	<a name="50422151_marker-303011"></a><a name="50422151_marker-303012"></a><a name="50422151_36038"></a>Types of edge blend 
+
+
+</h1>
+<p>
+<a name="50422151_pgfId-303015"></a><a name="50422151_marker-303014"></a>There are three types of edge blend:</p>
+<ul>
+<li>
+<a name="50422151_pgfId-303016"></a>Rolling-ball blends</li>
+<li>
+<a name="50422151_pgfId-303017"></a>Chamfers</li>
+<li>
+<a name="50422151_pgfId-461331"></a>Variable rolling-ball blends</li>
+</ul>
+<p>
+<a name="50422151_pgfId-453938"></a>Each type of edge blend is set (that is, blend attributes are attached to the blend edges) using the functions listed below. Blends can then be fixed using <a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a>. </p>
+<p>
+<a name="50422151_pgfId-654698"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="50422151_pgfId-654732"></a>Note: You should not attempt to fix a mixture of chamfers and rolling-ball blends in a single call to <a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a>.</address><br>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="50422151_pgfId-462400"></a>You can create each type of edge blend on general bodies, so long as the body is locally manifold in the area of the blend. </p>
+
+<h3>
+<a name="50422151_pgfId-303024"></a>	74.3.1 	<a name="50422151_marker-303019"></a><a name="50422151_marker-303020"></a><a name="50422151_marker-303021"></a><a name="50422151_marker-303022"></a><a name="50422151_marker-303023"></a>Rolling-ball blends </h3>
+
+<h4>
+<a name="50422151_pgfId-303025"></a>Function:</h4>
+<p>
+<a name="50422151_pgfId-303027"></a><a name="50422151_marker-303026"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_edge_set_blend_constant.html">PK_EDGE_set_blend_constant</a></p>
+<p>
+<a name="50422151_pgfId-303028"></a>Rolling-ball blends have a constant circular or curvature-continuous cross-section; they are the result of rolling a sphere along two surfaces adjoining an edge (see <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_42290"><em>
+Figure 74-1</em></a>). The extent of rolling-ball blends is determined by specifying the radius of the sphere.</p>
+<p>
+<a name="50422151_pgfId-303065"></a>&nbsp;</p>
+
+<img src="./Edge Blending Overview_files/fd_chap-875.gif">
+
+<p>
+<a name="50422151_pgfId-303067"></a>Figure 74-1 <a name="50422151_42290"></a>Rolling-ball blend</p>
+
+
+
+<h3>
+<a name="50422151_pgfId-303073"></a>	74.3.2 	<a name="50422151_marker-303068"></a><a name="50422151_marker-303069"></a><a name="50422151_marker-303070"></a><a name="50422151_marker-303071"></a><a name="50422151_marker-303072"></a>Chamfers </h3>
+
+<h4>
+<a name="50422151_pgfId-575395"></a>Function: </h4>
+<p>
+<a name="50422151_pgfId-575515"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_edge_set_blend_chain.html">PK_EDGE_set_blend_chain</a> and <a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_edge_set_blend_chamfer.html">PK_EDGE_set_blend_chamfer</a></p>
+<p>
+<a name="50422151_pgfId-575551"></a>Chamfers are blends that have a linear cross-section (see <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_20295"><em>
+Figure 74-2</em></a>). There are two types of chamfer blends: face offset chamfers and apex-range chamfers. </p>
+<p>
+<a name="50422151_pgfId-585303"></a>Face offset chamfer blends can be determined by the intersection between offset surfaces that are defined using the <code>
+range_1</code>
+ and <code>
+range_2</code>
+ arguments in <a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_edge_set_blend_chamfer.html">PK_EDGE_set_blend_chamfer</a> or using options in <a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_edge_set_blend_chain.html">PK_EDGE_set_blend_chain</a>. See <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.076.html#50422152_94585">Section 75.2.4, “Options for face offset chamfers”</a>, for more information. </p>
+<p>
+<a name="50422151_pgfId-587640"></a>Apex-range chamfers provide an alternative way of controlling the boundaries of a chamfer blend, and can be created using options in <a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_edge_set_blend_chain.html">PK_EDGE_set_blend_chain</a>. See <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.076.html#50422152_40965">Section 75.2.3, “Options for chamfer blends”</a> for more information.</p>
+<p>
+<a name="50422151_pgfId-303117"></a>&nbsp;</p>
+
+<img src="./Edge Blending Overview_files/fd_chap-876.gif">
+
+<p>
+<a name="50422151_pgfId-303119"></a>Figure 74-2 <a name="50422151_20295"></a>Chamfer blend</p>
+
+
+
+<h3>
+<a name="50422151_pgfId-303125"></a>	74.3.3 	<a name="50422151_marker-303120"></a><a name="50422151_marker-303121"></a><a name="50422151_marker-303122"></a><a name="50422151_marker-303123"></a><a name="50422151_marker-303124"></a>Variable rolling-ball blends </h3>
+
+<h4>
+<a name="50422151_pgfId-303126"></a>Function:</h4>
+<p>
+<a name="50422151_pgfId-467637"></a><a name="50422151_marker-467636"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_edge_set_blend_chain.html">PK_EDGE_set_blend_chain</a></p>
+<p>
+<a name="50422151_pgfId-468026"></a>Variable rolling-ball blends are those where the size of the blend (e.g. the blend radius, in the case of a blend with a circular cross-section) varies along the chain of edges being blended as shown in <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_26471"><em>
+Figure 74-3</em></a>. Variable rolling-ball blends may have circular, conic, or curvature-continuous cross-sections. </p>
+<p>
+<a name="50422151_pgfId-303166"></a>&nbsp;</p>
+
+<img src="./Edge Blending Overview_files/fd_chap-877.gif">
+
+<p>
+<a name="50422151_pgfId-461355"></a>Figure 74-3 <a name="50422151_26471"></a>Variable rolling-ball blend</p>
+
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="50422151_pgfId-461356"></a>74.4	Other blending functionality 
+
+
+</h1>
+<p>
+<a name="50422151_pgfId-467196"></a>As well as creating an unfixed blend, you can also enquire the properties of any unfixed blends, remove the blend attributes of an unfixed blend, and fix the blend. </p>
+
+<h3>
+<a name="50422151_pgfId-461360"></a>	74.4.1 	<a name="50422151_marker-461357"></a><a name="50422151_marker-461358"></a><a name="50422151_marker-461359"></a>Enquiring blend properties </h3>
+<p>
+<a name="50422151_pgfId-461361"></a>This section provides a brief overview of the functionality available for enquiring various properties of edge blends. See the API documentation for each function in the <em>
+<a href="http://www.q-solid.com/Parasolid_Docs_V35/pk_index.html">PK Interface Programming Reference</a> Manual</em> for more information. </p>
+<p>
+<a name="50422151_pgfId-461398"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<th rowspan="1" colspan="1">
+<p>
+<a name="50422151_pgfId-461367"></a>Type of enquiry </p>
+</th>
+<th rowspan="1" colspan="1">
+<p>
+<a name="50422151_pgfId-461369"></a>Description</p>
+</th>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="50422151_pgfId-461371"></a>Blend parameters</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="50422151_pgfId-461376"></a><a name="50422151_marker-461373"></a><a name="50422151_marker-461374"></a><a name="50422151_marker-461375"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_edge_ask_blend.html">PK_EDGE_ask_blend</a> returns information about the parameters of the unfixed blend on a given edge:</p>
+<ul>
+<li>
+<a name="50422151_pgfId-461377"></a>The type of blend attached to the edge (if any).</li>
+<li>
+<a name="50422151_pgfId-461378"></a>The faces to the left and right of the edge.</li>
+<li>
+<a name="50422151_pgfId-461379"></a>A structure detailing the shape of the blend (in the case of a blend set by <a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_edge_set_blend_chain.html">PK_EDGE_set_blend_chain</a>, this structure is not filled in; this function returns the details of the shape of the blend in a Parasolid Report instead).</li>
+<li>
+<a name="50422151_pgfId-461380"></a>A structure detailing the blend’s properties.</li>
+<li>
+<a name="50422151_pgfId-461381"></a>The blend’s cliff edge if used.</li>
+</ul>
+</td>
+</tr>
+<tr>
+<td rowspan="1" colspan="1">
+<p>
+<a name="50422151_pgfId-461383"></a>Standard form of a blend surface</p>
+</td>
+<td rowspan="1" colspan="1">
+<p>
+<a name="50422151_pgfId-461389"></a><a name="50422151_marker-461385"></a><a name="50422151_marker-461386"></a><a name="50422151_marker-461387"></a><a name="50422151_marker-461388"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_blendsf_ask.html">PK_BLENDSF_ask</a> returns the standard form of a rolling-ball blend surface. See <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_41547">Section 74.8, “Outputting fixed blend surfaces”</a>, for more information. </p>
+</td>
+</tr>
+</tbody></table>
+
+
+<h3>
+<a name="50422151_pgfId-461403"></a>	74.4.2 	<a name="50422151_marker-461399"></a><a name="50422151_marker-461400"></a><a name="50422151_marker-461401"></a><a name="50422151_marker-461402"></a>Removing unfixed blends </h3>
+<p>
+<a name="50422151_pgfId-461405"></a><a name="50422151_marker-461404"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_edge_remove_blend.html">PK_EDGE_remove_blend</a> removes an unfixed blend from the given edge. If the blend was set using <a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_edge_set_blend_chain.html">PK_EDGE_set_blend_chain</a>, then the unfixed blend is removed from <em>
+all</em> edges in the chain of which the given edge forms a part. </p>
+
+
+<h3>
+<a name="50422151_pgfId-461412"></a>	74.4.3 	<a name="50422151_marker-461406"></a><a name="50422151_marker-461407"></a><a name="50422151_marker-461408"></a><a name="50422151_marker-461409"></a><a name="50422151_marker-461410"></a><a name="50422151_marker-461411"></a><a name="50422151_68231"></a>Fix the blends in a body </h3>
+<p>
+<a name="50422151_pgfId-461414"></a><a name="50422151_marker-461413"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a> changes any edges of the body which have blend attributes into full faces with the appropriate blending surface geometry.</p>
+<p>
+<a name="50422151_pgfId-463968"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_body_fix_blends.html">PK_BODY_fix_blends</a> supports a wide range of options for controlling the appearance of the fixed blend. See <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.076.html#50422152_55971">Section 75.3, “Options when fixing blends”</a>, for more details. </p>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="50422151_pgfId-306530"></a>74.5	<a name="50422151_26238"></a><a name="50422151_marker-306527"></a><a name="50422151_marker-306528"></a><a name="50422151_marker-306529"></a>Limitations on edge blending 
+
+
+</h1>
+<p>
+<a name="50422151_pgfId-306532"></a><a name="50422151_marker-306531"></a>There are a number of limitations which determine whether a particular edge can be blended. These limitations are based both on the underlying topology and geometry of the edge and the presence of blends on adjacent edges. Some limitations are general while others are related to the number of adjacent edges that are blended.</p>
+<p>
+<a name="50422151_pgfId-306533"></a>The geometry of blends can be extremely complex, and it is not possible to lay down hard and fast rules which can always be guaranteed to apply. The following sections give general rules of thumb which apply in the majority of cases.</p>
+
+<h3>
+<a name="50422151_pgfId-306537"></a>	74.5.1 	<a name="50422151_marker-306534"></a><a name="50422151_marker-306535"></a><a name="50422151_marker-306536"></a>General limitations on edge blending </h3>
+<p>
+<a name="50422151_pgfId-306538"></a>Some general limitations are:</p>
+<ul>
+<li>
+<a name="50422151_pgfId-306539"></a>You cannot blend an edge terminating at a point tangency using an asymmetric chamfer or a conic cross-section blend with asymmetric ranges at that point.</li>
+<li>
+<a name="50422151_pgfId-306540"></a>Two edges can only be blended at a four-edge vertex if the other two edges are smooth, or if the two edges do not share a face and are of the same convexity. See <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_23995">Section 74.6.4, “Blending two edges at a four-edge vertex”</a></li>
+<li>
+<a name="50422151_pgfId-306541"></a>A value used as a range must be consistent with the geometry of the faces which are blended. For example, it must be possible to move away from all points in the second face by at least the distance specified by the given range.</li>
+<li>
+<a name="50422151_pgfId-306542"></a>In general, the offsets, by the relevant ranges, of the surfaces attached to the faces meeting at the edge to be blended must not self-intersect and must intersect to define a spine curve for the blend.</li>
+<p>
+<a name="50422151_pgfId-306543"></a>An exception to this is if you use the <code>
+inside_tight</code>
+ option described in <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.076.html#50422152_27267">Section 75.3.13, “Creating blends inside tight corners”</a>. Another exception is the following configuration where the rolling-ball blend (edge 1) is smaller than the blend applied to edge 2:</p>
+<p>
+<a name="50422151_pgfId-396344"></a>&nbsp;</p>
+</ul>
+
+<img src="./Edge Blending Overview_files/fd_chap-878.gif">
+
+<p>
+<a name="50422151_pgfId-306821"></a>Figure 74-4 Exception to the previous rule</p>
+
+<h4>
+<a name="50422151_pgfId-545406"></a>74.5.1.1 <a name="50422151_82606"></a>Blending facet or mixed edges </h4>
+<p>
+<a name="50422151_pgfId-545451"></a>You can successfully blend facet or mixed edges if all of the following are true at the start of a blend operation:</p>
+<ul>
+<li>
+<a name="50422151_pgfId-623109"></a>No more than two edges are to be blended at a vertex with four or more edges.</li>
+<li>
+<a name="50422151_pgfId-554143"></a>No more than three edges are to be blended at a vertex.</li>
+<li>
+<a name="50422151_pgfId-623269"></a>If all edges in a three edge vertex are to be blended and they have different convexity, the two same-convexity edges must have the same radius.</li>
+<li>
+<a name="50422151_pgfId-623044"></a>If two edges in a four or more edge vertex are to be blended, the other edges must be smooth.</li>
+<li>
+<a name="50422151_pgfId-624702"></a>The blended edges within each chain are either all convex or all concave. <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_81603"><em>
+Figure 74-5</em></a> (a) shows an example where the blend fails because the chain of edges to be blended has varying convexity. <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_81603"><em>
+Figure 74-5</em></a> (b) shows a successful blend where the edges in the chain are all convex.</li>
+</ul>
+<p>
+<a name="50422151_pgfId-551465"></a>&nbsp;</p>
+
+<img src="./Edge Blending Overview_files/fd_chap-879.gif">
+
+<p>
+<a name="50422151_pgfId-551179"></a>Figure 74-5 <a name="50422151_81603"></a>Performing edge blending on facet bodies that have varying convexity</p>
+<p>
+<a name="50422151_pgfId-643053"></a>&nbsp;</p>
+
+<img src="./Edge Blending Overview_files/fd_chap-880.gif">
+
+<p>
+<a name="50422151_pgfId-642691"></a>Figure 74-6 Blending chains of mixed edges<a name="50422151_marker-550615"></a><a name="50422151_marker-550616"></a><a name="50422151_marker-550617"></a><a name="50422151_88815"></a></p>
+
+
+
+<h3>
+<a name="50422151_pgfId-661618"></a>	74.5.2 	Specific limitations on edge blending </h3>
+
+<h4>
+<a name="50422151_pgfId-448464"></a>74.5.2.1 <a name="50422151_marker-448462"></a><a name="50422151_marker-448463"></a>Blending one edge at a vertex </h4>
+<p>
+<a name="50422151_pgfId-448465"></a>If three edges meet at the vertex, it is normally possible to blend one of them. The occasion when it is not possible to blend one of the edges is when the end surface is undefined. For example:</p>
+<p>
+<a name="50422151_pgfId-398145"></a>&nbsp;</p>
+
+<img src="./Edge Blending Overview_files/fd_chap-881.gif">
+
+<p>
+<a name="50422151_pgfId-306909"></a>Figure 74-7 Limitation of blending one edge at a vertex</p>
+
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="50422151_pgfId-306916"></a>74.6	<a name="50422151_marker-306910"></a><a name="50422151_marker-306911"></a><a name="50422151_marker-306912"></a><a name="50422151_marker-306913"></a><a name="50422151_marker-306914"></a><a name="50422151_26008"></a>Edge blending rules, theories and tips 
+
+
+</h1>
+<p>
+<a name="50422151_pgfId-306917"></a>Although it is fairly straightforward to describe illegal blends it is much harder to generate rules of thumb which guarantee that blends are legal. In particular it is often difficult to avoid falling over the illegal overlap/intersection type errors caused by choosing too large blend radii. However, the following rules and tips are worth considering but always remember that it is best to make and fix blends in small groups:</p>
+
+<h3>
+<a name="50422151_pgfId-306918"></a>	74.6.1 	Blending one edge at a vertex </h3>
+<p>
+<a name="50422151_pgfId-306921"></a><a name="50422151_marker-306919"></a><a name="50422151_marker-306920"></a>If more than three edges meet at a vertex it is usually possible to blend one of them providing that:</p>
+<ul>
+<li>
+<a name="50422151_pgfId-306922"></a>The ranges must be sufficiently small and the configuration such that the sides of the blend end on other edges at the same vertex.</li>
+<li>
+<a name="50422151_pgfId-306923"></a>It is possible to cap the end of the blend with existing faces, extending at most two of the adjoining faces.</li>
+</ul>
+
+
+<h3>
+<a name="50422151_pgfId-306928"></a>	74.6.2 	<a name="50422151_92370"></a><a name="50422151_marker-306925"></a><a name="50422151_marker-306926"></a><a name="50422151_marker-306927"></a>Blending two edges at a three-edge vertex </h3>
+<p>
+<a name="50422151_pgfId-306929"></a>You can successfully blend two of the edges at a three-edge vertex in the following situations:</p>
+<ul>
+<li>
+<a name="50422151_pgfId-306930"></a>If any two of the three edges A, B, and C, are of the same convexity, they can be blended (see <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_18766"><em>
+Figure 74-8</em></a> (a)).</li>
+<li>
+<a name="50422151_pgfId-306934"></a>If edges A and B are of one convexity, and edge C is of opposite convexity, you can blend A and C or B and C only if the blend on edge C is of constant radius (see <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_18766"><em>
+Figure 74-8</em></a> (b)). </li>
+</ul>
+<p>
+<a name="50422151_pgfId-306941"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="50422151_pgfId-306940"></a>Note: You cannot blend two edges of different convexity if either or both of the requested blends is a chamfer blend.</address><br>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="50422151_pgfId-398399"></a>&nbsp;</p>
+
+<img src="./Edge Blending Overview_files/fd_chap-882.gif">
+
+<p>
+<a name="50422151_pgfId-307282"></a>Figure 74-8 <a name="50422151_18766"></a>Blending two edges at a three-edge vertex</p>
+
+
+<h3>
+<a name="50422151_pgfId-307286"></a>	74.6.3 	<a name="50422151_marker-307283"></a><a name="50422151_marker-307284"></a><a name="50422151_marker-307285"></a>Blending three edges at a three-edge vertex </h3>
+<p>
+<a name="50422151_pgfId-307289"></a><a name="50422151_marker-307287"></a><a name="50422151_marker-307288"></a>When all three edges of a three-edge vertex are blended simultaneously (put them on and fix them as a group), an extra blend face is added to smooth out the vertex.</p>
+
+
+<h3>
+<a name="50422151_pgfId-307294"></a>	74.6.4 	<a name="50422151_23995"></a><a name="50422151_marker-307291"></a><a name="50422151_marker-307292"></a><a name="50422151_marker-307293"></a>Blending two edges at a four-edge vertex </h3>
+<p>
+<a name="50422151_pgfId-307298"></a><a name="50422151_marker-307295"></a><a name="50422151_marker-307296"></a><a name="50422151_37873"></a>When blending two edges of a four-edge vertex with a rolling-ball blend, the following constraints are applied:</p>
+<ul>
+<li>
+<a name="50422151_pgfId-307299"></a>the other pair, i.e. non-blended edges, are tangent or do not share a face and are of the same convexity</li>
+<li>
+<a name="50422151_pgfId-307300"></a>the convexity of the blend does not change at the vertex of the two blended edges</li>
+</ul>
+<p>
+<a name="50422151_pgfId-307304"></a>&nbsp;</p>
+<table border="1">
+<tbody><tr>
+<td rowspan="1" colspan="1">
+<address>
+<a name="50422151_pgfId-307303"></a>Note: The two edges to be blended must both be picked before either blend is fixed.</address><br>
+</td>
+</tr>
+</tbody></table>
+<p>
+<a name="50422151_pgfId-307308"></a>Some common cases are illustrated in <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#50422151_41657"><em>
+Figure 74-9</em></a>. The illustrations show the “before” and “after” for each case; in the left hand picture of each example, the four-edge vertex is surrounded by a dotted circle.</p>
+<p>
+<a name="50422151_pgfId-398724"></a>&nbsp;</p>
+
+<img src="./Edge Blending Overview_files/fd_chap-883.gif">
+
+<p>
+<a name="50422151_pgfId-309257"></a>Figure 74-9 <a name="50422151_41657"></a>Blending two edges at four-edge vertices</p>
+<p>
+<a name="50422151_pgfId-508096"></a>For an example of vertex blending, see the code example in the <code>
+C++\Code</code>
+ <code>
+Examples\Modelling\Blending\Edge\Vertex</code>
+ <code>
+Blending</code>
+ folder, located in <code>
+example_applications</code>
+ in your Parasolid installation folder.</p>
+
+
+<h3>
+<a name="50422151_pgfId-309274"></a>	74.6.5 	<a name="50422151_marker-492291"></a><a name="50422151_marker-492292"></a>Blends and B-surfaces </h3>
+<p>
+<a name="50422151_pgfId-309277"></a><a name="50422151_marker-492294"></a><a name="50422151_marker-492295"></a>In principal edges at which one or both of the adjoining surfaces is parametric can be blended subject to the same restrictions as any other edge. However, the nature of B-surface definitions introduces extra restrictions on blending:</p>
+<ul>
+<li>
+<a name="50422151_pgfId-309278"></a>Where a blend adds material it may not be possible to extend the third face at a vertex to terminate the blend.</li>
+<li>
+<a name="50422151_pgfId-309279"></a>It may not be possible to extend the offsets of B-surfaces far enough to define the spine curve for a blend.</li>
+</ul>
+
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="50422151_pgfId-309261"></a>74.7	<a name="50422151_marker-309258"></a><a name="50422151_marker-309259"></a><a name="50422151_marker-309260"></a>Variable radius blends 
+
+
+</h1>
+<p>
+<a name="50422151_pgfId-309264"></a><a name="50422151_marker-309262"></a><a name="50422151_marker-309263"></a>When creating variable radius blends (VRBs) using <a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_edge_set_blend_chain.html">PK_EDGE_set_blend_chain</a>, the following criteria must be satisfied:</p>
+<ul>
+<li>
+<a name="50422151_pgfId-309265"></a>The blend radii must be defined at 2 or more positions. If you specify an open-ended chain, then two of the positions must correspond to the vertices at the ends of the chain. If the chain is closed, then the positions may be anywhere on the chain, and need not correspond to vertices on the edge. </li>
+<li>
+<a name="50422151_pgfId-309270"></a>The rho values must either be zero for every point along the VRB, or strictly between zero and one for every point along the VRB. You cannot have a mixture of zero and non-zero rho values.</li>
+<li>
+<a name="50422151_pgfId-309271"></a>VRBs can have zero radius at one or both ends, but not in the middle. If the range off one of the faces at the end of a conic VRB is zero, then the range off the other face must also be zero.</li>
+</ul>
+<p>
+<a name="50422151_pgfId-507900"></a>For an example of variable radius blends, see the code example in the <code>
+C++\Code</code>
+ <code>
+Examples\Modelling\Blending\Edge\Variable</code>
+ <code>
+Radius</code>
+ <code>
+Blending</code>
+ folder, located in <code>
+example_applications</code>
+ in your Parasolid installation folder.</p>
+<p>
+<a name="50422151_pgfId-533924"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.076.html#50422152_96102">Section 75.2.2, “Options for variable radius blends”</a> for more information on variable radius blend options. </p>
+
+
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<hr>
+
+<h1>
+<a name="50422151_pgfId-309284"></a>74.8	<a name="50422151_marker-507889"></a><a name="50422151_marker-507890"></a><a name="50422151_marker-507891"></a><a name="50422151_marker-507892"></a><a name="50422151_41547"></a>Outputting fixed blend surfaces 
+
+
+</h1>
+<p>
+<a name="50422151_pgfId-309286"></a><a name="50422151_marker-309285"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_blendsf_ask.html">PK_BLENDSF_ask</a> outputs the data describing a fixed blend surface. Internally there is only one type of blend surface, the blended edge, which is used for a face which smooths out an edge or a vertex, e.g. that which is used to smooth out a three-edge vertex when two of the blends add material and the other removes material (or vice versa).</p>
+
+<h3>
+<a name="50422151_pgfId-309289"></a>	74.8.1 	<a name="50422151_marker-309287"></a><a name="50422151_marker-309288"></a>Blended edge </h3>
+<p>
+<a name="50422151_pgfId-309291"></a><a name="50422151_marker-309290"></a>The data which is returned for a blended edge is:</p>
+<ul>
+<li>
+<a name="50422151_pgfId-309292"></a><code>
+geom_1</code>
+, <code>
+geom_2</code>
+ - the two surfaces which met at the edge which was originally blended</li>
+<li>
+<a name="50422151_pgfId-309293"></a><code>
+radii[2]</code>
+ - the ranges on the corresponding surfaces</li>
+<li>
+<a name="50422151_pgfId-309294"></a><code>
+spine</code>
+ - the curve defining the center of the rolling-ball</li>
+<li>
+<a name="50422151_pgfId-309295"></a><code>
+spine_ext</code>
+ - the valid region of the spine curve</li>
+</ul>
+<p>
+<a name="50422151_pgfId-309296"></a>The chamfer blend type is never returned, the surfaces introduced by fixing chamfers are always planes, cylinders, cones or B-surfaces.</p>
+
+
+<h3>
+<a name="50422151_pgfId-309300"></a>	74.8.2 	<a name="50422151_marker-309297"></a><a name="50422151_marker-309298"></a><a name="50422151_marker-309299"></a>Simplification of blend surfaces </h3>
+<p>
+<a name="50422151_pgfId-309302"></a><a name="50422151_marker-309301"></a>Wherever possible, Parasolid simplifies fixed rolling-ball blends to tori and cylinders.</p>
+<p>
+<a name="50422151_pgfId-309303"></a><a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_blendsf_ask.html">PK_BLENDSF_ask</a> can only be used to output a surface of type PK_CLASS_blend. <a href="http://www.q-solid.com/Parasolid_Docs_V35/headers/pk_entity_ask_class.html">PK_ENTITY_ask_class</a> may be used to determine the type of surfaces created by fixing blends.</p>
+
+
+<a name="endofdoc"></a>
+
+<p align="RIGHT">
+<a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.075.html#topofdoc"><i>[back to top]</i></a>
+</p>
+
+<p></p><table border="" align="CENTER"><tbody><tr>
+  <td>&lt;&lt;&lt; <a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.074.html">Introduction To Blending</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs_V35/fd_index.html">Chapters</a></td>
+  <td><a href="http://www.q-solid.com/Parasolid_Docs_V35/chapters/fd_chap.076.html">Edge Blending Options</a> &gt;&gt;&gt;</td>
+</tr></tbody></table>
+
+
+
+</body></html>
