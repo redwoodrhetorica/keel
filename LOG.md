@@ -3333,3 +3333,40 @@ for the id=16 fragment -- print its representative sample point and w_B -- to co
 band hypothesis, then implement the sec-1.4 two-sided neighborhood test for on-boundary
 fragments and a zero-area fragment filter. Tripwire stays the 45-degree symmetric chamfer (7.75)
 and the honesty gate (no wrong answer; the asym chamfer DECLINES meanwhile).
+
+## Addendum 109 (2026-06-09, attended): #16 LAYER 2 AIRTIGHT -- the on-on-band hypothesis is REFUTED; the bug is face_interior_point sampling OUTSIDE a thin fragment. Still 82/144
+
+Ran the Addendum-108 NEXT step (env-gated DIAG of classify_faces: each fragment's interior
+sample point, its winding number w_B against the cutter, the resulting FaceClass, and the
+fragment's loop ring). Diagnostics reverted; master clean at the LAYER-1 merge.
+
+REFUTES the Addendum-108 hypothesis: ALL fragment winding numbers are clean ~1.0 or ~0.0 -- NONE
+land in the 0.25..0.75 OnOther band. So the corner triangle is NOT mis-tagged OnOther. It is
+classified OUTSIDE the cutter (w=0 -> OutsideOther -> KEEP for A-B) when it is actually INSIDE
+the cutter and must be dropped.
+
+AIRTIGHT ROOT CAUSE (fragment id=40 in ia.body, ring (1.50,0,2.00)(2.00,0,1.00)(2.00,0,2.00) =
+the corner triangle): its face_interior_point returned p=(1.435,0,1.75), which lies ACROSS the
+hypotenuse, OUTSIDE the triangle (check: x+0.5z = 2.31 < 2.5, the opposite side from the third
+vertex (2,2)). At that escaped point the cutter winding number is 0 (outside) -> the triangle is
+mis-sampled and classified OutsideOther -> wrongly kept. The TRUE centroid (1.833,0,1.667) is
+inside the triangle AND inside the cutter (w=1) -> would correctly classify InsideOther -> drop.
+(The pentagon-rest fragment id=93 samples correctly at (0.917,0,0.917), w=0, kept -- correct.)
+
+THE BUG IS IN face_interior_point (boolean.rs:715), the planar branch: it builds a UV polygon by
+sampling fins' edge curves, takes the outer-loop UV bbox, grids 24x24, and keeps the inside-
+winding grid point with max distance to the boundary. For the thin triangle the chosen point
+escapes the polygon (winding_nonzero passes a point the sampled-fin UV polygon admits but the
+true trimmed triangle does not -- likely the fragment's fins still ride edges longer than the
+triangle's sides, so the sampled polygon is larger than the visual triangle). face_interior_point
+is used by ALL boolean classification, so the fix has HIGH BLAST RADIUS and must be done fresh
+with the full gate + fuzz, not hacked in.
+
+FIX PLAN (next session): make face_interior_point return a GUARANTEED-interior point for planar
+faces -- e.g. ear-clip/triangulate the outer loop minus holes and take the centroid of the
+largest triangle (always strictly interior), or add a final containment re-check on the grid pick
+with a triangulation fallback. Then: the triangle classifies InsideOther -> dropped, leaving the
+correct 6 box + 1 cut = 7 faces; also add a zero-area degenerate-fragment filter (the id=73
+2-vertex lamina on the B side). Verify asym chamfer -> 7.5 (mass==mesh, un-ignore the success
+assertion), symmetric chamfer stays 7.75, full workspace + fuzz_boolean clean. This is the
+LAYER-2 close-out; with it #16 ships and unblocks the blend/chamfer family.
