@@ -299,6 +299,18 @@ impl Body {
     /// (offset) face planes. Convex polyhedra only; self-intersection
     /// resolution for concave/curved bodies is deferred. Negative shrinks.
     pub fn offset_body(&mut self, distance: f64) -> Result<(), TopoError> {
+        self.offset_body_with(|_| distance)
+    }
+
+    /// Per-face offset (item 43, multi-thickness): each face moves along its
+    /// outward normal by `dist(face)` instead of a single global distance.
+    /// The convex-planar / 3-valent-corner reintersect of `offset_body`; the
+    /// three-plane vertex meet handles faces offset by different amounts
+    /// (their offset planes simply meet at a new corner). Negative shrinks.
+    pub(crate) fn offset_body_with(
+        &mut self,
+        dist: impl Fn(FaceKey) -> f64,
+    ) -> Result<(), TopoError> {
         use std::collections::HashMap;
         // New offset plane (+ sense) per face.
         let mut planes: HashMap<FaceKey, (Plane3, bool)> = HashMap::new();
@@ -312,7 +324,7 @@ impl Body {
                 plane.frame.z * -1.0
             };
             let mut np = plane;
-            np.frame.origin = np.frame.origin + outward * distance;
+            np.frame.origin = np.frame.origin + outward * dist(f);
             planes.insert(f, (np, sense));
         }
         // Recompute every vertex as the meet of its three incident planes.

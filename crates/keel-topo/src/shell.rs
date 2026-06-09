@@ -33,8 +33,23 @@ impl Body {
         if t <= 0.0 || !t.is_finite() {
             return Err(TopoError::Precondition("hollow: thickness must be > 0"));
         }
+        self.hollow_per_face(|_| t)
+    }
+
+    /// Hollow with a per-face wall thickness (parity item 43, multi-thickness
+    /// shell). `thickness(face)` gives the inward wall thickness for each of
+    /// the body's faces (keyed by the body's own `FaceKey`s; a deep clone
+    /// preserves them, so the closure is queried on the matching faces of the
+    /// inner copy). The inner shell is the body shrunk per-face by
+    /// `offset_body_with` and subtracted; the differently-offset faces meet at
+    /// inner edges/steps automatically (dossier 50 sec 3.1). Same convex-
+    /// planar scope and honest-decline behaviour as [`hollow`](Self::hollow).
+    pub fn hollow_per_face(
+        &self,
+        thickness: impl Fn(crate::entity::FaceKey) -> f64,
+    ) -> Result<Body, TopoError> {
         let mut inner = self.clone();
-        inner.offset_body(-t)?;
+        inner.offset_body_with(|f| -thickness(f))?;
         boolean(self, &inner, BoolOp::Difference, 1e-7)
             .map(|r| r.body)
             .map_err(|_| {
@@ -94,6 +109,30 @@ mod tests {
         assert!(
             (v - mv).abs() < 1e-6 && v > 0.0 && v < outer,
             "hollow prism must be a valid wall with mass == mesh (mass {v}, mesh {mv}, outer {outer})"
+        );
+    }
+
+    #[test]
+    fn hollow_per_face_multi_thickness() {
+        // Multi-thickness shell (item 43): a 4^3 box with the top wall at
+        // thickness 2 and all other walls at 1. The inner void is then
+        // [1,3]x[1,3]x[1,2] = 2*2*1 = 4, so the wall volume is 64 - 4 = 60.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 4.0, 4.0).unwrap();
+        let top = b
+            .face_keys()
+            .into_iter()
+            .find(|&f| b.face_outward_normal(f).map(|n| n.z > 0.9).unwrap_or(false))
+            .expect("top face");
+        let h = b
+            .hollow_per_face(|f| if f == top { 2.0 } else { 1.0 })
+            .unwrap();
+        assert!(h.validate().is_ok(), "multi-thickness hollow invalid");
+        let v = h.mass_properties().unwrap().volume;
+        let mv = h.mesh_volume();
+        assert!(
+            (v - 60.0).abs() < 1e-6 && (mv - 60.0).abs() < 1e-6,
+            "multi-thickness wall volume must be 60 with mass == mesh (got mass {v}, mesh {mv})"
         );
     }
 
