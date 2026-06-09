@@ -12,7 +12,6 @@
 use crate::Body;
 use crate::body::TopoError;
 use crate::boolean::{BoolOp, boolean};
-use keel_math::vec::Vec3;
 
 impl Body {
     /// Hollow this solid to a uniform wall thickness `t`, leaving a fully
@@ -20,36 +19,34 @@ impl Body {
     /// thin-walled solid whose boundary is two nested shells (the original
     /// outer boundary and the inward-offset inner boundary).
     ///
-    /// MVP scope: axis-aligned box. The inner shell is the body's bounding
-    /// box shrunk by `t` on every side, subtracted via a nested boolean
-    /// difference; this is the dossier-50 sec-6.1 base case and the first
-    /// consumer of the enclosed-void assembly. Errors if `t` is not
-    /// positive or exceeds `t_max = min(extent)/2` (the wall would collapse
-    /// onto the medial axis).
+    /// The inner shell is the body shrunk inward by `t` via the whole-body
+    /// face-offset-and-reintersect (`offset_body(-t)`, the Forsyth shell
+    /// algorithm of dossier 50 sec 1 for the convex planar case), then
+    /// subtracted as a nested boolean difference, whose enclosed-void
+    /// assembly yields the two-shell hollow solid. Scope: convex planar
+    /// solids (box, prism); `offset_body` declines non-convex / non-planar /
+    /// non-simple-vertex bodies, so hollow declines honestly there (curved
+    /// and concave shells are a follow-up). Errors if `t <= 0` or `t` is so
+    /// large the inner shell collapses past the medial axis (the difference's
+    /// mass==mesh post-condition rejects the degenerate inner body).
     pub fn hollow(&self, t: f64) -> Result<Body, TopoError> {
         if t <= 0.0 || !t.is_finite() {
             return Err(TopoError::Precondition("hollow: thickness must be > 0"));
         }
-        let bb = self.bounding_box();
-        let ext = bb.max - bb.min;
-        // t_max = min(extent)/2 (box medial limit, dossier 50 sec 2.1).
-        if ext.x <= 2.0 * t || ext.y <= 2.0 * t || ext.z <= 2.0 * t {
-            return Err(TopoError::Precondition(
-                "hollow: thickness >= t_max (inner wall collapses)",
-            ));
-        }
-        let inner_min = bb.min + Vec3::new(t, t, t);
-        let mut inner = Body::new();
-        inner.block(inner_min, ext.x - 2.0 * t, ext.y - 2.0 * t, ext.z - 2.0 * t)?;
+        let mut inner = self.clone();
+        inner.offset_body(-t)?;
         boolean(self, &inner, BoolOp::Difference, 1e-7)
             .map(|r| r.body)
-            .map_err(|_| TopoError::Precondition("hollow: shell assembly failed"))
+            .map_err(|_| {
+                TopoError::Precondition("hollow: shell assembly failed (thickness >= t_max?)")
+            })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use keel_math::vec::Vec3;
 
     #[test]
     fn hollow_box_encloses_void() {
@@ -65,6 +62,50 @@ mod tests {
         assert!(
             (v - 56.0).abs() < 1e-6 && (mv - 56.0).abs() < 1e-6,
             "hollow-box wall volume must be 56 with mass == mesh (got mass {v}, mesh {mv})"
+        );
+    }
+
+    #[test]
+    fn hollow_generalizes_to_a_prism() {
+        // Hollowing is not box-special: a triangular prism shells too (the
+        // inner shell is its inward face-offset, a smaller similar prism).
+        // Outer triangle (legs 6,6) area 18, height 4 -> vol 72. Offsetting
+        // the 3 side planes inward by t=1 shrinks the triangle's incircle by
+        // 1 and the top/bottom inward by 1; the wall is the outer minus the
+        // inner prism. Assert only that it ASSEMBLES to a valid two-shell
+        // solid with mass == mesh and 0 < wall < outer (the exact inner
+        // volume depends on the incircle offset; the invariants are the
+        // oracle).
+        let mut b = Body::new();
+        b.prism(
+            &[
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(6.0, 0.0, 0.0),
+                Vec3::new(0.0, 6.0, 0.0),
+            ],
+            Vec3::new(0.0, 0.0, 4.0),
+        )
+        .unwrap();
+        let outer = b.mass_properties().unwrap().volume;
+        let h = b.hollow(1.0).unwrap();
+        assert!(h.validate().is_ok(), "hollow prism invalid");
+        let v = h.mass_properties().unwrap().volume;
+        let mv = h.mesh_volume();
+        assert!(
+            (v - mv).abs() < 1e-6 && v > 0.0 && v < outer,
+            "hollow prism must be a valid wall with mass == mesh (mass {v}, mesh {mv}, outer {outer})"
+        );
+    }
+
+    #[test]
+    fn hollow_declines_when_too_thick() {
+        // t past t_max collapses the inner shell; hollow must DECLINE (Err),
+        // never return a wrong body. A 2^3 box has t_max = 1.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        assert!(
+            b.hollow(1.5).is_err(),
+            "over-thick hollow must decline, not return a wrong body"
         );
     }
 }

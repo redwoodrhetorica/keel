@@ -3511,3 +3511,18 @@ per disconnected wall is a follow-up; does not arise for hollow()).
 GATE: exact CI triplet green (workspace 108 math + 77 geom + 158 topo incl. the hollow-box oracle,
 clippy -D warnings, fmt) + fuzz_boolean (WSL nightly, 200s, Done 425 runs, clean). Merged.
 NEXT: thicken (44) reuses the same void/rim machinery; or pierce/rim for the open-tray shell.
+
+## Addendum 114 (2026-06-09, attended): hollow() generalized from box-only to convex planar solids. Stays 84/144
+
+Replaced the bbox-difference inner-shell construction with `self.clone().offset_body(-t)` -- the
+existing whole-body face-offset-and-reintersect (tweak.rs), which IS the Forsyth shell algorithm
+of dossier 50 sec 1 for the convex planar case (offset each face plane inward by t, recompute
+every 3-valent corner as the meet of its three offset planes). hollow() now shells any convex
+PRISM, not just an axis-aligned box, and declines honestly (offset_body errors on non-convex /
+non-planar / non-simple-vertex bodies; over-thick t collapses the inner shell -> the difference's
+mass==mesh post-condition rejects it). No boolean.rs change (the enclosed-void partition is
+identical to Addendum 113), so fuzz coverage is unchanged. Added tests: a triangular-prism hollow
+(valid two-shell wall, mass==mesh, 0<wall<outer) and an over-thick decline (2^3 box, t=1.5 ->
+Err). Curved-face and concave shells remain the follow-up (need offset_body to grow beyond convex
+planar, or the winding-number offset trim of dossier 50 sec 4).
+GATE: workspace 108 + 77 + 160 (two new shell tests) green, clippy -D warnings, fmt. Merged.
