@@ -263,7 +263,7 @@ impl Body {
     /// If the loop is a single fin over a closed circular edge, return
     /// its (center_u, center_v, radius) in the plane frame (via the
     /// edge's pcurve, which is a UV circle). None otherwise.
-    fn single_circle_disc(&self, lk: crate::entity::LoopKey) -> Option<(f64, f64, f64)> {
+    pub(crate) fn single_circle_disc(&self, lk: crate::entity::LoopKey) -> Option<(f64, f64, f64)> {
         let entry = self.loops.get(lk).and_then(|l| l.fin)?;
         // Exactly one fin in the loop.
         let f = self.fins.get(entry)?;

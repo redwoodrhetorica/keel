@@ -124,7 +124,20 @@ impl Body {
             Some((lo, hi))
         };
         match s {
-            Surface3::Plane(_) => None,
+            Surface3::Plane(_) => {
+                // A disc / annulus (every loop a single circle) integrates
+                // exactly to pi*r^2 per loop, outer adding and inner-ring
+                // holes subtracting. A polygon loop -> None (tessellation is
+                // already exact for polygons).
+                let loops = self.faces.get(face).map(|f| f.loops.clone())?;
+                let mut area = 0.0;
+                for (li, lk) in loops.iter().enumerate() {
+                    let (_, _, r) = self.single_circle_disc(*lk)?;
+                    let disc = pi * r * r;
+                    area += if li == 0 { disc } else { -disc };
+                }
+                Some(area)
+            }
             Surface3::Cylinder(c) => {
                 let f = &c.frame;
                 let (hlo, hhi) = height_range(f.origin, f.z, None)?;
@@ -551,6 +564,13 @@ mod tests {
             (cyl.face_area(lat) - 12.0 * pi).abs() < 1e-9,
             "cylinder lateral area {} != 12pi",
             cyl.face_area(lat)
+        );
+        // Whole-body surface area is now exact too: caps 2*(pi*4) + lateral
+        // 12pi = 20pi (the disc caps are exact pi*r^2, not a 32-gon).
+        assert!(
+            (cyl.surface_area() - 20.0 * pi).abs() < 1e-9,
+            "cylinder surface area {} != 20pi",
+            cyl.surface_area()
         );
         // Cone r=2 h=3: lateral = pi r slant, slant = sqrt(4+9) = sqrt(13).
         let mut cone = Body::new();

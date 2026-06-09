@@ -2706,3 +2706,20 @@ DISC caps tessellate to a 32-gon -- exact single-circle-disc planar area
 RUNNING TOTAL: stays 73/144 (accuracy improvement to the area interrogation).
 GATE: exact CI triplet green (144 keel-topo, clippy -D warnings, fmt). No fuzz --
 read-only query. Merged.
+
+## Addendum 86 (2026-06-09, overnight): EXACT planar disc/annulus area -> full bodies exact (stays 73/144)
+
+Completes the exact-surface-area work (Addendum 85). face_area now also computes
+exact pi*r^2 for PLANAR disc/annulus faces (every loop a single circle): outer loop
+adds pi*r_out^2, inner-ring holes subtract pi*r_in^2. Reuses single_circle_disc
+(made pub(crate)) -- the same detector mass_properties' fast path uses, so cylinder/
+cone CAPS (single-circle discs) and revolve washers (kemr'd 2-loop annuli) are now
+exact. Polygon loops -> None (tessellation already exact). Result: a cylinder BODY's
+surface_area is now EXACT (caps 8pi + lateral 12pi = 20pi), not just the lateral.
+Still tessellation-approximate: NURBS faces, trimmed sphere/torus patches, and
+seam-bridged discs (the flat-cap revolve disc has a rim+seam loop, not a single
+circle) -- minor, documented.
+RUNNING TOTAL: stays 73/144 (accuracy: surface area now exact for analytic
+disc/annulus + curved faces).
+GATE: exact CI triplet green (144 keel-topo, clippy -D warnings, fmt). No fuzz --
+read-only query. Merged.
