@@ -111,6 +111,28 @@ impl Body {
             .min_by(|x, y| x.1.total_cmp(&y.1))
     }
 
+    /// Principal curvatures (k1, k2) of a face's surface at the surface
+    /// point nearest `p` (parity item 107, surface analysis). In 1/length
+    /// units, exact for analytic surfaces: plane -> (0, 0); cylinder radius
+    /// r -> {0, 1/r}; sphere radius r -> (1/r, 1/r); cone/torus vary with
+    /// position. `None` if the face has no surface or the projection is
+    /// degenerate.
+    pub fn face_curvature(&self, face: crate::entity::FaceKey, p: Vec3) -> Option<(f64, f64)> {
+        let (sk, _) = self.faces.get(face).and_then(|f| f.surface)?;
+        match self.surfaces.get(sk)? {
+            crate::entity::SurfaceGeom::Analytic(s) => {
+                let pr = s.project(p).ok()?;
+                let lg = s.local_geometry(pr.u, pr.v).ok()?;
+                Some((lg.k1, lg.k2))
+            }
+            crate::entity::SurfaceGeom::Nurbs(n) => {
+                let pr = keel_geom::project::project_point_surface_fast(n, p);
+                let lg = n.local_geometry(pr.u, pr.v).ok()?;
+                Some((lg.k1, lg.k2))
+            }
+        }
+    }
+
     /// Draft analysis (parity item 107): per-face signed draft angle range
     /// relative to a `pull` direction, for moldability / pull-direction
     /// checks. Each face's draft is arcsin(outward_normal . pull_hat),
@@ -440,6 +462,40 @@ mod tests {
         b.block(Vec3::ZERO, 2.0, 3.0, 4.0).unwrap();
         let a = b.surface_area();
         assert!((a - 52.0).abs() < 1e-9, "block surface area {a} != 52");
+    }
+
+    #[test]
+    fn face_curvature_cylinder_and_sphere() {
+        use crate::entity::SurfaceGeom;
+        use keel_geom::surface::Surface3;
+        // Cylinder radius 2: principal curvatures {0, 1/2} on the lateral.
+        let cf = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut cyl = Body::new();
+        cyl.cylinder(cf, 2.0, 3.0).unwrap();
+        let lat = cyl
+            .face_keys()
+            .into_iter()
+            .find(|&f| {
+                matches!(
+                    cyl.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )
+            })
+            .expect("cylinder lateral face");
+        let (k1, k2) = cyl.face_curvature(lat, Vec3::new(2.0, 0.0, 1.5)).unwrap();
+        let (kmax, kmin) = (k1.abs().max(k2.abs()), k1.abs().min(k2.abs()));
+        assert!((kmax - 0.5).abs() < 1e-6, "cylinder kmax {kmax} != 1/2");
+        assert!(kmin < 1e-6, "cylinder kmin {kmin} != 0");
+
+        // Sphere radius 2: both principal curvatures 1/2. (z_sphere's pole
+        // axis is x, so sample the equator at (0,2,0), not the pole.)
+        let s = z_sphere(Vec3::ZERO, 2.0);
+        let sf = s.face_keys()[0];
+        let (s1, s2) = s.face_curvature(sf, Vec3::new(0.0, 2.0, 0.0)).unwrap();
+        assert!(
+            (s1.abs() - 0.5).abs() < 1e-6 && (s2.abs() - 0.5).abs() < 1e-6,
+            "sphere curvatures ({s1}, {s2}) != (1/2, 1/2)"
+        );
     }
 
     #[test]

@@ -2634,3 +2634,27 @@ RUNNING TOTAL: 71 -> 72/144 (genus-1 tube/annular solid of revolution).
 GATE: exact CI triplet green (139 keel-topo, clippy -D warnings, fmt). No fuzz --
 constructor; uses existing Euler ops + holed-face path, no boolean/winding change.
 Merged.
+
+## Addendum 82 (2026-06-08, overnight): face_curvature surface analysis (broadens 72/144) + massprops sense wall confirmed
+
+Two things this autonomous cycle:
+1. ATTEMPTED the unified face-orientation fix (research file 46) to make the genus-1
+   tube exact in analytic mass_properties. Tried PURE sense (orient = sign(sense),
+   massprops normal = sense*natural = the existing face_outward_normal helper).
+   SAME 3 regressions as before (corner_overlap/guillotine/chamfer). Sharpened root
+   cause + REVERTED per the log-and-move rule: integrate_planar_face COUPLES loop
+   WINDING to the orient sign; boolean-path loops are wound for region-based
+   normals, Euler-path (tube) loops for sense-based -- so the helper alone is
+   insufficient, the unification must reconcile winding+sense+region together (file
+   46's validator invariant). Also found a latent placeholder: boolean.rs ~1122 uses
+   nz=(0,0,1) for non-plane surfaces when deriving stitch sense. All recorded in
+   [[massprops-sense-region-inconsistency]]; deep, do attended.
+2. SHIPPED face_curvature: Body::face_curvature(face, p) -> Option<(k1,k2)>, the
+   principal curvatures at the surface point nearest p, from the analytic surface's
+   local_geometry (exact): plane (0,0); cylinder r {0,1/r}; sphere r (1/r,1/r);
+   cone/torus position-dependent. Reuses local_geometry + project. Test: cylinder
+   lateral {0,1/2}, sphere (1/2,1/2) at the equator (poles are param singularities).
+   Surface-analysis family alongside draft_analysis (both item 107) -> BROADENS,
+   counter stays 72/144.
+GATE: exact CI triplet green (140 keel-topo, clippy -D warnings, fmt). No fuzz --
+read-only query. Merged.
