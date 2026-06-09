@@ -3559,3 +3559,32 @@ USE of the existing pipeline, not new boolean code), so fuzz coverage is unchang
 GATE: workspace 108 + 77 + 162 green, clippy -D warnings, fmt. Merged.
 SHELL FAMILY now 41/42/43/45 done; only 44 (thicken, needs sheet-body representation kernel/51)
 remains -- its own milestone.
+
+## Addendum 117 (2026-06-09, attended): SHEET BODIES + THICKEN (item 44) -- the first non-solid body kind. 86 -> 87/144
+
+(User: "open the sheet-body keystone" -> "1". Built it.) Re-read dossier 51 (sheet/open-body
+topology) before starting. KEY FINDING that collapsed the risk: Keel's EXISTING validator already
+admits a lamina sheet with NO change. A sheet (one double-sided planar face, n FREE edges of
+radial-1, bordering the ambient void on both sides, no solid region) is non-manifold, so
+check_euler_poincare auto-skips (it only runs when every edge is radial-2); check_radial_cycles
+already accepts radial-1 (each lone fin is in exactly one cycle); check_shells_regions requires
+only the single infinite VOID region (not a solid one) and the double-sided face's two sides both
+link to that void. So NO BodyKind / validator refactor was needed -- the feared core-touching
+change evaporated; the only work was constructing a correct lamina.
+
+CONSTRUCTOR (crates/keel-topo/src/sheet.rs): Body::planar_sheet(profile) builds the lamina
+DIRECTLY in the arenas (new_face with front==back==void, new_loop, n new_vertex, n new_edge each
+with a single radial fin = a free edge, splice the fin ring, one shell in the void holding both
+(F,Front) and (F,Back)), then attaches the Plane (Newell normal) + boundary Line3s. It validates
+as a real open body (the first body in Keel with no solid region). THICKEN: Body::thicken(t) --
+MVP single planar face -- reads the sheet's face plane + outer-loop profile and extrudes it to
+thickness t CENTRED on the sheet plane (-t/2 base, +t sweep), via prism. ORACLES: a 2x3 sheet
+validates (1 face, 4 free edges); thicken(0.5) -> slab volume 3.0, mass == mesh, validate ok.
+
+This SHIPS item 44 AND stands up the sheet-body representation, which is the shared prerequisite
+for Phase 5 sheet ops -- extend (70), knit/sew (71), trim (72), split (76) -- now unblocked.
+Follow-ups (documented): multi-face / curved sheets thicken via offset-both-sides + a rim band
+(dossier 50 sec 5), one-sided thicken mode, and a BodyKind tag for explicit sheet/solid semantics
+(not needed for validation, useful for API clarity). No boolean.rs change, so fuzz is unchanged.
+GATE: workspace 108 + 77 + 164 green (two new sheet tests), clippy -D warnings, fmt. Merged.
+SHELL FAMILY COMPLETE: 41/42/43/44/45 all done.
