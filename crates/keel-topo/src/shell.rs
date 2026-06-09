@@ -56,6 +56,37 @@ impl Body {
                 TopoError::Precondition("hollow: shell assembly failed (thickness >= t_max?)")
             })
     }
+
+    /// Hollow with PIERCED (open) faces (parity item 42): the faces for
+    /// which `pierced(face)` is true are opened so the interior void
+    /// communicates with the outside through them (a cup / open tray rather
+    /// than a sealed cavity). Mechanism: the inner shell's counterpart of a
+    /// pierced face is pushed OUTWARD past the original face instead of
+    /// inward, so the subtracted inner pocket pokes through it and the
+    /// difference opens that side (the rim of the opening is the wall's edge,
+    /// produced transversally by the boolean -- no separate rim-wall surgery).
+    /// Non-pierced faces shell inward by `t` as usual. Convex planar scope,
+    /// like [`hollow`](Self::hollow); at least one face must remain
+    /// un-pierced (an all-pierced body has no wall). The classic case is
+    /// `pierced = |f| top(f)` -> an open box (tray).
+    pub fn hollow_pierce(
+        &self,
+        t: f64,
+        pierced: impl Fn(crate::entity::FaceKey) -> bool,
+    ) -> Result<Body, TopoError> {
+        if t <= 0.0 || !t.is_finite() {
+            return Err(TopoError::Precondition("hollow: thickness must be > 0"));
+        }
+        let bb = self.bounding_box();
+        // Push pierced faces well outside the body so their inner-pocket
+        // counterpart pokes fully through the original face.
+        let margin = (bb.max - bb.min).norm() + 1.0;
+        let mut inner = self.clone();
+        inner.offset_body_with(|f| if pierced(f) { margin } else { -t })?;
+        boolean(self, &inner, BoolOp::Difference, 1e-7)
+            .map(|r| r.body)
+            .map_err(|_| TopoError::Precondition("hollow_pierce: shell assembly failed"))
+    }
 }
 
 #[cfg(test)]
@@ -133,6 +164,30 @@ mod tests {
         assert!(
             (v - 60.0).abs() < 1e-6 && (mv - 60.0).abs() < 1e-6,
             "multi-thickness wall volume must be 60 with mass == mesh (got mass {v}, mesh {mv})"
+        );
+    }
+
+    #[test]
+    fn hollow_pierce_top_makes_a_tray() {
+        // Pierce the top of a 4^3 box at wall thickness 1 -> an open tray:
+        // floor z in [0,1] (4x4) plus walls around a 2x2 opening from z=1 to
+        // 4. Removed volume = the 2x2x3 pocket = 12, so the tray volume is
+        // 64 - 12 = 52. Single connected shell (the void opens through the
+        // top), no enclosed void (dossier 50 sec 6.2).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 4.0, 4.0).unwrap();
+        let top = b
+            .face_keys()
+            .into_iter()
+            .find(|&f| b.face_outward_normal(f).map(|n| n.z > 0.9).unwrap_or(false))
+            .expect("top face");
+        let tray = b.hollow_pierce(1.0, |f| f == top).unwrap();
+        assert!(tray.validate().is_ok(), "tray invalid");
+        let v = tray.mass_properties().unwrap().volume;
+        let mv = tray.mesh_volume();
+        assert!(
+            (v - 52.0).abs() < 1e-6 && (mv - 52.0).abs() < 1e-6,
+            "open tray volume must be 52 with mass == mesh (got mass {v}, mesh {mv})"
         );
     }
 

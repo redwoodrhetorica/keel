@@ -3542,3 +3542,20 @@ is unchanged (delegation only) and boolean.rs is untouched, so fuzz coverage is 
 GATE: workspace 108 + 77 + 161 green, clippy -D warnings, fmt. Merged.
 SHELL-FAMILY STATUS: 41 (hollow) + 43 (multi-thickness) + 45 (offset_body) done; 42 (pierce/rim
 walls) and 44 (thicken, needs sheet bodies kernel/51) remain.
+
+## Addendum 116 (2026-06-09, attended): PIERCE / open-tray shell (item 42). 85 -> 86/144
+
+Body::hollow_pierce(t, pierced: Fn(FaceKey)->bool): opens the faces for which pierced(f) is true
+so the void communicates with the outside (a cup/tray, dossier 50 sec 3.2/6.2). The clean
+mechanism avoids rim-wall surgery entirely: a pierced face's inner-shell counterpart is pushed
+OUTWARD past the original face (offset_body_with returns +margin for pierced faces, -t otherwise),
+so the subtracted inner pocket POKES THROUGH that face and the boolean difference opens that side
+TRANSVERSALLY -- the rim of the opening is just the wall's edge, produced by the ordinary
+transversal boolean (no separate build_rim_wall). ORACLE: pierce the top of a 4^3 box at t=1 ->
+open tray, removed pocket 2x2x3 = 12, tray volume 64 - 12 = 52, mass == mesh, validate ok, a
+SINGLE connected shell (the void is open, no enclosed-void region). Convex planar scope (offset_
+body); at least one face must stay un-pierced. boolean.rs untouched (this is a new transversal
+USE of the existing pipeline, not new boolean code), so fuzz coverage is unchanged.
+GATE: workspace 108 + 77 + 162 green, clippy -D warnings, fmt. Merged.
+SHELL FAMILY now 41/42/43/45 done; only 44 (thicken, needs sheet-body representation kernel/51)
+remains -- its own milestone.
