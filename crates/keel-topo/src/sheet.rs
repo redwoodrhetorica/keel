@@ -9,12 +9,12 @@
 //! only the single infinite void region (not a solid one), which the
 //! double-sided face borders on both sides.
 //!
-//! Operations on this representation: THICKEN (44, dossier 50 sec 5) -> a
-//! solid of wall thickness `t`; TRIM (72) by a plane; and KNIT/SEW (71,
-//! `boolean::knit`) which joins sheets and promotes a closed result to a
-//! solid (six squares -> a cube). The MVP covers single planar faces;
-//! multi-face / curved sheets (thicken via offset-both-sides + a rim band)
-//! and surface EXTEND (70) are follow-ups.
+//! Operations on this representation: THICKEN (44) -> a solid of wall
+//! thickness `t`; TRIM (72) by a plane; EXTEND (70) the boundary outward;
+//! and KNIT/SEW (71, `boolean::knit`) which joins sheets and promotes a
+//! closed result to a solid (six squares -> a cube). The MVP covers single
+//! planar faces; multi-face / curved sheets (thicken via offset-both-sides
+//! + a rim band, curved extend/trim) are follow-ups.
 
 use crate::body::{Body, TopoError};
 use crate::entity::{LoopKind, Side, SurfaceGeom};
@@ -216,6 +216,84 @@ impl Body {
         }
         Body::planar_sheet(&clipped)
     }
+
+    /// Extend a planar sheet's boundary outward by `d` (parity item 70,
+    /// surface extension): each boundary edge's supporting line is offset
+    /// outward by `d` in the sheet plane and consecutive offset lines are
+    /// reintersected at the new (sharp) corners -- the planar analogue of the
+    /// surface-extension core (dossier 13), here extending the trim of an
+    /// infinite plane. `d < 0` shrinks. MVP: single planar convex face;
+    /// returns Err on degenerate/parallel corners.
+    pub fn extend(&self, d: f64) -> Result<Body, TopoError> {
+        if !d.is_finite() {
+            return Err(TopoError::Precondition("extend: non-finite distance"));
+        }
+        let faces = self.face_keys();
+        let [face] = faces[..] else {
+            return Err(TopoError::Precondition(
+                "extend: only a single-face planar sheet is supported (MVP)",
+            ));
+        };
+        if !matches!(self.face_surface3(face), Some(Surface3::Plane(_))) {
+            return Err(TopoError::Precondition("extend: non-planar sheet (MVP)"));
+        }
+        let n = self
+            .face_outward_normal(face)
+            .ok_or(TopoError::Precondition("extend: no face normal"))?;
+        let poly = self.face_outer_loop_points(face);
+        let m = poly.len();
+        if m < 3 {
+            return Err(TopoError::Precondition("extend: degenerate boundary"));
+        }
+        // Project to 2D in the plane (u, v with u x v = n).
+        let o = poly[0];
+        let seed = if n.x.abs() < 0.9 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0)
+        };
+        let u = (seed - n * seed.dot(n))
+            .try_normalize()
+            .ok_or(TopoError::Precondition("extend: axis"))?;
+        let v = n.cross(u);
+        let p2: Vec<[f64; 2]> = poly
+            .iter()
+            .map(|&p| [(p - o).dot(u), (p - o).dot(v)])
+            .collect();
+        // Outward edge normals (sign by polygon winding) and offset-line
+        // constants `q . normal = c` (shifted outward by d).
+        let area2: f64 = (0..m)
+            .map(|i| p2[i][0] * p2[(i + 1) % m][1] - p2[(i + 1) % m][0] * p2[i][1])
+            .sum();
+        let s = if area2 >= 0.0 { 1.0 } else { -1.0 };
+        let mut lines: Vec<([f64; 2], f64)> = Vec::with_capacity(m);
+        for i in 0..m {
+            let a = p2[i];
+            let b = p2[(i + 1) % m];
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let len = (dx * dx + dy * dy).sqrt();
+            if len < 1e-12 {
+                return Err(TopoError::Precondition("extend: degenerate edge"));
+            }
+            let nm = [dy / len * s, -dx / len * s]; // outward unit normal
+            let c = a[0] * nm[0] + a[1] * nm[1] + d;
+            lines.push((nm, c));
+        }
+        // New corner i = intersection of offset lines (i-1) and i.
+        let mut out3d: Vec<Vec3> = Vec::with_capacity(m);
+        for i in 0..m {
+            let (na, ca) = lines[(i + m - 1) % m];
+            let (nb, cb) = lines[i];
+            let det = na[0] * nb[1] - na[1] * nb[0];
+            if det.abs() < 1e-12 {
+                return Err(TopoError::Precondition("extend: parallel corner"));
+            }
+            let x = (ca * nb[1] - cb * na[1]) / det;
+            let y = (na[0] * cb - nb[0] * ca) / det;
+            out3d.push(o + u * x + v * y);
+        }
+        Body::planar_sheet(&out3d)
+    }
 }
 
 #[cfg(test)]
@@ -241,6 +319,26 @@ mod tests {
         );
         // Open body: no enclosed solid, so zero solid volume by the mesh.
         assert_eq!(s.face_keys().len(), 1, "sheet must have one face");
+    }
+
+    #[test]
+    fn extend_sheet_grows_boundary() {
+        // Extend a 2x2 sheet outward by 1 -> a 4x4 sheet (each edge moves out
+        // by 1). Thicken by 1 to check the area: 4*4*1 = 16.
+        let s = Body::planar_sheet(&[
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(2.0, 2.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+        ])
+        .unwrap();
+        let big = s.extend(1.0).unwrap();
+        assert!(big.validate().is_ok(), "extended sheet invalid");
+        let v = big.thicken(1.0).unwrap().mass_properties().unwrap().volume;
+        assert!(
+            (v - 16.0).abs() < 1e-9,
+            "extended-then-thickened volume must be 16 (got {v})"
+        );
     }
 
     #[test]

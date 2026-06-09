@@ -3657,3 +3657,20 @@ GATE: exact CI triplet green (workspace 108 math + 77 geom + 168 topo, clippy -D
 + fuzz_boolean (WSL nightly, 200s, Done 414 runs, clean). Merged.
 PHASE 5 now: 71/72/76/77 done; only 70 (surface extend) remains. Counter 91/144 -- a +9 run this
 session (53/41/43/42/44/72/76/77/71).
+
+## Addendum 122 (2026-06-09, attended): EXTEND a sheet boundary (item 70) -- PHASE 5 COMPLETE. 91 -> 92/144
+
+Body::extend(d): grow a planar sheet's boundary outward by d. Project the boundary to 2D in the
+plane (u, v with u x v = n), offset each edge's supporting line outward by d (outward unit normal
+sign set by the polygon's signed area), reintersect consecutive offset lines at the new sharp
+corners, unproject, rebuild via planar_sheet. The planar analogue of the dossier-13 surface-
+extension core (extending the trim of an infinite plane). d<0 shrinks; parallel/degenerate corners
+decline. ORACLE: a 2x2 sheet extended by 1 -> a 4x4 sheet; thickened by 1 -> volume 16. MVP single
+planar convex face; curved extend is a follow-up. No boolean.rs change -> fuzz unchanged.
+GATE: workspace 108 + 77 + 169 green, clippy -D warnings, fmt. Merged.
+
+PHASE 5 COMPLETE: 70 (extend) + 71 (knit) + 72 (trim) + 76 (split) + 77 (slice) all done, on the
+sheet-body foundation built this session. Counter 92/144 -- a +10 run this session
+(53/41/43/42/44/72/76/77/71/70) on top of the #21/#16 Phase-0a keystones + enclosed-void 3-region
+stitch + sheet-body representation + the finalize_imported_assembly extraction. Shell family
+(41-45) AND Phase-5 sheet ops (70/71/72/76/77) both fully shipped.
