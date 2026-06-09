@@ -6,6 +6,18 @@ use crate::Body;
 use keel_math::bbox::Aabb3;
 use keel_math::vec::Vec3;
 
+/// One face's draft-angle range relative to a pull direction (parity item
+/// 107). `min`/`max` are signed radians: arcsin(outward_normal . pull),
+/// so +pi/2 = facing fully toward the pull, -pi/2 = fully away, 0 = a
+/// vertical wall (zero draft). Planar faces have min == max; curved faces
+/// give the range over the face.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FaceDraft {
+    pub face: crate::entity::FaceKey,
+    pub min: f64,
+    pub max: f64,
+}
+
 /// Closest point on triangle `[a, b, c]` to `p` (Ericson, Real-Time
 /// Collision Detection), then the distance.
 fn point_tri_distance(p: Vec3, tri: &[Vec3; 3]) -> f64 {
@@ -77,6 +89,39 @@ impl Body {
     /// every face's area. Exact for all-planar bodies.
     pub fn surface_area(&self) -> f64 {
         self.face_keys().iter().map(|&f| self.face_area(f)).sum()
+    }
+
+    /// Draft analysis (parity item 107): per-face signed draft angle range
+    /// relative to a `pull` direction, for moldability / pull-direction
+    /// checks. Each face's draft is arcsin(outward_normal . pull_hat),
+    /// taken over its outward tessellation triangles (constant for a
+    /// planar face, a range for a curved one). A near-zero draft is a
+    /// vertical wall (undercut risk); a NEGATIVE-to-POSITIVE range means
+    /// the face is undercut for that pull. Empty `pull` or faces that
+    /// tessellate empty are skipped.
+    pub fn draft_analysis(&self, pull: Vec3) -> Vec<FaceDraft> {
+        let Some(d) = pull.try_normalize() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for f in self.face_keys() {
+            let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+            for t in self.tessellate_face(f) {
+                if let Some(n) = (t[1] - t[0]).cross(t[2] - t[0]).try_normalize() {
+                    let s = n.dot(d).clamp(-1.0, 1.0).asin();
+                    lo = lo.min(s);
+                    hi = hi.max(s);
+                }
+            }
+            if hi >= lo {
+                out.push(FaceDraft {
+                    face: f,
+                    min: lo,
+                    max: hi,
+                });
+            }
+        }
+        out
     }
 
     /// Volume from the body's outward tessellation via the divergence
@@ -375,6 +420,59 @@ mod tests {
         b.block(Vec3::ZERO, 2.0, 3.0, 4.0).unwrap();
         let a = b.surface_area();
         assert!((a - 52.0).abs() < 1e-9, "block surface area {a} != 52");
+    }
+
+    #[test]
+    fn draft_analysis_box() {
+        use core::f64::consts::FRAC_PI_2;
+        // Pull +z: top/bottom caps are +/- pi/2 (fully drafted), the four
+        // side walls are 0 (vertical / zero draft). Each is planar so the
+        // range collapses (min == max).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let drafts = b.draft_analysis(Vec3::new(0.0, 0.0, 1.0));
+        assert_eq!(drafts.len(), 6, "a box has 6 faces");
+        let (mut caps, mut walls) = (0, 0);
+        for d in &drafts {
+            assert!(
+                (d.min - d.max).abs() < 1e-9,
+                "planar face draft is constant"
+            );
+            if (d.min.abs() - FRAC_PI_2).abs() < 1e-9 {
+                caps += 1;
+            } else if d.min.abs() < 1e-9 {
+                walls += 1;
+            }
+        }
+        assert_eq!((caps, walls), (2, 4), "box draft buckets vs +z pull");
+    }
+
+    #[test]
+    fn draft_analysis_cylinder_lateral_is_zero() {
+        use core::f64::consts::FRAC_PI_2;
+        // Pull +z (the axis): caps +/- pi/2, the lateral face is 0 draft
+        // ALL the way around (radial normals are perpendicular to z) -- an
+        // undraftable vertical wall.
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut b = Body::new();
+        b.cylinder(frame, 1.0, 2.0).unwrap();
+        let drafts = b.draft_analysis(Vec3::new(0.0, 0.0, 1.0));
+        assert!(
+            drafts
+                .iter()
+                .any(|d| (d.min - FRAC_PI_2).abs() < 1e-6 && (d.max - FRAC_PI_2).abs() < 1e-6),
+            "top cap fully drafted"
+        );
+        assert!(
+            drafts.iter().any(|d| (d.min + FRAC_PI_2).abs() < 1e-6),
+            "bottom cap fully drafted"
+        );
+        assert!(
+            drafts
+                .iter()
+                .any(|d| d.min.abs() < 1e-6 && d.max.abs() < 1e-6),
+            "lateral wall is zero draft all around"
+        );
     }
 
     #[test]
