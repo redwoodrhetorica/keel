@@ -13,7 +13,7 @@ use keel_math::vec::{Vec3, Vec4};
 /// control net, row-major ctrl[i * nv + j] with i the u index (0..nu)
 /// and j the v index (0..nv). All weights strictly positive and
 /// canonicalized so the maximum lies in (0.5, 1].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NurbsSurface {
     kv_u: KnotVector,
     kv_v: KnotVector,

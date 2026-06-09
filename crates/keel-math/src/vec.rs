@@ -44,7 +44,7 @@ pub struct Vec2 {
 }
 
 /// 3D vector.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Vec3 {
     pub x: f64,
     pub y: f64,
@@ -52,7 +52,7 @@ pub struct Vec3 {
 }
 
 /// 4D vector (homogeneous coordinates for rational geometry).
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Vec4 {
     pub x: f64,
     pub y: f64,

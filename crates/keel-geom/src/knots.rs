@@ -4,7 +4,7 @@ use crate::{GeomError, MAX_DEGREE};
 
 /// A validated, clamped (end multiplicity = degree + 1), nondecreasing
 /// knot vector. Immutable after construction.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct KnotVector {
     degree: usize,
     knots: Vec<f64>,

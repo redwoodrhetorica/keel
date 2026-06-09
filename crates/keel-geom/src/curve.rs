@@ -17,7 +17,7 @@ pub enum Domain {
 
 /// Infinite straight line: point(t) = origin + t * dir (dir unit, so
 /// t is arc length). Carried unbounded; edges bound it in topology.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Line3 {
     pub origin: Vec3,
     /// Unit direction.
@@ -42,7 +42,7 @@ impl Line3 {
 
 /// Circle: point(theta) = center + r cos(theta) x + r sin(theta) y,
 /// with x, y unit and orthogonal. theta in [0, 2*pi).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Circle3 {
     pub center: Vec3,
     pub x_axis: Vec3,
@@ -91,7 +91,7 @@ impl Circle3 {
 }
 
 /// Ellipse: point(theta) = center + a cos(theta) x + b sin(theta) y.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Ellipse3 {
     pub center: Vec3,
     pub x_axis: Vec3,
@@ -168,7 +168,7 @@ impl Ellipse3 {
 
 /// Exhaustive curve dispatch (compile error at every non-exhaustive
 /// match when a curve type is added).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Curve3 {
     Line(Line3),
     Circle(Circle3),
