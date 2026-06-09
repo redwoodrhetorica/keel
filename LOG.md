@@ -3674,3 +3674,31 @@ sheet-body foundation built this session. Counter 92/144 -- a +10 run this sessi
 (53/41/43/42/44/72/76/77/71/70) on top of the #21/#16 Phase-0a keystones + enclosed-void 3-region
 stitch + sheet-body representation + the finalize_imported_assembly extraction. Shell family
 (41-45) AND Phase-5 sheet ops (70/71/72/76/77) both fully shipped.
+
+## Addendum 123 (2026-06-09, attended): ASSEMBLY LAYER -- instances + DAG + transforms + stable ids (items 82-85). 92 -> 96/144
+
+Re-read dossier 16 (assembly layer) first. The industry-consensus model (Parasolid partitions +
+app instancing, OCCT XCAF shape-ref + TopLoc_Location, STEP NAUO + mapped_item): an assembly is a
+DAG of DEFINITIONS (geometry stored once) and INSTANCES (definition reference + placement
+transform); structure is ORTHOGONAL to placement; an OCCURRENCE's world placement is the
+composition of instance transforms along its path and its IDENTITY is that path of stable
+instance ids (survives geometry edits). The kernel provides this thin tier; mating/constraints/PLM
+stay in the host.
+
+NEW MODULE crates/keel-topo/src/assembly.rs (no change to any existing code -> zero regression
+risk): Assembly { defs, root } with Def::Part(Box<Body>) | Def::Sub(Vec<Instance>);
+add_part/add_subassembly/set_root/edit_part; flatten() -> Vec<Occurrence{ path, world, body }>
+walks the DAG accumulating child.transform.then(parent_acc) and places each leaf via the existing
+Body::transformed (item 74). Definitions can only reference EARLIER-added defs, so the graph is
+acyclic by construction (no cycle check needed). Delivers all four items: 82 instances (Instance),
+83 assembly DAG (a Def referenced by many instances -- a SHARED subassembly), 84 per-instance
+transforms (world = path composition), 85 stable edit-surviving ids (InstanceId / occurrence
+path). ORACLES: (1) one box def -> a 2x2 grid via a sub-assembly instanced twice (the DAG) -> 4
+distinct world occurrences, each the unit box (vol 8, validate ok), each a length-2 path, all
+paths/positions unique; (2) editing the box def to a 4^3 box leaves the occurrence paths
+unchanged (identity survives) while the new volume 64 flows through. Instance transforms are rigid
+(Body::transformed's domain: rotation+translation; scale/mirror/NURBS instances are a follow-up).
+GATE: workspace 108 + 77 + 171 green (two new assembly tests), clippy -D warnings (boxed the large
+Def::Part variant), fmt. No boolean.rs change -> fuzz unchanged. Merged.
+Counter 96/144 -- a +14 run this session. Phase 9 assemblies 82-85 done; foreign geometry
+114-116 remains in Phase 9.
