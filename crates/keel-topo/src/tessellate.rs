@@ -217,7 +217,7 @@ impl Body {
     /// the face carries a CLOSED circle edge (a whole lateral or SSI-
     /// trimmed band); otherwise the min/max boundary-vertex angle (a
     /// partial-angle patch such as a fillet's quarter-cylinder blend).
-    fn cyl_angular_span(
+    pub(crate) fn cyl_angular_span(
         &self,
         face: FaceKey,
         origin: Vec3,
