@@ -2674,3 +2674,14 @@ polygon-inset/miter, not centroid scaling) is the general drafted-extrude.
 RUNNING TOTAL: 72 -> 73/144 (tapered extrude, sweep/loft family item 65).
 GATE: exact CI triplet green (141 keel-topo, clippy -D warnings, fmt). No fuzz --
 additive constructor over loft. Merged.
+
+## Addendum 84 (2026-06-09, overnight): revolve_closed hardening coverage (stays 73/144)
+
+Hardened the genus-1 revolve_closed (Addendum 81), previously tested only on the
+rectangular tube. Added: (1) a TRIANGULAR ring cross-section [(1,0),(2,0),(1,1)]
+exercising a CONE band ((2,0)->(1,1)) inside the kfmrh-handle construction -- 3
+faces (washer+cone+inner cylinder), validate ok, mesh_volume ~4pi/3 (Pappus
+2pi*R_c*A = 2pi*(4/3)*(1/2)); (2) rejection of an axis-touching (radius-0) profile
+(genus-0, belongs to revolve). Both pass -- the genus-1 constructor + cone-band
+geometry are robust beyond the rectangular case. Test-only; counter stays 73/144.
+GATE: exact CI triplet green (143 keel-topo, clippy -D warnings, fmt). Merged.
