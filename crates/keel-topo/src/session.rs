@@ -44,14 +44,14 @@ impl Body {
 /// Site addressing by VALUE (EntityIds): keys are transient, ids are
 /// the durable names, so journals survive serialization and replay on
 /// a fresh body.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SiteDescriptor {
     VertexLoop(EntityId),
     AfterFin(EntityId),
 }
 
 /// Recorded operation descriptor, sufficient for replay.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum OpDescriptor {
     Mvfs {
         region: EntityId,
@@ -100,6 +100,20 @@ impl OpJournal for VecJournal {
     fn record(&mut self, op: &OpDescriptor) {
         self.0.push(op.clone());
     }
+}
+
+/// Serialize an operation journal to a deterministic JSON document
+/// (parity item 129, persistent journaling). The journal addresses
+/// entities by durable `EntityId` and its f64 point params round-trip
+/// EXACTLY (serde_json/ryu), so `load_journal` + `replay` on a fresh
+/// body reproduces the original topology hash.
+pub fn save_journal(journal: &[OpDescriptor]) -> Result<String, serde_json::Error> {
+    serde_json::to_string(journal)
+}
+
+/// Parse an operation journal from `save_journal` output (parity item 129).
+pub fn load_journal(s: &str) -> Result<Vec<OpDescriptor>, serde_json::Error> {
+    serde_json::from_str(s)
 }
 
 /// Replay a journal on a fresh body. Because EntityId assignment is
@@ -299,5 +313,45 @@ mod tests {
         }
         // The block's volume is the known 24 (sanity that geometry survived).
         assert!((block.mass_properties().unwrap().volume - 24.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn journal_serde_round_trips_and_replays() {
+        // Record a short journal, serialize it to JSON, reload, and replay
+        // on a fresh body (parity item 129). The reloaded journal equals
+        // the original (exact, incl. f64 params) and replays to the same
+        // topology hash as the directly-built body.
+        let mut journal = VecJournal::default();
+        let mut b = Body::new();
+        let r = b.infinite_region();
+        let r_id = b.region(r).map(|x| x.id).unwrap_or_else(|| panic!());
+        journal.record(&OpDescriptor::Mvfs {
+            region: r_id,
+            p: [0.5, -1.0, 2.0],
+        });
+        let seed = b
+            .mvfs(r, Vec3::new(0.5, -1.0, 2.0))
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        let lp = b
+            .face(seed.face)
+            .map(|f| f.loops[0])
+            .unwrap_or_else(|| panic!());
+        let lp_id = b.loop_(lp).map(|l| l.id).unwrap_or_else(|| panic!());
+        journal.record(&OpDescriptor::Mev {
+            site: SiteDescriptor::VertexLoop(lp_id),
+            p: [1.5, -1.0, 2.0],
+        });
+        b.mev(MevSite::VertexLoop(lp), Vec3::new(1.5, -1.0, 2.0))
+            .unwrap_or_else(|e| panic!("{e:?}"));
+
+        let json = save_journal(&journal.0).unwrap_or_else(|e| panic!("{e:?}"));
+        let j2 = load_journal(&json).unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(journal.0, j2, "journal serde round-trip not exact");
+        let replayed = replay(&j2).unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(
+            b.topology_hash(),
+            replayed.topology_hash(),
+            "replayed-from-JSON topology hash differs"
+        );
     }
 }

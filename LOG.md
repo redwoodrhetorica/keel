@@ -2980,3 +2980,21 @@ serialized on-disk form. Deltas/transactions (127) + persistent naming (52/dossi
 follow-ons.
 GATE: exact CI triplet green (workspace: 108 math + 77 geom + 155 topo, clippy -D, fmt).
 Read-only serialization (no boolean/tessellate_planar change) -> no fuzz. Merged.
+
+## Addendum 99 (2026-06-09, attended): journal serialization (item 129) -- 81 -> 82/144
+
+save_journal(&[OpDescriptor]) -> String / load_journal(&str) -> Vec<OpDescriptor>:
+persistent journaling (parity item 129), completing Phase 7's persistence trio with the
+body save/restore (126, Addendum 98) and the in-memory snapshot/replay (122-125).
+serde-derived OpDescriptor + SiteDescriptor (session.rs); the journal addresses entities
+by durable EntityId and its f64 point params round-trip EXACTLY (serde_json/ryu), so
+load_journal + replay on a fresh body reproduces the original topology (EntityId
+assignment is deterministic, so recorded ids resolve identically at replay).
+Test (journal_serde_round_trips_and_replays): record an mvfs+mev journal, save -> JSON ->
+load -> the reloaded journal EQUALS the original (exact), and replay reproduces the
+directly-built body's topology_hash. Additive derives + 2 fns; all existing tests
+unchanged. (The journal is not yet auto-populated by the public constructors -- that
+constructor-integrated journaling is a follow-on; deltas/transactions 127 + persistent
+naming 82-85/124 [dossier 52] remain.)
+GATE: exact CI triplet green (workspace: 108 math + 77 geom + 156 topo, clippy -D, fmt).
+No fuzz (read-only serialization). Merged.
