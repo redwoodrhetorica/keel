@@ -2658,3 +2658,19 @@ Two things this autonomous cycle:
    counter stays 72/144.
 GATE: exact CI triplet green (140 keel-topo, clippy -D warnings, fmt). No fuzz --
 read-only query. Merged.
+
+## Addendum 83 (2026-06-09, overnight): tapered/draft extrude (item 65) -- 73/144
+
+Body::extrude_tapered(base, dir, top_scale): sweep a planar polygon along dir while
+scaling the top profile by top_scale about the base centroid -- a truncated pyramid
+/ drafted boss. KEY INSIGHT: under centroid scaling the side quads are PLANAR for
+ANY polygon (top t_i = c + (b_i-c)*s + dir; then t0-b0 = (t1-b0) - s*(b1-b0) lies in
+span(t1-b0, b1-b0) -> the four corners are coplanar), so it is a thin, exact
+specialization of loft -- no new topology. top_scale in (0,1) tapers in, 1.0 is a
+straight prism, >1 flares. Test: 2x2 square base, +z by 1, top_scale 0.5 -> 1x1 top,
+6 faces, mass_properties volume (h/3)(A1+A2+sqrt(A1 A2)) = (1/3)(4+1+2) = 7/3 exact.
+FOLLOW-UP: perpendicular-offset draft (every face tilts by a fixed ANGLE; needs a
+polygon-inset/miter, not centroid scaling) is the general drafted-extrude.
+RUNNING TOTAL: 72 -> 73/144 (tapered extrude, sweep/loft family item 65).
+GATE: exact CI triplet green (141 keel-topo, clippy -D warnings, fmt). No fuzz --
+additive constructor over loft. Merged.

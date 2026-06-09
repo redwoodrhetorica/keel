@@ -385,6 +385,38 @@ impl Body {
         })
     }
 
+    /// Tapered (draft) extrude (sweep/loft family, parity item 65): sweep
+    /// the planar polygon `base` along `dir` while scaling the top profile
+    /// by `top_scale` about the base centroid -- a truncated pyramid /
+    /// drafted boss. `top_scale` in (0, 1) tapers inward, 1.0 is a straight
+    /// prism, > 1 flares out. Under centroid scaling the side quads are
+    /// PLANAR for any polygon (t0-b0 lies in span(t1-b0, b1-b0)), so this
+    /// is a thin specialization of `loft`. (A perpendicular-offset draft,
+    /// where every face tilts by a fixed ANGLE, is a follow-up.)
+    pub fn extrude_tapered(
+        &mut self,
+        base: &[Vec3],
+        dir: Vec3,
+        top_scale: f64,
+    ) -> Result<PrimitiveOut, TopoError> {
+        if base.len() < 3 {
+            return Err(TopoError::Precondition(
+                "extrude_tapered: need 3+ base points",
+            ));
+        }
+        if !dir.is_finite() || !top_scale.is_finite() || top_scale <= 0.0 {
+            return Err(TopoError::Precondition(
+                "extrude_tapered: dir must be finite, top_scale > 0",
+            ));
+        }
+        let c: Vec3 = base.iter().fold(Vec3::ZERO, |a, &p| a + p) / base.len() as f64;
+        let top: Vec<Vec3> = base
+            .iter()
+            .map(|&v| c + (v - c) * top_scale + dir)
+            .collect();
+        self.loft(base, &top)
+    }
+
     /// Full 360-degree solid of revolution (sweep/loft family, parity
     /// items 62-69) of a meridian `profile` of (radius, height) points
     /// about `frame.z`, with `frame.x` the seam-meridian reference. The
@@ -1708,6 +1740,27 @@ mod tests {
         edges_lie_on_adjacent_surfaces(&b, 1e-9);
         let v = b.mass_properties().unwrap().volume;
         assert!((v - 14.0 / 3.0).abs() < 1e-9, "frustum volume {v} != 14/3");
+    }
+
+    #[test]
+    fn extrude_tapered_square_frustum() {
+        // 2x2 square base, extrude +z by 1, top scaled 0.5 about the
+        // centroid -> 1x1 top. Truncated pyramid volume
+        //   = (h/3)(A1 + A2 + sqrt(A1 A2)) = (1/3)(4 + 1 + 2) = 7/3.
+        let base = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(2.0, 2.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+        ];
+        let mut b = Body::new();
+        let out = b
+            .extrude_tapered(&base, Vec3::new(0.0, 0.0, 1.0), 0.5)
+            .unwrap();
+        assert!(b.validate().is_ok(), "tapered extrude invalid");
+        assert_eq!(out.faces.len(), 6, "tapered extrude face count");
+        let v = b.mass_properties().unwrap().volume;
+        assert!((v - 7.0 / 3.0).abs() < 1e-9, "frustum volume {v} != 7/3");
     }
 
     #[test]
