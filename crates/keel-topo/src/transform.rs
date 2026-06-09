@@ -356,6 +356,27 @@ mod tests {
     }
 
     #[test]
+    fn transform_cylinder_preserves_analytic_volume() {
+        // Rotating a CURVED body must keep analytic mass_properties exact:
+        // pcurves are parameter-space (untouched), and the rotated surface
+        // frame maps them to the rotated 3D surface -- so the integral is
+        // the rotated original. (Coverage: transform on curved bodies was
+        // only checked via validate+mesh_volume before.)
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut b = Body::new();
+        b.cylinder(frame, 1.0, 2.0).unwrap();
+        let v0 = b.mass_properties().unwrap().volume; // pi r^2 h = 2pi
+        let t = Transform3::from_rotation(Vec3::new(1.0, 0.0, 0.0), 0.7).unwrap();
+        let m = b.transformed(&t).unwrap();
+        assert!(m.validate().is_ok(), "transformed cylinder invalid");
+        let v1 = m.mass_properties().unwrap().volume;
+        assert!(
+            (v1 - v0).abs() < 1e-9,
+            "rotation changed cylinder analytic volume: {v0} -> {v1}"
+        );
+    }
+
+    #[test]
     fn scale_box_cubes_the_volume() {
         // [0,2]^3 (volume 8) scaled 2x about the origin -> [0,4]^3 (volume
         // 64 = 8 * 2^3), a valid solid.
