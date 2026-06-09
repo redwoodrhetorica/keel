@@ -29,7 +29,7 @@ pub enum TopoError {
     Invalid,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Body {
     pub(crate) vertices: Arena<Vertex>,
     pub(crate) edges: Arena<Edge>,

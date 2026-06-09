@@ -21,6 +21,24 @@ impl Body {
     pub fn restore(snapshot: Snapshot) -> Body {
         snapshot.0
     }
+
+    /// Serialize the whole body to a deterministic JSON document (parity
+    /// item 126, persistent save/restore). serde_json round-trips f64
+    /// EXACTLY (ryu shortest-round-trip), and the generational arena keys
+    /// and generations serialize verbatim, so every topology reference
+    /// stays valid across a round-trip -- no key remapping. The document
+    /// is self-describing and stable for a given body (deterministic field
+    /// and entity order).
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    /// Restore a body from `to_json` output (parity item 126). Returns a
+    /// serde error for a malformed document; callers may `validate()` the
+    /// result (a faithful round-trip of a valid body is itself valid).
+    pub fn from_json(s: &str) -> Result<Body, serde_json::Error> {
+        serde_json::from_str(s)
+    }
 }
 
 /// Site addressing by VALUE (EntityIds): keys are transient, ids are
@@ -240,5 +258,46 @@ mod tests {
         let restored = Body::restore(snap);
         assert_eq!(restored.topology_hash(), h);
         assert!(restored.validate().is_ok());
+    }
+
+    #[test]
+    fn json_save_restore_round_trips_exactly() {
+        use keel_geom::surface::Frame3;
+        // Planar body (block) + curved body (cylinder): both serialize to
+        // JSON and restore to a valid body with identical topology hash and
+        // bit-exact geometry (mass_properties matches).
+        let mut block = Body::new();
+        block
+            .block(Vec3::new(1.0, 2.0, 3.0), 2.0, 3.0, 4.0)
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        let mut cyl = Body::new();
+        cyl.cylinder(
+            Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap(),
+            1.5,
+            3.0,
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
+        for b in [&block, &cyl] {
+            let json = b.to_json().unwrap_or_else(|e| panic!("{e:?}"));
+            let r = Body::from_json(&json).unwrap_or_else(|e| panic!("{e:?}"));
+            assert!(r.validate().is_ok(), "restored body invalid");
+            assert_eq!(
+                b.topology_hash(),
+                r.topology_hash(),
+                "topology hash differs"
+            );
+            assert_eq!(b.counts(), r.counts(), "counts differ");
+            let v0 = b
+                .mass_properties()
+                .unwrap_or_else(|e| panic!("{e:?}"))
+                .volume;
+            let v1 = r
+                .mass_properties()
+                .unwrap_or_else(|e| panic!("{e:?}"))
+                .volume;
+            assert_eq!(v0.to_bits(), v1.to_bits(), "volume not bit-exact");
+        }
+        // The block's volume is the known 24 (sanity that geometry survived).
+        assert!((block.mass_properties().unwrap().volume - 24.0).abs() < 1e-12);
     }
 }

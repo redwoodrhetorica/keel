@@ -404,6 +404,8 @@ dependencies = [
  "keel-geom",
  "keel-math",
  "proptest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

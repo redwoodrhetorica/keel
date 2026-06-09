@@ -17,7 +17,9 @@ use keel_math::vec::Vec3;
 
 /// Stable identity: monotonic per body, never reused, persisted.
 /// Arena keys are transient addresses; this is the name.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, serde::Serialize, serde::Deserialize,
+)]
 pub struct EntityId(pub u64);
 
 pub type VertexKey = Key<Vertex>;
@@ -31,7 +33,9 @@ pub type CurveKey = Key<CurveGeom>;
 pub type SurfaceKey = Key<SurfaceGeom>;
 
 /// Untyped reference for the id map and lineage.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, serde::Serialize, serde::Deserialize,
+)]
 pub enum AnyKey {
     Vertex(VertexKey),
     Edge(EdgeKey),
@@ -48,13 +52,13 @@ pub enum AnyKey {
 pub type CurveGeom = keel_geom::curve::Curve3;
 
 /// Surface geometry attached to faces.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum SurfaceGeom {
     Analytic(keel_geom::surface::Surface3),
     Nurbs(keel_geom::nurbs_surface::NurbsSurface),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Vertex {
     pub id: EntityId,
     pub point: Vec3,
@@ -68,7 +72,7 @@ pub struct Vertex {
     pub groups: Vec<FinKey>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Edge {
     pub id: EntityId,
     /// Geometry reference + sense (curve direction vs edge direction).
@@ -96,7 +100,7 @@ impl Edge {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Fin {
     pub id: EntityId,
     pub edge: EdgeKey,
@@ -110,13 +114,13 @@ pub struct Fin {
     pub pcurve: Option<(CurveKey, bool)>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum LoopKind {
     Outer,
     Inner,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Loop {
     pub id: EntityId,
     pub face: FaceKey,
@@ -127,7 +131,9 @@ pub struct Loop {
     pub kind: LoopKind,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, serde::Serialize, serde::Deserialize,
+)]
 pub enum Side {
     Front,
     Back,
@@ -143,7 +149,7 @@ impl Side {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Face {
     pub id: EntityId,
     pub surface: Option<(SurfaceKey, bool)>,
@@ -153,7 +159,7 @@ pub struct Face {
     pub back_region: RegionKey,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Shell {
     pub id: EntityId,
     pub region: RegionKey,
@@ -165,7 +171,7 @@ pub struct Shell {
     pub genus: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Region {
     pub id: EntityId,
     pub solid: bool,
@@ -176,7 +182,7 @@ pub struct Region {
 /// Typed attribute value (gate design 1.4; extended for parity items
 /// 117-120: `Vec3` carries colors/directions, `Bytes` carries raw
 /// per-entity user fields).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum AttrValue {
     F64(f64),
     I64(i64),
