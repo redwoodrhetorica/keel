@@ -2535,3 +2535,21 @@ tests stay green (cone-to-pole path untouched).
 RUNNING TOTAL: 67 -> 68/144 (flat-cap solid of revolution).
 GATE: exact CI triplet green (134 keel-topo, clippy -D warnings, fmt). No fuzz --
 constructor change, not a boolean/tessellation-pipeline mutation. Merged.
+
+## Addendum 78 (2026-06-08): UNIFORM BODY SCALE (planar bodies) -- 69/144
+
+Body::scaled(center, factor) -> uniform scale about a point (transform.rs). Vertices
+-> center + (p-center)*factor; plane-surface frame origins scale, axes unchanged
+(uniform scale preserves directions); line-curve origins scale, dir unchanged.
+Planar-faced bodies only for now: mass_properties projects the SCALED vertices
+through the (scaled-origin, unchanged-axes) frame, so it computes u' = s*u and
+stays self-consistent WITHOUT touching stored pcurves (u'=(p_scaled-origin').x =
+s*(p-origin).x); tessellation likewise samples scaled geometry. Curved surfaces
+(radii would scale) and circle/ellipse/NURBS edges (radii + pcurve params) are a
+follow-up -- rejected.
+Test: 2^3 block scaled 2x about origin -> [0,4]^3, validate ok, mass_properties
+volume 64 = 8*2^3, bbox exact; rejects a curved body and factor 0.
+RUNNING TOTAL: 68 -> 69/144 (body scale; rounds out the transform family
+transform/mirror/scale).
+GATE: exact CI triplet green (136 keel-topo, clippy -D warnings, fmt). No fuzz --
+additive op. Merged.
