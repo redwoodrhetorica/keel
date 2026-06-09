@@ -3623,3 +3623,16 @@ fuzz/diagnosis pass (likely an A-vs-B operand-order or face-EntityId-order sensi
 intersection select/stitch). Logged, not chased here. No boolean.rs change -> fuzz unchanged.
 GATE: workspace 108 + 77 + 166 green, clippy -D warnings, fmt. Merged.
 PHASE 5 now: 72 (trim) + 76 (split) done; 70 (extend) / 71 (knit-sew) / 77 (slice) remain.
+
+## Addendum 120 (2026-06-09, attended): SLICE by an offset list (item 77). 89 -> 90/144
+
+Body::slice(point, normal, offsets) -> Vec<Body>: cut a solid by a list of parallel planes
+(at point + off*normal), returning the N+1 ordered pieces between consecutive planes. Implemented
+as a repeated split_by_plane in increasing offset order (split off the back piece at each plane,
+carry the front forward), so it inherits split's coverage with zero new machinery. ORACLE: a 6^3
+box sliced at x=2 and x=4 -> three 2x6x6 = 72 slabs, each valid + mass-exact. No boolean.rs change
+-> fuzz unchanged.
+GATE: workspace 108 + 77 + 167 green, clippy -D warnings, fmt. Merged.
+PHASE 5 now: 72/76/77 done; only 70 (extend) + 71 (knit-sew, closure->solid promotion) remain.
+Counter at 90/144 -- a +8 run this session (53/41/43/42/44/72/76/77) on top of the #21/#16
+keystones + enclosed-void stitch + sheet-body representation.
