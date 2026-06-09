@@ -12,6 +12,7 @@
 use crate::Body;
 use crate::body::TopoError;
 use crate::boolean::{BoolOp, boolean};
+use keel_math::vec::Vec3;
 
 impl Body {
     /// Hollow this solid to a uniform wall thickness `t`, leaving a fully
@@ -87,12 +88,88 @@ impl Body {
             .map(|r| r.body)
             .map_err(|_| TopoError::Precondition("hollow_pierce: shell assembly failed"))
     }
+
+    /// Split a solid by a cutting plane into two pieces (parity item 76):
+    /// the BACK piece (where `(p - point) . normal <= 0`) and the FRONT
+    /// piece. Each piece is the body with the OTHER half-space removed by a
+    /// guillotine difference against a large oriented slab (the well-tested
+    /// transversal-cut path), so the cut cap is produced by the ordinary
+    /// boolean -- no new machinery. Returns `(back, front)`. Errors if either
+    /// difference fails (e.g. the plane misses the body, leaving a piece
+    /// equal to the whole body or empty).
+    pub fn split_by_plane(&self, point: Vec3, normal: Vec3) -> Result<(Body, Body), TopoError> {
+        let n = normal
+            .try_normalize()
+            .ok_or(TopoError::Precondition("split: degenerate plane normal"))?;
+        let bb = self.bounding_box();
+        let big = (bb.max - bb.min).norm() * 2.0 + 10.0;
+        // In-plane orthonormal axes.
+        let seed = if n.x.abs() < 0.9 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0)
+        };
+        let u = (seed - n * seed.dot(n))
+            .try_normalize()
+            .ok_or(TopoError::Precondition("split: axis"))?;
+        let v = n.cross(u);
+        // A half-space slab on `side` of the plane (-1 back, +1 front): a big
+        // square at the far face extruded back toward the plane. The base
+        // winding is self-corrected so the slab is a positive-volume solid.
+        let slab = |side: f64| -> Result<Body, TopoError> {
+            let far = point + n * (side * big);
+            let q = |a: f64, b: f64| far + u * a + v * b;
+            let dir = n * (-side * big);
+            let mut base = vec![q(-big, -big), q(big, -big), q(big, big), q(-big, big)];
+            let mut s = Body::new();
+            let ok = s.prism(&base, dir).is_ok()
+                && s.mass_properties().map(|m| m.volume > 0.0).unwrap_or(false);
+            if !ok {
+                base.reverse();
+                s = Body::new();
+                s.prism(&base, dir)?;
+            }
+            Ok(s)
+        };
+        let back = slab(-1.0)?;
+        let front = slab(1.0)?;
+        // Each piece is the body with the OTHER half-space removed (a
+        // guillotine difference, the well-tested transversal-cut case): the
+        // back piece = body minus the front slab, and vice versa.
+        let pb = boolean(self, &front, BoolOp::Difference, 1e-7)
+            .map(|r| r.body)
+            .map_err(|_| TopoError::Precondition("split: back piece failed"))?;
+        let pf = boolean(self, &back, BoolOp::Difference, 1e-7)
+            .map(|r| r.body)
+            .map_err(|_| TopoError::Precondition("split: front piece failed"))?;
+        Ok((pb, pf))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use keel_math::vec::Vec3;
+
+    #[test]
+    fn split_box_by_plane_halves() {
+        // Split a 4^3 box by x=2 (normal +x): back piece x<=2 = 2x4x4 = 32,
+        // front piece x>=2 = 32; both valid solids summing to the original.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 4.0, 4.0).unwrap();
+        let (back, front) = b
+            .split_by_plane(Vec3::new(2.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0))
+            .unwrap();
+        assert!(
+            back.validate().is_ok() && front.validate().is_ok(),
+            "split pieces invalid"
+        );
+        let vb = back.mass_properties().unwrap().volume;
+        let vf = front.mass_properties().unwrap().volume;
+        assert!(
+            (vb - 32.0).abs() < 1e-6 && (vf - 32.0).abs() < 1e-6,
+            "split halves must each be 32 (got back {vb}, front {vf})"
+        );
+    }
 
     #[test]
     fn hollow_box_encloses_void() {

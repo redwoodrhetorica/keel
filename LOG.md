@@ -3602,3 +3602,24 @@ follow-ups on the same clip. No boolean.rs change -> fuzz unchanged.
 GATE: workspace 108 + 77 + 165 green, clippy -D warnings, fmt. Merged.
 PHASE 5 progress: 72 (trim) done; 70 (extend) / 71 (knit-sew, with closure->solid promotion) /
 76 (split) / 77 (slice) remain, all on the sheet-body foundation.
+
+## Addendum 119 (2026-06-09, attended): SPLIT a solid by a plane (item 76). 88 -> 89/144
+
+Body::split_by_plane(point, normal) -> (back, front): split a solid into two pieces by a cutting
+plane, reusing the boolean -- no new machinery. Each half-space is modelled as a large oriented
+SLAB (a big square in the plane, spanned by in-plane axes u, v = n x u, extruded |big| along the
+normal; the base winding is self-corrected so the slab is a positive-volume solid). Each piece is
+the body with the OTHER half-space REMOVED by a guillotine DIFFERENCE (back = body - front_slab,
+front = body - back_slab). ORACLE: a 4^3 box split by x=2 -> two 2x4x4 = 32 pieces, both validate,
+mass-exact. MVP: any solid the guillotine difference handles; general curved/oblique cuts inherit
+the boolean's current coverage.
+
+NOTE / latent boolean follow-up found in passing: the INTERSECTION form (body INTERSECT half-slab)
+was ASYMMETRIC -- the back-side intersection assembled but the geometrically-mirrored front-side
+intersection failed the mass==mesh gate ("degenerate or self-inconsistent result"), both slabs
+being valid positive-volume solids. The DIFFERENCE path is clean for both (guillotine is the
+tested case), so split uses it; the intersection asymmetry is a real boolean bug worth a separate
+fuzz/diagnosis pass (likely an A-vs-B operand-order or face-EntityId-order sensitivity in the
+intersection select/stitch). Logged, not chased here. No boolean.rs change -> fuzz unchanged.
+GATE: workspace 108 + 77 + 166 green, clippy -D warnings, fmt. Merged.
+PHASE 5 now: 72 (trim) + 76 (split) done; 70 (extend) / 71 (knit-sew) / 77 (slice) remain.
