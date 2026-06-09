@@ -2875,3 +2875,25 @@ approximation of file 06 S3.1's exact n.d=0 zero-set tracer; HLR (96) is S7.
 Test: cube [0,2]^3 cut at z=1 -> 4-point square outline, 2 fan triangles, cut-face area
 4 exact, normal +z. Read-only query -> no fuzz needed.
 GATE: exact CI triplet green (152 keel-topo, clippy -D warnings, fmt). Merged.
+
+## Addendum 94 (2026-06-09, attended): translational sweep-along-path (item 63) -- 78 -> 79/144
+
+Body::sweep_along_path(profile, path): sweep a planar polygon along a polyline path by
+TRANSLATION -- copy the profile (kept parallel, not reoriented) to each path vertex and
+loft the copies (parity item 63, Phase 2). Reuses loft_sections; consecutive translates
+make every side quad a parallelogram (planar), so no new stitching. Path needs >= 2
+points (2 points = a straight/oblique prism).
+ENABLER FIX in loft_sections: caps now lie in the END-PROFILE PLANES (each cap normal is
+that profile's own Newell normal, oriented outward by the +/-up sign) instead of using
+the centroid axis `up` directly. Correct when the section planes are NOT perpendicular
+to the centroid axis (an oblique sweep); for the perpendicular prism/frustum case it
+equals +/-up, so loft / extrude_tapered / 3-section tests are unchanged.
+RESEARCH REVIEW (file 01 synthesis, sweep policy): a swept surface is stored as
+trajectory + profile + a frame rule; the rotation-minimizing-frame (RMF, Wang et al.
+double-reflection) PROFILE-PERPENDICULAR sweep -- where the profile turns to follow the
+path -- is the documented full form and is DEFERRED here; the translational
+(parallel-profile) sweep is the first slice.
+Test: a 2x2 square swept along a uniformly oblique 3-point path -> a sheared prism,
+volume 24 (Cavalieri: base 4 x z-extent 6), 10 faces, valid; < 2 path points rejected.
+Constructor over Euler ops, no boolean/tessellate_planar change -> no new fuzz.
+GATE: exact CI triplet green (153 keel-topo, clippy -D warnings, fmt). Merged.

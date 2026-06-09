@@ -346,9 +346,39 @@ impl Body {
         self.debug_validate();
 
         // ---- geometry attachment ----
-        // Caps: section-0 outward = -up, last-section outward = +up.
-        let bottom_frame = Frame3::from_z(sections[0][0], up * -1.0).map_err(geom_err)?;
-        let top_frame = Frame3::from_z(sections[k - 1][0], up).map_err(geom_err)?;
+        // Caps lie in the end-profile PLANES: each cap normal is that
+        // profile's own (Newell) normal, oriented outward (the section-0
+        // cap points back along -up, the last-section cap forward along
+        // +up). Using the profile normal -- not `up` itself -- keeps the
+        // cap correct when the section planes are not perpendicular to the
+        // centroid axis (e.g. an oblique path sweep). For the common
+        // perpendicular case (prism / frustum) this equals +/- up.
+        let newell = |poly: &[Vec3]| -> Vec3 {
+            let m = poly.len();
+            let mut nrm = Vec3::ZERO;
+            for i in 0..m {
+                let (a, b) = (poly[i], poly[(i + 1) % m]);
+                nrm = nrm
+                    + Vec3::new(
+                        (a.y - b.y) * (a.z + b.z),
+                        (a.z - b.z) * (a.x + b.x),
+                        (a.x - b.x) * (a.y + b.y),
+                    );
+            }
+            nrm
+        };
+        let orient_cap = |poly: &[Vec3], want_up_sign: f64| -> Vec3 {
+            let nn = newell(poly).try_normalize().unwrap_or(up);
+            if nn.dot(up) * want_up_sign >= 0.0 {
+                nn
+            } else {
+                nn * -1.0
+            }
+        };
+        let bottom_frame =
+            Frame3::from_z(sections[0][0], orient_cap(sections[0], -1.0)).map_err(geom_err)?;
+        let top_frame = Frame3::from_z(sections[k - 1][0], orient_cap(sections[k - 1], 1.0))
+            .map_err(geom_err)?;
         self.attach_face_surface(
             faces[0],
             SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(bottom_frame))),
@@ -412,6 +442,36 @@ impl Body {
             vertices: all_verts,
             reports,
         })
+    }
+
+    /// Sweep a planar `profile` polygon along a polyline `path` by
+    /// TRANSLATION (parity item 63): the profile is copied to each path
+    /// vertex (kept parallel, NOT reoriented) and the copies are lofted
+    /// into a solid. Because consecutive copies are pure translates, every
+    /// side quad is a parallelogram (planar), so this reuses loft_sections
+    /// directly; the first/last path vertices carry the end caps. `path`
+    /// needs >= 2 points (a 2-point path is a straight/oblique prism). A
+    /// profile-perpendicular sweep, where the profile turns to follow the
+    /// path via a rotation-minimizing frame, is a follow-up (research file
+    /// 01 synthesis: trajectory + profile + RMF frame rule).
+    pub fn sweep_along_path(
+        &mut self,
+        profile: &[Vec3],
+        path: &[Vec3],
+    ) -> Result<PrimitiveOut, TopoError> {
+        if path.len() < 2 {
+            return Err(TopoError::Precondition("sweep: path needs >= 2 points"));
+        }
+        if path.iter().any(|p| !p.is_finite()) {
+            return Err(TopoError::Precondition("sweep: non-finite path point"));
+        }
+        let p0 = path[0];
+        let sections: Vec<Vec<Vec3>> = path
+            .iter()
+            .map(|&pj| profile.iter().map(|&q| q + (pj - p0)).collect())
+            .collect();
+        let refs: Vec<&[Vec3]> = sections.iter().map(|s| s.as_slice()).collect();
+        self.loft_sections(&refs)
     }
 
     /// Tapered (draft) extrude (sweep/loft family, parity item 65): sweep
@@ -1826,6 +1886,33 @@ mod tests {
         edges_lie_on_adjacent_surfaces(&b, 1e-9);
         let v = b.mass_properties().unwrap().volume;
         assert!((v - 8.0).abs() < 1e-9, "3-section box volume {v} != 8");
+    }
+
+    #[test]
+    fn sweep_along_oblique_path_is_a_sheared_prism() {
+        // A 2x2 square swept by translation along a uniformly oblique
+        // 3-point path -> a sheared (oblique) prism. By Cavalieri the
+        // volume is base area x z-extent = 4 * 6 = 24, shear-independent.
+        let profile = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(2.0, 2.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+        ];
+        let path = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 3.0),
+            Vec3::new(2.0, 0.0, 6.0),
+        ];
+        let mut b = Body::new();
+        let out = b.sweep_along_path(&profile, &path).unwrap();
+        assert!(b.validate().is_ok(), "sweep invalid: {:?}", b.validate());
+        assert_eq!(out.faces.len(), 10, "sweep face count");
+        let v = b.mass_properties().unwrap().volume;
+        assert!((v - 24.0).abs() < 1e-9, "oblique sweep volume {v} != 24");
+        // A path with < 2 points is rejected.
+        let mut bad = Body::new();
+        assert!(bad.sweep_along_path(&profile, &path[..1]).is_err());
     }
 
     #[test]
