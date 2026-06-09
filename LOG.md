@@ -3120,3 +3120,57 @@ duplicate seam + corner consistency) and still declines -- no wrong answer (gate
 remains open. m16c tangent-seam dedup stays unmerged (independent, possibly folded into #16).
 GATE: keel-topo 157 green (incl. strict L-union + symmetric chamfer), workspace 108+77+157,
 clippy -D warnings, fmt; fuzz_boolean pending.
+
+## Addendum 104 (2026-06-09, attended): Phase 0a -- shell-closure invariant backstop in stitch_by_import (dossier 47, task #21). Stays 82/144 (honesty hardening)
+
+RESEARCH (dossier 47 re-read before the change, per standing rules). The centerpiece (Q1
+lines 30-34, synthesis step 5 line 202) is the DROP-PREVENTION / shell-closure invariant:
+"every coedge of every kept face has exactly one radial partner (or a complete, consistent
+radial cycle) before the shell is declared closed; an unmatched coedge is an ERROR to surface,
+never a face to silently drop." Q4 / Qi-Shapiro: Euler validate() is necessary but NOT
+sufficient (a body can be Euler-valid yet have a dropped face), which is exactly why a
+dedicated closure assertion is warranted alongside the Addendum-102 mass==mesh gate.
+
+CONFIRMED validate() does NOT enforce closure (data, codegraph + read of check_radial_cycles):
+it only asserts each fin sits in EXACTLY ONE radial cycle and points back to its edge. An edge
+carrying a lone fin (radial.len() == 1) passes every validate() check untouched -- the single
+fin is in exactly one cycle. So a dangling coedge (the silent-drop signature) is invisible to
+validate today.
+
+CHANGE: in stitch_by_import, after the seam glue and before finalize, assert no edge has
+radial.len() < 2; on violation return an honest BoolFault::AssemblyFailed rather than finalize
+a body around the unpaired coedge.
+
+SCOPE decision was DATA-DRIVEN, not assumed (the Addendum-101 lesson). A first, UNCONDITIONAL
+radial<2 check regressed exactly 3 tests -- block_intersect_cylinder_is_a_plug,
+block_minus_cylinder_blind_hole, boolean_multi_empty_single_and_two_tools -- ALL CURVED. Diagnosis (env-gated
+DIAG dump of every radial<2 edge): radial-1 edges are COMMON and LEGITIMATE in the CURVED
+stitch path -- periodic-surface seams and degenerate closed circular rims (e.g. the plug's
+closed edge with bounds.0==bounds.1 at (3,2,4): a cylinder cap/seam represented as a closed
+edge with a single wrapping fin). On master those bodies return Ok and pass validate + the
+curved tessellated-volume gate; the unconditional check shunted them all to the soup fallback
+and 3 of them failed there. The dossier's invariant is explicitly about the ALL-PLANAR
+assembly path (the asym-chamfer / L-union oblique-cut class, and the polygon soup being
+retired). A correct closed PLANAR solid never has a radial-1 edge. So the check is scoped to
+all-planar results (strict subset of the unconditional check, which regressed only curved
+tests => guaranteed zero regressions), where it keeps full coverage of the actual drop-bug
+class.
+
+VERIFIED LIVE, not dead code (temporary marker, full-suite run): the check FIRES 3x across the
+suite on all-planar bodies with a dangling coedge (the asym-chamfer-class declines; 3/8/9-face
+bodies), each correctly routed to the existing fallback + mass==mesh gate, and the suite stays
+157/157. So this is a real, exercised backstop.
+
+ORTHOGONALITY (carries forward the Addendum-102 + Qwen synthesis): the topological closure
+invariant and the geometric mass==mesh gate each catch a class the other misses -- a dropped
+face can survive volume agreement under symmetric error cancellation but cannot survive coedge
+pairing; conversely mass==mesh catches metric error closure cannot see. Keep both.
+
+HONEST SCOPE: this is the contained #21 backstop, NOT the dossier-47 fix. The asym chamfer
+(#16) still DECLINES (no wrong answer; gate holds) and stays open for the dossier-39 sec 3.2
+two-sided neighborhood test + the SeamId identity-assembly. Documented limitation: the CURVED
+stitch path's legitimate radial-1 seam representation is not covered by this invariant; if the
+curved assembly is ever tightened to identity-from-imprint, the closure check can be widened to
+it then. #21 CLOSED.
+GATE: exact CI triplet green (workspace 108 math + 77 geom + 157 topo, clippy -D warnings, fmt)
++ fuzz_boolean (WSL nightly, 180s, Done 323 runs, clean, no artifacts). Merged.
