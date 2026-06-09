@@ -3260,3 +3260,43 @@ a principled keep-which-one rule). Concrete plan for the next milestone:
 This is a milestone-sized two-layer change with a known tripwire (the 45-degree symmetric
 chamfer must stay at 7.75). The honesty gate + #21 closure invariant guarantee no wrong answer
 in the meantime (the asym chamfer DECLINES). #16 stays open with a fully data-grounded plan.
+
+## Addendum 107 (2026-06-09, attended): #16 LAYER 1 LANDED -- per-face canonical seam dedup in imprint_operand. Still 82/144 (LAYER 2 remains; asym chamfer still DECLINES)
+
+REFRAMED LAYER 1 after the Addendum-106 data + a research re-read (dossier 47 Q5/centerpiece;
+user reminded the standing order to re-read research before a task). The duplicate seam is NOT a
+dossier-39 sec 3.2 near-tangency: seam[2] (box right face x cutter APEX face 37) and seam[3]
+(box right face x cutter OBLIQUE face 42) are the SAME line x=2,z=1 because the two cutter faces
+share an EXACT prism edge that happens to lie on the box right face. So it is the dossier-47
+canonical-representative problem ("coincident/duplicate facets are resolved by keeping one
+canonical representative"; the imprint must "create the shared edge once"), NOT tangency
+suppression. The earlier "keep transversal / drop tangent via sec-3.2 collinear-normals" plan
+was the WRONG mechanism (both faces stay on one side of x=2; neither crosses) -- corrected.
+
+FIX (imprint_operand, Phase 2, per-face): before assembling a face's seam members, dedupe
+geometrically-coincident imprint curves (endpoints unordered + midpoint within etol), keeping one
+canonical representative. The box face is then split ONCE. The OTHER operand groups by ITS own
+face, so each cutter face keeps its own imprint -- only the operand-A face's duplicate drops.
+This is face-local (mirrors where the L-union boundary-ring filter landed, Addendum 103) and is a
+GENERAL fix: any boolean where two tool faces share an edge lying on an operand face previously
+double-split that face and orphaned a coedge.
+
+VERIFIED (env-gated DIAG, success branch checked explicitly): the asym chamfer's duplicate-seam
+coedge id=92 (x=2,z=1) is GONE; the post-glue unpaired set dropped 5 -> 3. The symmetric chamfer
+stays 7.75, all chamfer tests pass.
+
+LAYER 2 LOCALIZED (decisive owner data, this session): the 3 remaining unpaired coedges are the
+removed-corner triangle on the front (y=0) face: id=23 (2,0,1)->(2,0,2) and id=25 (1.5,0,2)->
+(2,0,2) owned by box face EntityId(16) (which RETAINED the removed corner (2,0,2)), and the
+hypotenuse id=91 (1.5,0,2)->(2,0,1) owned by face EntityId(81) (the oblique cut face). The front
+face was not trimmed to meet the cut: its would-be hypotenuse coedge is missing, so face 81's
+hypotenuse is unpaired and the corner legs dangle. CRUCIAL FINDING: the SYMMETRIC chamfer leaves
+the IDENTICAL 3-coedge corner-triangle unpaired in stitch_by_import (id 23/25/83 at z=1.5) -- it
+only passes because it falls back to build_result_solid (the soup), which tolerates the symmetric
+corner but DROPS the asym tilted face. So LAYER 2 is SHARED; fixing it would let BOTH chamfers
+assemble through stitch_by_import. Next session: determine why the front-face fragment kept the
+corner (imprint split vs select_faces vs the kept fragment's loop) -- is face 16 the un-split
+whole front face, or a mis-kept fragment? -- then fix the trim/keep so the kept front fragment is
+bounded by the hypotenuse (pairing face 81).
+GATE: exact CI triplet green (workspace 108 math + 77 geom + 157 topo, clippy -D warnings, fmt)
++ fuzz_boolean (WSL nightly, 180s, Done 322 runs, clean). Merged.
