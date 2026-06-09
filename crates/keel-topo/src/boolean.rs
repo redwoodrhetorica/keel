@@ -2298,7 +2298,38 @@ fn imprint_operand(
     }
 
     // Phase 2: imprint per face.
-    for (_, (face, members)) in groups {
+    for (_, (face, mut members)) in groups {
+        // Dedupe geometrically-coincident imprint curves on THIS face, keeping
+        // one canonical representative (dossier 47 Q5/centerpiece: "coincident
+        // /duplicate facets are resolved by keeping one canonical representative"
+        // and the imprint must "create the shared edge once"). Two operand-B
+        // faces that share an edge lying ON this operand-A face each emit a seam
+        // here -- e.g. the asymmetric-chamfer cutter's oblique cut face and its
+        // apex face share the prism edge that lands on the box side face, so both
+        // intersect that box face along the SAME line. Imprinting both
+        // double-splits the face and orphans a coedge (the shell-closure
+        // violation #21 catches). This is an EXACT shared cutter edge, not a
+        // near-tangency, so it is a canonical-dedup, NOT a dossier-39 sec 3.2
+        // tangency suppression. The OTHER operand groups by ITS own face, so each
+        // B-face keeps its own imprint; only this A-face's duplicate drops.
+        if members.len() > 1 {
+            let mut keep: Vec<usize> = Vec::with_capacity(members.len());
+            for &i in &members {
+                let (ai, bi) = curve_endpoints(&seams[i].curve);
+                let mi = curve_point(&seams[i].curve, 0.5);
+                let dup = keep.iter().any(|&j| {
+                    let (aj, bj) = curve_endpoints(&seams[j].curve);
+                    let mj = curve_point(&seams[j].curve, 0.5);
+                    (mi - mj).norm() <= etol
+                        && (((ai - aj).norm() <= etol && (bi - bj).norm() <= etol)
+                            || ((ai - bj).norm() <= etol && (bi - aj).norm() <= etol))
+                });
+                if !dup {
+                    keep.push(i);
+                }
+            }
+            members = keep;
+        }
         let eps: Vec<(Vec3, Vec3)> = members
             .iter()
             .map(|&i| curve_endpoints(&seams[i].curve))
