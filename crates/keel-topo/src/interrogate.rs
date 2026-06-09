@@ -84,10 +84,73 @@ impl Body {
     /// approximation for curved faces (consistent with the curved volume
     /// oracle -- exact analytic area is a later refinement).
     pub fn face_area(&self, face: crate::entity::FaceKey) -> f64 {
+        if let Some(a) = self.analytic_curved_area(face) {
+            return a;
+        }
         self.tessellate_face(face)
             .iter()
             .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
             .sum()
+    }
+
+    /// Exact analytic area of a CURVED analytic face, reusing the same
+    /// angular/height trim the tessellator uses (so trimmed fillet bands
+    /// and primitive faces alike are exact). `None` -> use tessellation:
+    /// planar faces (already exact that way), NURBS faces, and trimmed
+    /// sphere/torus patches (whose partial area needs a UV integral).
+    fn analytic_curved_area(&self, face: crate::entity::FaceKey) -> Option<f64> {
+        use keel_geom::surface::Surface3;
+        let pi = core::f64::consts::PI;
+        let (sk, _) = self.faces.get(face).and_then(|f| f.surface)?;
+        let crate::entity::SurfaceGeom::Analytic(s) = self.surfaces.get(sk)? else {
+            return None;
+        };
+        let span = |o: Vec3, ex: Vec3, ey: Vec3, ez: Vec3| {
+            let (lo, hi) = self.cyl_angular_span(face, o, ex, ey, ez);
+            hi - lo
+        };
+        let height_range = |o: Vec3, ez: Vec3, extra: Option<f64>| {
+            let mut h = self.cyl_circle_heights(face, o, ez);
+            if let Some(e) = extra
+                && h.len() < 2
+            {
+                h.push(e);
+            }
+            if h.len() < 2 {
+                return None;
+            }
+            let lo = h.iter().cloned().fold(f64::INFINITY, f64::min);
+            let hi = h.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            Some((lo, hi))
+        };
+        match s {
+            Surface3::Plane(_) => None,
+            Surface3::Cylinder(c) => {
+                let f = &c.frame;
+                let (hlo, hhi) = height_range(f.origin, f.z, None)?;
+                Some(c.radius * span(f.origin, f.x, f.y, f.z) * (hhi - hlo))
+            }
+            Surface3::Cone(c) => {
+                let f = &c.frame;
+                let slope = c.half_angle.tan();
+                if slope == 0.0 {
+                    return None;
+                }
+                // Add the apex height (radius -> 0) if the face reaches it.
+                let (hlo, hhi) = height_range(f.origin, f.z, Some(-c.radius / slope))?;
+                let r_at = |h: f64| (c.radius + h * slope).abs();
+                let (r1, r2) = (r_at(hlo), r_at(hhi));
+                let slant = ((r2 - r1).powi(2) + (hhi - hlo).powi(2)).sqrt();
+                Some(0.5 * span(f.origin, f.x, f.y, f.z) * (r1 + r2) * slant)
+            }
+            Surface3::Sphere(sp) if self.face_covers_closed_surface(face) => {
+                Some(4.0 * pi * sp.radius * sp.radius)
+            }
+            Surface3::Torus(t) if self.face_covers_closed_surface(face) => {
+                Some(4.0 * pi * pi * t.major * t.minor)
+            }
+            Surface3::Sphere(_) | Surface3::Torus(_) => None,
+        }
     }
 
     /// Total surface area of the body (parity interrogation): the sum of
@@ -462,6 +525,52 @@ mod tests {
         b.block(Vec3::ZERO, 2.0, 3.0, 4.0).unwrap();
         let a = b.surface_area();
         assert!((a - 52.0).abs() < 1e-9, "block surface area {a} != 52");
+    }
+
+    #[test]
+    fn exact_curved_surface_area() {
+        use crate::entity::SurfaceGeom;
+        use keel_geom::surface::Surface3;
+        let pi = core::f64::consts::PI;
+        let cf = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        // Cylinder r=2 h=3: lateral = 2 pi r h = 12pi, now EXACT (analytic,
+        // not the tessellation undershoot).
+        let mut cyl = Body::new();
+        cyl.cylinder(cf.clone(), 2.0, 3.0).unwrap();
+        let lat = cyl
+            .face_keys()
+            .into_iter()
+            .find(|&f| {
+                matches!(
+                    cyl.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )
+            })
+            .unwrap();
+        assert!(
+            (cyl.face_area(lat) - 12.0 * pi).abs() < 1e-9,
+            "cylinder lateral area {} != 12pi",
+            cyl.face_area(lat)
+        );
+        // Cone r=2 h=3: lateral = pi r slant, slant = sqrt(4+9) = sqrt(13).
+        let mut cone = Body::new();
+        cone.cone(cf, 2.0, 3.0).unwrap();
+        let cl = cone
+            .face_keys()
+            .into_iter()
+            .find(|&f| {
+                matches!(
+                    cone.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Cone(_)))
+                )
+            })
+            .unwrap();
+        let expect = pi * 2.0 * 13.0_f64.sqrt();
+        assert!(
+            (cone.face_area(cl) - expect).abs() < 1e-9,
+            "cone lateral area {} != pi*r*sqrt(13)",
+            cone.face_area(cl)
+        );
     }
 
     #[test]

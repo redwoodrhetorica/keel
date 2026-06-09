@@ -2685,3 +2685,24 @@ faces (washer+cone+inner cylinder), validate ok, mesh_volume ~4pi/3 (Pappus
 (genus-0, belongs to revolve). Both pass -- the genus-1 constructor + cone-band
 geometry are robust beyond the rectangular case. Test-only; counter stays 73/144.
 GATE: exact CI triplet green (143 keel-topo, clippy -D warnings, fmt). Merged.
+
+## Addendum 85 (2026-06-09, overnight): EXACT analytic surface area for curved faces (stays 73/144)
+
+face_area now computes EXACT analytic area for curved analytic faces (was the
+tessellation undershoot), reusing the same trim the tessellator uses, so primitive
+faces AND trimmed fillet/revolve bands are exact:
+- Cylinder: r * dphi * dh (dphi = cyl_angular_span, dh = cyl_circle_heights range).
+- Cone: (dphi/2)(r1+r2) * slant, slant = sqrt(dr^2+dh^2); adds the apex height
+  (radius->0) when the face reaches it, so the cone primitive is exact too.
+- Sphere (full coverage): 4 pi r^2. Torus (full coverage): 4 pi^2 R r.
+- Planar faces -> None (tessellation already exact); NURBS + TRIMMED sphere/torus
+  patches -> None (fall back to tessellation; a UV-integral exact area is a
+  follow-up). Made tessellate.rs::cyl_angular_span pub(crate) (cyl_circle_heights
+  already was, face_covers_closed_surface is pub).
+Test: cylinder lateral r=2 h=3 -> 12pi exact; cone lateral -> pi*r*sqrt(13) exact.
+NOTE: a cylinder/cone BODY surface_area is still slightly off because the planar
+DISC caps tessellate to a 32-gon -- exact single-circle-disc planar area
+(pi r^2, the mass_properties single_circle_disc path) is the matching follow-up.
+RUNNING TOTAL: stays 73/144 (accuracy improvement to the area interrogation).
+GATE: exact CI triplet green (144 keel-topo, clippy -D warnings, fmt). No fuzz --
+read-only query. Merged.
