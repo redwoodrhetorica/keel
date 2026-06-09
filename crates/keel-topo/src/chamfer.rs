@@ -175,13 +175,16 @@ mod tests {
         let dir = t * (len + 2.0 * margin);
         let mut cutter = Body::new();
         cutter.prism(&profile, dir).unwrap();
-        if let Ok(res) = boolean(&b, &cutter, BoolOp::Difference, 1e-7) {
-            let v = res.body.mass_properties().unwrap().volume;
-            let mv = res.body.mesh_volume();
-            assert!(
-                (v - 7.5).abs() < 1e-6 && (mv - 7.5).abs() < 0.05,
-                "asymmetric chamfer must be 7.5 (got mass {v}, mesh {mv}) or decline"
-            );
-        }
+        let res = boolean(&b, &cutter, BoolOp::Difference, 1e-7).expect(
+            "asymmetric chamfer must now ASSEMBLE (LAYER 1 seam dedup + LAYER 2 \
+                     vertex-bounded fin sampling + degenerate-fragment filter)",
+        );
+        assert!(res.body.validate().is_ok(), "asym chamfer body invalid");
+        let v = res.body.mass_properties().unwrap().volume;
+        let mv = res.body.mesh_volume();
+        assert!(
+            (v - 7.5).abs() < 1e-6 && (mv - 7.5).abs() < 1e-6,
+            "asymmetric chamfer must be the true 7.5 with mass == mesh (got mass {v}, mesh {mv})"
+        );
     }
 }
