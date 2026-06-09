@@ -3588,3 +3588,17 @@ Follow-ups (documented): multi-face / curved sheets thicken via offset-both-side
 (not needed for validation, useful for API clarity). No boolean.rs change, so fuzz is unchanged.
 GATE: workspace 108 + 77 + 164 green (two new sheet tests), clippy -D warnings, fmt. Merged.
 SHELL FAMILY COMPLETE: 41/42/43/44/45 all done.
+
+## Addendum 118 (2026-06-09, attended): TRIM a sheet by a plane (item 72) -- first Phase-5 sheet op. 87 -> 88/144
+
+Body::trim_by_plane(plane_point, plane_normal): the first sheet operation on the new sheet-body
+representation. Keeps the portion of a planar sheet on the BACK side of the plane ((p-pt).n <= 0)
+by clipping the boundary polygon to that half-space with a single-plane Sutherland-Hodgman pass
+(emit each inside vertex; at a crossing edge emit the plane intersection point t = da/(da-db)),
+then rebuilds the kept polygon as a sheet via planar_sheet. ORACLE: a 4x4 sheet trimmed by x=2
+(normal +x) -> a 2x4 sheet; thickened by 1 -> volume 8 (so the kept half is exactly right). MVP:
+single planar face, simple boundary; trim by a general SURFACE and trimming solid faces are
+follow-ups on the same clip. No boolean.rs change -> fuzz unchanged.
+GATE: workspace 108 + 77 + 165 green, clippy -D warnings, fmt. Merged.
+PHASE 5 progress: 72 (trim) done; 70 (extend) / 71 (knit-sew, with closure->solid promotion) /
+76 (split) / 77 (slice) remain, all on the sheet-body foundation.
