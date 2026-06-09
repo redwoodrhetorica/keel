@@ -2834,3 +2834,26 @@ corner (0,0,0)'s 3 edges hidden, the other 9 visible; degenerate view -> empty.
 Completes the Phase-6 render trio (facets 95 + silhouette 97 + HLR 96) on the shared
 tessellation. Read-only query -> no fuzz needed.
 GATE: exact CI triplet green (150 keel-topo, clippy -D warnings, fmt). Merged.
+
+## Addendum 92 (2026-06-09, attended): multi-section loft / skin (item 66) -- 76 -> 77/144
+
+Body::loft_sections(&[&[Vec3]]): loft/skin through K >= 2 parallel-ish sections, each
+an n-point polygon with matching vertex count (parity item 66, Phase 2). Builds the
+section-0 cap, then ONE band of n side faces per consecutive section pair, threading
+the intermediate section rings through as uncapped edge loops (the seed face's loop
+always bounds the current top rim, so each band just repeats verticals + n side mefs),
+then the final cap. loft(bottom, top) is now the K=2 case (delegates here -- existing
+loft + extrude_tapered tests unchanged, confirming the refactor). Side quads across
+each consecutive pair must be PLANAR (checked).
+RESEARCH REVIEW (file 26 transfinite/n-sided, S2 Gordon): "lofting/skinning is the
+degenerate Gordon case with only one family of curves," and sections must be
+COMPATIBLE (matching parameterization). The matching-vertex-count + planar-side-quad
+polygon skin is exactly that discrete case. Deferred per the dossier: smooth-NURBS
+skinning with cross-section continuity (twist compatibility, knot-vector merge, G1/G2
+ribbons) -- that is the items-66/67 "with guides + continuity" refinement, needing the
+NURBS surfacing core.
+Test: three 2x2 squares stacked at z=0,1,2 -> a 2x2x2 box with a mid-section edge ring
+(no mid cap), 10 faces, (v,e,f)=(12,20,10), volume 8 exact; edges lie on adjacent
+surfaces. Constructor over existing Euler ops (mev/mef), no boolean/tessellate_planar
+change -> no new fuzz.
+GATE: exact CI triplet green (151 keel-topo, clippy -D warnings, fmt). Merged.
