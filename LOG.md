@@ -3416,3 +3416,21 @@ m16c-tangent-seam-dedup branch can be retired (its idea was reimplemented correc
 on current master; its build_result_solid/assemble_open_chain target is gone).
 GATE: exact CI triplet green (workspace 108 math + 77 geom + 157 topo incl. strict asym chamfer,
 clippy -D warnings, fmt) + fuzz_boolean (WSL nightly, 200s, Done 307 runs, clean). Merged.
+
+## Addendum 111 (2026-06-09, attended): SHIP variable/asymmetric chamfer public API (item 53). 82 -> 83/144
+
+With the Addendum-110 keystone in place, the public API is a thin generalization of chamfer_edge.
+Added Body::chamfer_edge_asymmetric(edge, d1, d2): independent setbacks on the two adjacent
+planar faces (faces_around_edge order), same transversal-prism cutter with an apex well outside
+the body. chamfer_edge(edge, d) now delegates to it with d1==d2==d (no behavior change; the
+symmetric path stays the 45-degree tripwire at 7.75). The asym-chamfer test was rewritten to
+drive the PUBLIC API (chamfer_edge_asymmetric(e, 0.5, 1.0)) and asserts the true 7.5 with
+mass == mesh, validate ok. This converts the Addendum-110 keystone into a shipped, counted
+feature: parity item 53 (variable / two-offset chamfer). Item 52 (constant chamfer) was already
+counted.
+COUNTER: 82 -> 83/144.
+GATE: workspace 108 + 77 + 157 green (incl. the public-API asym chamfer test), clippy -D
+warnings, fmt. fuzz unchanged: this addendum touches only chamfer.rs (a wrapper over the boolean
+fuzzed clean at the Addendum-110 merge); the boolean pipeline is byte-identical. Merged.
+NEXT (unblock family): shell (41), thicken (44), fillet/blend (47-60) -- all now have their
+general-position assembly foundation. Re-read the relevant dossier before each.
