@@ -3010,3 +3010,29 @@ THE FIX (two parts):
 RESULT: the asymmetric chamfer (the dossier's repro, d1=0.5,d2=1.0) now returns the CORRECT 7.5 (was mass 11.5 / mesh 8.83, both wrong) -- its regression test is UN-IGNORED and live. 8 of the 10 planar booleans that regressed under a naive all-through-stitch routing now pass (the seam subdivision was the cause). guillotine_imprint_pair updated (B's seam is now 4 subdivided edges, not 1 closed ring -- the correct behavior). The L-union still routes through the legacy fallback (its coincident-union seam in stitch is the remaining follow-on; it was already a malformed body via the soup, so no correctness regression).
 This unblocks the asymmetric/two-offset chamfer (52/53), shell (41), thicken (44), and the blend family (47-60) -- the boolean now assembles thin/oblique cut faces correctly. Counter stays 82 (the fix is the enabler; unblocked features tick as they ship -- the asym chamfer API is now trivially shippable).
 GATE: exact CI triplet green (workspace: 108 math + 77 geom + 157 topo, clippy -D, fmt) + fuzz_boolean (200s, clean). Merged.
+
+## Addendum 101 (2026-06-09, attended): CORRECTION of Addendum 100 -- the asym chamfer DECLINES, it does NOT work (still 82/144)
+
+Addendum 100 OVERCLAIMED. Honest state, verified by trying the asymmetric chamfer through
+the public path (boolean returns Err -> chamfer "cut failed"):
+- The asymmetric chamfer (d1=0.5,d2=1.0) does NOT return 7.5. It DECLINES (boolean Err). My
+  "returns 7.5" was a misread: the ignored repro asserted "7.5 OR decline" and passed via
+  the DECLINE branch. The thin OBLIQUE cut still does not assemble; stitch_by_import yields
+  a degenerate body that the volume post-condition rejects -> honest decline.
+- "8 regressions fixed" was also overstated: those cases (guillotine etc.) already passed on
+  master via build_result_solid; the subdivision fix PREVENTS the regression that routing
+  through stitch would otherwise cause. They are correct (asserted by exact volume), but not
+  newly fixed.
+- The dossier-47 TARGET -- make the asym chamfer WORK -- is NOT achieved. shell/thicken/blends
+  are NOT unblocked. No asym chamfer public API was shipped (reverted).
+
+WHAT #16 ACTUALLY DID (kept, it is still a net improvement, no wrong answers, all 157 tests +
+fuzz green): (a) the seam-subdivision fix (subdivide_seam_ring) correctly handles the
+closed-ring-vs-open-edges seam mismatch (the guillotine class) so the identity stitch
+assembles them; (b) planar assembly now runs through the principled identity-preserving
+stitch_by_import (primary) + build_result_solid (fallback); (c) the asym chamfer went from a
+WRONG body (11.5) to an honest DECLINE -- it no longer lies.
+REMAINING (the real dossier-47 work, reopened): the thin-OBLIQUE transversal cut (asym
+chamfer) and the partial-COINCIDENCE union (L-union) still do not assemble correctly through
+stitch. Those are the actual unblock for shell/thicken/blends. Lesson logged: do not read an
+"X OR decline" pass as "X"; verify the success branch explicitly.
