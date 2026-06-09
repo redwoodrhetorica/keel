@@ -2600,3 +2600,37 @@ genus-1 constructor (like torus()'s kfmrh handle-punch), not a boolean. Queued.
 RUNNING TOTAL: 70 -> 71/144 (closest-point interrogation).
 GATE: exact CI triplet green (138 keel-topo, clippy -D warnings, fmt). No fuzz --
 read-only query + a safe point-triangle refactor. Merged.
+
+## Addendum 81 (2026-06-08): GENUS-1 solid of revolution (tube / annular) via research file 45 -- 72/144
+
+revolve_closed(frame, profile) -> a full-360 solid of revolution of a CLOSED,
+OFF-AXIS meridian (all radii > 0) = a GENUS-1 (toroidal) solid: tube / hollow
+cylinder / annular ring. The construction follows file 45's derived, Euler-
+Poincare-checked sequence, validated against Keel's validator on the first tube:
+  mvfs(p0) + mef_on_vertex_loop  -> seed + C0 latitude + bottom cap
+  per segment 0..n-2: mev (next latitude) + mef (close band)  -> n-1 lateral bands
+  kfmrh(top_cap, bottom_cap)     -> PUNCH THE HANDLE (genus 0->1); the bottom cap
+                                    absorbs the top cap's circle as a ring and
+                                    becomes the closing inner band (2 loops)
+  mekr(outer_fin, ring_fin)      -> add the inner band's meridian seam
+  kemr each interior washer seam -> 2-loop holed annulus caps (Addendum 79 trick)
+For the hollow cylinder [(1,0),(2,0),(2,1),(1,1)] this lands exactly on the
+dossier's V4 E8 F4 (then E6 R2 after the two washer kemrs), debug_validate clean.
+The diagnostic that nailed the close: build seed+3 bands -> 3 lateral bands + 2
+end caps (C0 at v0, C3 at v3); kfmrh fuses them into the handle, mekr seams it.
+Geometry: cylinder/cone/washer-plane per segment (reusing revolve's logic + the
+-sign(dr) washer normal); CCW profile normalization. Test: tube r_in=1 r_out=2
+h=1 -> 4 faces (bottom washer, outer cyl, top washer, inner cyl), validate ok,
+mesh_volume ~3pi = pi(4-1)(1).
+KNOWN FOLLOW-UP: analytic mass_properties returns 5pi not 3pi -- the inner band's
+contribution ADDS rather than subtracts pi (a region-solidity orientation
+subtlety on the kfmrh-punched face). mesh_volume (sense-based tessellation) is
+correct, so the GEOMETRY is right; exact analytic volume on the genus-1 face is
+deferred (revolve_partial shipped on mesh_volume too).
+EARLIER (logged, reverted): both BOOLEAN routes to a tube fail -- coaxial-
+coincident Difference -> stitch-invalid; transversal Difference -> valid but inner
+wall mis-bounded (Addendum 80). Hence the from-scratch constructor.
+RUNNING TOTAL: 71 -> 72/144 (genus-1 tube/annular solid of revolution).
+GATE: exact CI triplet green (139 keel-topo, clippy -D warnings, fmt). No fuzz --
+constructor; uses existing Euler ops + holed-face path, no boolean/winding change.
+Merged.

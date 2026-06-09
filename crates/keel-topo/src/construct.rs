@@ -616,6 +616,217 @@ impl Body {
         })
     }
 
+    /// Full 360-degree solid of revolution of a CLOSED, OFF-AXIS meridian
+    /// `profile` of (radius, height) points about `frame.z` -- a GENUS-1
+    /// (toroidal) solid such as a tube / hollow cylinder or annular ring.
+    /// Every profile point must be off the axis (radius > 0); the profile
+    /// is an implicitly-closed loop (the last segment runs profile[n-1] ->
+    /// profile[0]). Each segment revolves to a cylinder / cone / washer
+    /// band as in `revolve`; the cycle is closed by one `kfmrh` handle-
+    /// punch plus a `mekr` seam (research file 45), and interior washer
+    /// bands are `kemr`'d to 2-loop holed faces. Profiles that touch the
+    /// axis (poles, genus 0) are out of scope -- use `revolve`.
+    pub fn revolve_closed(
+        &mut self,
+        frame: Frame3,
+        profile: &[(f64, f64)],
+    ) -> Result<PrimitiveOut, TopoError> {
+        let n = profile.len();
+        if n < 3 {
+            return Err(TopoError::Precondition("revolve_closed: need 3+ points"));
+        }
+        if profile
+            .iter()
+            .any(|&(r, h)| !r.is_finite() || !h.is_finite() || r <= 0.0)
+        {
+            return Err(TopoError::Precondition(
+                "revolve_closed: profile must be off-axis (radius > 0) and finite",
+            ));
+        }
+        // Normalize to CCW in the (r, h) plane so the washer/cylinder
+        // outward conventions below come out right.
+        let signed: f64 = (0..n)
+            .map(|i| {
+                let (r0, h0) = profile[i];
+                let (r1, h1) = profile[(i + 1) % n];
+                r0 * h1 - r1 * h0
+            })
+            .sum();
+        let prof: Vec<(f64, f64)> = if signed < 0.0 {
+            profile.iter().rev().copied().collect()
+        } else {
+            profile.to_vec()
+        };
+
+        let (o, ex, ey, ez) = (frame.origin, frame.x, frame.y, frame.z);
+        let s = |i: usize| o + ex * prof[i].0 + ez * prof[i].1;
+
+        let mut reports = Vec::new();
+        let r = self.infinite_region();
+        let seed = self.mvfs(r, s(0))?;
+        reports.push(seed.report.clone());
+        let lp = self
+            .faces
+            .get(seed.face)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let first = self.mef_on_vertex_loop(lp, None)?;
+        reports.push(first.report.clone());
+
+        // Bands for segments 0..n-2; the closing inner band (segment n-1)
+        // is built by the handle-punch below.
+        let mut bands: Vec<(FaceKey, usize, usize, EdgeKey)> = Vec::new();
+        let mut cur_face = seed.face;
+        let mut cur_lp = lp;
+        let mut cur_vertex = seed.vertex;
+        for i in 0..n - 1 {
+            let fin = self.fin_ending_at(cur_lp, cur_vertex)?;
+            let up = self.mev(MevSite::AfterFin(fin), s(i + 1))?;
+            reports.push(up.report);
+            let at = self.fin_ending_at(cur_lp, up.vertex)?;
+            let cap = self.mef(at, at, None)?;
+            reports.push(cap.report.clone());
+            bands.push((cur_face, i, i + 1, up.edge));
+            cur_face = cap.face;
+            cur_lp = self
+                .faces
+                .get(cap.face)
+                .map(|f| f.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            cur_vertex = up.vertex;
+        }
+        // Close the cycle (file 45): kfmrh punches the handle (genus 0->1)
+        // -- `first` absorbs the top cap's circle as a ring, becoming the
+        // inner closing band -- then mekr adds that band's meridian seam.
+        let top_cap = cur_face;
+        reports.push(self.kfmrh(top_cap, first.face)?);
+        let loops = self
+            .faces
+            .get(first.face)
+            .map(|f| f.loops.clone())
+            .ok_or(TopoError::StaleKey)?;
+        if loops.len() != 2 {
+            return Err(TopoError::Precondition(
+                "revolve_closed: handle punch did not yield a ring",
+            ));
+        }
+        let fo = self
+            .loops
+            .get(loops[0])
+            .and_then(|l| l.fin)
+            .ok_or(TopoError::StaleKey)?;
+        let fr = self
+            .loops
+            .get(loops[1])
+            .and_then(|l| l.fin)
+            .ok_or(TopoError::StaleKey)?;
+        let seam = self.mekr(fo, fr)?;
+        reports.push(seam.report);
+        bands.push((first.face, n - 1, 0, seam.edge));
+        self.debug_validate();
+
+        // Interior washer bands (horizontal segment) -> kemr the seam into
+        // a proper 2-loop holed face (a seam-bridged annulus mis-tessellates).
+        for &(_, lo, hi, sm) in &bands.clone() {
+            if (prof[lo].1 - prof[hi].1).abs() < 1e-12 {
+                let fin = self
+                    .edges
+                    .get(sm)
+                    .and_then(|e| e.radial.first().copied())
+                    .ok_or(TopoError::Precondition("revolve_closed washer: seam fin"))?;
+                reports.push(self.kemr(fin)?);
+            }
+        }
+        self.debug_validate();
+
+        // ---- geometry attach: cylinder / cone / washer-plane per band ----
+        let axis_at = |h: f64| o + ez * h;
+        for &(fk, lo, hi, _) in &bands {
+            let (r_lo, h_lo) = prof[lo];
+            let (r_hi, h_hi) = prof[hi];
+            if (h_hi - h_lo).abs() < 1e-12 {
+                // Flat washer; outward z = -sign(dr) on a CCW meridian.
+                let nz = if r_hi > r_lo { ez * -1.0 } else { ez };
+                let f = Frame3::from_z(axis_at(h_lo), nz).map_err(geom_err)?;
+                self.attach_face_surface(
+                    fk,
+                    SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(f))),
+                    true,
+                );
+            } else if (r_hi - r_lo).abs() < 1e-12 {
+                let cyl_frame = Frame3 {
+                    origin: axis_at(h_lo),
+                    x: ex,
+                    y: ey,
+                    z: ez,
+                };
+                self.attach_face_surface(
+                    fk,
+                    SurfaceGeom::Analytic(Surface3::Cylinder(
+                        Cylinder3::new(cyl_frame, r_lo).map_err(geom_err)?,
+                    )),
+                    h_hi > h_lo,
+                );
+                self.attach_revolve_band_pcurves(fk, h_lo, o, ez)?;
+            } else {
+                let slope = (r_hi - r_lo) / (h_hi - h_lo);
+                let cone_frame = Frame3 {
+                    origin: axis_at(h_lo),
+                    x: ex,
+                    y: ey,
+                    z: ez,
+                };
+                self.attach_face_surface(
+                    fk,
+                    SurfaceGeom::Analytic(Surface3::Cone(
+                        Cone3::new(cone_frame, r_lo, slope.atan()).map_err(geom_err)?,
+                    )),
+                    h_hi > h_lo,
+                );
+                self.attach_revolve_band_pcurves(fk, h_lo, o, ez)?;
+            }
+        }
+
+        // Edges: closed -> latitude circle, open -> meridian seam line.
+        let edge_keys: Vec<EdgeKey> = self.edges.iter().map(|(k, _)| k).collect();
+        let mut all_edges = Vec::new();
+        for ek in edge_keys {
+            let edge = self.edges.get(ek).ok_or(TopoError::StaleKey)?;
+            let (va, vb) = edge.bounds;
+            let closed = edge.is_closed();
+            let pa = self
+                .vertices
+                .get(va)
+                .map(|v| v.point)
+                .ok_or(TopoError::StaleKey)?;
+            if closed {
+                let h = (pa - o).dot(ez);
+                let center = axis_at(h);
+                let radius = (pa - center).norm();
+                let circle = Circle3::new(center, ex, ey, radius).map_err(geom_err)?;
+                self.attach_edge_curve(ek, Curve3::Circle(circle), true);
+            } else {
+                let pb = self
+                    .vertices
+                    .get(vb)
+                    .map(|v| v.point)
+                    .ok_or(TopoError::StaleKey)?;
+                let line = Line3::new(pa, pb - pa).map_err(geom_err)?;
+                self.attach_edge_curve(ek, Curve3::Line(line), true);
+            }
+            all_edges.push(ek);
+        }
+
+        let faces: Vec<FaceKey> = bands.iter().map(|&(f, _, _, _)| f).collect();
+        let vertices: Vec<VertexKey> = self.vertices.iter().map(|(k, _)| k).collect();
+        Ok(PrimitiveOut {
+            faces,
+            edges: all_edges,
+            vertices,
+            reports,
+        })
+    }
+
     /// Partial (wedge) solid of revolution through angle `theta` of a
     /// CLOSED meridian `profile` of (radius, height) points about
     /// `frame.z`, with `frame.x` the phi=0 reference. Unlike the full
@@ -1732,6 +1943,28 @@ mod tests {
         assert!(
             (mv - expect).abs() < expect * 0.01,
             "stepped cylinder mass_properties {mv} != ~5pi"
+        );
+    }
+
+    #[test]
+    fn revolve_closed_hollow_cylinder() {
+        // Closed off-axis profile r_in=1, r_out=2, h=1 -> a tube (genus-1).
+        // Faces: bottom washer, outer cylinder, top washer, inner cylinder.
+        // Volume = pi(r_out^2 - r_in^2) h = pi(4-1)(1) = 3pi.
+        let mut b = Body::new();
+        let out = b
+            .revolve_closed(z_up(), &[(1.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0)])
+            .unwrap();
+        assert!(b.validate().is_ok(), "tube invalid: {:?}", b.validate());
+        assert_eq!(out.faces.len(), 4, "tube face count");
+        // Geometry validated by the pcurve-free divergence oracle (exact
+        // analytic mass_properties on the genus-1 inner band is a follow-up
+        // -- a region-orientation subtlety on the kfmrh-punched face).
+        let expect = 3.0 * core::f64::consts::PI;
+        let v = b.mesh_volume();
+        assert!(
+            (v - expect).abs() < expect * 0.01,
+            "tube mesh_volume {v} != ~3pi"
         );
     }
 
