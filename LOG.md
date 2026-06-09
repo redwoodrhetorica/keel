@@ -2443,3 +2443,32 @@ GATE: exact CI triplet green (127 keel-topo, clippy -D warnings, fmt) + fuzz_boo
 soak (loop_polygon + cyl_angular_span are the winding-classifier hot path; the
 arc_sweep paths are gated on Some, inert for the full-primitive fuzz corpus).
 Merged.
+
+## Addendum 74 (2026-06-08): RIGID BODY TRANSFORM (rotation + translation) -- 65/144 (first counter advance since partial revolve)
+
+Body::transformed(&Transform3) -> Body (new file crates/keel-topo/src/transform.rs):
+the same isometry carries every vertex point and every analytic surface/curve
+FRAME; radii/angles are invariant because the motion is rigid; pcurves (parameter
+space) are untouched. Foundational for assemblies/instancing; mirror (reflection)
+and NURBS-body transforms are follow-ups.
+GUARD: the linear part must be a proper rotation -- the basis images must stay
+orthonormal (rigid -> radii preserved) and right-handed. A scale/shear (non-
+orthonormal) is rejected ("rigid only"); a reflection (det < 0) is rejected
+("mirror is a follow-up"). NURBS surfaces/curves error ("follow-up").
+KEY CORRECTNESS CATCH: the curve/surface arenas hold MORE than the 3D model
+geometry -- a 12-edge box's arena had 36 curves (edge lines + fin PCURVES, which
+live in the same arena, + construction orphans, including a NURBS pcurve).
+Transforming every arc would have corrupted the pcurves (they are UV parameter-
+space curves and must NOT move in 3D). Fix: transform ONLY geometry REFERENCED by
+the topology -- surfaces via face.surface, curves via edge.curve (deduped through
+a HashSet); pcurves (fin.pcurve) and orphans are deliberately left alone.
+Test: 2^3 block rotated pi/2 about z then translated +5x -> validate ok,
+mass_properties volume invariant at 8, bbox exactly [3,5]x[0,2]x[0,2]. Plus a
+rejection test for uniform scale and for an x-reflection.
+NOTE (cleanliness, not a bug): construction leaves orphan curves in the arena (36
+vs 12 referenced for a box). Harmless (unreferenced geometry is ignored by
+tessellation/mass_properties/validate) but a future arena-compaction pass could
+reclaim them.
+RUNNING TOTAL: 64 -> 65/144 (body transform, a fresh capability).
+GATE: exact CI triplet green (129 keel-topo, clippy -D warnings, fmt). No fuzz
+needed -- additive new op, no boolean/tessellation-pipeline change. Merged.

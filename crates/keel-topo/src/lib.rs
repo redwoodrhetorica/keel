@@ -25,6 +25,7 @@ pub mod session;
 pub mod simplify;
 pub mod step_export;
 pub mod tessellate;
+pub mod transform;
 pub mod tweak;
 pub mod validate;
 pub mod winding;
