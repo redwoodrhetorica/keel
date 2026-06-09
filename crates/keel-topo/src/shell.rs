@@ -144,6 +144,35 @@ impl Body {
             .map_err(|_| TopoError::Precondition("split: front piece failed"))?;
         Ok((pb, pf))
     }
+
+    /// Slice a solid by a list of parallel cutting planes (parity item 77):
+    /// planes at `point + off * normal` for each `off` in `offsets`, yielding
+    /// the ordered pieces between consecutive planes (N offsets -> N+1
+    /// pieces). Implemented as a repeated [`split_by_plane`](Self::split_by_plane)
+    /// (split off the back piece at each plane in increasing order, carry the
+    /// front forward), so it inherits split's coverage. A piece that an
+    /// offset does not actually cut comes back equal to the carried body.
+    pub fn slice(
+        &self,
+        point: Vec3,
+        normal: Vec3,
+        offsets: &[f64],
+    ) -> Result<Vec<Body>, TopoError> {
+        let n = normal
+            .try_normalize()
+            .ok_or(TopoError::Precondition("slice: degenerate normal"))?;
+        let mut sorted: Vec<f64> = offsets.iter().copied().filter(|o| o.is_finite()).collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mut pieces = Vec::with_capacity(sorted.len() + 1);
+        let mut remaining = self.clone();
+        for &off in &sorted {
+            let (back, front) = remaining.split_by_plane(point + n * off, n)?;
+            pieces.push(back);
+            remaining = front;
+        }
+        pieces.push(remaining);
+        Ok(pieces)
+    }
 }
 
 #[cfg(test)]
@@ -169,6 +198,22 @@ mod tests {
             (vb - 32.0).abs() < 1e-6 && (vf - 32.0).abs() < 1e-6,
             "split halves must each be 32 (got back {vb}, front {vf})"
         );
+    }
+
+    #[test]
+    fn slice_box_into_three() {
+        // Slice a 6^3 box at x=2 and x=4 -> three 2x6x6 = 72 slabs.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 6.0, 6.0, 6.0).unwrap();
+        let pieces = b
+            .slice(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), &[2.0, 4.0])
+            .unwrap();
+        assert_eq!(pieces.len(), 3, "two offsets must give three pieces");
+        for p in &pieces {
+            assert!(p.validate().is_ok(), "slice piece invalid");
+            let v = p.mass_properties().unwrap().volume;
+            assert!((v - 72.0).abs() < 1e-6, "each slab must be 72 (got {v})");
+        }
     }
 
     #[test]
