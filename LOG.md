@@ -2786,3 +2786,21 @@ massprops. Counter stays 73 (a correctness fix making an existing capability exa
 genus-1 / any reversed-sense body, not a new map item).
 GATE: exact CI triplet green (147 keel-topo, clippy -D warnings, fmt) + fuzz_boolean.
 Merged.
+
+## Addendum 89 (2026-06-09, attended): render facets + lines (item 95) -- 73 -> 74/144
+
+Body::render_mesh() -> RenderMesh { facets: Vec<RenderFacet{tri,normal}>, edges:
+Vec<Vec<Vec3>> }: the render-ready output a viewer consumes (parity item 95, Phase 6
+rendering). Facets reuse the existing outward tessellation (tessellate_face, the same
+triangles the volume oracle uses, each CCW about its outward normal); the per-facet
+unit normal is the triangle's own normal (flat shading). The wireframe is one polyline
+per topological edge via a new edge_polyline() helper: straight edges (line / degree-1
+NURBS) emit their two endpoints exactly; circular/elliptic arcs sample 32 segments
+between their endpoint parameters (a full revolution for a closed edge, detected by
+coincident endpoint params); NURBS edges sample their parameter domain. Honest
+deferral: an open NURBS sub-arc samples its whole domain (most NURBS edges are full
+curves), and a reflex circular arc takes the increasing-parameter direction.
+Test: block 2^3 -> 12 facets + 12 two-point edges, all normals unit; cylinder -> >12
+facets + sampled rim polylines whose points lie on radius 1 about the axis.
+A read-only query (no topology mutation, no boolean pipeline touch) -> no fuzz needed.
+GATE: exact CI triplet green (148 keel-topo, clippy -D warnings, fmt). Merged.
