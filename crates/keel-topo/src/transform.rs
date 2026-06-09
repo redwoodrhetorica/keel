@@ -1,28 +1,63 @@
-//! Rigid body transform (rotation + translation): moving a body in space.
+//! Rigid body transform (rotation + translation) and mirror (reflection).
 //! The same isometry carries every vertex point and every analytic
 //! surface/curve frame; radii and angles are invariant because the motion
-//! is rigid, and pcurves (parameter space) are untouched. Reflections
-//! (mirror) flip handedness and need a sense flip -- a follow-up; so is
-//! transforming NURBS-carried geometry (control-point image).
+//! is rigid, and pcurves (parameter space) are untouched.
+//!
+//! Reflection (mirror) needs NO special orientation handling: reflecting
+//! every frame directly sends frame.z -> M(frame.z), so the outward normal
+//! (mass_properties uses frame.z x region-solidity; tessellation uses
+//! frame.z x sense) maps to M(N); and because M is orthogonal the face's
+//! (u, v) coordinates are preserved, so pcurves stay valid. The frame goes
+//! left-handed, but nothing relies on its chirality. Transforming NURBS
+//! geometry is the one follow-up.
 
 use crate::Body;
 use crate::body::TopoError;
 use crate::entity::SurfaceGeom;
 use keel_geom::curve::{Circle3, Curve3, Ellipse3, Line3};
 use keel_geom::surface::{Cone3, Cylinder3, Frame3, Plane3, Sphere3, Surface3, Torus3};
+use keel_math::mat::Mat3;
 use keel_math::transform::Transform3;
 use keel_math::vec::Vec3;
 use std::collections::HashSet;
 
 impl Body {
     /// Apply a RIGID motion (rotation + translation) to a copy of the
-    /// body. Errors if `t` is not a proper isometry -- a reflection would
-    /// flip orientation (mirror is a follow-up) and a scale/shear would
-    /// change radii -- or if the body carries NURBS geometry.
+    /// body. Errors if `t` is not a proper rotation -- a reflection (use
+    /// [`Body::mirrored`]) or a scale/shear -- or if the body carries
+    /// NURBS geometry.
     pub fn transformed(&self, t: &Transform3) -> Result<Body, TopoError> {
-        // The linear part must be a proper rotation: basis images stay
-        // orthonormal (rigid, so radii are preserved) and right-handed
-        // (no reflection).
+        match Self::isometry_kind(t)? {
+            IsometryKind::Rotation => self.apply_isometry(t),
+            IsometryKind::Reflection => Err(TopoError::Precondition(
+                "transform: reflection -- use Body::mirrored",
+            )),
+        }
+    }
+
+    /// Mirror a copy of the body across the plane through `plane_point`
+    /// with unit-able normal `plane_normal`. Works for analytic faces
+    /// (planar and curved); NURBS-carried geometry is a follow-up.
+    pub fn mirrored(&self, plane_point: Vec3, plane_normal: Vec3) -> Result<Body, TopoError> {
+        let m = plane_normal
+            .try_normalize()
+            .ok_or(TopoError::Precondition("mirror: degenerate plane normal"))?;
+        // Householder reflection R(x) = (I - 2 m m^T) x + 2 (plane_point . m) m.
+        let linear = Mat3::from_cols(
+            Vec3::new(1.0, 0.0, 0.0) - m * (2.0 * m.x),
+            Vec3::new(0.0, 1.0, 0.0) - m * (2.0 * m.y),
+            Vec3::new(0.0, 0.0, 1.0) - m * (2.0 * m.z),
+        );
+        let t = Transform3 {
+            linear,
+            translation: m * (2.0 * plane_point.dot(m)),
+        };
+        self.apply_isometry(&t)
+    }
+
+    /// Classify a transform's linear part. Errors on scale/shear (non-
+    /// orthonormal), where radii would not be preserved.
+    fn isometry_kind(t: &Transform3) -> Result<IsometryKind, TopoError> {
         let xx = t.apply_vector(Vec3::new(1.0, 0.0, 0.0));
         let yy = t.apply_vector(Vec3::new(0.0, 1.0, 0.0));
         let zz = t.apply_vector(Vec3::new(0.0, 0.0, 1.0));
@@ -34,15 +69,20 @@ impl Body {
             && yy.dot(zz).abs() < 1e-9;
         if !orthonormal {
             return Err(TopoError::Precondition(
-                "transform: rigid (rotation+translation) only -- scale/shear unsupported",
+                "transform: rigid (rotation/reflection) only -- scale/shear unsupported",
             ));
         }
-        if xx.cross(yy).dot(zz) < 0.0 {
-            return Err(TopoError::Precondition(
-                "transform: reflection (mirror) is a follow-up",
-            ));
-        }
+        Ok(if xx.cross(yy).dot(zz) >= 0.0 {
+            IsometryKind::Rotation
+        } else {
+            IsometryKind::Reflection
+        })
+    }
 
+    /// Shared isometry application: carry every vertex point and every
+    /// referenced analytic surface/curve frame by `t`. Works identically
+    /// for rotations and reflections (see the module note).
+    fn apply_isometry(&self, t: &Transform3) -> Result<Body, TopoError> {
         let mut out = self.clone();
         let fr = |f: &Frame3| Frame3 {
             origin: t.apply_point(f.origin),
@@ -70,38 +110,36 @@ impl Body {
             let Some(s) = out.surfaces.get(k).cloned() else {
                 continue;
             };
-            let ns = match s {
-                SurfaceGeom::Analytic(a) => SurfaceGeom::Analytic(match a {
-                    Surface3::Plane(p) => Surface3::Plane(Plane3 {
-                        frame: fr(&p.frame),
-                    }),
-                    Surface3::Cylinder(c) => Surface3::Cylinder(Cylinder3 {
-                        frame: fr(&c.frame),
-                        radius: c.radius,
-                    }),
-                    Surface3::Cone(c) => Surface3::Cone(Cone3 {
-                        frame: fr(&c.frame),
-                        radius: c.radius,
-                        half_angle: c.half_angle,
-                    }),
-                    Surface3::Sphere(c) => Surface3::Sphere(Sphere3 {
-                        frame: fr(&c.frame),
-                        radius: c.radius,
-                    }),
-                    Surface3::Torus(c) => Surface3::Torus(Torus3 {
-                        frame: fr(&c.frame),
-                        major: c.major,
-                        minor: c.minor,
-                    }),
+            let SurfaceGeom::Analytic(a) = s else {
+                return Err(TopoError::Precondition(
+                    "transform: NURBS surfaces are a follow-up",
+                ));
+            };
+            let na = match a {
+                Surface3::Plane(p) => Surface3::Plane(Plane3 {
+                    frame: fr(&p.frame),
                 }),
-                SurfaceGeom::Nurbs(_) => {
-                    return Err(TopoError::Precondition(
-                        "transform: NURBS surfaces are a follow-up",
-                    ));
-                }
+                Surface3::Cylinder(c) => Surface3::Cylinder(Cylinder3 {
+                    frame: fr(&c.frame),
+                    radius: c.radius,
+                }),
+                Surface3::Cone(c) => Surface3::Cone(Cone3 {
+                    frame: fr(&c.frame),
+                    radius: c.radius,
+                    half_angle: c.half_angle,
+                }),
+                Surface3::Sphere(c) => Surface3::Sphere(Sphere3 {
+                    frame: fr(&c.frame),
+                    radius: c.radius,
+                }),
+                Surface3::Torus(c) => Surface3::Torus(Torus3 {
+                    frame: fr(&c.frame),
+                    major: c.major,
+                    minor: c.minor,
+                }),
             };
             if let Some(slot) = out.surfaces.get_mut(k) {
-                *slot = ns;
+                *slot = SurfaceGeom::Analytic(na);
             }
         }
 
@@ -146,6 +184,11 @@ impl Body {
     }
 }
 
+enum IsometryKind {
+    Rotation,
+    Reflection,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,15 +224,12 @@ mod tests {
 
     #[test]
     fn transform_rejects_scale_and_reflection() {
-        use keel_math::mat::Mat3;
         let mut b = Body::new();
         b.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
-        // Uniform scale is not rigid.
         assert!(
             b.transformed(&Transform3::from_uniform_scale(2.0)).is_err(),
             "scale should reject"
         );
-        // Reflection across x = 0 (det -1) is mirror -- a follow-up.
         let reflect = Transform3 {
             linear: Mat3::from_cols(
                 Vec3::new(-1.0, 0.0, 0.0),
@@ -198,6 +238,58 @@ mod tests {
             ),
             translation: Vec3::ZERO,
         };
-        assert!(b.transformed(&reflect).is_err(), "reflection should reject");
+        assert!(
+            b.transformed(&reflect).is_err(),
+            "transformed must reject a reflection (mirror has its own entry)"
+        );
+    }
+
+    #[test]
+    fn mirror_box_across_plane() {
+        // Reflect a 2^3 block across x = 0: [0,2]^3 -> [-2,0]x[0,2]x[0,2],
+        // volume invariant, a valid (re-oriented) solid.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let m = b.mirrored(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0)).unwrap();
+        assert!(m.validate().is_ok(), "mirrored box invalid");
+        let v = m.mass_properties().unwrap().volume;
+        assert!((v - 8.0).abs() < 1e-9, "mirror changed volume: {v}");
+        let bb = m.bounding_box();
+        assert!(
+            (bb.min - Vec3::new(-2.0, 0.0, 0.0)).norm() < 1e-9,
+            "bbox min {:?}",
+            bb.min
+        );
+        assert!(
+            (bb.max - Vec3::new(0.0, 2.0, 2.0)).norm() < 1e-9,
+            "bbox max {:?}",
+            bb.max
+        );
+    }
+
+    #[test]
+    fn mirror_curved_body() {
+        // An offset cylinder (axis through x = 2, radius 1, height 2)
+        // mirrored across x = 0 -> axis through x = -2; direct frame
+        // reflection handles the curved face with no special casing.
+        let frame = Frame3::from_z(Vec3::new(2.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut b = Body::new();
+        b.cylinder(frame, 1.0, 2.0).unwrap();
+        let m = b.mirrored(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0)).unwrap();
+        assert!(m.validate().is_ok(), "mirrored cylinder invalid");
+        let v = m.mesh_volume();
+        let expect = 2.0 * core::f64::consts::PI; // pi r^2 h = pi*1*2
+        assert!(
+            (v - expect).abs() < expect * 0.02,
+            "mirrored cylinder volume {v} != ~{expect}"
+        );
+        let bb = m.bounding_box();
+        assert!(
+            (bb.min - Vec3::new(-3.0, -1.0, 0.0)).norm() < 1e-9
+                && (bb.max - Vec3::new(-1.0, 1.0, 2.0)).norm() < 1e-9,
+            "mirrored cylinder bbox [{:?},{:?}]",
+            bb.min,
+            bb.max
+        );
     }
 }
