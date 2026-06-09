@@ -1083,6 +1083,34 @@ impl Body {
         })
     }
 
+    /// Hollow cylinder (tube / pipe) primitive: the genus-1 solid between
+    /// coaxial cylinders of radii r_inner < r_outer over height `h` about
+    /// `frame.z`. A convenience over `revolve_closed` with the rectangular
+    /// meridian [(r_inner,0),(r_outer,0),(r_outer,h),(r_inner,h)] -- so
+    /// it is the same 4-face genus-1 body (outer/inner walls + two washer
+    /// caps).
+    pub fn tube(
+        &mut self,
+        frame: Frame3,
+        r_inner: f64,
+        r_outer: f64,
+        h: f64,
+    ) -> Result<PrimitiveOut, TopoError> {
+        if !(r_inner.is_finite() && r_outer.is_finite() && h.is_finite())
+            || r_inner <= 0.0
+            || r_outer <= r_inner
+            || h <= 0.0
+        {
+            return Err(TopoError::Precondition(
+                "tube: need 0 < r_inner < r_outer and h > 0",
+            ));
+        }
+        self.revolve_closed(
+            frame,
+            &[(r_inner, 0.0), (r_outer, 0.0), (r_outer, h), (r_inner, h)],
+        )
+    }
+
     /// Solid cylinder: axis = frame.z, base disc at the frame origin,
     /// height h. Topology V2 E3 F3 (caps + lateral with seam).
     pub fn cylinder(
@@ -2055,6 +2083,27 @@ mod tests {
             b.revolve_closed(z_up(), &[(0.0, 0.0), (2.0, 0.0), (1.0, 1.0)])
                 .is_err(),
             "axis-touching profile should reject"
+        );
+    }
+
+    #[test]
+    fn tube_primitive() {
+        // Hollow cylinder r_inner=1, r_outer=2, h=1 -> volume 3pi, 4 faces.
+        let mut b = Body::new();
+        let out = b.tube(z_up(), 1.0, 2.0, 1.0).unwrap();
+        assert!(b.validate().is_ok(), "tube invalid");
+        assert_eq!(out.faces.len(), 4, "tube face count");
+        let expect = 3.0 * core::f64::consts::PI;
+        let v = b.mesh_volume();
+        assert!(
+            (v - expect).abs() < expect * 0.01,
+            "tube volume {v} != ~3pi"
+        );
+        // Degenerate radii reject.
+        let mut bad = Body::new();
+        assert!(
+            bad.tube(z_up(), 2.0, 1.0, 1.0).is_err(),
+            "r_inner >= r_outer should reject"
         );
     }
 
