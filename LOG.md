@@ -3079,3 +3079,44 @@ do not WORK (#16, #20 stay open for the SeamId identity-assembly). The kernel si
 returns a wrong planar boolean body. Counter stays 82/144.
 GATE: exact CI triplet green (workspace 108 math + 77 geom + 157 topo, clippy -D warnings, fmt)
 + fuzz_boolean (150s, clean, exit 0). Merged.
+
+## Addendum 103 (2026-06-09, attended): Phase 0a -- partial-coincidence union (L-union) now ASSEMBLES (boundary-coincident ring filter). 82/144, real general-position-boolean progress
+
+RE-CALIBRATION (user-directed): re-read all research; the parity ROADMAP
+(docs/superpowers/specs/2026-06-08-parasolid-parity-roadmap.md) re-anchored priorities on
+Phase 0a (general-position booleans -- coincident/tangent/touching), which "gates almost every
+feature engine." The asym chamfer I'd been grinding is a Phase-3 FEATURE whose tangent-seam
+failure is really a Phase-0a gap, so I'd been building on an unfinished foundation. CodeGraph
+indexed this session to navigate the pipeline (it confirmed the LTH keep/drop tables in
+select_faces and the two-sided sense test in classify_faces ALREADY exist -- file 39 §2.3 --
+so the gap is degenerate-seam ASSEMBLY, not classification).
+
+DIAGNOSIS (data-first, KEEL_DIAG instrumentation; the success branch verified explicitly per
+the Addendum-100 lesson). The L-union (A=2x2x1 base + B=1x2x1 on its left half) DECLINED. The
+stitch produced 11 faces (the correct selection -- the coincident wall dropped) with ALL edges
+radial-2 (fully paired, no dangling), yet validate FAILED: EulerPoincareViolated{lhs:-1,rhs:3},
+inner_rings:1. Root cause was UPSTREAM of stitch, in imprint: B's four side faces each meet A's
+top plane (z=1), and seam_curves emitted four seams that imprint_operand assembled into a CLOSED
+RING = B's footprint [0,1]x[0,2]. Three of the four sides lie on A-top's OWN boundary; only x=1
+is interior. imprint_closed_curve punched that ring in as a phantom INNER LOOP (a hole) instead
+of SPLITTING A-top along the lone interior chord -> the inner_rings=1 / Euler break. (Confirmed
+not preimprint: disabling it left the bug unchanged.)
+
+FIX: in imprint_operand, before per-face assembly, when a face's seam group assembles into a
+CLOSED loop, drop the boundary-coincident segments IFF <=1 interior segment remains. Rationale:
+a genuine interior ring (a hole -- e.g. the chamfer cutter face's footprint) has >=2 interior
+segments; a loop that closes only because boundary-coincident sides complete it around a single
+real cut is not a ring at all -- it is that one chord SPLITTING the face. Discriminator data:
+L-union closed loop = 4 members, 3 on-boundary (1 interior) -> spurious, filter; symmetric
+chamfer cutter-face loop = 4 members, 2 on-boundary (2 interior) -> genuine, keep. (A first,
+UNCONDITIONAL boundary drop regressed the symmetric chamfer; the closed-loop guard alone did
+too -- both are closed loops; the <=1-interior-segment criterion is what cleanly separates
+them. Two failed attempts before the data gave the right criterion.)
+
+RESULT: the L-union now ASSEMBLES to the true volume 6 with mass == mesh (strict .expect() +
+exact assertion -- the test is now success-required, no longer correct-or-decline). #20 CLOSED:
+partial-coincidence union works. The asym chamfer (#16) is a SEPARATE layer (tangent interior-
+duplicate seam + corner consistency) and still declines -- no wrong answer (gate holds);
+remains open. m16c tangent-seam dedup stays unmerged (independent, possibly folded into #16).
+GATE: keel-topo 157 green (incl. strict L-union + symmetric chamfer), workspace 108+77+157,
+clippy -D warnings, fmt; fuzz_boolean pending.

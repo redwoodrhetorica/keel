@@ -1710,9 +1710,9 @@ pub fn imprint(a: &Body, b: &Body, tol: f64) -> Result<(Body, Body), BoolFault> 
 
 /// Endpoints of a seam curve (sample at the parameter ends; closed
 /// curves return the seam point twice).
-fn curve_endpoints(c: &keel_geom::curve::Curve3) -> (keel_math::vec::Vec3, keel_math::vec::Vec3) {
+fn curve_point(c: &keel_geom::curve::Curve3, t: f64) -> keel_math::vec::Vec3 {
     use keel_geom::curve::Curve3;
-    let s = |t: f64| match c {
+    match c {
         Curve3::Nurbs(n) => {
             let (a, b) = n.domain();
             n.point(a + t * (b - a))
@@ -1720,8 +1720,23 @@ fn curve_endpoints(c: &keel_geom::curve::Curve3) -> (keel_math::vec::Vec3, keel_
         Curve3::Line(l) => l.point(t),
         Curve3::Circle(ci) => ci.point(core::f64::consts::TAU * t),
         Curve3::Ellipse(e) => e.point(core::f64::consts::TAU * t),
+    }
+}
+
+fn curve_endpoints(c: &keel_geom::curve::Curve3) -> (keel_math::vec::Vec3, keel_math::vec::Vec3) {
+    (curve_point(c, 0.0), curve_point(c, 1.0))
+}
+
+/// Distance from point `p` to the segment `a`-`b` in 3D.
+fn seg_dist3(p: keel_math::vec::Vec3, a: keel_math::vec::Vec3, b: keel_math::vec::Vec3) -> f64 {
+    let ab = b - a;
+    let len2 = ab.dot(ab);
+    let t = if len2 < 1e-300 {
+        0.0
+    } else {
+        ((p - a).dot(ab) / len2).clamp(0.0, 1.0)
     };
-    (s(0.0), s(1.0))
+    (p - (a + ab * t)).norm()
 }
 
 /// Build a closed degree-1 (polyline) NURBS through `nodes`, returning
@@ -2172,6 +2187,61 @@ fn imprint_operand(
         let face = pick(s);
         let id = working.faces.get(face).map(|f| f.id.0).unwrap_or(u64::MAX);
         groups.entry(id).or_insert((face, Vec::new())).1.push(i);
+    }
+
+    // Drop seam segments that lie entirely on the operand face's OWN
+    // boundary (research file 39 §3, touching contact). When a tool face
+    // meets this face along one of its existing edges, the SSI emits a
+    // seam coincident with the boundary. Assembling those boundary-
+    // coincident segments together with the genuine INTERIOR cut turns an
+    // open splitting chain into a spurious closed inner RING that punches
+    // a hole in the face instead of dividing it -- the partial-overlap
+    // L-union bug: B's footprint on A's top has three of its four sides on
+    // A-top's boundary, so the four seams assembled into a ring and the
+    // face kept a phantom inner loop. A seam whose every sample lies on the
+    // face boundary within tol is already an edge of this face; the other
+    // operand owns the contact, so this face must not re-imprint it. Only
+    // the interior portion (the real cut) survives to split the face.
+    for (face, members) in groups.values_mut() {
+        let bnd = working.face_outer_loop_points(*face);
+        if bnd.len() < 3 {
+            continue;
+        }
+        // Scope to the spurious-RING case only. If these seams assemble into
+        // a CLOSED loop, boundary-coincident sides make it a phantom inner
+        // ring that punches a hole instead of splitting the face (L-union).
+        // Open chains / lone cuts (chamfer) must be left intact -- dropping
+        // their boundary-touching parts would un-trim a kept tool face.
+        let eps: Vec<(Vec3, Vec3)> = members
+            .iter()
+            .map(|&i| curve_endpoints(&seams[i].curve))
+            .collect();
+        if assemble_closed_loop(&eps, tol).is_none() {
+            continue;
+        }
+        let on_boundary = |p: Vec3| -> bool {
+            let m = bnd.len();
+            (0..m)
+                .map(|i| seg_dist3(p, bnd[i], bnd[(i + 1) % m]))
+                .fold(f64::INFINITY, f64::min)
+                <= etol
+        };
+        let is_on_boundary_seg = |i: usize| {
+            [0.0, 0.25, 0.5, 0.75, 1.0]
+                .iter()
+                .all(|&t| on_boundary(curve_point(&seams[i].curve, t)))
+        };
+        // A genuine interior ring (a hole, e.g. the chamfer cutter face's
+        // footprint) has >=2 interior segments. The spurious case is a loop
+        // that closes only BECAUSE boundary-coincident segments complete it
+        // around a single real interior cut (<=1 interior segment): then the
+        // "ring" is really that one chord SPLITTING the face, and imprinting
+        // it as a closed hole punches a phantom inner loop (the L-union: 3 of
+        // 4 sides on A-top's boundary). Drop the boundary segments only then.
+        let interior = members.iter().filter(|&&i| !is_on_boundary_seg(i)).count();
+        if interior <= 1 {
+            members.retain(|&i| !is_on_boundary_seg(i));
+        }
     }
 
     // Phase 1: pre-split boundary edges at unique OPEN-seam endpoints
@@ -3023,20 +3093,19 @@ mod tests {
         // identity-preserving stitch milestone (tasks #16 / #20).
         // If the seam can't yet assemble, the boolean declines (Err) and the
         // contract is satisfied vacuously; otherwise the body must be correct.
-        if let Ok(res) = boolean(&a, &b, BoolOp::Union, 1e-7) {
-            assert!(
-                res.body.validate().is_ok(),
-                "L-solid union invalid: {:?}",
-                res.faults
-            );
-            let v = res.body.mass_properties().unwrap().volume;
-            let mv = res.body.mesh_volume();
-            assert!(
-                (v - 6.0).abs() < 1e-9 && (v - mv).abs() < 1e-6,
-                "L-solid union, if it returns a body, must be the true 6 \
-                 with mass == mesh (got mass {v}, mesh {mv})"
-            );
-        }
+        let res = boolean(&a, &b, BoolOp::Union, 1e-7)
+            .expect("L-union must now ASSEMBLE (boundary-coincident seam filter)");
+        assert!(
+            res.body.validate().is_ok(),
+            "L-solid union invalid: {:?}",
+            res.faults
+        );
+        let v = res.body.mass_properties().unwrap().volume;
+        let mv = res.body.mesh_volume();
+        assert!(
+            (v - 6.0).abs() < 1e-9 && (v - mv).abs() < 1e-6,
+            "L-solid union must be the true 6 with mass == mesh (got mass {v}, mesh {mv})"
+        );
     }
 
     #[test]
