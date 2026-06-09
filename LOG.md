@@ -2804,3 +2804,18 @@ Test: block 2^3 -> 12 facets + 12 two-point edges, all normals unit; cylinder ->
 facets + sampled rim polylines whose points lie on radius 1 about the axis.
 A read-only query (no topology mutation, no boolean pipeline touch) -> no fuzz needed.
 GATE: exact CI triplet green (148 keel-topo, clippy -D warnings, fmt). Merged.
+
+## Addendum 90 (2026-06-09, attended): silhouette / outline (item 97) -- 74 -> 75/144
+
+Body::silhouette(view) -> Vec<[Vec3;2]>: the outline segments for an orthographic
+view direction (parity item 97, Phase 6). Standard mesh-silhouette: weld the render
+facets' vertices to a 1e-6 grid, and an edge is on the silhouette when its two
+incident facets face opposite ways relative to the view (sign(n0.v) != sign(n1.v),
+i.e. one toward the eye and one away). EXACT for polyhedral models (segments are real
+model edges); tessellation-resolution for curved faces (each smooth silhouette curve
+becomes a polyline -- exact analytic silhouette curves, e.g. a sphere's great circle
+or a cylinder's two rules, are a later refinement). Deterministic output (BTreeMap).
+Test: a 2^3 cube viewed corner-on (1,2,3) -> exactly 6 outline edges (a hexagon),
+each a real length-2 cube edge; translation-invariant count; a zero view -> empty.
+Builds directly on Addendum 89's render facets. Read-only query -> no fuzz needed.
+GATE: exact CI triplet green (149 keel-topo, clippy -D warnings, fmt). Merged.
