@@ -3636,3 +3636,24 @@ GATE: workspace 108 + 77 + 167 green, clippy -D warnings, fmt. Merged.
 PHASE 5 now: 72/76/77 done; only 70 (extend) + 71 (knit-sew, closure->solid promotion) remain.
 Counter at 90/144 -- a +8 run this session (53/41/43/42/44/72/76/77) on top of the #21/#16
 keystones + enclosed-void stitch + sheet-body representation.
+
+## Addendum 121 (2026-06-09, attended): KNIT / SEW with closure->solid promotion (item 71, dossier 51 centerpiece). 90 -> 91/144
+
+boolean::knit(bodies, tol) -> Body: join a set of sheet (or solid) bodies into one, merge
+coincident vertices, glue coincident free edges into radial pairs, and -- when the result closes
+into a watertight shell -- PROMOTE it to a solid. REFACTOR (the clean enabler): the back half of
+stitch_by_import (vertex-merge + edge-glue + shell-closure invariant + enclosed-void region
+partition + validate) was EXTRACTED verbatim into a shared pub(crate) finalize_imported_assembly
+(dst, rec, faces, inf, solid, vtol); both the boolean stitch AND knit now call it, so knit's
+assembly is the exact same heavily-tested code (no duplication, both paths cover it). knit imports
+each body's faces with per-body identity (within-body shared edges dedup by source id; the
+cross-body coincident edges join in the coordinate merge), then finalizes. ORACLE: six planar
+square sheets (each oriented outward via a CCW-about-normal helper) knit into a closed cube and
+promote to a SOLID -- volume 8, mass == mesh, validate ok. This completes the sheet-body story:
+construct (planar_sheet) -> trim/split/slice -> KNIT -> promote-to-solid, and is the dossier-51
+centerpiece. The extraction is behavior-preserving: 32 boolean tests pass and fuzz_boolean is
+clean (the refactor is a pure code move).
+GATE: exact CI triplet green (workspace 108 math + 77 geom + 168 topo, clippy -D warnings, fmt)
++ fuzz_boolean (WSL nightly, 200s, Done 414 runs, clean). Merged.
+PHASE 5 now: 71/72/76/77 done; only 70 (surface extend) remains. Counter 91/144 -- a +9 run this
+session (53/41/43/42/44/72/76/77/71).
