@@ -151,6 +151,71 @@ impl Body {
         solid.prism(&base, normal * t)?;
         Ok(solid)
     }
+
+    /// Trim a planar sheet by a cutting plane (parity item 72), keeping the
+    /// portion on the BACK side of the plane (where `(p - plane_point) .
+    /// plane_normal <= 0`). The sheet's boundary polygon is clipped to that
+    /// half-space (Sutherland-Hodgman against the single plane) and the
+    /// kept portion rebuilt as a sheet. MVP: single planar face / convex or
+    /// simple boundary; returns Err if nothing remains. (Trim by a general
+    /// surface, and trimming solid faces, are follow-ups on this same clip.)
+    pub fn trim_by_plane(&self, plane_point: Vec3, plane_normal: Vec3) -> Result<Body, TopoError> {
+        let n = plane_normal
+            .try_normalize()
+            .ok_or(TopoError::Precondition("trim: degenerate plane normal"))?;
+        let faces = self.face_keys();
+        let [face] = faces[..] else {
+            return Err(TopoError::Precondition(
+                "trim: only a single-face planar sheet is supported (MVP)",
+            ));
+        };
+        if !matches!(self.face_surface3(face), Some(Surface3::Plane(_))) {
+            return Err(TopoError::Precondition("trim: non-planar sheet (MVP)"));
+        }
+        let poly = self.face_outer_loop_points(face);
+        if poly.len() < 3 {
+            return Err(TopoError::Precondition("trim: degenerate boundary"));
+        }
+        // Signed distance to the plane (kept side: sd <= 0).
+        let sd = |p: Vec3| (p - plane_point).dot(n);
+        let mut out: Vec<Vec3> = Vec::new();
+        let m = poly.len();
+        for i in 0..m {
+            let a = poly[i];
+            let b = poly[(i + 1) % m];
+            let (da, db) = (sd(a), sd(b));
+            let a_in = da <= 1e-12;
+            let b_in = db <= 1e-12;
+            if a_in {
+                out.push(a);
+            }
+            if a_in != b_in {
+                // Edge crosses the plane: add the intersection point.
+                let t = da / (da - db);
+                out.push(a + (b - a) * t);
+            }
+        }
+        // Drop near-duplicate consecutive vertices from the clip.
+        let mut clipped: Vec<Vec3> = Vec::with_capacity(out.len());
+        for p in out {
+            if clipped
+                .last()
+                .map(|q| (*q - p).norm() > 1e-9)
+                .unwrap_or(true)
+            {
+                clipped.push(p);
+            }
+        }
+        if clipped.len() >= 2 && (clipped[0] - clipped[clipped.len() - 1]).norm() <= 1e-9 {
+            clipped.pop();
+        }
+        if clipped.len() < 3 {
+            return Err(TopoError::Precondition(
+                "trim: nothing remains on the kept side",
+            ));
+        }
+        Body::planar_sheet(&clipped)
+    }
 }
 
 #[cfg(test)]
@@ -176,6 +241,30 @@ mod tests {
         );
         // Open body: no enclosed solid, so zero solid volume by the mesh.
         assert_eq!(s.face_keys().len(), 1, "sheet must have one face");
+    }
+
+    #[test]
+    fn trim_sheet_by_plane_keeps_half() {
+        // Trim a 4x4 sheet (z=0, x,y in [0,4]) by the plane x=2 (normal +x):
+        // the kept BACK side is x <= 2, a 2x4 sheet. Thicken it by 1 to check
+        // the trimmed area: volume 2*4*1 = 8.
+        let s = Body::planar_sheet(&[
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(4.0, 0.0, 0.0),
+            Vec3::new(4.0, 4.0, 0.0),
+            Vec3::new(0.0, 4.0, 0.0),
+        ])
+        .unwrap();
+        let half = s
+            .trim_by_plane(Vec3::new(2.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0))
+            .unwrap();
+        assert!(half.validate().is_ok(), "trimmed sheet invalid");
+        let slab = half.thicken(1.0).unwrap();
+        let v = slab.mass_properties().unwrap().volume;
+        assert!(
+            (v - 8.0).abs() < 1e-9,
+            "trimmed-then-thickened volume must be 8 (got {v})"
+        );
     }
 
     #[test]
