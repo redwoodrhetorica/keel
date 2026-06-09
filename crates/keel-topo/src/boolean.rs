@@ -1413,7 +1413,7 @@ fn stitch_by_import(
     kept: &[KeptFace],
     tol: f64,
 ) -> Result<Body, BoolFault> {
-    use crate::entity::{EdgeKey, Side, VertexKey};
+    use crate::entity::{EdgeKey, VertexKey};
     use crate::lineage::Derivation;
     use std::collections::BTreeMap;
     let vtol = tol.max(1e-7);
@@ -1439,6 +1439,25 @@ fn stitch_by_import(
         faces.push(f);
     }
 
+    finalize_imported_assembly(dst, rec, faces, inf, solid, vtol)
+}
+
+/// The shared back half of import-and-glue assembly (used by the boolean
+/// stitch AND by `knit`): merge coincident vertices, glue coincident free /
+/// dangling edges into radial pairs, assert the planar shell-closure
+/// invariant, partition into solid / void / infinite regions (enclosed-void
+/// aware), then validate. Takes the body with its kept faces already
+/// imported (front -> `inf`, back -> `solid`) and the live op recorder.
+pub(crate) fn finalize_imported_assembly(
+    mut dst: Body,
+    mut rec: crate::body::OpRecorder,
+    faces: Vec<FaceKey>,
+    inf: crate::entity::RegionKey,
+    solid: crate::entity::RegionKey,
+    vtol: f64,
+) -> Result<Body, BoolFault> {
+    use crate::entity::{EdgeKey, Side, VertexKey};
+    use crate::lineage::Derivation;
     // Merge coincident vertices (the operands' independent seam vertices
     // along the shared SSI curve land at the same point).
     let vkeys: Vec<VertexKey> = dst.vertices.iter().map(|(k, _)| k).collect();
@@ -1623,6 +1642,50 @@ fn stitch_by_import(
         Ok(()) => Ok(dst),
         Err(_) => Err(BoolFault::AssemblyFailed("stitched (curved) body invalid")),
     }
+}
+
+/// Knit / sew a set of sheet (or solid) bodies into one (parity item 71):
+/// import every face, merge coincident vertices, glue coincident free edges
+/// into radial pairs, and -- if the result closes into a watertight shell --
+/// promote it to a SOLID (the enclosed-void-aware region partition runs in
+/// `finalize_imported_assembly`). Six planar square sheets, each oriented
+/// outward, knit into a closed cube -> a solid of the cube's volume. Faces
+/// are imported with per-body identity (within-body shared edges dedup by
+/// source id; cross-body coincident edges join via the coordinate merge).
+/// Returns Err if the knit does not close into a valid solid (a still-open
+/// multi-sheet result is a follow-up).
+pub fn knit(bodies: &[&Body], tol: f64) -> Result<Body, BoolFault> {
+    use crate::lineage::Derivation;
+    use std::collections::BTreeMap;
+    let vtol = tol.max(1e-7);
+    let mut dst = Body::new();
+    let inf = dst.infinite_region();
+    let mut rec = dst.begin_op();
+    let solid = dst.new_region(&mut rec, true, Derivation::Created);
+    let mut faces = Vec::new();
+    for body in bodies {
+        // Fresh maps PER BODY: within-body shared edges dedup by source id;
+        // genuinely-coincident topology between bodies joins in the merge.
+        let mut vmap: BTreeMap<(Operand, u64), crate::entity::VertexKey> = BTreeMap::new();
+        let mut emap: BTreeMap<(Operand, u64), crate::entity::EdgeKey> = BTreeMap::new();
+        for fk in body.face_keys() {
+            let f = import_face(
+                &mut dst,
+                body,
+                fk,
+                Operand::A,
+                false,
+                &mut rec,
+                &mut vmap,
+                &mut emap,
+                inf,
+                solid,
+            )
+            .ok_or(BoolFault::AssemblyFailed("knit: import failed"))?;
+            faces.push(f);
+        }
+    }
+    finalize_imported_assembly(dst, rec, faces, inf, solid, vtol)
 }
 
 /// Partition `faces` (kept fragments of the stitched body) into connected

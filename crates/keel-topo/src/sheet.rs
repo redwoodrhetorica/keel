@@ -9,12 +9,12 @@
 //! only the single infinite void region (not a solid one), which the
 //! double-sided face borders on both sides.
 //!
-//! THICKEN (dossier 50 sec 5) turns a sheet into a solid of wall thickness
-//! `t`. This first increment covers the single PLANAR face: a two-sided
-//! thicken is the boundary profile extruded to thickness `t` centred on the
-//! sheet plane. Multi-face / curved sheets (offset-both-sides + a rim band)
-//! and the other sheet ops that share this representation -- extend (70),
-//! knit/sew (71), trim (72), split (76) -- are follow-ups.
+//! Operations on this representation: THICKEN (44, dossier 50 sec 5) -> a
+//! solid of wall thickness `t`; TRIM (72) by a plane; and KNIT/SEW (71,
+//! `boolean::knit`) which joins sheets and promotes a closed result to a
+//! solid (six squares -> a cube). The MVP covers single planar faces;
+//! multi-face / curved sheets (thicken via offset-both-sides + a rim band)
+//! and surface EXTEND (70) are follow-ups.
 
 use crate::body::{Body, TopoError};
 use crate::entity::{LoopKind, Side, SurfaceGeom};
@@ -264,6 +264,72 @@ mod tests {
         assert!(
             (v - 8.0).abs() < 1e-9,
             "trimmed-then-thickened volume must be 8 (got {v})"
+        );
+    }
+
+    #[test]
+    fn knit_six_sheets_into_a_cube() {
+        // Knit/sew (item 71): six planar square sheets, each oriented
+        // outward, knit into a closed cube and PROMOTE to a solid. Cube
+        // [0,2]^3 -> volume 8 (the closure->solid promotion is the point).
+        use crate::boolean::knit;
+        // Order four coplanar corners CCW about the outward normal so the
+        // sheet's Newell normal points outward.
+        fn ccw(mut c: Vec<Vec3>, n: Vec3) -> Vec<Vec3> {
+            let cen = c.iter().fold(Vec3::ZERO, |a, &p| a + p) * (1.0 / c.len() as f64);
+            let seed = if n.x.abs() < 0.9 {
+                Vec3::new(1.0, 0.0, 0.0)
+            } else {
+                Vec3::new(0.0, 1.0, 0.0)
+            };
+            let u = (seed - n * seed.dot(n)).try_normalize().unwrap();
+            let v = n.cross(u);
+            c.sort_by(|a, b| {
+                let aa = (*a - cen).dot(v).atan2((*a - cen).dot(u));
+                let bb = (*b - cen).dot(v).atan2((*b - cen).dot(u));
+                aa.partial_cmp(&bb).unwrap()
+            });
+            c
+        }
+        let p = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
+        let defs: [(Vec<Vec3>, Vec3); 6] = [
+            (
+                vec![p(0., 0., 0.), p(2., 0., 0.), p(2., 2., 0.), p(0., 2., 0.)],
+                p(0., 0., -1.),
+            ),
+            (
+                vec![p(0., 0., 2.), p(2., 0., 2.), p(2., 2., 2.), p(0., 2., 2.)],
+                p(0., 0., 1.),
+            ),
+            (
+                vec![p(0., 0., 0.), p(0., 2., 0.), p(0., 2., 2.), p(0., 0., 2.)],
+                p(-1., 0., 0.),
+            ),
+            (
+                vec![p(2., 0., 0.), p(2., 2., 0.), p(2., 2., 2.), p(2., 0., 2.)],
+                p(1., 0., 0.),
+            ),
+            (
+                vec![p(0., 0., 0.), p(2., 0., 0.), p(2., 0., 2.), p(0., 0., 2.)],
+                p(0., -1., 0.),
+            ),
+            (
+                vec![p(0., 2., 0.), p(2., 2., 0.), p(2., 2., 2.), p(0., 2., 2.)],
+                p(0., 1., 0.),
+            ),
+        ];
+        let sheets: Vec<Body> = defs
+            .iter()
+            .map(|(c, n)| Body::planar_sheet(&ccw(c.clone(), *n)).unwrap())
+            .collect();
+        let refs: Vec<&Body> = sheets.iter().collect();
+        let cube = knit(&refs, 1e-7).expect("six closed sheets must knit into a solid cube");
+        assert!(cube.validate().is_ok(), "knit cube invalid");
+        let v = cube.mass_properties().unwrap().volume;
+        let mv = cube.mesh_volume();
+        assert!(
+            (v - 8.0).abs() < 1e-6 && (mv - 8.0).abs() < 1e-6,
+            "knit cube volume must be 8 with mass == mesh (got mass {v}, mesh {mv})"
         );
     }
 
