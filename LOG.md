@@ -3300,3 +3300,36 @@ whole front face, or a mis-kept fragment? -- then fix the trim/keep so the kept 
 bounded by the hypotenuse (pairing face 81).
 GATE: exact CI triplet green (workspace 108 math + 77 geom + 157 topo, clippy -D warnings, fmt)
 + fuzz_boolean (WSL nightly, 180s, Done 322 runs, clean). Merged.
+
+## Addendum 108 (2026-06-09, attended): #16 LAYER 2 ROOT-CAUSED -- it is a CLASSIFICATION bug (two spurious kept faces), not a stitch gap. Still 82/144; LAYER 2 open
+
+Dumped all 9 kept faces' loop rings for the asym chamfer (env-gated DIAG, reverted; master clean
+at the LAYER-1 merge). This relocates LAYER 2 from "stitch can't pair the corner coedges" to
+"select_faces keeps two faces it should not." The CORRECT kept set is 6 trimmed box faces + 1
+oblique cut face = 7. Observed kept = 9, with the front face correctly split (the proper trimmed
+front IS present) but TWO SPURIOUS extras:
+  - id=16: the REMOVED-CORNER TRIANGLE (1.50,0,2)(2,0,1)(2,0,2) on the front (y=0) face. It lies
+    INSIDE the cutter wedge (it is the removed material) so for A-B it must be A_inB -> DROP, but
+    it is KEPT. Its three sides are the "unpaired coedges" of Addendum 107 -- they were never an
+    assembly gap, they are the boundary of a wrongly-kept fragment.
+  - id=73: a DEGENERATE 2-vertex face (2,2,1)-(2,0,1) (the right-face setback line) -- a sliver
+    lamina from the cutter side that should not be a face at all.
+The genuinely-correct fragments are all present: bottom(2), left(27), top-trimmed-to-x<=1.5(38),
+front-trimmed-bounded-by-hypotenuse(48: ...(2,0,1)->(1.5,0,2)...), right-trimmed-to-z<=1(56),
+back-trimmed(65), and the oblique cut face(81: the quad (1.5,2,2)(1.5,0,2)(2,0,1)(2,2,1)).
+
+WHY (hypothesis, to confirm next): the corner triangle id=16 abuts the cutter's oblique face
+along the hypotenuse, so it is an on-on / near-boundary fragment. classify_faces uses a winding-
+number with a 0.25 band around w=0.5; a fragment sitting on the cutter boundary gets the
+ambiguous w~0.5 and is mis-selected as outside (kept) instead of inside (dropped). The principled
+fix is the dossier-39 sec 2 on-on neighborhood classification: the two-sided eps-offset-along-
+normal membership test (sec 1.4) decides the corner triangle is inside B -> drop. Plus a
+degenerate-fragment rejection (id=73, a 2-edge lamina, zero area) before/at select.
+
+So LAYER 2 is a CLASSIFICATION milestone (dossier-39 sec 2 on-on tables + degenerate rejection),
+NOT a stitch-assembly fix. It is shared with the symmetric chamfer (which only survives via the
+soup's tolerance of the same misclassification). Concrete next step: instrument classify_faces
+for the id=16 fragment -- print its representative sample point and w_B -- to confirm the w~0.5
+band hypothesis, then implement the sec-1.4 two-sided neighborhood test for on-boundary
+fragments and a zero-area fragment filter. Tripwire stays the 45-degree symmetric chamfer (7.75)
+and the honesty gate (no wrong answer; the asym chamfer DECLINES meanwhile).
