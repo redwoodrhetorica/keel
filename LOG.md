@@ -3036,3 +3036,46 @@ REMAINING (the real dossier-47 work, reopened): the thin-OBLIQUE transversal cut
 chamfer) and the partial-COINCIDENCE union (L-union) still do not assemble correctly through
 stitch. Those are the actual unblock for shell/thicken/blends. Lesson logged: do not read an
 "X OR decline" pass as "X"; verify the success branch explicitly.
+
+## Addendum 102 (2026-06-09, attended): self-consistency gate -- the planar boolean can no longer return a wrong body (still 82/144)
+
+RESEARCH REVIEW (dossier 47, re-read before this change at the user's instruction): the
+centerpiece prescribes (1) the SHELL-CLOSURE INVARIANT -- every kept-face coedge has exactly
+one radial partner (or a complete radial cycle), an unmatched coedge is a HARD ERROR never a
+silent drop; (2) IDENTITY-PRESERVING assembly -- carry seam edge identity through from imprint,
+group coedges by a stable id, never re-weld by coordinate; (3) retire build_result_solid. Q4
+of the dossier (Qi-Shapiro epsilon-solidity) states the load-bearing point for THIS change:
+Euler validate() is NECESSARY BUT NOT SUFFICIENT -- a body can be Euler-valid with positive
+volume yet geometrically wrong (a dropped/mis-stitched face). The asym chamfer and the L-union
+are exactly that class.
+
+CHANGE: added a geometric self-consistency gate to boolean()'s planar post-condition. For an
+all-planar result the sense-exact mass_properties volume and the sense-tessellated mesh_volume
+agree EXACTLY when the body is well-formed (polygonal tessellation is exact); a disagreement
+means assembly produced a wrong-but-Euler-valid body. The gate now DECLINES (Err) on
+|mass - mesh| > 1e-3*(1+|mass|) instead of returning the lie. Diagnostic basis (diag_chamfer_
+angle_sweep, run before the change): every WRONG asym-chamfer case had mass != mesh (8.0/9.925
+vs true ~7.7), every CORRECT case had mass == mesh -- the invariant the gate keys on. Net
+effect: the asym chamfer and L-union both now reliably DECLINE rather than ever return a
+wrong-positive body. Only the L-union test needed updating (to the honest correct-or-decline-
+never-wrong contract); the asym-chamfer test already had it.
+
+SECOND OPINION (Qwen3-Coder-30B-A3B, run once locally via llama.cpp at the user's request --
+a one-off outside-voice check): confirmed the dossier's closure-invariant + identity-from-
+imprint target, and endorsed dossier option (a) -- a global SeamId tagged on BOTH operands'
+seam edges at imprint time, grouped at assembly -- as the cross-operand identity mechanism for
+the real fix. Two useful caveats it surfaced: (i) closure is necessary but NOT a complete
+oracle -- a face can drop while its SURVIVING coedges still pair, passing closure yet wrong;
+(ii) mass == mesh can be fooled by symmetric error-cancellation. SYNTHESIS (the one design
+refinement to carry forward): the topological closure invariant and the geometric mass==mesh
+gate are ORTHOGONAL -- each catches a class the other misses -- so when the real SeamId
+identity-assembly lands, KEEP this gate as a complementary backstop rather than retiring it.
+(Qwen contradicted itself calling closure "necessary and sufficient" in one point while its own
+prior point showed it is not; weighted accordingly. The O(n^2) vertex-dedup and degenerate-face
+notes it raised are real but correctness-neutral and the soup path is being retired anyway.)
+
+STATE: this is an HONESTY hardening, not the dossier-47 fix -- the asym chamfer / L-union still
+do not WORK (#16, #20 stay open for the SeamId identity-assembly). The kernel simply no longer
+returns a wrong planar boolean body. Counter stays 82/144.
+GATE: exact CI triplet green (workspace 108 math + 77 geom + 157 topo, clippy -D warnings, fmt)
++ fuzz_boolean (150s, clean, exit 0). Merged.

@@ -1638,12 +1638,27 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, B
     let ok = if curved {
         let v = body.tessellated_volume();
         v.is_finite() && v > 1e-9 * (1.0 + v.abs())
+    } else if let Ok(m) = body.mass_properties() {
+        // SELF-CONSISTENCY gate (research file 47): for a well-formed
+        // all-planar body the sense-exact mass_properties and the
+        // sense-tessellated mesh_volume agree exactly (polygonal
+        // tessellation is exact). A disagreement means assembly produced a
+        // geometrically WRONG body that happens to be Euler-valid with
+        // positive volume -- e.g. an oblique chamfer cut whose cut face was
+        // dropped/mis-stitched (mass != mesh). Decline honestly rather than
+        // LIE. (Validate is necessary but not sufficient; making such cuts
+        // WORK is the boolean-assembly milestone, this stops the kernel
+        // returning a wrong-positive body in the meantime.)
+        let mv = body.mesh_volume();
+        m.volume.is_finite()
+            && m.volume > 0.0
+            && (m.volume - mv).abs() <= 1e-3 * (1.0 + m.volume.abs())
     } else {
-        matches!(body.mass_properties(), Ok(m) if m.volume.is_finite() && m.volume > 0.0)
+        false
     };
     if !ok {
         return Err(BoolFault::AssemblyFailed(
-            "degenerate result (non-positive volume)",
+            "degenerate or self-inconsistent result (mass != mesh)",
         ));
     }
     Ok(BoolResult { body, faults, op })
@@ -2996,14 +3011,32 @@ mod tests {
         a.block(Vec3::ZERO, 2.0, 2.0, 1.0).unwrap();
         let mut b = Body::new();
         b.block(Vec3::new(0.0, 0.0, 1.0), 1.0, 2.0, 1.0).unwrap();
-        let res = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
-        assert!(
-            res.body.validate().is_ok(),
-            "L-solid union invalid: {:?}",
-            res.faults
-        );
-        let v = res.body.mass_properties().unwrap().volume;
-        assert!((v - 6.0).abs() < 1e-9, "L-solid union volume {v} != 6");
+        // CONTRACT (research file 47, self-consistency gate): the coincident
+        // (partial-overlap) union seam is not yet assembled identity-clean,
+        // so build_result_solid drops a face -> a body whose sense-exact mass
+        // (6) disagrees with its tessellated mesh (5.333). The gate now
+        // catches that disagreement and DECLINES rather than return the
+        // malformed body. So the honest contract is correct-or-decline,
+        // NEVER a wrong-positive: if Ok, the L-solid must be the true 6 with
+        // mass == mesh; if the seam can't yet assemble, Err. Making this
+        // union actually build (mass == mesh == 6) is the dossier-47
+        // identity-preserving stitch milestone (tasks #16 / #20).
+        // If the seam can't yet assemble, the boolean declines (Err) and the
+        // contract is satisfied vacuously; otherwise the body must be correct.
+        if let Ok(res) = boolean(&a, &b, BoolOp::Union, 1e-7) {
+            assert!(
+                res.body.validate().is_ok(),
+                "L-solid union invalid: {:?}",
+                res.faults
+            );
+            let v = res.body.mass_properties().unwrap().volume;
+            let mv = res.body.mesh_volume();
+            assert!(
+                (v - 6.0).abs() < 1e-9 && (v - mv).abs() < 1e-6,
+                "L-solid union, if it returns a body, must be the true 6 \
+                 with mass == mesh (got mass {v}, mesh {mv})"
+            );
+        }
     }
 
     #[test]
