@@ -2553,3 +2553,32 @@ RUNNING TOTAL: 68 -> 69/144 (body scale; rounds out the transform family
 transform/mirror/scale).
 GATE: exact CI triplet green (136 keel-topo, clippy -D warnings, fmt). No fuzz --
 additive op. Merged.
+
+## Addendum 79 (2026-06-08): INTERIOR WASHER / HOLED-FACE revolve via kemr -- 70/144
+
+revolve() now accepts INTERIOR horizontal segments (both ends off-axis) -> flat
+ANNULAR (washer/shoulder) faces. This is the HOLED-FACE construction path, the
+foundation shell (41) and thicken (44) also need.
+KEY INSIGHT: the sequential band construction builds each band as a single-loop
+SEAM-BRIDGED face (the per-band meridian seam bridges the lower+upper latitude
+circles into one loop). For cone/cylinder bands that is fine (they tessellate via
+tessellate_cylinder/cone, bypassing loop_polygon). But a flat washer is PLANAR ->
+tessellate_planar -> loop_polygon, which mis-handles a 2-closed-circle + seam loop
+(it falls back to sampling ONE circle as a full disc -> wrong volume, 13.58 vs
+5pi). FIX: for an interior horizontal band, kemr (kill-edge-make-ring) the band's
+SEAM edge -> the single loop splits into a proper 2-LOOP holed face (outer circle
+loop + inner circle RING/hole), which tessellate_planar (outer ear-clip + inner
+reversed fan) and mass_properties (inner subtracts) already handle. Disc end-caps
+keep their seam (inner "circle" is the pole -> no ring to make). Tracked each
+band's seam edge through construction to reach it. Also replaced the disc-cap
+normal heuristic (h vs mid-height) with the robust nz = -sign(dr) rule that is
+correct for caps AND washers (meridian is bottom->top, solid on the axis side).
+Test: stepped cylinder [(0,0),(2,0),(2,1),(1,1),(1,2),(0,2)] -> wide r=2 over
+h[0,1] + narrow r=1 over h[1,2] with a washer shoulder at h=1; 5 faces, validate
+ok, mesh_volume AND mass_properties ~5pi (4pi + pi). bicone/barrel/flat-cap
+regressions green.
+RUNNING TOTAL: 69 -> 70/144 (washer/holed-face solid of revolution; unlocks the
+holed-face path).
+GATE: exact CI triplet green (137 keel-topo, clippy -D warnings, fmt). No fuzz --
+constructor change; the holed-face tessellation path it exercises is the existing
+inner-ring path, not a boolean/winding mutation. Merged.
