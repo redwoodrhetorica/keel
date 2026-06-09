@@ -2582,3 +2582,21 @@ holed-face path).
 GATE: exact CI triplet green (137 keel-topo, clippy -D warnings, fmt). No fuzz --
 constructor change; the holed-face tessellation path it exercises is the existing
 inner-ring path, not a boolean/winding mutation. Merged.
+
+## Addendum 80 (2026-06-08): CLOSEST-POINT-ON-BODY + tube-boolean gap finding -- 71/144
+
+Body::closest_point(p) -> Option<(Vec3, f64)> (interrogate.rs): the closest surface
+point to an external point + its distance. Refactored the existing Ericson point-
+triangle routine into closest_on_tri (returns the point) with point_tri_distance a
+thin norm wrapper (min_distance regressions stay green), then min-reduce over the
+body's outward tessellation. Exact for planar faces; tessellation-approximate for
+curved (exact face projection later). Test: [0,2]^3, point (5,1,1) -> closest
+(2,1,1) on +x face, distance 3.
+FINDING (logged, not fixed): a TUBE via Difference of two coaxial same-height
+cylinders FAILS -- boolean returns AssemblyFailed("stitched (curved) body
+invalid"). The coincident end-caps + genus-1 (through-hole) result hits the known
+enclosed-void/genus-1 stitch gap. So tube/annular solids need a from-scratch
+genus-1 constructor (like torus()'s kfmrh handle-punch), not a boolean. Queued.
+RUNNING TOTAL: 70 -> 71/144 (closest-point interrogation).
+GATE: exact CI triplet green (138 keel-topo, clippy -D warnings, fmt). No fuzz --
+read-only query + a safe point-triangle refactor. Merged.

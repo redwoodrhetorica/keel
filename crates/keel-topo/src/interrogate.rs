@@ -19,8 +19,8 @@ pub struct FaceDraft {
 }
 
 /// Closest point on triangle `[a, b, c]` to `p` (Ericson, Real-Time
-/// Collision Detection), then the distance.
-fn point_tri_distance(p: Vec3, tri: &[Vec3; 3]) -> f64 {
+/// Collision Detection).
+fn closest_on_tri(p: Vec3, tri: &[Vec3; 3]) -> Vec3 {
     let (a, b, c) = (tri[0], tri[1], tri[2]);
     let ab = b - a;
     let ac = c - a;
@@ -28,40 +28,45 @@ fn point_tri_distance(p: Vec3, tri: &[Vec3; 3]) -> f64 {
     let d1 = ab.dot(ap);
     let d2 = ac.dot(ap);
     if d1 <= 0.0 && d2 <= 0.0 {
-        return (p - a).norm(); // vertex region A
+        return a; // vertex region A
     }
     let bp = p - b;
     let d3 = ab.dot(bp);
     let d4 = ac.dot(bp);
     if d3 >= 0.0 && d4 <= d3 {
-        return (p - b).norm(); // vertex region B
+        return b; // vertex region B
     }
     let vc = d1 * d4 - d3 * d2;
     if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
         let v = d1 / (d1 - d3);
-        return (p - (a + ab * v)).norm(); // edge AB
+        return a + ab * v; // edge AB
     }
     let cp = p - c;
     let d5 = ab.dot(cp);
     let d6 = ac.dot(cp);
     if d6 >= 0.0 && d5 <= d6 {
-        return (p - c).norm(); // vertex region C
+        return c; // vertex region C
     }
     let vb = d5 * d2 - d1 * d6;
     if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
         let w = d2 / (d2 - d6);
-        return (p - (a + ac * w)).norm(); // edge AC
+        return a + ac * w; // edge AC
     }
     let va = d3 * d6 - d5 * d4;
     if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
         let w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
-        return (p - (b + (c - b) * w)).norm(); // edge BC
+        return b + (c - b) * w; // edge BC
     }
     // Interior: barycentric projection onto the plane.
     let denom = 1.0 / (va + vb + vc);
     let v = vb * denom;
     let w = vc * denom;
-    (p - (a + ab * v + ac * w)).norm()
+    a + ab * v + ac * w
+}
+
+/// Distance from `p` to triangle `[a, b, c]`.
+fn point_tri_distance(p: Vec3, tri: &[Vec3; 3]) -> f64 {
+    (p - closest_on_tri(p, tri)).norm()
 }
 
 impl Body {
@@ -89,6 +94,21 @@ impl Body {
     /// every face's area. Exact for all-planar bodies.
     pub fn surface_area(&self) -> f64 {
         self.face_keys().iter().map(|&f| self.face_area(f)).sum()
+    }
+
+    /// Closest point on the body's surface to an external point `p`, with
+    /// its distance (parity interrogation). Exact for planar faces;
+    /// tessellation-resolution approximate for curved faces (exact
+    /// face-surface projection is a later refinement). `None` for an empty
+    /// body.
+    pub fn closest_point(&self, p: Vec3) -> Option<(Vec3, f64)> {
+        self.all_triangles()
+            .iter()
+            .map(|t| {
+                let q = closest_on_tri(p, t);
+                (q, (p - q).norm())
+            })
+            .min_by(|x, y| x.1.total_cmp(&y.1))
     }
 
     /// Draft analysis (parity item 107): per-face signed draft angle range
@@ -420,6 +440,20 @@ mod tests {
         b.block(Vec3::ZERO, 2.0, 3.0, 4.0).unwrap();
         let a = b.surface_area();
         assert!((a - 52.0).abs() < 1e-9, "block surface area {a} != 52");
+    }
+
+    #[test]
+    fn closest_point_on_box() {
+        // [0,2]^3; point at (5,1,1) -> closest surface point (2,1,1) on the
+        // +x face, distance 3.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let (q, d) = b.closest_point(Vec3::new(5.0, 1.0, 1.0)).unwrap();
+        assert!((d - 3.0).abs() < 1e-9, "closest distance {d} != 3");
+        assert!(
+            (q - Vec3::new(2.0, 1.0, 1.0)).norm() < 1e-9,
+            "closest point {q:?}"
+        );
     }
 
     #[test]
