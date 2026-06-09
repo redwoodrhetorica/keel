@@ -3175,42 +3175,43 @@ it then. #21 CLOSED.
 GATE: exact CI triplet green (workspace 108 math + 77 geom + 157 topo, clippy -D warnings, fmt)
 + fuzz_boolean (WSL nightly, 180s, Done 323 runs, clean, no artifacts). Merged.
 
-## Addendum 105 (2026-06-09, attended): #16 asym-chamfer DIAGNOSIS CHECKPOINT -- the decline is at ASSEMBLY, not a Tangent fault (corrects the prior framing). No code landed; still 82/144
+## Addendum 105 (2026-06-09, attended): #16 asym-chamfer DIAGNOSIS CHECKPOINT -- decline mechanism traced end-to-end; prior LAYER-1/2 diagnosis RECONCILED (not overturned). No code landed; still 82/144
 
 Re-read dossier 39 (coincident/tangent face booleans, sec 3.2 the real-edge-iff-separates-kept-
 from-dropped test; sec 2 the LTH on-on keep/drop tables) before resuming #16. Then INSTRUMENTED
 the live asym-chamfer repro (asymmetric_chamfer_must_not_return_wrong_body: 2^3 box minus a thin
 triangular-prism wedge, setbacks d1=0.5/d2=1.0, true volume 7.5) with env-gated DIAG at the
-three candidate decline sites. Hard data (the success branch verified explicitly per the
-Addendum-101 lesson; diagnostics reverted, master clean at ff5d888):
+three candidate decline sites. Hard data (diagnostics reverted, master clean at the #21 merge):
 
   DIAG seams=5 faults=[]
   DIAG kept=9 (A:7 B:2)
   DIAG gate curved=false ok=false mass=11.499999999999995 mesh=8.833333333333332 nfaces=8
 
-CORRECTED DIAGNOSIS (overturns the [[tilted-cut-boolean-bug]] "tangent cutter apex-face ->
-Tangent fault" framing):
-1. seam_curves emits 5 seams with NO faults -- so the boolean does NOT decline at the early
-   Tangent guard (boolean.rs:1625). There is no tangent fault in this repro.
-2. classify + select produce 9 kept faces (7 from A, 2 from B). Selection is CORRECT -- the
-   tilted cut face IS selected, exactly as dossier 47 predicted.
-3. The WALL is ASSEMBLY. stitch_by_import cannot pair the thin-oblique seam coedges, so it
-   returns Err (its 9-kept attempt is the "9 faces / 21 edges" firing of the new #21 closure
-   check -- an unpaired coedge after the seam glue). The pipeline falls back to
-   build_result_solid (the soup), which DROPS the tilted face -> an 8-face all-planar body with
-   mass=11.5 (dossier-47's exact soup-drop signature) != mesh=8.833. The mass==mesh gate then
-   DECLINES honestly. No wrong answer is ever returned.
+WHAT THIS RUN ESTABLISHED (decline path traced end-to-end):
+1. seam_curves emits 5 seams with NO Tangent FAULT -- so the boolean does NOT decline at the
+   early Tangent guard (boolean.rs:1625). (This is CONSISTENT with the prior diagnosis, which
+   already said the apex tangency is emitted as a spurious TRANSVERSAL seam, not as a fault --
+   so a spurious seam would NOT appear in faults[]. Not a refutation.)
+2. classify + select produce 9 kept faces (7 from A, 2 from B); the tilted cut face IS selected.
+3. The WALL is ASSEMBLY. stitch_by_import cannot pair the thin-oblique seam coedges, returns Err
+   (its 9-kept attempt is the "9 faces / 21 edges" firing of the new #21 closure check), and the
+   pipeline falls back to build_result_solid (the soup), which DROPS the tilted face -> an 8-face
+   all-planar body with mass=11.5 (dossier-47's exact soup-drop signature) != mesh=8.833. The
+   mass==mesh gate then DECLINES honestly. No wrong answer is ever returned.
 
-CONSEQUENCE FOR THE FIX: the real #16 fix lives in the DOSSIER-47 identity-preserving ASSEMBLY
-(the same seam-glue path the L-union fix of Addendum 103 touched in imprint_operand), NOT a
-separate dossier-39 sec 3.2 tangency-suppression layer (there is no spurious tangent seam to
-suppress here -- seams=5, faults=[], and the 9 kept faces are correct). The concrete open
-question for next session: in stitch_by_import's dangling-edge glue (bounds-match pairing of
-radial-1 edges), WHICH coedge of the thin oblique cut is left unpaired, and WHY the
-bounds/vertex match misses it (candidate: the thin-wedge setback vertices are distinct-but-near
-and the coincident-vertex merge or the per-operand seam subdivision does not line up 1:1, the
-oblique cousin of the guillotine closed-ring-vs-open-edges mismatch that Addendum 100 fixed for
-the axis-aligned case). NEXT: instrument the dangling-edge set in stitch_by_import for this
-repro (print each radial-1 edge's bounds + the faces whose fins are on it, pre- and post-glue),
-locate the unpaired coedge, then extend the seam subdivision / glue to pair it -- mirroring the
-guillotine (Addendum 100) and L-union (Addendum 103) imprint fixes for the oblique case.
+WHAT THIS RUN DID NOT ESTABLISH (guard against the Addendum-101/100 overclaim): I counted the
+5 seams and the 9 kept faces but did NOT examine each seam's geometry, so I did NOT verify
+whether one of the 5 is the spurious interior-duplicate apex seam (LAYER 1) nor whether the
+unpaired coedges come from that duplicate (LAYER 1) or the three-face removed-corner triangle
+(LAYER 2). The prior, finer [[tilted-cut-boolean-bug]] diagnosis (LAYER 1 spurious interior-
+duplicate apex seam + LAYER 2 multi-face corner consistency; the held m16c-tangent-seam-dedup
+branch cut dangling coedges 5->3; dossier-39 sec 3.2 two-sided neighborhood test as the
+principled fix path) therefore STANDS as the candidate and is consistent with this run. The
+open question -- whether the fix is upstream seam-suppression (sec 3.2) or the dossier-47
+assembly-glue (the oblique cousin of the Addendum-100 guillotine / Addendum-103 L-union imprint
+fixes), or both layers -- is NOT yet decided by data.
+
+NEXT (data-first): print each of the 5 seams (face_a/face_b ids + curve endpoints) AND the
+radial-1 dangling-coedge set in stitch_by_import for this repro pre- and post-glue. That single
+run decides LAYER 1 (a duplicate interior seam to suppress per sec 3.2) vs an assembly-glue gap
+(extend seam subdivision / bounds-match to pair the oblique coedges). Only then design the fix.
