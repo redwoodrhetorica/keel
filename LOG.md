@@ -2414,3 +2414,32 @@ Addendum 71; also unblocks future chamfer/fillet-of-revolution).
 GATE: exact CI triplet green (126 keel-topo, clippy -D warnings, fmt) + fuzz_boolean
 soak (tessellate_cone feeds the classifier for cone-faced bodies; change is inert
 for the full-cone fuzz corpus). Merged.
+
+## Addendum 73 (2026-06-08): partial revolve theta -> (0, 2pi) via opt-in Edge::arc_sweep (broadens 64/144)
+
+Completes the angular range of revolve_partial. The blocker was real: a Circle3
+edge plus its two endpoints is genuinely ambiguous (the theta arc vs the 2pi-theta
+complement), and BOTH tessellators inferred the arc from atan2, which wraps at the
++/-pi branch cut -- so any sector wider than pi was mis-measured (loop_polygon
+sampled the short complement; cyl_angular_span's atan2 min/max gave the wrong
+span).
+FIX: a new OPT-IN field Edge::arc_sweep: Option<f64> -- the signed angular sweep
+(bounds.0 -> bounds.1, circle frame) of an arc edge. Default None means "short
+span", exactly the behaviour every pre-existing arc relied on, so there is ZERO
+change to fillet/cap/boolean arcs (regression-free by construction). revolve_partial
+stamps Some(theta) on its vertical arcs (bounds.0 = phi=0 -> bounds.1 = phi=theta,
+CCW, so +theta). Both tessellators now use it when present:
+- loop_polygon: d = +/-sweep (sign from fin.forward) instead of the short-span
+  normalization; segment count scales with |sweep| so chord error stays bounded as
+  the arc approaches 2pi.
+- cyl_angular_span: returns start_angle .. start_angle + sweep CONTINUOUSLY (no
+  atan2 min/max), so a >pi sector is exact and the branch cut is never crossed.
+Topology is unchanged (no slab-splitting needed): same 2n V, 3n E, n+2 F, just
+wider arcs. Test: annular rectangle revolved 3pi/2, counts (8,12,6), mesh_volume
+~9pi/4. The (0, pi] cap is gone; only theta -> 2pi (full revolution) and true-pole
+profiles and pcurves remain follow-ups.
+RUNNING TOTAL: stays 64/144 (broadens the partial-revolve item; full angular range).
+GATE: exact CI triplet green (127 keel-topo, clippy -D warnings, fmt) + fuzz_boolean
+soak (loop_polygon + cyl_angular_span are the winding-classifier hot path; the
+arc_sweep paths are gated on Some, inert for the full-primitive fuzz corpus).
+Merged.
