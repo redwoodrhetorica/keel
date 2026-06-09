@@ -6,6 +6,7 @@
 //! total lineage reporting (spec D9), and deterministic identity.
 
 pub mod arena;
+pub mod assembly;
 pub mod blend;
 pub mod body;
 pub mod boolean;
