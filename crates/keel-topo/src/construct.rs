@@ -425,17 +425,11 @@ impl Body {
                 "revolve: interior must be off-axis",
             ));
         }
-        // A horizontal END segment (pole -> rim at constant height) is a
-        // flat DISC cap -- now supported (the geometry attach gives it a
-        // plane). Only INTERIOR horizontal segments are still rejected:
-        // they revolve to a holed washer (follow-up).
-        for i in 1..m - 2 {
-            if (profile[i].1 - profile[i + 1].1).abs() < 1e-12 {
-                return Err(TopoError::Precondition(
-                    "revolve: interior washer (follow-up)",
-                ));
-            }
-        }
+        // Any horizontal segment (constant height) revolves to a FLAT
+        // planar band: a DISC cap at an end (inner radius 0, the pole) or a
+        // WASHER/annulus in the interior. Both are built by the same
+        // single-loop seam-bridged band as the cone/cylinder bands, so they
+        // need no ring operators -- only a plane in the geometry attach.
 
         let (o, ex, ey, ez) = (frame.origin, frame.x, frame.y, frame.z);
         let s = |i: usize| o + ex * profile[i].0 + ez * profile[i].1;
@@ -462,8 +456,10 @@ impl Body {
         let mdown = self.mev(MevSite::AfterFin(fin), s(0))?;
         reports.push(mdown.report);
 
-        // bands: (face, lower_index, upper_index).
-        let mut bands = vec![(bot.face, 0usize, 1usize)];
+        // bands: (face, lower_index, upper_index, seam_edge). The seam is
+        // the per-band meridian edge bridging the band's lower and upper
+        // latitude circles into one loop.
+        let mut bands = vec![(bot.face, 0usize, 1usize, mdown.edge)];
         let mut cur_face = seed.face;
         let mut cur_lp = lp;
         let mut cur_vertex = seed.vertex;
@@ -474,7 +470,7 @@ impl Body {
             let at = self.fin_ending_at(cur_lp, up.vertex)?;
             let cap = self.mef(at, at, None)?;
             reports.push(cap.report.clone());
-            bands.push((cur_face, i, i + 1));
+            bands.push((cur_face, i, i + 1, up.edge));
             cur_face = cap.face;
             cur_lp = self
                 .faces
@@ -487,24 +483,43 @@ impl Body {
         let fin = self.fin_ending_at(cur_lp, cur_vertex)?;
         let mtop = self.mev(MevSite::AfterFin(fin), s(m - 1))?;
         reports.push(mtop.report);
-        bands.push((cur_face, m - 2, m - 1));
+        bands.push((cur_face, m - 2, m - 1, mtop.edge));
         self.debug_validate();
 
-        // ---- geometry attach: a disc, cone, or cylinder per band ----
+        // An INTERIOR horizontal band (both ends off-axis) is a flat
+        // ANNULUS. Its seam bridges the inner and outer latitude circles
+        // into a single loop, which would mis-tessellate as a full disc;
+        // kemr the seam to split it into a proper 2-loop holed face (outer
+        // loop + inner ring), which tessellate_planar/mass_properties
+        // handle correctly. (Disc end-caps keep their seam: their inner
+        // "circle" is the pole, so there is no ring to make.)
+        for &(_, lo, hi, seam) in &bands.clone() {
+            if (profile[lo].1 - profile[hi].1).abs() < 1e-12
+                && profile[lo].0 > 0.0
+                && profile[hi].0 > 0.0
+            {
+                let fin = self
+                    .edges
+                    .get(seam)
+                    .and_then(|e| e.radial.first().copied())
+                    .ok_or(TopoError::Precondition("revolve washer: seam fin"))?;
+                reports.push(self.kemr(fin)?);
+            }
+        }
+        self.debug_validate();
+
+        // ---- geometry attach: a disc/washer, cone, or cylinder per band ----
         let axis_at = |h: f64| o + ez * h;
-        let (min_h, max_h) = profile
-            .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &(_, h)| {
-                (a.min(h), b.max(h))
-            });
-        let href = 0.5 * (min_h + max_h);
-        for &(fk, lo, hi) in &bands {
+        for &(fk, lo, hi, _) in &bands {
             let (r_lo, h_lo) = profile[lo];
             let (r_hi, h_hi) = profile[hi];
             if (h_hi - h_lo).abs() < 1e-12 {
-                // Flat disc end-cap: outward points away from the body
-                // (down for the lower cap, up for the upper).
-                let nz = if h_lo < href { ez * -1.0 } else { ez };
+                // Flat disc/washer band. The meridian is traversed bottom
+                // pole -> top pole with the solid on the axis side, so the
+                // outward normal of a horizontal segment is -sign(dr) in z:
+                // an outward-growing segment (dr > 0) faces DOWN, an
+                // inward-growing one (dr < 0) faces UP.
+                let nz = if r_hi > r_lo { ez * -1.0 } else { ez };
                 let frame = Frame3::from_z(axis_at(h_lo), nz).map_err(geom_err)?;
                 self.attach_face_surface(
                     fk,
@@ -591,7 +606,7 @@ impl Body {
             all_edges.push(ek);
         }
 
-        let faces: Vec<FaceKey> = bands.iter().map(|&(f, _, _)| f).collect();
+        let faces: Vec<FaceKey> = bands.iter().map(|&(f, _, _, _)| f).collect();
         let vertices: Vec<VertexKey> = self.vertices.iter().map(|(k, _)| k).collect();
         Ok(PrimitiveOut {
             faces,
@@ -1683,6 +1698,40 @@ mod tests {
         assert!(
             (mv - expect).abs() < expect * 0.01,
             "flat-capped revolve mass_properties {mv} != ~pi"
+        );
+    }
+
+    #[test]
+    fn revolve_stepped_cylinder_with_washer() {
+        // pole -> (2,0) bottom disc -> (2,1) outer wall -> (1,1) WASHER
+        // shoulder (interior horizontal) -> (1,2) inner wall -> pole top
+        // disc. A stepped cylinder: wide r=2 over h[0,1] + narrow r=1 over
+        // h[1,2]. Volume = pi*4*1 + pi*1*1 = 5pi; 5 faces.
+        let mut b = Body::new();
+        b.revolve(
+            z_up(),
+            &[
+                (0.0, 0.0),
+                (2.0, 0.0),
+                (2.0, 1.0),
+                (1.0, 1.0),
+                (1.0, 2.0),
+                (0.0, 2.0),
+            ],
+        )
+        .unwrap();
+        assert!(b.validate().is_ok(), "stepped cylinder invalid");
+        assert_eq!(b.counts().f, 5, "stepped cylinder face count");
+        let expect = 5.0 * core::f64::consts::PI;
+        let v = b.mesh_volume();
+        assert!(
+            (v - expect).abs() < expect * 0.01,
+            "stepped cylinder mesh_volume {v} != ~5pi"
+        );
+        let mv = b.mass_properties().unwrap().volume;
+        assert!(
+            (mv - expect).abs() < expect * 0.01,
+            "stepped cylinder mass_properties {mv} != ~5pi"
         );
     }
 
