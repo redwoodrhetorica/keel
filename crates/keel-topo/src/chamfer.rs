@@ -1,9 +1,11 @@
-//! Edge chamfer (parity item 52; the first blend-family operation).
-//! A constant-setback chamfer on a convex edge between two PLANAR faces,
-//! done as a transversal boolean: subtract a prism whose chamfer face
-//! slices the corner at the setback, with its other faces lying outside
-//! the body so the cut stays transversal (no coincident-face handling
-//! needed). Curved-face chamfers, variable/asymmetric setback, and
+//! Edge chamfer (parity items 52 constant + 53 variable/asymmetric; the
+//! first blend-family operation). A setback chamfer on a convex edge
+//! between two PLANAR faces, done as a transversal boolean: subtract a
+//! prism whose chamfer face slices the corner at the setback(s), with its
+//! other faces lying outside the body so the cut stays transversal (no
+//! coincident-face handling needed). For unequal setbacks (d1 != d2) the
+//! chamfer face is a thin OBLIQUE plane; assembling it is the general-
+//! position-boolean keystone (LOG Addendum 110). Curved-face chamfers and
 //! fillets (arc cross-section) are follow-ups.
 
 use crate::Body;
@@ -17,6 +19,23 @@ impl Body {
     /// face. Returns the chamfered body. Errors if the edge is not
     /// bounded by exactly two planar faces, or the cut fails.
     pub fn chamfer_edge(&self, edge: EdgeKey, distance: f64) -> Result<Body, TopoError> {
+        self.chamfer_edge_asymmetric(edge, distance, distance)
+    }
+
+    /// Chamfer `edge` with independent setbacks `d1` on its first adjacent
+    /// face and `d2` on its second (parity item 53: variable / two-offset
+    /// chamfer). The cut face is a thin OBLIQUE transversal plane when
+    /// `d1 != d2`; assembling it is the general-position-boolean keystone
+    /// (LOG Addendum 110). Errors if the edge is not bounded by exactly two
+    /// planar faces, or the cut fails. The adjacent-face order is the
+    /// deterministic `faces_around_edge` order; query it if the caller needs
+    /// to map a specific setback to a specific face.
+    pub fn chamfer_edge_asymmetric(
+        &self,
+        edge: EdgeKey,
+        d1: f64,
+        d2: f64,
+    ) -> Result<Body, TopoError> {
         let (v0, v1) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
         let p0 = self.vertices.get(v0).ok_or(TopoError::StaleKey)?.point;
         let p1 = self.vertices.get(v1).ok_or(TopoError::StaleKey)?.point;
@@ -64,10 +83,10 @@ impl Body {
         // outward bisector so only the chamfer face (a-b) cuts the body.
         let bb = self.bounding_box();
         let big = (bb.max - bb.min).norm() * 2.0 + 10.0;
-        let margin = len * 0.5 + distance + 1e-3;
+        let margin = len * 0.5 + d1.max(d2) + 1e-3;
         let base = p0 - t * margin;
-        let a = base + u1 * distance;
-        let b = base + u2 * distance;
+        let a = base + u1 * d1;
+        let b = base + u2 * d2;
         let c = base + bisect * big;
         // Order the profile counterclockwise about the extrusion direction.
         let profile = if (b - a).cross(c - a).dot(t) >= 0.0 {
@@ -129,59 +148,24 @@ mod tests {
     }
 
     #[test]
-    fn asymmetric_chamfer_must_not_return_wrong_body() {
-        // Asymmetric chamfer of a 2^3 box top edge: setbacks d1=0.5 on one
-        // face, d2=1.0 on the other. The removed wedge is a right triangle
+    fn asymmetric_chamfer_assembles_to_true_volume() {
+        // Asymmetric chamfer of a 2^3 box top edge via the PUBLIC API:
+        // setbacks d1=0.5, d2=1.0. The removed wedge is a right triangle
         // (legs 0.5, 1.0 -> area 0.25) over length 2 => 0.5 removed, so the
-        // true volume is 8 - 0.5 = 7.5. The oblique cut face is a thin,
-        // non-45-degree fragment that build_result_solid drops (it returns
-        // mass 11.5 / mesh 8.83 -- both wrong). CONTRACT: the boolean must
-        // return the correct 7.5 OR decline (Err) -- never a wrong-positive
-        // body. This reconstructs the chamfer_edge cutter with independent
-        // setbacks (d1 != d2).
+        // true volume is 8 - 0.5 = 7.5. The cut face is a thin, non-45-degree
+        // OBLIQUE fragment; the old polygon-soup dropped it (mass 11.5 / mesh
+        // 8.83, both wrong). It must now ASSEMBLE to the true 7.5 with
+        // mass == mesh (the general-position-boolean keystone, LOG Addendum
+        // 110). Success-required (no longer correct-or-decline).
         let mut b = Body::new();
         b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
         let e = top_right_edge(&b);
-        let (v0, v1) = b.edges.get(e).unwrap().bounds;
-        let p0 = b.vertices.get(v0).unwrap().point;
-        let p1 = b.vertices.get(v1).unwrap().point;
-        let len = (p1 - p0).norm();
-        let t = (p1 - p0).try_normalize().unwrap();
-        let faces = b.faces_around_edge(e);
-        let n1 = b.face_outward_normal(faces[0]).unwrap();
-        let n2 = b.face_outward_normal(faces[1]).unwrap();
-        let mut u1 = t.cross(n1);
-        if u1.dot(n2) > 0.0 {
-            u1 = u1 * -1.0;
-        }
-        let mut u2 = t.cross(n2);
-        if u2.dot(n1) > 0.0 {
-            u2 = u2 * -1.0;
-        }
-        let bisect = (n1 + n2).try_normalize().unwrap();
-        let (d1, d2) = (0.5_f64, 1.0_f64);
-        let bb = b.bounding_box();
-        let big = (bb.max - bb.min).norm() * 2.0 + 10.0;
-        let margin = len * 0.5 + d1.max(d2) + 1e-3;
-        let base = p0 - t * margin;
-        let a = base + u1 * d1;
-        let bpt = base + u2 * d2;
-        let c = base + bisect * big;
-        let profile = if (bpt - a).cross(c - a).dot(t) >= 0.0 {
-            vec![a, bpt, c]
-        } else {
-            vec![a, c, bpt]
-        };
-        let dir = t * (len + 2.0 * margin);
-        let mut cutter = Body::new();
-        cutter.prism(&profile, dir).unwrap();
-        let res = boolean(&b, &cutter, BoolOp::Difference, 1e-7).expect(
-            "asymmetric chamfer must now ASSEMBLE (LAYER 1 seam dedup + LAYER 2 \
-                     vertex-bounded fin sampling + degenerate-fragment filter)",
-        );
-        assert!(res.body.validate().is_ok(), "asym chamfer body invalid");
-        let v = res.body.mass_properties().unwrap().volume;
-        let mv = res.body.mesh_volume();
+        let res = b
+            .chamfer_edge_asymmetric(e, 0.5, 1.0)
+            .expect("asymmetric chamfer must assemble (LAYER 1 + LAYER 2 fixes)");
+        assert!(res.validate().is_ok(), "asym chamfer body invalid");
+        let v = res.mass_properties().unwrap().volume;
+        let mv = res.mesh_volume();
         assert!(
             (v - 7.5).abs() < 1e-6 && (mv - 7.5).abs() < 1e-6,
             "asymmetric chamfer must be the true 7.5 with mass == mesh (got mass {v}, mesh {mv})"
