@@ -55,6 +55,68 @@ impl Body {
         self.apply_isometry(&t)
     }
 
+    /// Uniformly scale a copy of the body about `center` by `factor` > 0.
+    /// Planar-faced bodies only: mass_properties and tessellation sample the
+    /// scaled geometry directly, so the stored pcurves (left as-is) do not
+    /// affect them. Curved surfaces (whose radii would scale) and circular/
+    /// elliptic/NURBS edges are a follow-up.
+    pub fn scaled(&self, center: Vec3, factor: f64) -> Result<Body, TopoError> {
+        if !(factor.is_finite() && factor > 0.0) {
+            return Err(TopoError::Precondition(
+                "scale: factor must be finite and > 0",
+            ));
+        }
+        let mut out = self.clone();
+        let vkeys: Vec<_> = out.vertices.iter().map(|(k, _)| k).collect();
+        for k in vkeys {
+            if let Some(v) = out.vertices.get_mut(k) {
+                v.point = center + (v.point - center) * factor;
+            }
+        }
+        let skeys: HashSet<_> = out
+            .faces
+            .iter()
+            .filter_map(|(_, f)| f.surface.map(|(sk, _)| sk))
+            .collect();
+        for k in skeys {
+            let Some(SurfaceGeom::Analytic(Surface3::Plane(p))) = out.surfaces.get(k).cloned()
+            else {
+                return Err(TopoError::Precondition(
+                    "scale: curved/NURBS surfaces are a follow-up",
+                ));
+            };
+            let frame = Frame3 {
+                origin: center + (p.frame.origin - center) * factor,
+                x: p.frame.x,
+                y: p.frame.y,
+                z: p.frame.z,
+            };
+            if let Some(slot) = out.surfaces.get_mut(k) {
+                *slot = SurfaceGeom::Analytic(Surface3::Plane(Plane3 { frame }));
+            }
+        }
+        let ckeys: HashSet<_> = out
+            .edges
+            .iter()
+            .filter_map(|(_, e)| e.curve.map(|(ck, _)| ck))
+            .collect();
+        for k in ckeys {
+            let Some(Curve3::Line(l)) = out.curves.get(k).cloned() else {
+                return Err(TopoError::Precondition(
+                    "scale: curved edges are a follow-up",
+                ));
+            };
+            let nl = Line3 {
+                origin: center + (l.origin - center) * factor,
+                dir: l.dir,
+            };
+            if let Some(slot) = out.curves.get_mut(k) {
+                *slot = Curve3::Line(nl);
+            }
+        }
+        Ok(out)
+    }
+
     /// Classify a transform's linear part. Errors on scale/shear (non-
     /// orthonormal), where radii would not be preserved.
     fn isometry_kind(t: &Transform3) -> Result<IsometryKind, TopoError> {
@@ -291,5 +353,39 @@ mod tests {
             bb.min,
             bb.max
         );
+    }
+
+    #[test]
+    fn scale_box_cubes_the_volume() {
+        // [0,2]^3 (volume 8) scaled 2x about the origin -> [0,4]^3 (volume
+        // 64 = 8 * 2^3), a valid solid.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let s = b.scaled(Vec3::ZERO, 2.0).unwrap();
+        assert!(s.validate().is_ok(), "scaled box invalid");
+        let v = s.mass_properties().unwrap().volume;
+        assert!((v - 64.0).abs() < 1e-9, "scale^3 volume {v} != 64");
+        let bb = s.bounding_box();
+        assert!(
+            (bb.min - Vec3::ZERO).norm() < 1e-9
+                && (bb.max - Vec3::new(4.0, 4.0, 4.0)).norm() < 1e-9,
+            "scaled bbox [{:?},{:?}]",
+            bb.min,
+            bb.max
+        );
+    }
+
+    #[test]
+    fn scale_rejects_curved_and_bad_factor() {
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut cyl = Body::new();
+        cyl.cylinder(frame, 1.0, 2.0).unwrap();
+        assert!(
+            cyl.scaled(Vec3::ZERO, 2.0).is_err(),
+            "curved body scale is a follow-up"
+        );
+        let mut bx = Body::new();
+        bx.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        assert!(bx.scaled(Vec3::ZERO, 0.0).is_err(), "zero factor rejects");
     }
 }
