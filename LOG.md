@@ -2472,3 +2472,29 @@ reclaim them.
 RUNNING TOTAL: 64 -> 65/144 (body transform, a fresh capability).
 GATE: exact CI triplet green (129 keel-topo, clippy -D warnings, fmt). No fuzz
 needed -- additive new op, no boolean/tessellation-pipeline change. Merged.
+
+## Addendum 75 (2026-06-08): MIRROR (reflection across a plane) -- 66/144
+
+Body::mirrored(plane_point, plane_normal) -> Body (transform.rs): reflect a body
+across an arbitrary plane via a Householder reflection R(x) = (I - 2 m m^T)x +
+2(p.m)m built as a Transform3, applied through the SAME apply_isometry path as the
+rigid transform.
+KEY INSIGHT (simpler than the first attempt): a reflection needs NO special
+orientation handling. Reflecting every frame DIRECTLY sends frame.z -> M(frame.z),
+so the outward normal -- which mass_properties derives from frame.z x region-
+solidity and tessellation from frame.z x sense -- maps to M(N), the correct
+mirrored outward. Because M is orthogonal the face's (u,v) coordinates are
+preserved (u' = M(x).M(p-o) = x.(p-o) = u), so pcurves stay valid. The frame goes
+left-handed but nothing relies on its chirality. The first attempt flipped frame.z
+to "restore" right-handedness + flipped the face sense; that DOUBLE-flip made
+mass_properties' frame.z x region-orient normal point inward -> non-positive
+volume. Removing all of it (plain direct reflection) is correct AND works for
+CURVED faces too (cylinder/cone/sphere/torus), with no per-type casing.
+transformed() (rigid) now routes reflections to mirrored() via an isometry_kind
+classifier (orthonormal check rejects scale/shear; det sign splits rotation vs
+reflection). Tests: box across x=0 -> [-2,0]x[0,2]x[0,2], volume 8, valid; offset
+cylinder across x=0 -> validate + mesh_volume ~2pi + mirrored bbox.
+RUNNING TOTAL: 65 -> 66/144 (mirror, a fresh capability; builds on the Addendum-74
+transform).
+GATE: exact CI triplet green (131 keel-topo, clippy -D warnings, fmt). No fuzz --
+additive op, no boolean/tessellation-pipeline change. Merged.
