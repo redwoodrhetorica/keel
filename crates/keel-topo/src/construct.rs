@@ -236,88 +236,119 @@ impl Body {
     /// this covers tapered boxes, frusta, and prisms. Twisted/ruled
     /// lofts whose sides are non-planar need NURBS sides -- a follow-up.
     pub fn loft(&mut self, bottom: &[Vec3], top: &[Vec3]) -> Result<PrimitiveOut, TopoError> {
-        let n = bottom.len();
-        if n < 3 || top.len() != n {
+        self.loft_sections(&[bottom, top])
+    }
+
+    /// Loft / skin through K >= 2 parallel-ish sections (parity item 66),
+    /// each an n-point polygon with matching vertex count. Builds the
+    /// section-0 cap, then one band of n side faces per consecutive
+    /// section pair (intermediate section rings are NOT capped -- they
+    /// thread through as edge loops), then the final cap. Every side quad
+    /// across a consecutive pair must be PLANAR (doubly-curved skinning
+    /// with NURBS side faces is a follow-up); `loft(bottom, top)` is the
+    /// K = 2 case.
+    pub fn loft_sections(&mut self, sections: &[&[Vec3]]) -> Result<PrimitiveOut, TopoError> {
+        let k = sections.len();
+        if k < 2 {
+            return Err(TopoError::Precondition("loft: need >= 2 sections"));
+        }
+        let n = sections[0].len();
+        if n < 3 || sections.iter().any(|s| s.len() != n) {
             return Err(TopoError::Precondition(
-                "loft: profiles need 3+ matching points",
+                "loft: sections need 3+ matching points",
             ));
         }
-        if bottom.iter().chain(top).any(|p| !p.is_finite()) {
+        if sections
+            .iter()
+            .flat_map(|s| s.iter())
+            .any(|p| !p.is_finite())
+        {
             return Err(TopoError::Precondition("loft: non-finite point"));
         }
-        // Each side quad [b_i, b_{i+1}, t_{i+1}, t_i] must be planar.
-        for i in 0..n {
-            let (b0, b1) = (bottom[i], bottom[(i + 1) % n]);
-            let (t0, t1) = (top[i], top[(i + 1) % n]);
-            let nrm = (b1 - b0).cross(t0 - b0);
-            if let Some(un) = nrm.try_normalize()
-                && (t1 - b0).dot(un).abs() > 1e-7
-            {
-                return Err(TopoError::Precondition("loft: non-planar side quad"));
+        // Each side quad [lo_i, lo_{i+1}, hi_{i+1}, hi_i] across a
+        // consecutive section pair must be planar.
+        for w in sections.windows(2) {
+            let (lo, hi) = (w[0], w[1]);
+            for i in 0..n {
+                let (b0, b1) = (lo[i], lo[(i + 1) % n]);
+                let (t0, t1) = (hi[i], hi[(i + 1) % n]);
+                let nrm = (b1 - b0).cross(t0 - b0);
+                if let Some(un) = nrm.try_normalize()
+                    && (t1 - b0).dot(un).abs() > 1e-7
+                {
+                    return Err(TopoError::Precondition("loft: non-planar side quad"));
+                }
             }
         }
-        let cb: Vec3 = bottom.iter().fold(Vec3::ZERO, |a, &p| a + p) / n as f64;
-        let ct: Vec3 = top.iter().fold(Vec3::ZERO, |a, &p| a + p) / n as f64;
+        let centroid = |s: &[Vec3]| s.iter().fold(Vec3::ZERO, |a, &p| a + p) / n as f64;
+        let cb = centroid(sections[0]);
+        let ct = centroid(sections[k - 1]);
         let up = (ct - cb)
             .try_normalize()
             .ok_or(TopoError::Precondition("loft: degenerate profile offset"))?;
 
         let mut reports = Vec::new();
         let r = self.infinite_region();
-        let seed = self.mvfs(r, bottom[0])?;
+        let seed = self.mvfs(r, sections[0][0])?;
         reports.push(seed.report.clone());
         let lp = self
             .faces
             .get(seed.face)
             .map(|f| f.loops[0])
             .ok_or(TopoError::StaleKey)?;
-        // Bottom rim.
+        // Section-0 rim.
         let mut rim = vec![seed.vertex];
-        let mut rim_edges = Vec::new();
-        let m1 = self.mev(MevSite::VertexLoop(lp), bottom[1])?;
+        let mut straight_edges = Vec::new();
+        let m1 = self.mev(MevSite::VertexLoop(lp), sections[0][1])?;
         rim.push(m1.vertex);
-        rim_edges.push(m1.edge);
+        straight_edges.push(m1.edge);
         reports.push(m1.report);
-        for pt in &bottom[2..] {
+        for pt in &sections[0][2..] {
             let at = self.fin_ending_at(lp, *rim.last().ok_or(TopoError::StaleKey)?)?;
             let m = self.mev(MevSite::AfterFin(at), *pt)?;
             rim.push(m.vertex);
-            rim_edges.push(m.edge);
+            straight_edges.push(m.edge);
             reports.push(m.report);
         }
         let fa = self.fin_ending_at(lp, rim[n - 1])?;
         let fb = self.fin_ending_at(lp, rim[0])?;
-        let bottom_face = self.mef(fa, fb, None)?;
-        rim_edges.push(bottom_face.edge);
-        reports.push(bottom_face.report.clone());
-        // Verticals to the top profile.
-        let mut tops = Vec::new();
-        let mut vert_edges = Vec::new();
-        for (i, &rv) in rim.iter().enumerate() {
-            let at = self.fin_ending_at(lp, rv)?;
-            let m = self.mev(MevSite::AfterFin(at), top[i])?;
-            tops.push(m.vertex);
-            vert_edges.push(m.edge);
-            reports.push(m.report);
+        let cap0 = self.mef(fa, fb, None)?;
+        straight_edges.push(cap0.edge);
+        reports.push(cap0.report.clone());
+
+        // One band of side faces per consecutive section pair. The seed
+        // face's loop `lp` always bounds the CURRENT top rim, so each band
+        // repeats: verticals up to the next section, then n side mefs.
+        let mut faces = vec![cap0.face];
+        let mut cur_rim = rim.clone();
+        let mut all_verts = rim;
+        for &section in &sections[1..] {
+            let mut next_rim = Vec::with_capacity(n);
+            for (i, &rv) in cur_rim.iter().enumerate() {
+                let at = self.fin_ending_at(lp, rv)?;
+                let m = self.mev(MevSite::AfterFin(at), section[i])?;
+                next_rim.push(m.vertex);
+                straight_edges.push(m.edge);
+                reports.push(m.report);
+            }
+            for i in 0..n {
+                let a = self.fin_ending_at(lp, next_rim[i])?;
+                let c = self.fin_ending_at(lp, next_rim[(i + 1) % n])?;
+                let side = self.mef(a, c, None)?;
+                faces.push(side.face);
+                straight_edges.push(side.edge);
+                reports.push(side.report.clone());
+            }
+            all_verts.extend(next_rim.iter().copied());
+            cur_rim = next_rim;
         }
-        // Side faces; the last mef also closes the top (seed face).
-        let mut faces = vec![bottom_face.face];
-        let mut top_edges = Vec::new();
-        for i in 0..n {
-            let a = self.fin_ending_at(lp, tops[i])?;
-            let c = self.fin_ending_at(lp, tops[(i + 1) % n])?;
-            let side = self.mef(a, c, None)?;
-            faces.push(side.face);
-            top_edges.push(side.edge);
-            reports.push(side.report.clone());
-        }
-        faces.push(seed.face); // top cap
+        faces.push(seed.face); // final cap (bounds the last section rim)
         self.debug_validate();
 
         // ---- geometry attachment ----
-        // Caps: bottom outward = -up, top outward = +up.
-        let bottom_frame = Frame3::from_z(bottom[0], up * -1.0).map_err(geom_err)?;
-        let top_frame = Frame3::from_z(top[0], up).map_err(geom_err)?;
+        // Caps: section-0 outward = -up, last-section outward = +up.
+        let bottom_frame = Frame3::from_z(sections[0][0], up * -1.0).map_err(geom_err)?;
+        let top_frame = Frame3::from_z(sections[k - 1][0], up).map_err(geom_err)?;
         self.attach_face_surface(
             faces[0],
             SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(bottom_frame))),
@@ -328,33 +359,33 @@ impl Body {
             SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(top_frame))),
             true,
         );
-        // Side planes: normal from the quad, oriented outward (away from
-        // the loft axis).
-        for i in 0..n {
-            let (b0, b1) = (bottom[i], bottom[(i + 1) % n]);
-            let t0 = top[i];
-            let mut normal = (b1 - b0)
-                .cross(t0 - b0)
-                .try_normalize()
-                .ok_or(TopoError::Precondition("loft: degenerate side quad"))?;
-            let mid = (b0 + b1 + t0) / 3.0;
-            let axis_pt = cb + up * (mid - cb).dot(up);
-            if normal.dot(mid - axis_pt) < 0.0 {
-                normal = normal * -1.0;
+        // Side planes per band: normal from the quad, oriented outward
+        // (away from the loft axis). Band bj uses sections bj and bj+1;
+        // its side face i is faces[1 + bj*n + i].
+        for bj in 0..k - 1 {
+            let (lo, hi) = (sections[bj], sections[bj + 1]);
+            for i in 0..n {
+                let (b0, b1) = (lo[i], lo[(i + 1) % n]);
+                let t0 = hi[i];
+                let mut normal = (b1 - b0)
+                    .cross(t0 - b0)
+                    .try_normalize()
+                    .ok_or(TopoError::Precondition("loft: degenerate side quad"))?;
+                let mid = (b0 + b1 + t0) / 3.0;
+                let axis_pt = cb + up * (mid - cb).dot(up);
+                if normal.dot(mid - axis_pt) < 0.0 {
+                    normal = normal * -1.0;
+                }
+                let frame = Frame3::from_z(b0, normal).map_err(geom_err)?;
+                self.attach_face_surface(
+                    faces[1 + bj * n + i],
+                    SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(frame))),
+                    true,
+                );
             }
-            let frame = Frame3::from_z(b0, normal).map_err(geom_err)?;
-            self.attach_face_surface(
-                faces[1 + i],
-                SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(frame))),
-                true,
-            );
         }
         // Straight edges -> lines.
-        let mut all_edges = Vec::new();
-        all_edges.extend(rim_edges.iter().copied());
-        all_edges.extend(vert_edges.iter().copied());
-        all_edges.extend(top_edges.iter().copied());
-        for &ek in &all_edges {
+        for &ek in &straight_edges {
             let (a, bnd) = {
                 let e = self.edges.get(ek).ok_or(TopoError::StaleKey)?;
                 (e.bounds.0, e.bounds.1)
@@ -372,15 +403,13 @@ impl Body {
             let line = Line3::new(pa, pb - pa).map_err(geom_err)?;
             self.attach_edge_curve(ek, Curve3::Line(line), true);
         }
-        let mut vertices = rim;
-        vertices.extend(tops);
         for &fk in &faces {
             self.attach_plane_pcurves(fk)?;
         }
         Ok(PrimitiveOut {
             faces,
-            edges: all_edges,
-            vertices,
+            edges: straight_edges,
+            vertices: all_verts,
             reports,
         })
     }
@@ -1768,6 +1797,35 @@ mod tests {
         edges_lie_on_adjacent_surfaces(&b, 1e-9);
         let v = b.mass_properties().unwrap().volume;
         assert!((v - 14.0 / 3.0).abs() < 1e-9, "frustum volume {v} != 14/3");
+    }
+
+    #[test]
+    fn loft_three_sections_box() {
+        // Three identical 2x2 squares stacked at z = 0, 1, 2 -> a 2x2x2
+        // box with a mid-section edge ring (no mid cap). Volume 8; faces =
+        // bottom + 2 bands x 4 sides + top = 10; v - e + f = 2 gives e=20.
+        let sq = |z: f64| {
+            vec![
+                Vec3::new(0.0, 0.0, z),
+                Vec3::new(2.0, 0.0, z),
+                Vec3::new(2.0, 2.0, z),
+                Vec3::new(0.0, 2.0, z),
+            ]
+        };
+        let (s0, s1, s2) = (sq(0.0), sq(1.0), sq(2.0));
+        let mut b = Body::new();
+        let out = b.loft_sections(&[&s0, &s1, &s2]).unwrap();
+        assert!(
+            b.validate().is_ok(),
+            "3-section loft invalid: {:?}",
+            b.validate()
+        );
+        assert_eq!(out.faces.len(), 10, "3-section loft face count");
+        let c = b.counts();
+        assert_eq!((c.v, c.e, c.f), (12, 20, 10), "3-section loft counts");
+        edges_lie_on_adjacent_surfaces(&b, 1e-9);
+        let v = b.mass_properties().unwrap().volume;
+        assert!((v - 8.0).abs() < 1e-9, "3-section box volume {v} != 8");
     }
 
     #[test]
