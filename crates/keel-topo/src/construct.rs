@@ -2038,14 +2038,19 @@ mod tests {
             .unwrap();
         assert!(b.validate().is_ok(), "tube invalid: {:?}", b.validate());
         assert_eq!(out.faces.len(), 4, "tube face count");
-        // Geometry validated by the pcurve-free divergence oracle (exact
-        // analytic mass_properties on the genus-1 inner band is a follow-up
-        // -- a region-orientation subtlety on the kfmrh-punched face).
         let expect = 3.0 * core::f64::consts::PI;
         let v = b.mesh_volume();
         assert!(
             (v - expect).abs() < expect * 0.01,
             "tube mesh_volume {v} != ~3pi"
+        );
+        // Analytic mass_properties on the genus-1 inner band: the inner
+        // cylinder is the canonical REVERSED-sense (cavity-wall) face, and
+        // the file-46 sense-based divergence integrand handles it exactly.
+        let mv = b.mass_properties().unwrap().volume;
+        assert!(
+            (mv - expect).abs() < expect * 1e-9,
+            "tube mass_properties {mv} != 3pi"
         );
     }
 
