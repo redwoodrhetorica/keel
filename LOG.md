@@ -3215,3 +3215,48 @@ NEXT (data-first): print each of the 5 seams (face_a/face_b ids + curve endpoint
 radial-1 dangling-coedge set in stitch_by_import for this repro pre- and post-glue. That single
 run decides LAYER 1 (a duplicate interior seam to suppress per sec 3.2) vs an assembly-glue gap
 (extend seam subdivision / bounds-match to pair the oblique coedges). Only then design the fix.
+
+## Addendum 106 (2026-06-09, attended): #16 asym-chamfer DECISIVE diagnosis -- BOTH layers confirmed at entity level. No code landed; still 82/144
+
+Ran the Addendum-105 NEXT data run (env-gated DIAG of all 5 seams with face_a/face_b EntityIds
+and the radial-1 dangling-coedge set pre/post-glue in stitch_by_import; box A=[0,2]^3, cutter
+removes the top-right-edge corner, setbacks d1=0.5 -> x=1.5 on top, d2=1.0 -> z=1 on right).
+Diagnostics reverted; master clean at ff5f0f8. The data is decisive and confirms BOTH layers of
+the prior [[tilted-cut-boolean-bug]] diagnosis at the entity level:
+
+THE 5 SEAMS:
+  seam[0] fa=5  fb=42  top face z=2, line x=1.5  (real setback-d1 boundary)
+  seam[1] fa=40 fb=42  front face y=0, oblique (1.5,0,2)->(2,0,1)  (real)
+  seam[2] fa=45 fb=37  right face x=2, line z=1
+  seam[3] fa=45 fb=42  right face x=2, line z=1   <-- GEOMETRICALLY IDENTICAL to seam[2]
+  seam[4] fa=50 fb=42  back face y=2, oblique (2,2,1)->(1.5,2,2)  (real)
+
+LAYER 1 (confirmed, dossier-39 sec 3.2): seam[2] and seam[3] are the SAME line on box right
+face 45, emitted by TWO different cutter faces -- the transversal oblique cut face (fb=42, which
+also makes seams 0/1/4) and the apex/tangent face (fb=37). The cutter apex face grazes the box
+right face along the very line where the real chamfer face meets it: an interior-duplicate seam.
+Imprinting BOTH double-splits face 45 -> the unpaired coedge id=92 (x=2,z=1, (2,0,1)->(2,2,1)).
+
+LAYER 2 (confirmed, separate): of the 5 post-glue UNPAIRED coedges, removing the LAYER-1
+duplicate (id=92) still leaves id=25 (1.5,0,2)->(2,0,2), id=30 (2,0,2)->(2,2,2) [the ORIGINAL
+top-right box edge x=2,z=2, which the chamfer should DELETE], id=39 (2,2,1)->(2,2,2), id=95
+(1.5,0,2)->(2,0,1) [the front-face oblique]. These cluster around the removed corner where the
+chamfer face must stitch to the trimmed top/right/front/back box-face fragments -- the
+multi-face corner-consistency problem, NOT the duplicate seam.
+
+VERDICT: #16 needs BOTH fixes; neither alone makes the asym chamfer assemble (so a LAYER-1-only
+change would not move the test off DECLINE and would risk the symmetric-chamfer tripwire without
+a principled keep-which-one rule). Concrete plan for the next milestone:
+  LAYER 1 -- dedupe geometrically-coincident seams that share face_a, keeping the TRANSVERSAL
+    one and dropping the TANGENT one (dossier-39 sec 3.2: the tangent contact separates nothing
+    -> spurious). This needs the sec-3.2 tangency determination (collinear normals + non-sign-
+    changing signed gap), NOT an arbitrary keep-first. The held m16c-tangent-seam-dedup branch
+    did a sample-3-points dedup but on the now-removed build_result_solid/assemble_open_chain
+    path, so it must be reimplemented in boolean() right after seam_curves on current master.
+  LAYER 2 -- corner consistency: ensure the chamfer face's coedges stitch to the trimmed box-
+    face coedges at the removed corner, and that the original sharp edge (x=2,z=2) is fully
+    deleted rather than retained as a dangling coedge (id=30). Diagnose which face fragments
+    retain id=25/30/39 before designing.
+This is a milestone-sized two-layer change with a known tripwire (the 45-degree symmetric
+chamfer must stay at 7.75). The honesty gate + #21 closure invariant guarantee no wrong answer
+in the meantime (the asym chamfer DECLINES). #16 stays open with a fully data-grounded plan.
