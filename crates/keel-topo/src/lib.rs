@@ -22,6 +22,7 @@ pub mod ops;
 pub mod pmc;
 pub mod query;
 pub mod session;
+pub mod shell;
 pub mod simplify;
 pub mod step_export;
 pub mod tessellate;
