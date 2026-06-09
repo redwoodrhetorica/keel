@@ -5,3 +5,6 @@
 /fuzz/artifacts/
 
 /.claude/
+
+# CodeGraph local index (tooling artifact, not source)
+.codegraph/
