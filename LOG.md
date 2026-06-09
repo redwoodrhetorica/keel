@@ -3526,3 +3526,19 @@ identical to Addendum 113), so fuzz coverage is unchanged. Added tests: a triang
 Err). Curved-face and concave shells remain the follow-up (need offset_body to grow beyond convex
 planar, or the winding-number offset trim of dossier 50 sec 4).
 GATE: workspace 108 + 77 + 160 (two new shell tests) green, clippy -D warnings, fmt. Merged.
+
+## Addendum 115 (2026-06-09, attended): PER-FACE / multi-thickness shell (item 43). 84 -> 85/144
+
+Generalized offset_body to a per-face distance: offset_body_with(dist: Fn(FaceKey)->f64) moves
+each face plane inward by dist(f) and reintersects the 3-valent corners (the differently-offset
+planes simply meet at a new corner / step, dossier 50 sec 3.1); offset_body(distance) is now a
+thin wrapper. Body::hollow_per_face(thickness: Fn(FaceKey)->f64) clones, shrinks per-face by
+offset_body_with(-thickness), and subtracts -- the enclosed-void difference yields the multi-
+thickness wall; hollow(t) delegates with a constant closure. The per-face thicknesses are keyed
+by the body's own FaceKeys, which a deep clone preserves, so the closure matches the inner copy's
+faces. ORACLE: a 4^3 box with the top wall at t=2 and the rest at t=1 -> inner void
+[1,3]x[1,3]x[1,2] = 4, wall volume 64 - 4 = 60, mass == mesh, validate ok. offset_body behaviour
+is unchanged (delegation only) and boolean.rs is untouched, so fuzz coverage is unchanged.
+GATE: workspace 108 + 77 + 161 green, clippy -D warnings, fmt. Merged.
+SHELL-FAMILY STATUS: 41 (hollow) + 43 (multi-thickness) + 45 (offset_body) done; 42 (pierce/rim
+walls) and 44 (thicken, needs sheet bodies kernel/51) remain.
