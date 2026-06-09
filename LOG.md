@@ -2498,3 +2498,19 @@ RUNNING TOTAL: 65 -> 66/144 (mirror, a fresh capability; builds on the Addendum-
 transform).
 GATE: exact CI triplet green (131 keel-topo, clippy -D warnings, fmt). No fuzz --
 additive op, no boolean/tessellation-pipeline change. Merged.
+
+## Addendum 76 (2026-06-08): DRAFT ANALYSIS (item 107) -- 67/144
+
+Body::draft_analysis(pull) -> Vec<FaceDraft{face,min,max}> (interrogate.rs): per-
+face signed draft-angle RANGE relative to a pull direction, for moldability /
+pull-direction checks. Draft = arcsin(outward_normal . pull_hat) over the face's
+OUTWARD tessellation triangles: +pi/2 faces toward the pull, -pi/2 away, 0 a
+vertical wall (zero draft / undercut risk); a min<0<max range flags an undercut
+face for that pull. Planar faces collapse to min==max; curved faces report the
+true range. Reuses tessellate_face (the same outward triangles the winding
+classifier/volume use) -- no new geometry. Roadmap Phase 6.
+Tests: 2^3 box vs +z pull -> 2 caps at +/-pi/2, 4 walls at 0; cylinder vs +z ->
+caps +/-pi/2, lateral wall 0 all the way around (the undraftable case).
+RUNNING TOTAL: 66 -> 67/144 (draft analysis, a fresh interrogation item).
+GATE: exact CI triplet green (133 keel-topo, clippy -D warnings, fmt). No fuzz --
+read-only query, no mutation/boolean/tessellation-pipeline change. Merged.
