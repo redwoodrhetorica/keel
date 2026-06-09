@@ -351,9 +351,12 @@ impl Body {
         if hhi - hlo <= 0.0 {
             return Vec::new();
         }
+        // A partial-angle cone patch (a partial-revolve cone-sector band)
+        // has no closed circle edge -> trim to its boundary's phi span,
+        // exactly as the cylinder lateral does.
+        let (plo, phi_hi) = self.cyl_angular_span(face, origin, ex, ey, ez);
         const NV: usize = 16;
         const NP: usize = 64;
-        let tau = core::f64::consts::TAU;
         let sgn = if sense { 1.0 } else { -1.0 };
         let pt = |phi: f64, v: f64| -> Vec3 {
             origin + (ex * phi.cos() + ey * phi.sin()) * r_at(v) + ez * v
@@ -363,8 +366,8 @@ impl Body {
             let v0 = hlo + (hhi - hlo) * i as f64 / NV as f64;
             let v1 = hlo + (hhi - hlo) * (i + 1) as f64 / NV as f64;
             for j in 0..NP {
-                let p0 = tau * j as f64 / NP as f64;
-                let p1 = tau * (j + 1) as f64 / NP as f64;
+                let p0 = plo + (phi_hi - plo) * j as f64 / NP as f64;
+                let p1 = plo + (phi_hi - plo) * (j + 1) as f64 / NP as f64;
                 let a = pt(p0, v0);
                 let b = pt(p0, v1);
                 let c = pt(p1, v1);
