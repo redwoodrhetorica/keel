@@ -2819,3 +2819,18 @@ Test: a 2^3 cube viewed corner-on (1,2,3) -> exactly 6 outline edges (a hexagon)
 each a real length-2 cube edge; translation-invariant count; a zero view -> empty.
 Builds directly on Addendum 89's render facets. Read-only query -> no fuzz needed.
 GATE: exact CI triplet green (149 keel-topo, clippy -D warnings, fmt). Merged.
+
+## Addendum 91 (2026-06-09, attended): hidden-line-removed wireframe (item 96) -- 75 -> 76/144
+
+Body::hidden_line_wireframe(view) -> HlrWireframe { visible, hidden }: the edge
+segments a viewer can see vs the ones the solid occludes (parity item 96, Phase 6
+HLR). Each topological edge is sampled (reusing edge_polyline); a segment is HIDDEN
+when a ray from its midpoint toward the eye (+view) strikes a body facet (Moller-
+Trumbore ray/triangle with an eps that skips the faces the midpoint lies on), else
+VISIBLE. Honest deferral: midpoint classification (a segment straddling an occlusion
+boundary is not split -- a refinement); exact for segments wholly in front of/behind
+the solid at fine sampling. Test: cube [0,2]^3 viewed corner-on (1,2,3) -> the far
+corner (0,0,0)'s 3 edges hidden, the other 9 visible; degenerate view -> empty.
+Completes the Phase-6 render trio (facets 95 + silhouette 97 + HLR 96) on the shared
+tessellation. Read-only query -> no fuzz needed.
+GATE: exact CI triplet green (150 keel-topo, clippy -D warnings, fmt). Merged.

@@ -36,6 +36,41 @@ pub struct RenderMesh {
     pub edges: Vec<Vec<Vec3>>,
 }
 
+/// Hidden-line-removed wireframe for a view (parity item 96): the body's
+/// edge segments split into those the viewer can see and those the solid
+/// occludes.
+#[derive(Clone, Debug, Default)]
+pub struct HlrWireframe {
+    pub visible: Vec<[Vec3; 2]>,
+    pub hidden: Vec<[Vec3; 2]>,
+}
+
+/// Moller-Trumbore ray/triangle hit: the parameter t > eps where
+/// `orig + t*dir` meets `tri`, or None. `dir` need not be unit (t is in
+/// `dir` lengths); the eps skips faces the origin already lies on.
+fn ray_tri_hit(orig: Vec3, dir: Vec3, tri: &[Vec3; 3]) -> Option<f64> {
+    let e1 = tri[1] - tri[0];
+    let e2 = tri[2] - tri[0];
+    let pvec = dir.cross(e2);
+    let det = e1.dot(pvec);
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    let inv = 1.0 / det;
+    let tvec = orig - tri[0];
+    let u = tvec.dot(pvec) * inv;
+    if !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let qvec = tvec.cross(e1);
+    let w = dir.dot(qvec) * inv;
+    if w < 0.0 || u + w > 1.0 {
+        return None;
+    }
+    let t = e2.dot(qvec) * inv;
+    (t > 1e-6).then_some(t)
+}
+
 /// Closest point on triangle `[a, b, c]` to `p` (Ericson, Real-Time
 /// Collision Detection).
 fn closest_on_tri(p: Vec3, tri: &[Vec3; 3]) -> Vec3 {
@@ -244,6 +279,37 @@ impl Body {
             .filter(|e| e.count == 2 && e.signs[0] * e.signs[1] < 0.0)
             .map(|e| [e.a, e.b])
             .collect()
+    }
+
+    /// Hidden-line-removed wireframe for an orthographic view direction
+    /// `view` (parity item 96). Each topological edge is sampled into
+    /// segments; a segment is HIDDEN when a ray from its midpoint toward
+    /// the eye (along +view) strikes a facet of the body (the solid
+    /// occludes it), else VISIBLE. Midpoint classification: a segment
+    /// straddling an occlusion boundary is a later refinement -- exact for
+    /// segments wholly in front of or behind the solid (the common case at
+    /// fine sampling). A degenerate view returns an empty wireframe.
+    pub fn hidden_line_wireframe(&self, view: Vec3) -> HlrWireframe {
+        let Some(v) = view.try_normalize() else {
+            return HlrWireframe::default();
+        };
+        let facets: Vec<[Vec3; 3]> = self.render_mesh().facets.iter().map(|f| f.tri).collect();
+        let mut out = HlrWireframe::default();
+        for (k, _) in self.edges.iter() {
+            let Some(poly) = self.edge_polyline(k) else {
+                continue;
+            };
+            for w in poly.windows(2) {
+                let m = (w[0] + w[1]) * 0.5;
+                let occluded = facets.iter().any(|t| ray_tri_hit(m, v, t).is_some());
+                if occluded {
+                    out.hidden.push([w[0], w[1]]);
+                } else {
+                    out.visible.push([w[0], w[1]]);
+                }
+            }
+        }
+        out
     }
 
     /// Area of a single face (parity interrogation), summed over its
@@ -1027,5 +1093,23 @@ mod tests {
         assert_eq!(t.silhouette(Vec3::new(1.0, 2.0, 3.0)).len(), 6);
         // A degenerate (zero) view yields nothing.
         assert!(b.silhouette(Vec3::ZERO).is_empty());
+    }
+
+    #[test]
+    fn hlr_cube_hides_far_corner_edges() {
+        // Cube [0,2]^3 viewed from (1,2,3): the far corner (0,0,0)'s three
+        // edges are occluded by the solid; the other 9 are visible.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let hlr = b.hidden_line_wireframe(Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(
+            hlr.visible.len() + hlr.hidden.len(),
+            12,
+            "all cube edges classified"
+        );
+        assert_eq!(hlr.hidden.len(), 3, "far-corner edges hidden");
+        assert_eq!(hlr.visible.len(), 9, "front edges visible");
+        // Degenerate view -> empty.
+        assert!(b.hidden_line_wireframe(Vec3::ZERO).visible.is_empty());
     }
 }
