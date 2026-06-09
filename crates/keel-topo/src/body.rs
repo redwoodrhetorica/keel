@@ -301,6 +301,7 @@ impl Body {
             id,
             curve: None,
             bounds,
+            arc_sweep: None,
             radial: Vec::new(),
             tolerance: default_linear_tolerance(),
         });

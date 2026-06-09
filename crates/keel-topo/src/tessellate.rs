@@ -229,6 +229,35 @@ impl Body {
         let Some(f) = self.faces.get(face) else {
             return (0.0, tau);
         };
+        // If a boundary arc carries an explicit signed sweep (a wide-angle
+        // partial revolve), the span is start_angle .. start_angle + sweep,
+        // taken continuously -- so a sector wider than pi is exact and the
+        // atan2 branch cut is never crossed.
+        for &lk in &f.loops {
+            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            while let Some(fin) = self.fins.get(cur) {
+                if let Some(e) = self.edges.get(fin.edge)
+                    && let Some(sweep) = e.arc_sweep
+                    && let Some(p0) = self.vertices.get(e.bounds.0).map(|v| v.point)
+                {
+                    let w = p0 - origin;
+                    let w = w - ez * w.dot(ez);
+                    let a = w.dot(ey).atan2(w.dot(ex));
+                    return if sweep >= 0.0 {
+                        (a, a + sweep)
+                    } else {
+                        (a + sweep, a)
+                    };
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
         let (mut lo, mut hi, mut any) = (f64::INFINITY, f64::NEG_INFINITY, false);
         for &lk in &f.loops {
             let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
@@ -450,9 +479,12 @@ impl Body {
             {
                 let c = *c;
                 circle_edge = Some(c);
-                // Sample an OPEN arc edge (a fillet cap's spring/end arc)
-                // along its short span so the polygon follows the curve,
-                // not its chord (closed full-circle edges use the fallback).
+                // Sample an OPEN arc edge (a fillet cap's spring/end arc, a
+                // partial-revolve band arc) so the polygon follows the
+                // curve, not its chord (closed full-circle edges use the
+                // fallback). The default is the SHORT span; an edge with an
+                // explicit signed sweep (wide-angle revolve) takes that
+                // instead, so arcs beyond pi are followed correctly.
                 if self.edges.get(fin.edge).map(|e| !e.is_closed()) == Some(true)
                     && let (Some(ps), Some(pe)) = (
                         self.fin_start_vertex(cur)
@@ -469,17 +501,27 @@ impl Body {
                             .atan2((p - c.center).dot(c.x_axis))
                     };
                     let ts = ang(ps);
-                    let mut d = ang(pe) - ts;
-                    let pi = core::f64::consts::PI;
-                    while d > pi {
-                        d -= core::f64::consts::TAU;
-                    }
-                    while d <= -pi {
-                        d += core::f64::consts::TAU;
-                    }
-                    const SEG: usize = 8;
-                    for k in 1..SEG {
-                        verts.push(c.point(ts + d * (k as f64 / SEG as f64)));
+                    let d = if let Some(sweep) = self.edges.get(fin.edge).and_then(|e| e.arc_sweep)
+                    {
+                        // Signed sweep is bounds.0 -> bounds.1; flip it when
+                        // this fin runs the edge backward.
+                        if fin.forward { sweep } else { -sweep }
+                    } else {
+                        let mut d = ang(pe) - ts;
+                        let pi = core::f64::consts::PI;
+                        while d > pi {
+                            d -= core::f64::consts::TAU;
+                        }
+                        while d <= -pi {
+                            d += core::f64::consts::TAU;
+                        }
+                        d
+                    };
+                    // More segments for wider arcs so chord error stays
+                    // bounded as the sweep approaches 2pi.
+                    let seg = ((d.abs() * 8.0 / core::f64::consts::PI).ceil() as usize).max(8);
+                    for k in 1..seg {
+                        verts.push(c.point(ts + d * (k as f64 / seg as f64)));
                     }
                 }
             }

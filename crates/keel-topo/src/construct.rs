@@ -48,6 +48,15 @@ impl Body {
         }
     }
 
+    /// Record the signed angular sweep (bounds.0 -> bounds.1, circle
+    /// frame) of a circular arc edge, so the tessellators take the
+    /// intended arc rather than the short span. See `Edge::arc_sweep`.
+    pub(crate) fn set_edge_arc_sweep(&mut self, edge: EdgeKey, sweep: f64) {
+        if let Some(e) = self.edges.get_mut(edge) {
+            e.arc_sweep = Some(sweep);
+        }
+    }
+
     /// Wire body (items 8, 18): a single straight wire edge between two
     /// points, in the infinite region (no faces). Wraps `embed_wire` and
     /// attaches the line geometry.
@@ -587,9 +596,10 @@ impl Body {
     /// Topology is loft-like: n points -> 2n vertices, 3n edges, n+2 faces
     /// (Euler 2).
     ///
-    /// Scope: `theta` is limited to (0, pi] for now (the arc-edge
-    /// tessellation samples the short angular span). Profiles meeting the
-    /// axis (true poles) and pcurves are follow-ups; use mesh_volume.
+    /// Scope: `theta` in (0, 2pi) -- the vertical arcs carry an explicit
+    /// signed sweep (Edge::arc_sweep) so wide angles tessellate correctly.
+    /// Profiles meeting the axis (true poles) and pcurves are follow-ups;
+    /// use mesh_volume.
     pub fn revolve_partial(
         &mut self,
         frame: Frame3,
@@ -600,9 +610,9 @@ impl Body {
         if n < 3 {
             return Err(TopoError::Precondition("revolve_partial: need 3+ points"));
         }
-        if !theta.is_finite() || theta <= 1e-9 || theta > core::f64::consts::PI + 1e-12 {
+        if !theta.is_finite() || theta <= 1e-9 || theta >= core::f64::consts::TAU - 1e-9 {
             return Err(TopoError::Precondition(
-                "revolve_partial: theta must be in (0, pi]",
+                "revolve_partial: theta must be in (0, 2pi)",
             ));
         }
         if profile
@@ -778,6 +788,11 @@ impl Body {
             let (ra, za) = prof[i];
             let circle = Circle3::new(o + ez * za, ex, ey, ra).map_err(geom_err)?;
             self.attach_edge_curve(ek, Curve3::Circle(circle), true);
+            // The vertical arc runs bounds.0 = rim[i] (phi=0) -> bounds.1 =
+            // top[i] (phi=theta), CCW in the (ex, ey) frame, so its signed
+            // sweep is +theta. This lets the tessellators take the full
+            // arc even when theta > pi.
+            self.set_edge_arc_sweep(ek, theta);
         }
 
         let mut all_edges = Vec::new();
@@ -1593,15 +1608,41 @@ mod tests {
             .is_err(),
             "pole profile should reject"
         );
-        // theta > pi is out of scope for now.
+        // theta >= 2pi (a full revolution) is out of scope.
         assert!(
             b.revolve_partial(
                 z_up(),
                 &[(1.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0)],
-                4.0
+                core::f64::consts::TAU
             )
             .is_err(),
-            "theta > pi should reject"
+            "theta = 2pi should reject"
+        );
+    }
+
+    #[test]
+    fn revolve_partial_wide_angle() {
+        // Same annular rectangle, revolved 3pi/2 (> pi): the vertical arcs
+        // carry an explicit +3pi/2 sweep so the band/sector faces follow
+        // the long arc. Volume = (theta/2)(r1^2 - r0^2) h
+        //   = (3pi/4)(4 - 1)(1) = 9pi/4.
+        let mut b = Body::new();
+        let out = b
+            .revolve_partial(
+                z_up(),
+                &[(1.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0)],
+                3.0 * core::f64::consts::FRAC_PI_2,
+            )
+            .unwrap();
+        assert!(b.validate().is_ok(), "wide-angle revolve invalid");
+        let c = b.counts();
+        assert_eq!((c.v, c.e, c.f), (8, 12, 6), "wide-angle counts");
+        assert_eq!(out.faces.len(), 6);
+        let v = b.mesh_volume();
+        let expect = 9.0 * core::f64::consts::PI / 4.0;
+        assert!(
+            (v - expect).abs() < expect * 0.03,
+            "wide-angle mesh_volume {v} != ~{expect}"
         );
     }
 

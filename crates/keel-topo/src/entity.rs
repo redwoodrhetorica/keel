@@ -75,6 +75,14 @@ pub struct Edge {
     pub curve: Option<(CurveKey, bool)>,
     /// (start, end); equal keys = closed edge with a seam vertex.
     pub bounds: (VertexKey, VertexKey),
+    /// For a CIRCULAR arc edge, the signed angular sweep (radians, in
+    /// (-2pi, 2pi)) from `bounds.0` to `bounds.1` in the circle's own
+    /// frame, disambiguating the minor vs major arc that endpoints alone
+    /// cannot. `None` (the default) means "use the short span" -- the
+    /// behaviour every arc relied on before partial revolve, so existing
+    /// arcs are unaffected. Set only where an arc may exceed pi (e.g. a
+    /// wide-angle `revolve_partial`).
+    pub arc_sweep: Option<f64>,
     /// Radial cycle: ALL fins using this edge, in angular order around
     /// the edge (manifold = exactly 2). Wire edges have none.
     pub radial: Vec<FinKey>,
