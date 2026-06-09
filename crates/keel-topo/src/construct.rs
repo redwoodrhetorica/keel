@@ -425,15 +425,10 @@ impl Body {
                 "revolve: interior must be off-axis",
             ));
         }
-        // End segments non-horizontal (pole bands are cones, not discs).
-        if (profile[0].1 - profile[1].1).abs() < 1e-12
-            || (profile[m - 1].1 - profile[m - 2].1).abs() < 1e-12
-        {
-            return Err(TopoError::Precondition(
-                "revolve: horizontal end-cap (follow-up)",
-            ));
-        }
-        // Interior horizontal segments revolve to holed washers (follow-up).
+        // A horizontal END segment (pole -> rim at constant height) is a
+        // flat DISC cap -- now supported (the geometry attach gives it a
+        // plane). Only INTERIOR horizontal segments are still rejected:
+        // they revolve to a holed washer (follow-up).
         for i in 1..m - 2 {
             if (profile[i].1 - profile[i + 1].1).abs() < 1e-12 {
                 return Err(TopoError::Precondition(
@@ -495,11 +490,32 @@ impl Body {
         bands.push((cur_face, m - 2, m - 1));
         self.debug_validate();
 
-        // ---- geometry attach: a cone or cylinder per band ----
+        // ---- geometry attach: a disc, cone, or cylinder per band ----
         let axis_at = |h: f64| o + ez * h;
+        let (min_h, max_h) = profile
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &(_, h)| {
+                (a.min(h), b.max(h))
+            });
+        let href = 0.5 * (min_h + max_h);
         for &(fk, lo, hi) in &bands {
             let (r_lo, h_lo) = profile[lo];
             let (r_hi, h_hi) = profile[hi];
+            if (h_hi - h_lo).abs() < 1e-12 {
+                // Flat disc end-cap: outward points away from the body
+                // (down for the lower cap, up for the upper).
+                let nz = if h_lo < href { ez * -1.0 } else { ez };
+                let frame = Frame3::from_z(axis_at(h_lo), nz).map_err(geom_err)?;
+                self.attach_face_surface(
+                    fk,
+                    SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(frame))),
+                    true,
+                );
+                // No pcurves needed: the edge curves are attached after this
+                // loop, and the planar mass_properties path samples the disc
+                // loop geometry directly (not stored pcurves).
+                continue;
+            }
             // The band surface's v parameter is height along ez from its
             // frame origin; capture that origin height for the pcurves.
             let origin_h;
@@ -1643,6 +1659,30 @@ mod tests {
         assert!(
             (v - expect).abs() < expect * 0.03,
             "wide-angle mesh_volume {v} != ~{expect}"
+        );
+    }
+
+    #[test]
+    fn revolve_flat_capped_cylinder() {
+        // pole(0,0) -> (1,0) flat BOTTOM disc -> (1,1) cylinder wall ->
+        // pole(0,1) flat TOP disc: a unit cylinder built by revolution.
+        // Volume = pi r^2 h = pi; 3 faces (disc, wall, disc).
+        let mut b = Body::new();
+        b.revolve(z_up(), &[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)])
+            .unwrap();
+        assert!(b.validate().is_ok(), "flat-capped cylinder invalid");
+        assert_eq!(b.counts().f, 3, "flat-capped cylinder face count");
+        let v = b.mesh_volume();
+        let expect = core::f64::consts::PI;
+        assert!(
+            (v - expect).abs() < expect * 0.01,
+            "flat-capped revolve mesh_volume {v} != ~pi"
+        );
+        // The flat caps carry pcurves, so analytic mass_properties works too.
+        let mv = b.mass_properties().unwrap().volume;
+        assert!(
+            (mv - expect).abs() < expect * 0.01,
+            "flat-capped revolve mass_properties {mv} != ~pi"
         );
     }
 

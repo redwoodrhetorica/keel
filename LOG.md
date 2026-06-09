@@ -2514,3 +2514,24 @@ caps +/-pi/2, lateral wall 0 all the way around (the undraftable case).
 RUNNING TOTAL: 66 -> 67/144 (draft analysis, a fresh interrogation item).
 GATE: exact CI triplet green (133 keel-topo, clippy -D warnings, fmt). No fuzz --
 read-only query, no mutation/boolean/tessellation-pipeline change. Merged.
+
+## Addendum 77 (2026-06-08): full-revolve FLAT END-CAPS (disc caps) -- 68/144
+
+revolve() now accepts a HORIZONTAL end segment (pole (0,h) -> rim (r,h)), which
+revolves to a planar DISC cap instead of requiring a cone-to-pole. The band
+TOPOLOGY is unchanged (pole center + outer latitude circle, same as a cone band);
+only the geometry attach gains a branch: when h_lo == h_hi, attach a Plane(z=h)
+with outward -ez for the lower cap / +ez for the upper (decided by h vs the
+profile mid-height), instead of a Cone/Cylinder. The end-horizontal guard is
+relaxed; INTERIOR horizontal segments (holed washers) stay rejected (a later
+holed-face item). No pcurves are attached to the disc -- revolve attaches edge
+curves AFTER the band loop, and the planar mass_properties path samples the disc
+loop geometry directly at call time -- so analytic volume still works.
+Now a flat-ended solid of revolution (a unit cylinder, a bowl, a flat-ended
+frustum) is constructible by revolve, not just pole-to-pole cone/cylinder shells.
+Test: revolve [(0,0),(1,0),(1,1),(0,1)] -> unit cylinder, 3 faces (disc/wall/
+disc), validate ok, mesh_volume AND mass_properties ~pi. bicone/barrel regression
+tests stay green (cone-to-pole path untouched).
+RUNNING TOTAL: 67 -> 68/144 (flat-cap solid of revolution).
+GATE: exact CI triplet green (134 keel-topo, clippy -D warnings, fmt). No fuzz --
+constructor change, not a boolean/tessellation-pipeline mutation. Merged.
