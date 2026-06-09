@@ -2364,3 +2364,31 @@ This hardens the winding classifier for non-star-convex faces kernel-wide.
 RUNNING TOTAL: stays 63/144 (tessellation robustness + accuracy; not a new item).
 GATE: exact CI triplet green (122 keel-topo). tessellate_planar is the winding-
 classifier hot path -> fuzz_boolean re-soaked. Merged.
+
+## Addendum 71 (2026-06-08): PARTIAL (wedge) REVOLVE -- loft-topology + arc verticals + cylinder/sector bands (64/144)
+
+revolve_partial(frame, profile, theta) sweeps a CLOSED off-axis meridian polygon
+through theta in (0, pi] about frame.z. KEY INSIGHT: a partial revolve of an
+OFFSET profile has the SAME topology as a loft -- two end-cap faces (the meridian
+region at phi=0 and phi=theta) joined by side bands -- so the construction REUSES
+loft's exact Euler skeleton (mvfs, rim mev-chain, cap mef, verticals, side mefs +
+top cap). Only the geometry differs: the "verticals" are ARCS (Circle3 at each
+profile point's radius/height, phi 0->theta) and the side bands are partial
+CYLINDERS (constant-r segment) or planar ANNULAR SECTORS (constant-z segment)
+instead of loft's line verticals and planar quads. Caps are planar (phi=0 outward
+-ey; phi=theta outward -sin th ex + cos th ey). Profile winding is normalized to
+CCW so the per-band outward normals (cylinder sense = sign of dz; sector normal z
+= -sign of dr) come out consistent. The faces it needs already tessellate: the
+cylinder sectors via cyl_angular_span (Addendum 62) and the planar sectors via
+ear-clipping + arc-edge sampling (Addendum 70).
+Topology: n points -> 2n V, 3n E, n+2 F (Euler 2). Test: rectangle meridian
+r in [1,2] x z in [0,1] revolved pi/2 -> annular sector, counts (8,12,6),
+mesh_volume within 3% of 3pi/4 (curved-face chord undershoot; documented).
+SCOPE / follow-ups: slanted segments revolve to CONE sectors (need cone angular
+trim, mirroring cyl_angular_span) -> rejected for now; theta > pi (arc tessellation
+samples the short span) -> rejected; true-pole profiles (profile meets the axis)
+and pcurves for analytic mass_properties -> follow-ups (use mesh_volume meanwhile).
+RUNNING TOTAL: 63 -> 64/144 (partial/wedge revolve, sweep/loft family).
+GATE: exact CI triplet green (125 keel-topo, clippy -D warnings, fmt). No fuzz
+needed -- pure constructor, does not touch tessellate_planar or the boolean
+pipeline. Merged.
