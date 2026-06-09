@@ -2392,3 +2392,25 @@ RUNNING TOTAL: 63 -> 64/144 (partial/wedge revolve, sweep/loft family).
 GATE: exact CI triplet green (125 keel-topo, clippy -D warnings, fmt). No fuzz
 needed -- pure constructor, does not touch tessellate_planar or the boolean
 pipeline. Merged.
+
+## Addendum 72 (2026-06-08): CONE angular trim -> slanted partial revolve (broadens 64/144)
+
+Completes revolve_partial: slanted meridian segments now sweep CONE SECTORS
+(previously rejected). The enabler is a one-line mirror of the cylinder's angular
+trim: tessellate_cone now calls cyl_angular_span (already generic -- it returns
+[0, tau] when the face has a CLOSED circle edge, else the boundary vertices' phi
+span) and sweeps [plo, phi_hi] instead of a hardcoded full [0, tau]. Full cones
+(bicone/barrel/cone primitive: closed cap circles) are PROVABLY unchanged --
+cyl_angular_span returns [0, tau] for them -- so the existing cone tests pass
+untouched. revolve_partial attaches a Cone3 for slanted segments (anchor v=0 at
+the segment's start, slope = dr/dz, sense = (zb > za) radial-out, same rule as the
+cylinder band). Test: off-axis triangle meridian [(1,0),(2,0),(1,1)] revolved pi/2
+-> cone-sector wedge, counts (6,9,5), mesh_volume ~pi/3 (partial Pappus
+V = theta*R_centroid*Area = (pi/2)(4/3)(1/2)). revolve_partial now handles all
+axis-parallel / axis-perpendicular / slanted segment mixes; only theta>pi, true
+poles, and pcurves remain follow-ups.
+RUNNING TOTAL: stays 64/144 (broadens the partial-revolve item already counted in
+Addendum 71; also unblocks future chamfer/fillet-of-revolution).
+GATE: exact CI triplet green (126 keel-topo, clippy -D warnings, fmt) + fuzz_boolean
+soak (tessellate_cone feeds the classifier for cone-faced bodies; change is inert
+for the full-cone fuzz corpus). Merged.

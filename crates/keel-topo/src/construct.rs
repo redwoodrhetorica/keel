@@ -582,14 +582,12 @@ impl Body {
     /// `revolve`, the profile is a closed polygon held OFF the axis
     /// (radius > 0 everywhere); the two angular ends become planar cap
     /// faces (the meridian region at phi=0 and phi=theta) and each profile
-    /// segment sweeps a partial cylinder (constant radius) or planar
-    /// annular-sector (constant height) band. Topology is loft-like:
-    /// n points -> 2n vertices, 3n edges, n+2 faces (Euler 2).
+    /// segment sweeps a partial cylinder (constant radius), planar
+    /// annular-sector (constant height), or CONE sector (slanted) band.
+    /// Topology is loft-like: n points -> 2n vertices, 3n edges, n+2 faces
+    /// (Euler 2).
     ///
-    /// Scope: segments must be axis-parallel (constant r -> cylinder) or
-    /// axis-perpendicular (constant z -> planar sector); slanted segments
-    /// revolve to CONE sectors, which need cone angular trimming (a
-    /// follow-up). `theta` is limited to (0, pi] for now (the arc-edge
+    /// Scope: `theta` is limited to (0, pi] for now (the arc-edge
     /// tessellation samples the short angular span). Profiles meeting the
     /// axis (true poles) and pcurves are follow-ups; use mesh_volume.
     pub fn revolve_partial(
@@ -737,9 +735,24 @@ impl Body {
                     true,
                 );
             } else {
-                return Err(TopoError::Precondition(
-                    "revolve_partial: slanted segment (cone sector) is a follow-up",
-                ));
+                // Cone sector (slanted segment); anchor v=0 at this end
+                // (both ends off-axis) and trim angularly. As with the
+                // cylinder, going up (zb > za) on a CCW meridian faces
+                // radially outward.
+                let slope = (rb - ra) / (zb - za);
+                let cone_frame = Frame3 {
+                    origin: o + ez * za,
+                    x: ex,
+                    y: ey,
+                    z: ez,
+                };
+                self.attach_face_surface(
+                    fk,
+                    SurfaceGeom::Analytic(Surface3::Cone(
+                        Cone3::new(cone_frame, ra, slope.atan()).map_err(geom_err)?,
+                    )),
+                    zb > za,
+                );
             }
         }
         // Edges: rim/top profile segments -> lines; verticals -> arcs.
@@ -1537,6 +1550,33 @@ mod tests {
         assert!(
             (v - expect).abs() < expect * 0.03,
             "annular-sector mesh_volume {v} != ~{expect}"
+        );
+    }
+
+    #[test]
+    fn revolve_partial_cone_sector() {
+        // Off-axis triangle meridian [(1,0),(2,0),(1,1)] revolved pi/2.
+        // The (2,0)->(1,1) segment is a slanted CONE-sector band. By the
+        // partial Pappus theorem V = theta * R_centroid * Area:
+        //   Area = 1/2, R_c = (1+2+1)/3 = 4/3, theta = pi/2
+        //   V = (pi/2)(4/3)(1/2) = pi/3.
+        let mut b = Body::new();
+        let out = b
+            .revolve_partial(
+                z_up(),
+                &[(1.0, 0.0), (2.0, 0.0), (1.0, 1.0)],
+                core::f64::consts::FRAC_PI_2,
+            )
+            .unwrap();
+        assert!(b.validate().is_ok(), "cone-sector revolve invalid");
+        let c = b.counts();
+        assert_eq!((c.v, c.e, c.f), (6, 9, 5), "cone-sector counts");
+        assert_eq!(out.faces.len(), 5);
+        let v = b.mesh_volume();
+        let expect = core::f64::consts::PI / 3.0;
+        assert!(
+            (v - expect).abs() < expect * 0.03,
+            "cone-sector mesh_volume {v} != ~{expect}"
         );
     }
 
