@@ -2723,3 +2723,15 @@ RUNNING TOTAL: stays 73/144 (accuracy: surface area now exact for analytic
 disc/annulus + curved faces).
 GATE: exact CI triplet green (144 keel-topo, clippy -D warnings, fmt). No fuzz --
 read-only query. Merged.
+
+## Addendum 87 (2026-06-09, overnight): tube/pipe primitive (stays 73/144)
+
+Body::tube(frame, r_inner, r_outer, h): a named hollow-cylinder (pipe) primitive,
+a thin convenience over revolve_closed with the rectangular meridian
+[(r_in,0),(r_out,0),(r_out,h),(r_in,h)] -- the same 4-face genus-1 body
+(outer/inner walls + two washer caps). Validates 0 < r_inner < r_outer, h > 0.
+Test: tube(1,2,1) -> 4 faces, mesh_volume ~3pi; rejects r_inner >= r_outer. Rounds
+out the primitive family (block/prism/cyl/cone/sphere/torus/tube) with a usable
+hollow-cylinder API; counter stays 73 (convenience, not a distinct map item).
+GATE: exact CI triplet green (145 keel-topo, clippy -D warnings, fmt). No fuzz.
+Merged.
