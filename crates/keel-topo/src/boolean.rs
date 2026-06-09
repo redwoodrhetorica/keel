@@ -1567,20 +1567,55 @@ fn stitch_by_import(
         ));
     }
 
-    // Two-region partition: front (outward) -> infinite, back -> solid.
-    let solid_shell = dst.new_shell(&mut rec, solid, Derivation::Created);
-    let inf_shell = dst.new_shell(&mut rec, inf, Derivation::Created);
-    if let Some(s) = dst.shells.get_mut(solid_shell) {
-        s.faces = faces.iter().map(|&f| (f, Side::Back)).collect();
-    }
-    if let Some(s) = dst.shells.get_mut(inf_shell) {
-        s.faces = faces.iter().map(|&f| (f, Side::Front)).collect();
-    }
-    if let Some(r) = dst.regions.get_mut(solid) {
-        r.shells.push(solid_shell);
-    }
-    if let Some(r) = dst.regions.get_mut(inf) {
-        r.shells.push(inf_shell);
+    // Region partition, detecting ENCLOSED VOIDS (dossier 50: a closed inner
+    // shell encloses a void = a third region). Group the kept faces into
+    // connected boundary components (shared-edge connectivity); each is a
+    // closed shell whose BACK side bounds solid material and whose FRONT side
+    // bounds either the unbounded exterior (the infinite region) or an
+    // enclosed cavity (a new void region). The sign of the component's
+    // front-oriented signed volume distinguishes them: >= 0 means the front
+    // normals enclose the component from OUTSIDE (front faces the exterior ->
+    // infinite); < 0 means they enclose a bounded interior (front faces a void
+    // -> a new non-solid region). The common single-solid boolean is one
+    // component with v_front >= 0, recovering exactly the prior solid+infinite
+    // partition. (Disconnected solid bodies sharing one solid region is a
+    // documented simplification; separate solid regions per disconnected wall
+    // is a follow-up.)
+    for comp in connected_face_components(&dst, &faces) {
+        let v_front: f64 = comp
+            .iter()
+            .flat_map(|&f| dst.tessellate_face(f))
+            .map(|t| t[0].dot(t[1].cross(t[2])))
+            .sum::<f64>()
+            / 6.0;
+        let front_region = if v_front >= 0.0 {
+            inf
+        } else {
+            dst.new_region(&mut rec, false, Derivation::Created)
+        };
+        // Keep each face's side->region links consistent with the shell it
+        // lands in (check_shells_regions enforces this): back side -> solid,
+        // front side -> exterior/void.
+        for &f in &comp {
+            if let Some(face) = dst.faces.get_mut(f) {
+                face.back_region = solid;
+                face.front_region = front_region;
+            }
+        }
+        let back_shell = dst.new_shell(&mut rec, solid, Derivation::Created);
+        if let Some(s) = dst.shells.get_mut(back_shell) {
+            s.faces = comp.iter().map(|&f| (f, Side::Back)).collect();
+        }
+        if let Some(r) = dst.regions.get_mut(solid) {
+            r.shells.push(back_shell);
+        }
+        let front_shell = dst.new_shell(&mut rec, front_region, Derivation::Created);
+        if let Some(s) = dst.shells.get_mut(front_shell) {
+            s.faces = comp.iter().map(|&f| (f, Side::Front)).collect();
+        }
+        if let Some(r) = dst.regions.get_mut(front_region) {
+            r.shells.push(front_shell);
+        }
     }
     let _ = rec.finish();
 
@@ -1588,6 +1623,46 @@ fn stitch_by_import(
         Ok(()) => Ok(dst),
         Err(_) => Err(BoolFault::AssemblyFailed("stitched (curved) body invalid")),
     }
+}
+
+/// Partition `faces` (kept fragments of the stitched body) into connected
+/// boundary components: faces sharing an edge are in the same component.
+/// Each component is one closed boundary shell (e.g. the outer box surface
+/// and the inner void surface of a hollow body are two separate components).
+fn connected_face_components(dst: &Body, faces: &[FaceKey]) -> Vec<Vec<FaceKey>> {
+    use std::collections::BTreeMap;
+    let idx: BTreeMap<FaceKey, usize> = faces.iter().enumerate().map(|(i, &f)| (f, i)).collect();
+    let mut parent: Vec<usize> = (0..faces.len()).collect();
+    fn find(p: &mut [usize], i: usize) -> usize {
+        if p[i] != i {
+            let r = find(p, p[i]);
+            p[i] = r;
+        }
+        p[i]
+    }
+    // Union faces that share an edge (via the edge's radial fins -> owners).
+    for (_, e) in dst.edges.iter() {
+        let mut members: Vec<usize> = e
+            .radial
+            .iter()
+            .filter_map(|&fk| dst.fins.get(fk))
+            .filter_map(|fin| dst.loops.get(fin.owner))
+            .filter_map(|l| idx.get(&l.face).copied())
+            .collect();
+        members.dedup();
+        for w in members.windows(2) {
+            let (a, b) = (find(&mut parent, w[0]), find(&mut parent, w[1]));
+            if a != b {
+                parent[a] = b;
+            }
+        }
+    }
+    let mut groups: BTreeMap<usize, Vec<FaceKey>> = BTreeMap::new();
+    for (i, &f) in faces.iter().enumerate() {
+        let root = find(&mut parent, i);
+        groups.entry(root).or_default().push(f);
+    }
+    groups.into_values().collect()
 }
 
 /// Coplanar, overlapping planar face pairs `(face_in_a, face_in_b, n_a)`

@@ -3477,3 +3477,37 @@ reintersection), build the void. (3) then pierce (rim walls, build_rim_wall), th
 thickness, then curved faces, then thicken (44). t_max feasibility reuses the kernel/41 medial
 predictor. This is the disciplined hand-off point: shell is a milestone needing new void-region
 assembly; starting it deep in a long session risks the quality the rest of this session held.
+
+## Addendum 113 (2026-06-09, attended): SHELL / HOLLOW box (item 41) -- enclosed-void 3-region assembly SHIPPED. 83 -> 84/144
+
+(User pushed straight through -- "why stop?" -- so I built it; the objective gates are the safety
+net, not session length.) Implemented the long-deferred enclosed-void (3-region) stitch and the
+box-base-case shell on top of it.
+
+ENCLOSED-VOID PARTITION (boolean.rs stitch_by_import, replacing the flat 2-region partition):
+group the kept faces into connected boundary components (shared-edge union-find,
+connected_face_components); each component is one closed shell. Its BACK side bounds solid
+material (-> the single solid region, one shell per component); its FRONT side bounds either the
+unbounded exterior or an enclosed cavity, decided by the sign of the component's FRONT-oriented
+signed volume (sum of tessellate_face triangle v0.(v1xv2)/6): >= 0 -> the infinite region; < 0 ->
+a NEW non-solid VOID region. Each face's front_region/back_region links are set to match the shell
+it lands in (check_shells_regions enforces this -- the first failed attempt tripped exactly that).
+Backward-compatible: a single-solid boolean is one component with v_front >= 0, recovering the old
+solid+infinite partition exactly (zero regressions across the suite + fuzz). This 3-region stitch
+is now available to ALL booleans, so enclosed-void booleans (e.g. a cavity-creating difference)
+are unblocked alongside shell.
+
+SHELL API (crates/keel-topo/src/shell.rs): Body::hollow(t) -- MVP scope axis-aligned box: the
+inner shell is the bounding box shrunk by t on every side, subtracted as a nested boolean
+difference (the dossier-50 sec-6.1 base case). t_max guard = min(extent)/2 (the box medial limit).
+ORACLE (dossier 50 sec 6.1): a 4^3 box hollowed by t=1 -> wall volume 64 - 8 = 56 with mass ==
+mesh, validate ok, exactly the predicted two-nested-box / one-void topology. Success-required test.
+
+SCOPE / follow-ups (documented): box-only for now (offset uses the bbox); general offset-and-
+reintersect (curved faces, arbitrary solids), PIERCE + rim walls (open tray, dossier 50 sec 6.2),
+per-face thickness, and THICKEN (44, the dual: offset both sides + rim band) all build on this
+void-assembly foundation. Disconnected solids currently share one solid region (separate regions
+per disconnected wall is a follow-up; does not arise for hollow()).
+GATE: exact CI triplet green (workspace 108 math + 77 geom + 158 topo incl. the hollow-box oracle,
+clippy -D warnings, fmt) + fuzz_boolean (WSL nightly, 200s, Done 425 runs, clean). Merged.
+NEXT: thicken (44) reuses the same void/rim machinery; or pierce/rim for the open-tray shell.
