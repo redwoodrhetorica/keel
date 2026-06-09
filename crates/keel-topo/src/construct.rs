@@ -576,6 +576,211 @@ impl Body {
         })
     }
 
+    /// Partial (wedge) solid of revolution through angle `theta` of a
+    /// CLOSED meridian `profile` of (radius, height) points about
+    /// `frame.z`, with `frame.x` the phi=0 reference. Unlike the full
+    /// `revolve`, the profile is a closed polygon held OFF the axis
+    /// (radius > 0 everywhere); the two angular ends become planar cap
+    /// faces (the meridian region at phi=0 and phi=theta) and each profile
+    /// segment sweeps a partial cylinder (constant radius) or planar
+    /// annular-sector (constant height) band. Topology is loft-like:
+    /// n points -> 2n vertices, 3n edges, n+2 faces (Euler 2).
+    ///
+    /// Scope: segments must be axis-parallel (constant r -> cylinder) or
+    /// axis-perpendicular (constant z -> planar sector); slanted segments
+    /// revolve to CONE sectors, which need cone angular trimming (a
+    /// follow-up). `theta` is limited to (0, pi] for now (the arc-edge
+    /// tessellation samples the short angular span). Profiles meeting the
+    /// axis (true poles) and pcurves are follow-ups; use mesh_volume.
+    pub fn revolve_partial(
+        &mut self,
+        frame: Frame3,
+        profile: &[(f64, f64)],
+        theta: f64,
+    ) -> Result<PrimitiveOut, TopoError> {
+        let n = profile.len();
+        if n < 3 {
+            return Err(TopoError::Precondition("revolve_partial: need 3+ points"));
+        }
+        if !theta.is_finite() || theta <= 1e-9 || theta > core::f64::consts::PI + 1e-12 {
+            return Err(TopoError::Precondition(
+                "revolve_partial: theta must be in (0, pi]",
+            ));
+        }
+        if profile
+            .iter()
+            .any(|&(r, z)| !r.is_finite() || !z.is_finite() || r <= 0.0)
+        {
+            return Err(TopoError::Precondition(
+                "revolve_partial: profile radius must be finite and > 0",
+            ));
+        }
+        // Enforce CCW winding in the (r, z) meridian plane so the outward
+        // band normals below come out consistently.
+        let signed: f64 = (0..n)
+            .map(|i| {
+                let (r0, z0) = profile[i];
+                let (r1, z1) = profile[(i + 1) % n];
+                r0 * z1 - r1 * z0
+            })
+            .sum();
+        let prof: Vec<(f64, f64)> = if signed < 0.0 {
+            profile.iter().rev().copied().collect()
+        } else {
+            profile.to_vec()
+        };
+
+        let (o, ex, ey, ez) = (frame.origin, frame.x, frame.y, frame.z);
+        let (ct, st) = (theta.cos(), theta.sin());
+        let rot = ex * ct + ey * st; // phi=theta radial direction
+        let bottom: Vec<Vec3> = prof.iter().map(|&(r, z)| o + ex * r + ez * z).collect();
+        let top: Vec<Vec3> = prof.iter().map(|&(r, z)| o + rot * r + ez * z).collect();
+
+        // ---- topology (identical structure to loft) ----
+        let mut reports = Vec::new();
+        let r = self.infinite_region();
+        let seed = self.mvfs(r, bottom[0])?;
+        reports.push(seed.report.clone());
+        let lp = self
+            .faces
+            .get(seed.face)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let mut rim = vec![seed.vertex];
+        let mut rim_edges = Vec::new();
+        let m1 = self.mev(MevSite::VertexLoop(lp), bottom[1])?;
+        rim.push(m1.vertex);
+        rim_edges.push(m1.edge);
+        reports.push(m1.report);
+        for pt in &bottom[2..] {
+            let at = self.fin_ending_at(lp, *rim.last().ok_or(TopoError::StaleKey)?)?;
+            let m = self.mev(MevSite::AfterFin(at), *pt)?;
+            rim.push(m.vertex);
+            rim_edges.push(m.edge);
+            reports.push(m.report);
+        }
+        let fa = self.fin_ending_at(lp, rim[n - 1])?;
+        let fb = self.fin_ending_at(lp, rim[0])?;
+        let cap0 = self.mef(fa, fb, None)?;
+        rim_edges.push(cap0.edge);
+        reports.push(cap0.report.clone());
+        // Verticals (arcs) to the phi=theta profile.
+        let mut tops = Vec::new();
+        let mut vert_edges = Vec::new();
+        for (i, &rv) in rim.iter().enumerate() {
+            let at = self.fin_ending_at(lp, rv)?;
+            let m = self.mev(MevSite::AfterFin(at), top[i])?;
+            tops.push(m.vertex);
+            vert_edges.push(m.edge);
+            reports.push(m.report);
+        }
+        // Side bands; the last mef also closes the phi=theta cap (seed face).
+        let mut faces = vec![cap0.face];
+        let mut top_edges = Vec::new();
+        for i in 0..n {
+            let a = self.fin_ending_at(lp, tops[i])?;
+            let c = self.fin_ending_at(lp, tops[(i + 1) % n])?;
+            let side = self.mef(a, c, None)?;
+            faces.push(side.face);
+            top_edges.push(side.edge);
+            reports.push(side.report.clone());
+        }
+        faces.push(seed.face); // phi=theta cap
+        self.debug_validate();
+
+        // ---- geometry attach ----
+        // Caps: phi=0 outward = -ey; phi=theta outward = -sin th ex + cos th ey.
+        self.attach_face_surface(
+            faces[0],
+            SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(
+                Frame3::from_z(bottom[0], ey * -1.0).map_err(geom_err)?,
+            ))),
+            true,
+        );
+        self.attach_face_surface(
+            *faces.last().ok_or(TopoError::StaleKey)?,
+            SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(
+                Frame3::from_z(top[0], ex * -st + ey * ct).map_err(geom_err)?,
+            ))),
+            true,
+        );
+        // Side bands: cylinder (constant r) or planar sector (constant z).
+        for i in 0..n {
+            let (ra, za) = prof[i];
+            let (rb, zb) = prof[(i + 1) % n];
+            let fk = faces[1 + i];
+            if (rb - ra).abs() < 1e-12 {
+                // Cylinder sector; natural normal is radial-out, so the
+                // outer wall (going up, zb > za on a CCW profile) keeps
+                // sense=true and the inner wall flips.
+                let cyl_frame = Frame3 {
+                    origin: o,
+                    x: ex,
+                    y: ey,
+                    z: ez,
+                };
+                self.attach_face_surface(
+                    fk,
+                    SurfaceGeom::Analytic(Surface3::Cylinder(
+                        Cylinder3::new(cyl_frame, ra).map_err(geom_err)?,
+                    )),
+                    zb > za,
+                );
+            } else if (zb - za).abs() < 1e-12 {
+                // Planar annular sector at z = za; outward z = -(rb - ra).
+                let nz = if rb > ra { ez * -1.0 } else { ez };
+                self.attach_face_surface(
+                    fk,
+                    SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(
+                        Frame3::from_z(o + ex * ra + ez * za, nz).map_err(geom_err)?,
+                    ))),
+                    true,
+                );
+            } else {
+                return Err(TopoError::Precondition(
+                    "revolve_partial: slanted segment (cone sector) is a follow-up",
+                ));
+            }
+        }
+        // Edges: rim/top profile segments -> lines; verticals -> arcs.
+        for &ek in rim_edges.iter().chain(top_edges.iter()) {
+            let (va, vb) = {
+                let e = self.edges.get(ek).ok_or(TopoError::StaleKey)?;
+                e.bounds
+            };
+            let pa = self
+                .vertices
+                .get(va)
+                .map(|v| v.point)
+                .ok_or(TopoError::StaleKey)?;
+            let pb = self
+                .vertices
+                .get(vb)
+                .map(|v| v.point)
+                .ok_or(TopoError::StaleKey)?;
+            let line = Line3::new(pa, pb - pa).map_err(geom_err)?;
+            self.attach_edge_curve(ek, Curve3::Line(line), true);
+        }
+        for (i, &ek) in vert_edges.iter().enumerate() {
+            let (ra, za) = prof[i];
+            let circle = Circle3::new(o + ez * za, ex, ey, ra).map_err(geom_err)?;
+            self.attach_edge_curve(ek, Curve3::Circle(circle), true);
+        }
+
+        let mut all_edges = Vec::new();
+        all_edges.extend(rim_edges.iter().copied());
+        all_edges.extend(vert_edges.iter().copied());
+        all_edges.extend(top_edges.iter().copied());
+        let mut vertices = rim;
+        vertices.extend(tops);
+        Ok(PrimitiveOut {
+            faces,
+            edges: all_edges,
+            vertices,
+            reports,
+        })
+    }
+
     /// Solid cylinder: axis = frame.z, base disc at the frame origin,
     /// height h. Topology V2 E3 F3 (caps + lateral with seam).
     pub fn cylinder(
@@ -1306,6 +1511,57 @@ mod tests {
         assert!(
             (mv - expect).abs() < 1e-9,
             "barrel mass_properties vol {mv} != {expect}"
+        );
+    }
+
+    #[test]
+    fn revolve_partial_annular_sector() {
+        // Rectangle meridian r in [1,2], z in [0,1], revolved by pi/2.
+        // Annular-sector volume = (theta/2)(r1^2 - r0^2) h
+        //   = (pi/4)(4 - 1)(1) = 3pi/4.
+        let mut b = Body::new();
+        let out = b
+            .revolve_partial(
+                z_up(),
+                &[(1.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0)],
+                core::f64::consts::FRAC_PI_2,
+            )
+            .unwrap();
+        assert!(b.validate().is_ok(), "partial revolve invalid");
+        let c = b.counts();
+        assert_eq!((c.v, c.e, c.f), (8, 12, 6), "annular-sector counts");
+        assert_eq!(out.faces.len(), 6);
+        let v = b.mesh_volume();
+        let expect = 3.0 * core::f64::consts::PI / 4.0;
+        // Curved (cylinder/arc) faces tessellate with chord undershoot.
+        assert!(
+            (v - expect).abs() < expect * 0.03,
+            "annular-sector mesh_volume {v} != ~{expect}"
+        );
+    }
+
+    #[test]
+    fn revolve_partial_rejects_pole_and_big_angle() {
+        let mut b = Body::new();
+        // Profile touching the axis (r = 0) is out of scope.
+        assert!(
+            b.revolve_partial(
+                z_up(),
+                &[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)],
+                core::f64::consts::FRAC_PI_2
+            )
+            .is_err(),
+            "pole profile should reject"
+        );
+        // theta > pi is out of scope for now.
+        assert!(
+            b.revolve_partial(
+                z_up(),
+                &[(1.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0)],
+                4.0
+            )
+            .is_err(),
+            "theta > pi should reject"
         );
     }
 
