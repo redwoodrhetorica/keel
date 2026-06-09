@@ -2937,3 +2937,24 @@ ENABLER only -- does NOT tick a map item yet (like the Addendum-37 offset enable
 test) ticks item 126; it is the larger half and is next. Zero behavior change: additive
 derives, all existing tests unchanged (keel-math/geom/topo all green).
 GATE: exact CI triplet green (workspace: 108 math + 78 geom + 154 topo, clippy -D, fmt). Merged.
+
+## Addendum 97 (2026-06-09, attended): all 6 frontier dossiers landed + asymmetric-chamfer repro staged (stays 80/144)
+
+The research agent delivered all six requested dossiers (kernel/47-52): 47 boolean-result-
+assembly (the build_result_solid face-drop, HIGHEST leverage), 48 nurbs-skinning-lofting,
+49 sweep-rmf, 50 shell-offset-thicken, 51 sheet-bodies-ops, 52 persistent-naming. (The
+request doc was archived to old_research_request_0001.md.)
+Read 47 in full. ROOT CAUSE confirmed against the code: build_result_solid (the all-planar
+polygon-soup stitcher) DISCARDS the imprint's edge identity, reduces each kept fragment to
+a Vec3 ring, and re-establishes edge sharing by COORDINATE dedup (vindex global vtol) + a
+2-coedges-per-edge map. For a thin/oblique fragment the re-weld fails -> Euler-valid but
+geometrically wrong body. THE FIX (task #16 milestone): retire build_result_solid; route
+the planar path through the identity-preserving stitch_by_import; carry EdgeId from imprint,
+group coedges by identity, radial-splice, ASSERT a closure invariant (unmatched coedge =
+hard error, never a silent drop), carry orientation via the file-46 convention.
+STAGED: a committed regression test chamfer::asymmetric_chamfer_must_not_return_wrong_body
+(#[ignore]'d pending the fix) -- reconstructs the d1=0.5,d2=1.0 wedge cutter inline and
+asserts the boolean returns the true 7.5 OR declines, never a wrong-positive body. It is
+the dossier's validation harness: un-ignore when the fix lands. No new public API (no
+asymmetric-chamfer footgun); no count change (instrumentation toward the milestone).
+GATE: clippy -D warnings + fmt; the repro compiles and is correctly skipped (153 run, 1 ignored).

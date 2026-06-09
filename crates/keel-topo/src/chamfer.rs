@@ -127,4 +127,64 @@ mod tests {
         let v = chamfered.mass_properties().unwrap().volume;
         assert!((v - 7.75).abs() < 1e-6, "chamfer volume {v} != 7.75");
     }
+
+    #[test]
+    #[ignore = "known bug (task #16, dossier 47): build_result_solid drops the oblique \
+                cut face on a non-45-degree wedge. Un-ignore when the planar path routes \
+                through the identity-preserving stitch_by_import assembly."]
+    fn asymmetric_chamfer_must_not_return_wrong_body() {
+        // Asymmetric chamfer of a 2^3 box top edge: setbacks d1=0.5 on one
+        // face, d2=1.0 on the other. The removed wedge is a right triangle
+        // (legs 0.5, 1.0 -> area 0.25) over length 2 => 0.5 removed, so the
+        // true volume is 8 - 0.5 = 7.5. The oblique cut face is a thin,
+        // non-45-degree fragment that build_result_solid drops (it returns
+        // mass 11.5 / mesh 8.83 -- both wrong). CONTRACT: the boolean must
+        // return the correct 7.5 OR decline (Err) -- never a wrong-positive
+        // body. This reconstructs the chamfer_edge cutter with independent
+        // setbacks (d1 != d2).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e = top_right_edge(&b);
+        let (v0, v1) = b.edges.get(e).unwrap().bounds;
+        let p0 = b.vertices.get(v0).unwrap().point;
+        let p1 = b.vertices.get(v1).unwrap().point;
+        let len = (p1 - p0).norm();
+        let t = (p1 - p0).try_normalize().unwrap();
+        let faces = b.faces_around_edge(e);
+        let n1 = b.face_outward_normal(faces[0]).unwrap();
+        let n2 = b.face_outward_normal(faces[1]).unwrap();
+        let mut u1 = t.cross(n1);
+        if u1.dot(n2) > 0.0 {
+            u1 = u1 * -1.0;
+        }
+        let mut u2 = t.cross(n2);
+        if u2.dot(n1) > 0.0 {
+            u2 = u2 * -1.0;
+        }
+        let bisect = (n1 + n2).try_normalize().unwrap();
+        let (d1, d2) = (0.5_f64, 1.0_f64);
+        let bb = b.bounding_box();
+        let big = (bb.max - bb.min).norm() * 2.0 + 10.0;
+        let margin = len * 0.5 + d1.max(d2) + 1e-3;
+        let base = p0 - t * margin;
+        let a = base + u1 * d1;
+        let bpt = base + u2 * d2;
+        let c = base + bisect * big;
+        let profile = if (bpt - a).cross(c - a).dot(t) >= 0.0 {
+            vec![a, bpt, c]
+        } else {
+            vec![a, c, bpt]
+        };
+        let dir = t * (len + 2.0 * margin);
+        let mut cutter = Body::new();
+        cutter.prism(&profile, dir).unwrap();
+        if let Ok(res) = boolean(&b, &cutter, BoolOp::Difference, 1e-7) {
+            let v = res.body.mass_properties().unwrap().volume;
+            let mv = res.body.mesh_volume();
+            assert!(
+                (v - 7.5).abs() < 1e-6 && (mv - 7.5).abs() < 0.05,
+                "asymmetric chamfer must be 7.5 (got mass {v}, mesh {mv}) or decline"
+            );
+        }
+    }
 }
