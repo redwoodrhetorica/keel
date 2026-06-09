@@ -1469,6 +1469,36 @@ fn stitch_by_import(
         }
     }
 
+    // Shell-closure invariant (dossier 47 Q1 / synthesis step 5): every kept
+    // coedge must land in a radial pairing (or a complete radial cycle). After
+    // the seam glue above, an edge still carrying a lone fin (radial.len() == 1)
+    // is an UNMATCHED coedge -- the exact signature of the silently dropped face
+    // the dossier names as a hard error, never a face to omit. validate()'s
+    // check_radial_cycles only asserts each fin sits in exactly one cycle, so a
+    // dangling edge passes it untouched; this is the orthogonal topological
+    // backstop (complementary to the geometric mass==mesh gate of Addendum 102,
+    // each catching a class the other misses: a dropped face can survive volume
+    // agreement under symmetric error cancellation but not coedge pairing).
+    //
+    // SCOPE: all-planar results only. That is where the dossier's drop bug lives
+    // (the asymmetric-chamfer / L-union oblique-cut class is all-planar) and the
+    // polygon-soup path being retired. The curved path legitimately carries
+    // radial-1 edges -- periodic-surface seams and degenerate closed circular
+    // rims (e.g. a cylinder cap seam represented as a closed edge with a single
+    // wrapping fin) -- so a blanket radial check over-fires on correct curved
+    // bodies (the plug, the blind hole). A correct closed PLANAR solid never has
+    // a radial-1 edge: its polygon boundaries have distinct vertices and every
+    // edge is shared by exactly two (or, non-manifold, a full cycle of) faces.
+    let all_planar = dst
+        .face_keys()
+        .iter()
+        .all(|&f| matches!(dst.face_surface3(f), Some(Surface3::Plane(_))));
+    if all_planar && dst.edges.iter().any(|(_, e)| e.radial.len() < 2) {
+        return Err(BoolFault::AssemblyFailed(
+            "unmatched coedge: shell-closure invariant violated",
+        ));
+    }
+
     // Two-region partition: front (outward) -> infinite, back -> solid.
     let solid_shell = dst.new_shell(&mut rec, solid, Derivation::Created);
     let inf_shell = dst.new_shell(&mut rec, inf, Derivation::Created);
