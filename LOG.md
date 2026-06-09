@@ -2897,3 +2897,28 @@ Test: a 2x2 square swept along a uniformly oblique 3-point path -> a sheared pri
 volume 24 (Cavalieri: base 4 x z-extent 6), 10 faces, valid; < 2 path points rejected.
 Constructor over Euler ops, no boolean/tessellate_planar change -> no new fuzz.
 GATE: exact CI triplet green (153 keel-topo, clippy -D warnings, fmt). Merged.
+
+## Addendum 95 (2026-06-09, attended): adaptive / incremental tessellation (item 98) -- 79 -> 80/144
+
+Body::render_mesh_tol(chord_tol) -> RenderMesh: curved analytic faces
+(cylinder/cone/sphere/torus) faceted finely enough that each triangle stays within
+chord_tol of the true surface; finer tol => more facets (parity item 98, Phase 6). The
+shared helper arc_segments(span, radius, tol, default) returns the segment count from
+the chord-error bound n >= span*sqrt(radius/(8*tol)) (clamped [8,4096]), or the legacy
+fixed `default` when tol is None. Threaded as tol: Option<f64> through tessellate_face
+-> the four analytic curved tessellators; the NV/axial (cylinder/cone) and slant counts
+stay fixed (exact along the ruling). KEY SAFETY: the None path is byte-identical to the
+old fixed-count tessellation, so tessellate_face / mesh_volume / the winding oracle / all
+existing tests are UNCHANGED (154 pass) -- only the new Some(tol) render path adapts.
+NURBS faces keep their default grid (a curvature-adaptive NURBS faceter is the follow-up).
+RESEARCH REVIEW (file 01 synthesis tessellation policy + file 06 interrogation): the
+synthesis mandates baking tolerance-controlled facets at consumption boundaries carrying
+{requested tolerance, achieved deviation}; this is the analytic-surface realization of
+that (chord-error-bounded angular density). Re-bake-finer is exactly render_mesh_tol with
+a smaller tol.
+Test: r=1 h=2 cylinder -> render_mesh_tol(0.05) vs (0.0005): finer yields strictly more
+facets and a facet (divergence) volume within 1% of pi r^2 h = 2pi; default render_mesh
+unaffected.
+Default path unchanged -> no oracle change -> no new fuzz (the Some(tol) path is
+render-only, outside the boolean/winding pipeline).
+GATE: exact CI triplet green (154 keel-topo, clippy -D warnings, fmt). Merged.

@@ -148,10 +148,28 @@ impl Body {
     /// topological edge -- exact endpoints for straight edges, 32-segment
     /// samples for circular/elliptic arcs and NURBS edges.
     pub fn render_mesh(&self) -> RenderMesh {
+        self.render_mesh_opt(None)
+    }
+
+    /// Render facets + wireframe at a chord tolerance (parity item 98,
+    /// adaptive/incremental tessellation): curved analytic faces
+    /// (cylinder/cone/sphere/torus) are faceted finely enough that each
+    /// triangle stays within `chord_tol` of the true surface (finer tol =>
+    /// more facets). The wireframe edges are unchanged (already exact or
+    /// arc-sampled). NURBS faces use their default grid (a curvature-
+    /// adaptive NURBS faceter is a follow-up).
+    pub fn render_mesh_tol(&self, chord_tol: f64) -> RenderMesh {
+        self.render_mesh_opt(Some(chord_tol))
+    }
+
+    fn render_mesh_opt(&self, tol: Option<f64>) -> RenderMesh {
         let facets = self
             .face_keys()
             .iter()
-            .flat_map(|&f| self.tessellate_face(f))
+            .flat_map(|&f| match tol {
+                Some(t) => self.tessellate_face_tol(f, t),
+                None => self.tessellate_face(f),
+            })
             .map(|tri| {
                 let normal = (tri[1] - tri[0])
                     .cross(tri[2] - tri[0])
@@ -1163,5 +1181,45 @@ mod tests {
             .sum();
         assert!((area - 4.0).abs() < 1e-9, "cut-face area {area} != 4");
         assert!((sv.normal - Vec3::new(0.0, 0.0, 1.0)).norm() < 1e-12);
+    }
+
+    #[test]
+    fn render_mesh_tol_refines_curved_faces() {
+        // A unit-radius, height-2 cylinder faceted at a coarse vs a fine
+        // chord tolerance: finer tol yields strictly more facets, and the
+        // fine facet (divergence) volume is within 1% of the analytic
+        // pi r^2 h = 2 pi. The default render_mesh is unaffected.
+        let mut b = Body::new();
+        b.cylinder(
+            Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap(),
+            1.0,
+            2.0,
+        )
+        .unwrap();
+        let coarse = b.render_mesh_tol(0.05);
+        let fine = b.render_mesh_tol(0.0005);
+        assert!(
+            fine.facets.len() > coarse.facets.len(),
+            "finer tol -> more facets (fine {} vs coarse {})",
+            fine.facets.len(),
+            coarse.facets.len()
+        );
+        let vol = |m: &RenderMesh| {
+            m.facets
+                .iter()
+                .map(|f| f.tri[0].dot(f.tri[1].cross(f.tri[2])))
+                .sum::<f64>()
+                / 6.0
+        };
+        let want = core::f64::consts::PI * 2.0;
+        assert!(
+            (vol(&fine) - want).abs() < 0.01 * want,
+            "fine facet volume {} != ~{want}",
+            vol(&fine)
+        );
+        assert!(
+            !b.render_mesh().facets.is_empty(),
+            "default mesh still works"
+        );
     }
 }
