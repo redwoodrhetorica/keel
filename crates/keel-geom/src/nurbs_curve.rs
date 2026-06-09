@@ -35,7 +35,7 @@ pub(crate) fn binom(n: usize, k: usize) -> f64 {
 
 /// NURBS curve: clamped knot vector + homogeneous control points
 /// (w*x, w*y, w*z, w), all weights strictly positive.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NurbsCurve {
     kv: KnotVector,
     /// Homogeneous control points, length == kv.control_count().

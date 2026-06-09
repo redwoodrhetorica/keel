@@ -2922,3 +2922,18 @@ unaffected.
 Default path unchanged -> no oracle change -> no new fuzz (the Some(tol) path is
 render-only, outside the boolean/winding pipeline).
 GATE: exact CI triplet green (154 keel-topo, clippy -D warnings, fmt). Merged.
+
+## Addendum 96 (2026-06-09, attended): persistence layer A -- geometry serde (enabler, stays 80/144)
+
+First layer of save/restore (item 126). Added serde (workspace dep, derive feature) and
+serde::Serialize/Deserialize on the geometry + math value types: keel-math Vec3/Vec4;
+keel-geom Frame3, Surface3 {Plane3,Cylinder3,Cone3,Sphere3,Torus3}, Curve3 {Line3,
+Circle3,Ellipse3,NurbsCurve}, NurbsCurve, NurbsSurface, KnotVector. serde_json round-trips
+f64 exactly (ryu), so this meets file-14's exact-double requirement. Test: every analytic
+Surface3 variant + Curve3 Line/Circle round-trip through JSON bit-exactly (Surface3 via
+PartialEq; Curve3 via re-serialization since it lacks PartialEq).
+ENABLER only -- does NOT tick a map item yet (like the Addendum-37 offset enabler). Layer B
+(the keel-topo arena/Key/entities/Body serde + Body::save/restore + topology_hash round-trip
+test) ticks item 126; it is the larger half and is next. Zero behavior change: additive
+derives, all existing tests unchanged (keel-math/geom/topo all green).
+GATE: exact CI triplet green (workspace: 108 math + 78 geom + 154 topo, clippy -D, fmt). Merged.

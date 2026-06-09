@@ -91,7 +91,7 @@ pub(crate) fn local_geometry_from_ders(
 }
 
 /// Right-handed orthonormal frame.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Frame3 {
     pub origin: Vec3,
     pub x: Vec3,
@@ -123,16 +123,16 @@ impl Frame3 {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Plane3 {
     pub frame: Frame3,
 }
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Cylinder3 {
     pub frame: Frame3,
     pub radius: f64,
 }
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Cone3 {
     pub frame: Frame3,
     /// Radius at v = 0.
@@ -140,12 +140,12 @@ pub struct Cone3 {
     /// Half-angle; the radius grows by tan(half_angle) per unit height.
     pub half_angle: f64,
 }
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Sphere3 {
     pub frame: Frame3,
     pub radius: f64,
 }
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Torus3 {
     pub frame: Frame3,
     pub major: f64,
@@ -212,7 +212,7 @@ impl Torus3 {
 /// cone S = o + (r0 + v tan(alpha))(cos(u)X + sin(u)Y) + vZ;
 /// sphere S = o + r cos(v)(cos(u)X + sin(u)Y) + r sin(v)Z, v latitude;
 /// torus S = o + (R + r cos(v))(cos(u)X + sin(u)Y) + r sin(v)Z.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Surface3 {
     Plane(Plane3),
     Cylinder(Cylinder3),
@@ -591,6 +591,49 @@ mod tests {
         assert!(f.x.dot(f.z).abs() < 1e-14);
         assert!((f.x.cross(f.y) - f.z).norm() < 1e-14);
         assert!(Frame3::from_z(Vec3::ZERO, Vec3::ZERO).is_err());
+    }
+
+    #[test]
+    fn geometry_serde_round_trips_exactly() {
+        // Persistence enabler (item 126): analytic surfaces and curves
+        // serialize to JSON and restore bit-exactly (serde_json round-trips
+        // f64 via ryu). Surface3 has PartialEq; Curve3 does not, so its
+        // round-trip is checked by re-serialization equality.
+        use crate::curve::{Circle3, Curve3, Line3};
+        let f = Frame3::from_z(Vec3::new(0.3, -0.7, 2.0), Vec3::new(1., 1., 1.)).unwrap();
+        let surfaces = [
+            Surface3::Plane(Plane3::new(f.clone())),
+            Surface3::Cylinder(Cylinder3::new(f.clone(), 1.5).unwrap()),
+            Surface3::Cone(Cone3::new(f.clone(), 1.0, 0.5).unwrap()),
+            Surface3::Sphere(Sphere3::new(f.clone(), 2.5).unwrap()),
+            Surface3::Torus(Torus3::new(f.clone(), 3.0, 0.8).unwrap()),
+        ];
+        for s in &surfaces {
+            let json = serde_json::to_string(s).unwrap();
+            let back: Surface3 = serde_json::from_str(&json).unwrap();
+            assert_eq!(*s, back, "surface serde round-trip: {s:?}");
+        }
+        let curves = [
+            Curve3::Line(Line3::new(Vec3::new(1., 2., 3.), Vec3::new(1., 0., 0.)).unwrap()),
+            Curve3::Circle(
+                Circle3::new(
+                    Vec3::ZERO,
+                    Vec3::new(1., 0., 0.),
+                    Vec3::new(0., 1., 0.),
+                    2.0,
+                )
+                .unwrap(),
+            ),
+        ];
+        for c in &curves {
+            let json = serde_json::to_string(c).unwrap();
+            let back: Curve3 = serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                serde_json::to_string(&back).unwrap(),
+                json,
+                "curve serde round-trip"
+            );
+        }
     }
 
     #[test]

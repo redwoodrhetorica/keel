@@ -10,10 +10,12 @@ workspace = true
 
 [dependencies]
 keel-math = { path = "../keel-math" }
+serde.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 criterion.workspace = true
+serde_json.workspace = true
 
 [[bench]]
 name = "geom"
