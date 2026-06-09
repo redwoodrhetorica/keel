@@ -3370,3 +3370,49 @@ correct 6 box + 1 cut = 7 faces; also add a zero-area degenerate-fragment filter
 2-vertex lamina on the B side). Verify asym chamfer -> 7.5 (mass==mesh, un-ignore the success
 assertion), symmetric chamfer stays 7.75, full workspace + fuzz_boolean clean. This is the
 LAYER-2 close-out; with it #16 ships and unblocks the blend/chamfer family.
+
+## Addendum 110 (2026-06-09, attended): #16 COMPLETE -- the asymmetric (thin oblique transversal) chamfer now ASSEMBLES to the true 7.5. Phase 0a KEYSTONE. Counter stays 82/144 (enabler; features tick as their APIs ship)
+
+Both layers of the asymmetric-chamfer assembly failure are FIXED; the boolean now returns the
+true 7.5 with mass == mesh (strict .expect() + exact assertion -- the test is success-required,
+no longer correct-or-decline). The diagnosis chain (Addenda 105-109) correctly refuted two wrong
+fix-targets (a dossier-39 sec-3.2 tangency layer; an on-on winding band) before landing the real
+fixes:
+
+LAYER 1 (Addendum 107, already merged): per-face canonical seam dedup in imprint_operand (two
+cutter faces sharing an edge that lands on a box face emitted a coincident double-split).
+
+LAYER 2 (this addendum), two contained root causes, both verified data-first:
+  (a) fin_curve_samples (boolean.rs) sampled a fin's edge over the curve's FULL domain. A SPLIT
+      edge shares its parent curve, so a split fragment's fins rode the whole PARENT edge ->
+      face_interior_point built a too-large UV polygon and its grid pick ESCAPED the true thin
+      fragment (the corner triangle's interior point landed at (1.435,0,1.75), across the
+      hypotenuse, outside the triangle, on the outside-cutter side -> w=0 -> the inside-cutter
+      triangle mis-classified OutsideOther -> wrongly KEPT). FIX: sample the edge over its
+      vertex-bounded parameter sub-range (project the two bound vertices to [s0,s1] for straight
+      Line/NURBS curves; closed edges and periodic circle/ellipse arcs keep the full sweep). Sole
+      caller is face_interior_point, so the blast radius is exactly classification's interior
+      sampling. With it the triangle samples its true centroid -> InsideOther -> dropped; mesh
+      volume went 8.833 -> 7.5.
+  (b) classify_faces kept a DEGENERATE zero-area sliver (the cutter apex face's in-box portion,
+      area = -0.0, collapsing to a 2-vertex lamina that broke mass_properties and inflated the
+      shell to 8 faces). FIX: reject faces with |area| <= tol^2 as FaceClass::Unknown
+      (select_faces keeps no Unknown) -- measured: the sliver is ~0 while the next-smallest real
+      face is 0.25, a clean separation. Drops it from both the stitch and soup paths.
+
+RESULT: kept set is now the correct 6 trimmed box faces + 1 oblique cut = 7; the asym chamfer
+(d1=0.5,d2=1.0) assembles to volume 7.5, mass == mesh, validate ok. The 45-degree symmetric
+chamfer stays 7.75 (tripwire held). This is the Phase-0a KEYSTONE: the general-position boolean
+now assembles thin OBLIQUE TRANSVERSAL cuts, the class that gates the blend/chamfer family
+(items 52/53 variable/asymmetric chamfer), shell (41), thicken (44), and the blend family
+(47-60). COUNTER STAYS 82/144 by this project's convention (Addenda 100/103: "the fix is the
+enabler; unblocked features tick as they ship"). No new public feature API shipped here -- the
+asym-chamfer test reconstructs the cutter manually to exercise the boolean. The public
+asymmetric/two-offset chamfer_edge API (item 52/53) is now a trivial follow-on (the boolean does
+the work) and is the natural next tick; shell/thicken/blends likewise now have their assembly
+foundation.
+
+m16c-tangent-seam-dedup branch can be retired (its idea was reimplemented correctly as LAYER 1
+on current master; its build_result_solid/assemble_open_chain target is gone).
+GATE: exact CI triplet green (workspace 108 math + 77 geom + 157 topo incl. strict asym chamfer,
+clippy -D warnings, fmt) + fuzz_boolean (WSL nightly, 200s, Done 307 runs, clean). Merged.

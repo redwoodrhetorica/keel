@@ -560,10 +560,66 @@ impl Body {
                 Curve3::Ellipse(el) => el.point(core::f64::consts::TAU * s),
             }
         };
+        // Restrict the sampled range to the edge's bounding vertices. A
+        // SPLIT edge shares its parent's curve, so sweeping the full curve
+        // domain would ride the whole PARENT edge -- corrupting the UV
+        // polygon face_interior_point builds for a split fragment (e.g. an
+        // asymmetric-chamfer corner triangle whose top/right sides are split
+        // children: the sampled polygon then spans the untrimmed box edges,
+        // the interior-point sampler escapes the true fragment, and the
+        // fragment is mis-classified inside/outside the other operand). For
+        // STRAIGHT curves (Line and degree>=1 NURBS) the parameter is
+        // monotonic, so projecting the two bound vertices gives the edge's
+        // true sub-range, sampled in the fin's traversal direction
+        // (bounds.0 -> bounds.1 when forward). Closed edges (one shared
+        // vertex) and periodic curves (circle/ellipse arcs, whose seam-wrap
+        // direction is ambiguous from endpoints alone) keep the prior
+        // full-[0,1] sweep in the fin direction.
+        let s_of = |p: keel_math::vec::Vec3| -> Option<f64> {
+            match c {
+                Curve3::Line(l) => Some(l.project(p)),
+                Curve3::Nurbs(n) => {
+                    let (a, b) = n.domain();
+                    if (b - a).abs() <= f64::MIN_POSITIVE {
+                        None
+                    } else {
+                        Some((keel_geom::project::project_point(n, p, 1e-7).u - a) / (b - a))
+                    }
+                }
+                _ => None,
+            }
+        };
+        let range = if e.bounds.0 == e.bounds.1 {
+            None
+        } else {
+            match (
+                self.vertices
+                    .get(e.bounds.0)
+                    .map(|v| v.point)
+                    .and_then(s_of),
+                self.vertices
+                    .get(e.bounds.1)
+                    .map(|v| v.point)
+                    .and_then(s_of),
+            ) {
+                (Some(s0), Some(s1)) => Some(if f.forward { (s0, s1) } else { (s1, s0) }),
+                _ => None,
+            }
+        };
         let mut out = Vec::with_capacity(m);
-        for i in 0..m {
-            let s = i as f64 / m as f64;
-            out.push(eval(if fwd { s } else { 1.0 - s }));
+        match range {
+            Some((sa, sb)) => {
+                for i in 0..m {
+                    let t = i as f64 / m as f64;
+                    out.push(eval(sa + (sb - sa) * t));
+                }
+            }
+            None => {
+                for i in 0..m {
+                    let s = i as f64 / m as f64;
+                    out.push(eval(if fwd { s } else { 1.0 - s }));
+                }
+            }
         }
         Some(out)
     }
@@ -904,7 +960,7 @@ fn winding_nonzero(poly: &[(f64, f64)], q: (f64, f64)) -> bool {
 
 /// Classify every face of `working` against the `other` operand solid:
 /// sample the face interior and test containment in `other`.
-pub(crate) fn classify_faces(working: &Body, other: &Body, _tol: f64) -> Vec<(FaceKey, FaceClass)> {
+pub(crate) fn classify_faces(working: &Body, other: &Body, tol: f64) -> Vec<(FaceKey, FaceClass)> {
     // Generalized winding number is the PRIMARY classifier (the
     // d-booleans-tolerant.md mandate): robust at on-boundary/tangential
     // contacts and surface-type-agnostic (no pcurve/periodicity
@@ -914,6 +970,18 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, _tol: f64) -> Vec<(Fa
     const COINCIDENCE_BAND: f64 = 0.25;
     let mut out = Vec::new();
     for face in working.face_keys() {
+        // Reject degenerate (zero-area) fragments before classifying. A thin
+        // tool sliver can collapse to a lamina -- e.g. the asymmetric-chamfer
+        // cutter's apex-face portion that dips inside the box reduces to the
+        // setback line. face_interior_point can still land a point on such a
+        // sliver and the winding test then mis-keeps it (a 2-vertex face that
+        // breaks mass_properties and inflates the shell). An area within tol^2
+        // of zero is not a real face: mark it Unknown (select_faces keeps no
+        // Unknown), dropping it from both assembly paths.
+        if working.face_area(face).abs() <= tol * tol {
+            out.push((face, FaceClass::Unknown));
+            continue;
+        }
         let class = match working.face_interior_point(face) {
             Some(p) => {
                 let w = other.generalized_winding_number(p);
