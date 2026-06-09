@@ -2022,6 +2022,43 @@ mod tests {
     }
 
     #[test]
+    fn revolve_closed_triangular_ring() {
+        // A TRIANGULAR closed off-axis cross-section [(1,0),(2,0),(1,1)]
+        // revolved full 2pi -> a genus-1 ring exercising a CONE band
+        // ((2,0)->(1,1)) inside the closed/handle construction (plus a
+        // washer (1,0)->(2,0) and the closing inner cylinder (1,1)->(1,0)).
+        // Pappus: V = 2pi * R_centroid * Area = 2pi * (4/3) * (1/2) = 4pi/3.
+        let mut b = Body::new();
+        let out = b
+            .revolve_closed(z_up(), &[(1.0, 0.0), (2.0, 0.0), (1.0, 1.0)])
+            .unwrap();
+        assert!(
+            b.validate().is_ok(),
+            "triangular ring invalid: {:?}",
+            b.validate()
+        );
+        assert_eq!(out.faces.len(), 3, "triangular ring face count");
+        let expect = 4.0 * core::f64::consts::PI / 3.0;
+        let v = b.mesh_volume();
+        assert!(
+            (v - expect).abs() < expect * 0.02,
+            "triangular ring mesh_volume {v} != ~4pi/3"
+        );
+    }
+
+    #[test]
+    fn revolve_closed_rejects_axis_touching() {
+        // A profile that touches the axis (radius 0) is a genus-0 solid of
+        // revolution, not a ring -- use `revolve`. revolve_closed rejects it.
+        let mut b = Body::new();
+        assert!(
+            b.revolve_closed(z_up(), &[(0.0, 0.0), (2.0, 0.0), (1.0, 1.0)])
+                .is_err(),
+            "axis-touching profile should reject"
+        );
+    }
+
+    #[test]
     fn revolve_rejects_open_profile() {
         let mut b = Body::new();
         // Both ends off-axis -> not a closed solid of revolution.
