@@ -184,6 +184,68 @@ impl Body {
         Some(out)
     }
 
+    /// Silhouette / outline edges of the body for an orthographic view
+    /// direction `view` (parity item 97). Returns the segments where the
+    /// surface turns away from the viewer: an edge is on the silhouette
+    /// when its two incident facets face opposite ways relative to `view`
+    /// (one toward, one away). EXACT for polyhedral models (the segments
+    /// are real model edges); tessellation-resolution for curved faces
+    /// (each smooth silhouette curve becomes a polyline; exact analytic
+    /// silhouette curves are a later refinement). `view` points from the
+    /// scene toward the eye; an unnormalizable view returns nothing.
+    pub fn silhouette(&self, view: Vec3) -> Vec<[Vec3; 2]> {
+        use std::collections::BTreeMap;
+        let Some(v) = view.try_normalize() else {
+            return Vec::new();
+        };
+        // Weld vertices to a 1e-6 grid so facet edges that share a point
+        // get the same key (the tessellation shares model vertices exactly).
+        let q = |p: Vec3| -> (i64, i64, i64) {
+            const S: f64 = 1e6;
+            (
+                (p.x * S).round() as i64,
+                (p.y * S).round() as i64,
+                (p.z * S).round() as i64,
+            )
+        };
+        type Key = (i64, i64, i64);
+        // Per-welded-edge accumulator: its two endpoints, the normal-dot-
+        // view of each incident facet, and how many facets share it.
+        struct Acc {
+            a: Vec3,
+            b: Vec3,
+            signs: [f64; 2],
+            count: usize,
+        }
+        let mut edges: BTreeMap<(Key, Key), Acc> = BTreeMap::new();
+        for f in self.render_mesh().facets {
+            let d = f.normal.dot(v);
+            for (i, j) in [(0, 1), (1, 2), (2, 0)] {
+                let (mut pa, mut pb) = (f.tri[i], f.tri[j]);
+                let (mut ka, mut kb) = (q(pa), q(pb));
+                if ka > kb {
+                    std::mem::swap(&mut ka, &mut kb);
+                    std::mem::swap(&mut pa, &mut pb);
+                }
+                let e = edges.entry((ka, kb)).or_insert(Acc {
+                    a: pa,
+                    b: pb,
+                    signs: [0.0; 2],
+                    count: 0,
+                });
+                if e.count < 2 {
+                    e.signs[e.count] = d;
+                }
+                e.count += 1;
+            }
+        }
+        edges
+            .into_values()
+            .filter(|e| e.count == 2 && e.signs[0] * e.signs[1] < 0.0)
+            .map(|e| [e.a, e.b])
+            .collect()
+    }
+
     /// Area of a single face (parity interrogation), summed over its
     /// outward triangles. Exact for planar faces; the tessellation
     /// approximation for curved faces (consistent with the curved volume
@@ -941,5 +1003,29 @@ mod tests {
                 "cyl facet normal unit"
             );
         }
+    }
+
+    #[test]
+    fn silhouette_of_cube_is_a_hexagon() {
+        // A cube viewed from a generic (corner-on) direction has 3 front
+        // faces and 3 back faces; the outline is the 6 edges separating
+        // them -- a hexagonal silhouette. Each segment is a real cube edge
+        // (length 2). No face is edge-on for (1,2,3), so the count is exact.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let sil = b.silhouette(Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(sil.len(), 6, "cube silhouette is a hexagon");
+        for s in &sil {
+            assert!(
+                ((s[1] - s[0]).norm() - 2.0).abs() < 1e-9,
+                "silhouette segment is a unit cube edge"
+            );
+        }
+        // Translation-invariant count.
+        let mut t = Body::new();
+        t.block(Vec3::new(10.0, -5.0, 3.0), 2.0, 2.0, 2.0).unwrap();
+        assert_eq!(t.silhouette(Vec3::new(1.0, 2.0, 3.0)).len(), 6);
+        // A degenerate (zero) view yields nothing.
+        assert!(b.silhouette(Vec3::ZERO).is_empty());
     }
 }
