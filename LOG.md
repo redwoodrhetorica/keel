@@ -2857,3 +2857,21 @@ Test: three 2x2 squares stacked at z=0,1,2 -> a 2x2x2 box with a mid-section edg
 surfaces. Constructor over existing Euler ops (mev/mef), no boolean/tessellate_planar
 change -> no new fuzz.
 GATE: exact CI triplet green (151 keel-topo, clippy -D warnings, fmt). Merged.
+
+## Addendum 93 (2026-06-09, attended): section view / filled cut face (item 99) -- 77 -> 78/144
+
+Body::section_view(plane_point, plane_normal) -> SectionView { outline, facets, normal }:
+the section/detail-view output a viewer hatches (parity item 99, Phase 6). Reuses the
+item-75 section_by_plane outline and fills it -- a fan triangulation of the convex
+cross-section (the solid cut-face region), oriented by the plane normal.
+RESEARCH REVIEW (file 06 interrogation/HLR + file 01 synthesis 2D-arrangement+winding):
+file 06 S3.1 frames silhouettes/contours as exact spline zero-sets (n.d=0) and the
+synthesis routes section HATCHING through the one 2D-arrangement/winding engine. The
+convex fan fill is the discrete case; concave / multi-loop / curved-boundary section
+regions need that arrangement engine and are the documented deferral (consistent with
+section_by_plane's convex straight-edge scope). NOTE: this same file-06 review
+retroactively backs the render trio (Add. 89-91) -- silhouette (97) is the mesh-level
+approximation of file 06 S3.1's exact n.d=0 zero-set tracer; HLR (96) is S7.
+Test: cube [0,2]^3 cut at z=1 -> 4-point square outline, 2 fan triangles, cut-face area
+4 exact, normal +z. Read-only query -> no fuzz needed.
+GATE: exact CI triplet green (152 keel-topo, clippy -D warnings, fmt). Merged.

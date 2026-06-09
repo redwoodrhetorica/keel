@@ -45,6 +45,16 @@ pub struct HlrWireframe {
     pub hidden: Vec<[Vec3; 2]>,
 }
 
+/// A section view of a body cut by a plane (parity item 99): the ordered
+/// cross-section outline (item 75) plus the filled cut face triangulated
+/// for rendering, and the cut-plane normal the fill faces.
+#[derive(Clone, Debug, Default)]
+pub struct SectionView {
+    pub outline: Vec<Vec3>,
+    pub facets: Vec<[Vec3; 3]>,
+    pub normal: Vec3,
+}
+
 /// Moller-Trumbore ray/triangle hit: the parameter t > eps where
 /// `orig + t*dir` meets `tri`, or None. `dir` need not be unit (t is in
 /// `dir` lengths); the eps skips faces the origin already lies on.
@@ -608,6 +618,29 @@ impl Body {
         pts
     }
 
+    /// Section VIEW of the body cut by a plane (parity item 99): the
+    /// item-75 cross-section outline plus the filled cut face, triangulated
+    /// for rendering (a section/detail view's solid hatch region), oriented
+    /// by the plane normal. Convex cross-sections fill exactly via a fan;
+    /// concave / multi-loop / curved-boundary sections need the full 2D
+    /// arrangement region engine (research file 06 interrogation/HLR; file
+    /// 01 synthesis 2D-arrangement + winding for section hatching) and are
+    /// a later slice -- consistent with section_by_plane's convex scope.
+    pub fn section_view(&self, plane_point: Vec3, plane_normal: Vec3) -> SectionView {
+        let outline = self.section_by_plane(plane_point, plane_normal);
+        let normal = plane_normal.try_normalize().unwrap_or(Vec3::ZERO);
+        let mut facets = Vec::new();
+        // Convex cross-section -> fan triangulation from the first vertex.
+        for i in 1..outline.len().saturating_sub(1) {
+            facets.push([outline[0], outline[i], outline[i + 1]]);
+        }
+        SectionView {
+            outline,
+            facets,
+            normal,
+        }
+    }
+
     /// Planar slices at a list of offsets along `normal` from `base`
     /// (parity item 77, additive-manufacturing slicing): one section
     /// polygon per offset. Empty slices (offset misses the body) are kept
@@ -1111,5 +1144,24 @@ mod tests {
         assert_eq!(hlr.visible.len(), 9, "front edges visible");
         // Degenerate view -> empty.
         assert!(b.hidden_line_wireframe(Vec3::ZERO).visible.is_empty());
+    }
+
+    #[test]
+    fn section_view_of_cube_is_a_filled_square() {
+        // Cube [0,2]^3 cut by the mid plane z = 1: the cross-section is a
+        // 2x2 square (4 outline points), filled by 2 fan triangles whose
+        // areas sum to 4.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let sv = b.section_view(Vec3::new(1.0, 1.0, 1.0), Vec3::new(0.0, 0.0, 1.0));
+        assert_eq!(sv.outline.len(), 4, "square cross-section outline");
+        assert_eq!(sv.facets.len(), 2, "fan fill of a quad = 2 triangles");
+        let area: f64 = sv
+            .facets
+            .iter()
+            .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
+            .sum();
+        assert!((area - 4.0).abs() < 1e-9, "cut-face area {area} != 4");
+        assert!((sv.normal - Vec3::new(0.0, 0.0, 1.0)).norm() < 1e-12);
     }
 }
