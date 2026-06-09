@@ -1,9 +1,14 @@
 //! Mass properties via the divergence theorem (M4 Task 6).
 //!
 //! THE ORIENTATION AUDIT: volumes are computed with NO sign fudge.
-//! The per-face orientation comes purely from the M3 region-solidity
-//! conventions (front faces the parent region); a negative volume
-//! here is a bug in M3's conventions, never something to abs() away.
+//! Per-face orientation is the solid-OUTWARD normal n_out = sense *
+//! natural (research file 46: the single sense-based authority shared
+//! with the mesh path), folded together with each face's own loop
+//! winding. Region solidity only validates that a face bounds exactly
+//! one solid region; it no longer sets the sign on its own (that was
+//! correct only while sense agreed with it, and silently wrong on a
+//! reversed-sense cavity wall / genus-1 inner band). A negative volume
+//! here is a real orientation bug, never something to abs() away.
 //!
 //! Integration dispatch: planar faces integrate their UV region
 //! exactly-enough (triangle fan with a degree-5 rule for polygon
@@ -124,18 +129,14 @@ impl Body {
                 .get(face.back_region)
                 .map(|r| r.solid)
                 .ok_or(TopoError::StaleKey)?;
-            // Outward orientation from region solidity ALONE (the M3
-            // audit): the parametric normal points out of Front.
-            let orient = match (fs, bs) {
-                (false, true) => 1.0,  // solid behind: normal is outward
-                (true, false) => -1.0, // solid in front: flip
-                _ => {
-                    return Err(TopoError::Precondition(
-                        "mass_properties: face does not bound exactly one solid region",
-                    ));
-                }
-            };
-            let Some((sk, _)) = face.surface else {
+            // Validity: a solid face bounds exactly one solid region (a
+            // double-sided / lamina face has no single material side).
+            if (fs, bs) != (false, true) && (fs, bs) != (true, false) {
+                return Err(TopoError::Precondition(
+                    "mass_properties: face does not bound exactly one solid region",
+                ));
+            }
+            let Some((sk, sense)) = face.surface else {
                 return Err(TopoError::Precondition(
                     "mass_properties: face without surface",
                 ));
@@ -145,9 +146,16 @@ impl Body {
                     "mass_properties: NURBS faces are M5",
                 ));
             };
+            // Outward normal = sense * natural (research file 46): the SOLE
+            // orientation authority, consistent with the mesh path. (Region
+            // solidity ALONE was correct only while sense agreed with it; a
+            // reversed-sense face -- a cavity wall / genus-1 inner band --
+            // needs the sense.) Each integrator folds sense_sign in with the
+            // face's own loop winding.
+            let sense_sign = if sense { 1.0 } else { -1.0 };
             match surf {
-                Surface3::Plane(_) => self.integrate_planar_face(fk, surf, orient, &mut m)?,
-                _ => self.integrate_curved_face(fk, surf, orient, &mut m)?,
+                Surface3::Plane(_) => self.integrate_planar_face(fk, surf, sense_sign, &mut m)?,
+                _ => self.integrate_curved_face(fk, surf, sense_sign, &mut m)?,
             }
         }
         if m.v <= 0.0 {
@@ -184,14 +192,13 @@ impl Body {
         &self,
         fk: FaceKey,
         surf: &Surface3,
-        orient: f64,
+        sense_sign: f64,
         m: &mut Moments,
     ) -> Result<(), TopoError> {
         let Surface3::Plane(plane) = surf else {
             return Err(TopoError::Precondition("not a plane"));
         };
         let f = &plane.frame;
-        let normal = f.z * orient;
         let at = |u: f64, v: f64| -> Vec3 { f.origin + f.x * u + f.y * v };
         let face = self.faces.get(fk).ok_or(TopoError::StaleKey)?;
         // Fast path: a single-loop disc (one circular edge, e.g. a
@@ -199,9 +206,13 @@ impl Body {
         // (GL8 radial x periodic-trapezoid angular), far better than a
         // sampled polygon. Annulus/polygon faces fall through to the
         // general signed-fan.
+        // Outward normal = sense * natural (file 46). The polar quadrature
+        // below traverses CCW (positive area), so no winding factor is
+        // needed here: normal = f.z * sense_sign.
         if face.loops.len() == 1
             && let Some(circle) = self.single_circle_disc(face.loops[0])
         {
+            let normal = f.z * sense_sign;
             let (cu, cv, r) = circle;
             let nt = 32usize;
             for it in 0..nt {
@@ -227,8 +238,11 @@ impl Body {
                 .sum::<f64>()
                 * 0.5
         };
-        // The OUTER loop keeps its natural winding (the normal/orient
-        // sign convention compensates for it). Inner rings must wind
+        // The OUTER loop keeps its NATURAL winding (whatever the fins
+        // produce); the normal folds that winding in so the integrand is
+        // taken about the true outward normal. outward = sense * natural,
+        // and the signed fan carries an extra outer_sign factor, so
+        // normal = f.z * sense_sign * outer_sign. Inner rings wind
         // OPPOSITE to the outer loop so the fan sum subtracts the hole.
         let outer_sign = face
             .loops
@@ -236,6 +250,7 @@ impl Body {
             .and_then(|&l0| self.loop_uv_polyline_planar(l0, f).ok())
             .map(|p| signed_area(&p).signum())
             .unwrap_or(1.0);
+        let normal = f.z * sense_sign * outer_sign;
         for (li, &lk) in face.loops.iter().enumerate() {
             let mut poly = self.loop_uv_polyline_planar(lk, f)?;
             if poly.len() < 3 {
@@ -349,12 +364,15 @@ impl Body {
         Ok(poly)
     }
 
-    /// Curved face: composite GL over the parameter rectangle.
+    /// Curved face: composite GL over the parameter rectangle. The
+    /// parameter rectangle [u0,u1]x[v0,v1] is integrated in the natural
+    /// (increasing) direction, so the natural normal is du x dv and the
+    /// outward normal is sense * natural (file 46) -- no winding factor.
     fn integrate_curved_face(
         &self,
         fk: FaceKey,
         surf: &Surface3,
-        orient: f64,
+        sense_sign: f64,
         m: &mut Moments,
     ) -> Result<(), TopoError> {
         let tau = core::f64::consts::TAU;
@@ -416,7 +434,7 @@ impl Body {
                         let Ok(lg) = surf.local_geometry(u, v) else {
                             continue; // pole-adjacent node: measure zero
                         };
-                        let n = lg.du.cross(lg.dv) * orient;
+                        let n = lg.du.cross(lg.dv) * sense_sign;
                         let w = wu * wv * 0.25 * (ub - ua) * (vb - va);
                         m.add(lg.point, n, w);
                     }

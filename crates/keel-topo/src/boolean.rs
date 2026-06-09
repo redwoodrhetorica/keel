@@ -2564,6 +2564,41 @@ mod tests {
     }
 
     #[test]
+    fn tilted_guillotine_difference_volume() {
+        // A NON-45-degree planar guillotine: remove the wedge z > 0.5x + 1
+        // from [0,4]^3. The removed region has volume 32, so A - B = 32.
+        // The cut face is tilted (slope atan(0.5)) and non-axis-aligned --
+        // coverage for the file-46 sense-based planar integrand on a face
+        // whose plane frame is oblique to the world axes. mass_properties
+        // and the mesh oracle must agree.
+        use keel_math::transform::Transform3;
+        let a = block(Vec3::ZERO, Vec3::new(4., 4., 4.));
+        let theta = (0.5_f64).atan();
+        let rot = Transform3::from_rotation(Vec3::new(0., 1., 0.), -theta).unwrap();
+        let trans = Transform3::from_translation(Vec3::new(0., 0., 1.));
+        // A big slab occupying its local +z half-space; rotated so its
+        // bottom face becomes the plane z = 0.5x + 1, removed side up.
+        let slab = block(Vec3::new(-20., -20., 0.), Vec3::new(40., 40., 40.));
+        let b = slab.transformed(&rot.then(trans)).unwrap();
+        let res = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
+        assert!(
+            res.body.validate().is_ok(),
+            "tilted cut invalid: {:?}",
+            res.faults
+        );
+        let mp = res.body.mass_properties().unwrap().volume;
+        let mv = res.body.mesh_volume();
+        assert!(
+            (mp - 32.0).abs() < 1e-6,
+            "tilted-cut mass_properties {mp} != 32 (mesh {mv})"
+        );
+        assert!(
+            (mp - mv).abs() < 0.1,
+            "mass_properties {mp} vs mesh {mv} diverge on tilted cut"
+        );
+    }
+
+    #[test]
     fn near_degenerate_intersection_no_wrong_answer() {
         // A thin sliver intersection at a large coordinate (scale
         // disparity vs tol) found by fuzzing. M6a may decline it, but

@@ -2735,3 +2735,54 @@ out the primitive family (block/prism/cyl/cone/sphere/torus/tube) with a usable
 hollow-cylinder API; counter stays 73 (convenience, not a distinct map item).
 GATE: exact CI triplet green (145 keel-topo, clippy -D warnings, fmt). No fuzz.
 Merged.
+
+## Addendum 88 (2026-06-09, attended): sense-region orientation unification -- mass_properties is now sense-based (stays 73/144)
+
+THE WALL, RESOLVED. mass_properties oriented each face's divergence-integral normal
+from REGION SOLIDITY ALONE, ignoring the face `sense` bool. Correct only while sense
+agreed with region; SILENTLY WRONG on a reversed-sense face. The genus-1 tube's inner
+cylinder (the first sense=false analytic face: solid is the wall at r>r_in, so outward
+is radial-IN while the natural normal is radial-OUT) made analytic mass_properties
+report 5pi for a 3pi tube. Two prior attempts (orient = base*sense; orient = pure
+sense) both regressed the booleans and were reverted -- see
+[[massprops-sense-region-inconsistency]].
+
+THE FIX (research file 46, the FIN/MATERIAL-PRIMARY consumer half). mass_properties
+now derives the outward normal as n_out = sense * natural, the SAME authority the mesh
+path uses, folded together with each face's OWN loop winding:
+- mass_properties passes `sense_sign` (not the region `orient`) to both integrators;
+  region solidity now ONLY validates "face bounds exactly one solid region".
+- integrate_planar_face, DISC path (single circular loop, polar quadrature -- inherently
+  CCW): normal = f.z * sense_sign.
+- integrate_planar_face, GENERAL path (signed triangle fan): normal =
+  f.z * sense_sign * outer_sign, where outer_sign is the OUTER loop's actual signed-area
+  sign. Folding in the real winding is THE move that defeated the winding-coupling that
+  regressed attempt 2: for every already-correct face sense_sign*outer_sign equals the
+  old region `base`, so the booleans are byte-for-byte unchanged, while a reversed-sense
+  face gets the correct sign.
+- integrate_curved_face: n = (du x dv) * sense_sign (the parameter rectangle integrates
+  in the canonical +u,+v direction, so the natural normal is du x dv and outward is just
+  sense*natural -- no winding factor). Fixes the tube's reversed inner cylinder.
+
+RESULT: genus-1 tube (revolve_closed / tube) analytic mass_properties = 3pi EXACTLY
+(restored the assert, was on mesh_volume only). All curved primitives, all 3
+historically-fragile booleans (corner_overlap/guillotine/chamfer), unchanged. Added a
+tilted (non-axis-aligned, slope atan(0.5)) guillotine-difference coverage test: analytic
+volume 32 == mesh, exercising the sense-based planar integrand on an oblique plane frame.
+
+CONFIRMED BY REVERT-TEST: with massprops reverted to HEAD, the tube asserts 5pi (bug
+real); the fix gives 3pi. The boolean stitch was NOT touched -- mass_properties never
+needed it (planar boolean sense is already frame.z.dot(outward); curved booleans use
+mesh_volume). canonicalize_face_orientation + the validator invariant from file 46 were
+NOT built; the targeted integrand fix sufficed.
+
+SCOPE NOTE: the research's "one helper collapses the tube bug AND the tilted-cut bug"
+prediction was FALSIFIED for the tilted cut. The asymmetric (non-45) chamfer
+([[tilted-cut-boolean-bug]]) is a build_result_solid FACE-DROPPING bug -- the result
+BODY is malformed (mesh_volume itself wrong, tilted face dropped), so a mass_properties
+fix cannot and does not touch it. Re-confirmed at d1=0.5,d2=1.0: mesh 8.833, mass 11.5,
+expected 7.5 (all disagree). That bug stays OPEN; it lives in the boolean stitch, not
+massprops. Counter stays 73 (a correctness fix making an existing capability exact on
+genus-1 / any reversed-sense body, not a new map item).
+GATE: exact CI triplet green (147 keel-topo, clippy -D warnings, fmt) + fuzz_boolean.
+Merged.
