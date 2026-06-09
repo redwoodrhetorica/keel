@@ -129,9 +129,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "known bug (task #16, dossier 47): build_result_solid drops the oblique \
-                cut face on a non-45-degree wedge. Un-ignore when the planar path routes \
-                through the identity-preserving stitch_by_import assembly."]
     fn asymmetric_chamfer_must_not_return_wrong_body() {
         // Asymmetric chamfer of a 2^3 box top edge: setbacks d1=0.5 on one
         // face, d2=1.0 on the other. The removed wedge is a right triangle

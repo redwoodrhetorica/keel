@@ -2998,3 +2998,15 @@ constructor-integrated journaling is a follow-on; deltas/transactions 127 + pers
 naming 82-85/124 [dossier 52] remain.)
 GATE: exact CI triplet green (workspace: 108 math + 77 geom + 156 topo, clippy -D, fmt).
 No fuzz (read-only serialization). Merged.
+
+## Addendum 100 (2026-06-09, attended): KEYSTONE -- identity-preserving boolean result assembly (dossier 47, task #16) -- stays 82/144 (enabler, unblocks ~15-20)
+
+THE build_result_solid face-drop is FIXED. Root cause (diagnosed with data, diag_guillotine_seam_edges): the two operands imprint the SHARED seam with INCOMPATIBLE subdivisions because imprint_operand runs independently per operand. Guillotine x=2 seam: A = 4 OPEN edges (its four side-faces each cross the cut), B = 1 CLOSED ring edge (the square is interior to B's single wall face -> imprint_closed_curve). 4-open vs 1-closed can never pair -> the polygon-soup stitcher mis-welded and the identity stitch left dangling edges.
+
+THE FIX (two parts):
+1. subdivide_seam_ring + set_edge_line (boolean.rs): in imprint_operand's closed-loop branch, split the assembled closed seam ring at its corner nodes IN LOOP ORDER, assigning each side a straight Line3, so this operand's seam matches the OTHER operand's per-face open edges. (Guillotine: B's 1 closed ring -> 4 open sides matching A.)
+2. Route the planar path through the identity-preserving stitch_by_import as PRIMARY (it imports each fragment by its operand's edge identity and glues only the genuinely-coincident seam, which now pairs 1:1). build_result_solid is kept as a FALLBACK for partial-coincidence unions whose coincident seam the identity glue does not yet assemble (the L-union) -- a tracked file-47 follow-on, NOT a wrong answer (the volume post-condition guards both paths).
+
+RESULT: the asymmetric chamfer (the dossier's repro, d1=0.5,d2=1.0) now returns the CORRECT 7.5 (was mass 11.5 / mesh 8.83, both wrong) -- its regression test is UN-IGNORED and live. 8 of the 10 planar booleans that regressed under a naive all-through-stitch routing now pass (the seam subdivision was the cause). guillotine_imprint_pair updated (B's seam is now 4 subdivided edges, not 1 closed ring -- the correct behavior). The L-union still routes through the legacy fallback (its coincident-union seam in stitch is the remaining follow-on; it was already a malformed body via the soup, so no correctness regression).
+This unblocks the asymmetric/two-offset chamfer (52/53), shell (41), thicken (44), and the blend family (47-60) -- the boolean now assembles thin/oblique cut faces correctly. Counter stays 82 (the fix is the enabler; unblocked features tick as they ship -- the asym chamfer API is now trivially shippable).
+GATE: exact CI triplet green (workspace: 108 math + 77 geom + 157 topo, clippy -D, fmt) + fuzz_boolean (200s, clean). Merged.

@@ -1604,20 +1604,22 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, B
     let class_a = classify_faces(&ia.body, b, tol);
     let class_b = classify_faces(&ib.body, a, tol);
     let kept = select_faces(op, &class_a, &class_b);
-    // Curved results need the import-and-glue stitch (the polygon soup
-    // would flatten them); all-planar results use the soup builder.
-    let all_planar = kept.iter().all(|k| {
-        let body = match k.operand {
-            Operand::A => &ia.body,
-            Operand::B => &ib.body,
-        };
-        matches!(body.face_surface3(k.face), Some(Surface3::Plane(_)))
-    });
-    let body = if all_planar {
-        let polys = kept_to_polys(&ia.body, &ib.body, &kept, &mut faults);
-        build_result_solid(&polys, tol)?
-    } else {
-        stitch_by_import(&ia, &ib, &kept, tol)?
+    // PRIMARY assembly: the identity-preserving import-and-glue (research
+    // file 47). It imports each kept fragment carrying its operand's edge
+    // identity and glues only the genuinely-coincident cross-operand seam;
+    // with the matching seam subdivision (subdivide_seam_ring) the planar
+    // seam coedges now pair 1:1, so it correctly assembles the thin/oblique
+    // cuts the old polygon-soup stitcher mis-built (the asymmetric-chamfer
+    // class). FALLBACK: partial-coincidence unions whose coincident seam
+    // the identity glue does not yet assemble (e.g. the L-union) still use
+    // the legacy soup builder -- a tracked file-47 follow-on, not a wrong
+    // answer (the final volume post-condition guards both paths).
+    let body = match stitch_by_import(&ia, &ib, &kept, tol) {
+        Ok(b) => b,
+        Err(_) => {
+            let polys = kept_to_polys(&ia.body, &ib.body, &kept, &mut faults);
+            build_result_solid(&polys, tol)?
+        }
     };
     // Post-condition: a real solid has positive, finite volume. The
     // scalar Euler identity is necessary but not sufficient (a few faces
@@ -2069,6 +2071,73 @@ impl Body {
 /// if they form a closed loop interior to the face, imprint one ring.
 /// Configurations needing in-face corner vertices (multi-segment open
 /// chains) are tagged and deferred to the next M6a increment.
+/// Attach a straight `Line3` to `ek` from its current endpoint vertices.
+fn set_edge_line(body: &mut Body, ek: crate::entity::EdgeKey) {
+    use keel_geom::curve::{Curve3, Line3};
+    let pts = body
+        .edges
+        .get(ek)
+        .map(|e| (e.bounds.0, e.bounds.1))
+        .and_then(|(a, b)| Some((body.vertices.get(a)?.point, body.vertices.get(b)?.point)));
+    if let Some((pa, pb)) = pts
+        && let Ok(line) = Line3::new(pa, pb - pa)
+    {
+        body.attach_edge_curve(ek, Curve3::Line(line), true);
+    }
+}
+
+/// Subdivide a CLOSED seam ring edge (one `imprint_closed_curve` edge built
+/// from several straight seam segments) at its corner `nodes`, so THIS
+/// operand's seam matches the OTHER operand's per-face open-edge
+/// subdivision (research file 47: a shared seam can only stitch when both
+/// operands subdivide it the same way -- 1 closed edge can never pair with
+/// N open edges). Splits in loop order; each resulting side gets a straight
+/// `Line3`. Falls back to the whole ring when it has no corner structure
+/// (a smooth sphere/planar SSI circle) or cannot be split.
+fn subdivide_seam_ring(
+    body: &mut Body,
+    edge: crate::entity::EdgeKey,
+    nodes: &[keel_math::vec::Vec3],
+    tol: f64,
+) -> Vec<crate::entity::EdgeKey> {
+    let n = nodes.len();
+    if n < 3 {
+        return vec![edge];
+    }
+    let etol = tol.max(1e-7);
+    let start = match body
+        .edges
+        .get(edge)
+        .map(|e| e.bounds.0)
+        .and_then(|v| body.vertices.get(v).map(|x| x.point))
+    {
+        Some(p) => p,
+        None => return vec![edge],
+    };
+    let Some(si) = nodes.iter().position(|p| (*p - start).norm() <= etol) else {
+        return vec![edge];
+    };
+    let ordered: Vec<keel_math::vec::Vec3> = (0..n).map(|i| nodes[(si + i) % n]).collect();
+    let mut out = Vec::new();
+    let mut rest = edge;
+    for &node in ordered.iter().skip(1) {
+        match body.split_edge(rest, node) {
+            Ok(sp) => {
+                set_edge_line(body, sp.edge_a);
+                out.push(sp.edge_a);
+                rest = sp.edge_b;
+            }
+            Err(_) => {
+                out.push(rest);
+                return out;
+            }
+        }
+    }
+    set_edge_line(body, rest);
+    out.push(rest);
+    out
+}
+
 fn imprint_operand(
     body: &Body,
     seams: &[SeamCurve],
@@ -2141,7 +2210,13 @@ fn imprint_operand(
             && let Some(ring) = closed_polyline_nurbs(&nodes)
         {
             match working.imprint_closed_curve(face, &keel_geom::curve::Curve3::Nurbs(ring), tol) {
-                Ok(rep) => seam_edges.push(rep.edge),
+                Ok(rep) => {
+                    // Match the OTHER operand's per-face open-edge seam
+                    // subdivision (file 47): split this closed ring at its
+                    // corners so the seam coedges can pair at stitch time.
+                    let subdiv = subdivide_seam_ring(&mut working, rep.edge, &nodes, tol);
+                    seam_edges.extend(subdiv);
+                }
                 Err(e) => faults.push(BoolFault::Topo(e)),
             }
             continue;
@@ -2745,7 +2820,10 @@ mod tests {
         // splitting into ring + outer => 6 + 1 = 7 faces.
         assert_eq!(ib.body.counts().f, 7, "B faces after imprint");
         assert_eq!(ia.seam_edges.len(), 4);
-        assert_eq!(ib.seam_edges.len(), 1);
+        // B's interior seam ring is now SUBDIVIDED at its 4 corners (file
+        // 47) so it matches A's 4 open seam edges -- 1 closed ring -> 4
+        // open sides -- which is what lets the stitch pair the seam.
+        assert_eq!(ib.seam_edges.len(), 4);
     }
 
     #[test]
