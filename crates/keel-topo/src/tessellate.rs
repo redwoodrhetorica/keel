@@ -12,10 +12,39 @@ use crate::entity::FaceKey;
 use keel_geom::surface::Surface3;
 use keel_math::vec::Vec3;
 
+/// Number of chord segments to span an `span`-radian arc of radius
+/// `radius` so the chord deviates from the arc by at most `tol`
+/// (parity item 98, adaptive tessellation). `None` -> the fixed
+/// `default` (the legacy density, so the default tessellation -- and the
+/// volume oracle -- is unchanged). The chord error of one step d(phi) is
+/// radius*(1 - cos(d(phi)/2)) ~ radius*d(phi)^2/8, giving
+/// n >= span * sqrt(radius / (8*tol)).
+fn arc_segments(span: f64, radius: f64, tol: Option<f64>, default: usize) -> usize {
+    match tol {
+        Some(t) if t > 0.0 && radius > 0.0 && span > 0.0 => {
+            let n = (span.abs() * (radius / (8.0 * t)).sqrt()).ceil() as usize;
+            n.clamp(8, 4096)
+        }
+        _ => default,
+    }
+}
+
 impl Body {
     /// Outward-oriented triangles covering a face's trimmed region.
     /// Empty for unsupported (non-planar/non-spherical) faces in M6b.
     pub(crate) fn tessellate_face(&self, face: FaceKey) -> Vec<[Vec3; 3]> {
+        self.tessellate_face_opt(face, None)
+    }
+
+    /// Like `tessellate_face`, but tessellate curved analytic faces to a
+    /// chord tolerance `tol` (parity item 98). The default-density path
+    /// (`tessellate_face`) is unchanged, so the winding/volume oracle is
+    /// untouched.
+    pub(crate) fn tessellate_face_tol(&self, face: FaceKey, tol: f64) -> Vec<[Vec3; 3]> {
+        self.tessellate_face_opt(face, Some(tol))
+    }
+
+    fn tessellate_face_opt(&self, face: FaceKey, tol: Option<f64>) -> Vec<[Vec3; 3]> {
         let Some((sk, sense)) = self.faces.get(face).and_then(|f| f.surface) else {
             return Vec::new();
         };
@@ -23,11 +52,11 @@ impl Body {
             Some(crate::entity::SurfaceGeom::Analytic(surf)) => match surf {
                 Surface3::Plane(p) => self.tessellate_planar(face, p.frame.z, sense),
                 Surface3::Sphere(s) => {
-                    self.tessellate_sphere(face, s.frame.origin, s.radius, sense)
+                    self.tessellate_sphere(face, s.frame.origin, s.radius, sense, tol)
                 }
-                Surface3::Cylinder(c) => self.tessellate_cylinder(face, &c.clone(), sense),
-                Surface3::Cone(c) => self.tessellate_cone(face, &c.clone(), sense),
-                Surface3::Torus(t) => self.tessellate_torus(face, &t.clone(), sense),
+                Surface3::Cylinder(c) => self.tessellate_cylinder(face, &c.clone(), sense, tol),
+                Surface3::Cone(c) => self.tessellate_cone(face, &c.clone(), sense, tol),
+                Surface3::Torus(t) => self.tessellate_torus(face, &t.clone(), sense, tol),
             },
             Some(crate::entity::SurfaceGeom::Nurbs(n)) => {
                 self.tessellate_nurbs(face, &n.clone(), sense)
@@ -172,6 +201,7 @@ impl Body {
         face: FaceKey,
         torus: &keel_geom::surface::Torus3,
         sense: bool,
+        tol: Option<f64>,
     ) -> Vec<[Vec3; 3]> {
         let (c, ex, ey, ez, rmaj, rmin) = (
             torus.frame.origin,
@@ -181,11 +211,14 @@ impl Body {
             torus.major,
             torus.minor,
         );
-        const NU: usize = 64;
-        const NV: usize = 32;
         let tau = core::f64::consts::TAU;
         let sgn = if sense { 1.0 } else { -1.0 };
         let (vlo, vhi) = self.torus_tube_span(face, torus);
+        // Adaptive (item 98): major-ring count from the outer radius, tube
+        // count from the minor radius. The full major span (tau) is a
+        // conservative bound for partial-major patches.
+        let nu = arc_segments(tau, rmaj + rmin, tol, 64);
+        let nv = arc_segments((vhi - vlo).abs(), rmin, tol, 32);
         let pt = |u: f64, v: f64| -> Vec3 {
             let radial = ex * u.cos() + ey * u.sin();
             c + radial * (rmaj + rmin * v.cos()) + ez * (rmin * v.sin())
@@ -195,12 +228,12 @@ impl Body {
             (radial * v.cos() + ez * v.sin()) * sgn
         };
         let mut tris = Vec::new();
-        for i in 0..NU {
-            let u0 = tau * i as f64 / NU as f64;
-            let u1 = tau * (i + 1) as f64 / NU as f64;
-            for j in 0..NV {
-                let v0 = vlo + (vhi - vlo) * j as f64 / NV as f64;
-                let v1 = vlo + (vhi - vlo) * (j + 1) as f64 / NV as f64;
+        for i in 0..nu {
+            let u0 = tau * i as f64 / nu as f64;
+            let u1 = tau * (i + 1) as f64 / nu as f64;
+            for j in 0..nv {
+                let v0 = vlo + (vhi - vlo) * j as f64 / nv as f64;
+                let v1 = vlo + (vhi - vlo) * (j + 1) as f64 / nv as f64;
                 let a = pt(u0, v0);
                 let b = pt(u0, v1);
                 let cc = pt(u1, v1);
@@ -300,6 +333,7 @@ impl Body {
         face: FaceKey,
         cyl: &keel_geom::surface::Cylinder3,
         sense: bool,
+        tol: Option<f64>,
     ) -> Vec<[Vec3; 3]> {
         let (origin, ex, ey, ez, radius) = (
             cyl.frame.origin,
@@ -321,7 +355,10 @@ impl Body {
         }
         let (plo, phi_hi) = self.cyl_angular_span(face, origin, ex, ey, ez);
         const NV: usize = 16;
-        const NP: usize = 64;
+        // Adaptive angular count (item 98) from the cylinder radius and the
+        // actual angular span; axial NV stays fixed (a cylinder is exact
+        // along its axis).
+        let np = arc_segments(phi_hi - plo, radius, tol, 64);
         let sgn = if sense { 1.0 } else { -1.0 };
         let pt = |phi: f64, v: f64| -> Vec3 {
             origin + (ex * phi.cos() + ey * phi.sin()) * radius + ez * v
@@ -330,9 +367,9 @@ impl Body {
         for i in 0..NV {
             let v0 = hlo + (hhi - hlo) * i as f64 / NV as f64;
             let v1 = hlo + (hhi - hlo) * (i + 1) as f64 / NV as f64;
-            for j in 0..NP {
-                let p0 = plo + (phi_hi - plo) * j as f64 / NP as f64;
-                let p1 = plo + (phi_hi - plo) * (j + 1) as f64 / NP as f64;
+            for j in 0..np {
+                let p0 = plo + (phi_hi - plo) * j as f64 / np as f64;
+                let p1 = plo + (phi_hi - plo) * (j + 1) as f64 / np as f64;
                 let a = pt(p0, v0);
                 let b = pt(p0, v1);
                 let c = pt(p1, v1);
@@ -358,6 +395,7 @@ impl Body {
         face: FaceKey,
         cone: &keel_geom::surface::Cone3,
         sense: bool,
+        tol: Option<f64>,
     ) -> Vec<[Vec3; 3]> {
         let (origin, ex, ey, ez) = (cone.frame.origin, cone.frame.x, cone.frame.y, cone.frame.z);
         let slope = cone.half_angle.tan();
@@ -385,7 +423,9 @@ impl Body {
         // exactly as the cylinder lateral does.
         let (plo, phi_hi) = self.cyl_angular_span(face, origin, ex, ey, ez);
         const NV: usize = 16;
-        const NP: usize = 64;
+        // Adaptive angular count (item 98) from the cone's LARGEST band
+        // radius and the angular span; the slant (NV) stays fixed (linear).
+        let np = arc_segments(phi_hi - plo, r_at(hlo).max(r_at(hhi)), tol, 64);
         let sgn = if sense { 1.0 } else { -1.0 };
         let pt = |phi: f64, v: f64| -> Vec3 {
             origin + (ex * phi.cos() + ey * phi.sin()) * r_at(v) + ez * v
@@ -394,9 +434,9 @@ impl Body {
         for i in 0..NV {
             let v0 = hlo + (hhi - hlo) * i as f64 / NV as f64;
             let v1 = hlo + (hhi - hlo) * (i + 1) as f64 / NV as f64;
-            for j in 0..NP {
-                let p0 = plo + (phi_hi - plo) * j as f64 / NP as f64;
-                let p1 = plo + (phi_hi - plo) * (j + 1) as f64 / NP as f64;
+            for j in 0..np {
+                let p0 = plo + (phi_hi - plo) * j as f64 / np as f64;
+                let p1 = plo + (phi_hi - plo) * (j + 1) as f64 / np as f64;
                 let a = pt(p0, v0);
                 let b = pt(p0, v1);
                 let c = pt(p1, v1);
@@ -556,6 +596,7 @@ impl Body {
         center: Vec3,
         radius: f64,
         sense: bool,
+        tol: Option<f64>,
     ) -> Vec<[Vec3; 3]> {
         let Some(Surface3::Sphere(s)) = self.face_surface3(face) else {
             return Vec::new();
@@ -573,10 +614,12 @@ impl Body {
         // a whole-sphere face (no circle edge) meshes fully.
         let cap = self.sphere_cap_trim(face);
         // theta in [0, pi] (polar), phi in [0, 2pi). Coarse grid.
-        const NT: usize = 40;
-        const NP: usize = 60;
         let tau = core::f64::consts::TAU;
         let pi = core::f64::consts::PI;
+        // Adaptive (item 98): polar count over [0,pi] and azimuth count
+        // over [0,tau], both from the sphere radius.
+        let nt = arc_segments(pi, radius, tol, 40);
+        let np = arc_segments(tau, radius, tol, 60);
         let mut tris = Vec::new();
         let sgn = if sense { 1.0 } else { -1.0 };
         let on_cap = |q: Vec3| -> bool {
@@ -585,12 +628,12 @@ impl Body {
                 None => true,
             }
         };
-        for i in 0..NT {
-            let t0 = pi * i as f64 / NT as f64;
-            let t1 = pi * (i + 1) as f64 / NT as f64;
-            for j in 0..NP {
-                let p0 = tau * j as f64 / NP as f64;
-                let p1 = tau * (j + 1) as f64 / NP as f64;
+        for i in 0..nt {
+            let t0 = pi * i as f64 / nt as f64;
+            let t1 = pi * (i + 1) as f64 / nt as f64;
+            for j in 0..np {
+                let p0 = tau * j as f64 / np as f64;
+                let p1 = tau * (j + 1) as f64 / np as f64;
                 let a = pt(t0, p0);
                 let b = pt(t1, p0);
                 let c = pt(t1, p1);
