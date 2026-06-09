@@ -2958,3 +2958,25 @@ asserts the boolean returns the true 7.5 OR declines, never a wrong-positive bod
 the dossier's validation harness: un-ignore when the fix lands. No new public API (no
 asymmetric-chamfer footgun); no count change (instrumentation toward the milestone).
 GATE: clippy -D warnings + fmt; the repro compiles and is correctly skipped (153 run, 1 ignored).
+
+## Addendum 98 (2026-06-09, attended): persistence layer B -- deterministic save/restore (item 126) -- 80 -> 81/144
+
+Body::to_json() -> String / Body::from_json(&str) -> Body: full-body persistent save and
+restore (parity item 126), completing the layer-A geometry serde (Addendum 96). serde
+derived across the keel-topo tower: the generational arena (Key<T> with
+#[serde(bound="")] for its PhantomData<fn()->T>, Slot<T>, Arena<T>), every entity
+(Vertex/Edge/Fin/Loop/Face/Shell/Region + EntityId/AnyKey/SurfaceGeom/LoopKind/Side/
+AttrValue), lineage (OpId/Derivation/Lineage), and Body itself. serde_json round-trips
+f64 EXACTLY (ryu), and the arena keys + generations serialize verbatim, so EVERY
+topology reference stays valid across a round-trip with NO key remapping (the arena IS
+the identity, so save/restore is a verbatim structural copy). Meets file-14's exact-
+double requirement.
+Test (json_save_restore_round_trips_exactly): a block AND a cylinder each serialize to
+JSON, restore to a VALID body with identical topology_hash, identical entity counts, and
+BIT-EXACT mass_properties volume (to_bits() equality); the block's 24.0 confirms geometry
+survived. Additive derives only -- zero behavior change, all existing tests unchanged.
+The journal/replay (122-125) and snapshot (in-memory) paths are unaffected; this adds the
+serialized on-disk form. Deltas/transactions (127) + persistent naming (52/dossier) are
+follow-ons.
+GATE: exact CI triplet green (workspace: 108 math + 77 geom + 155 topo, clippy -D, fmt).
+Read-only serialization (no boolean/tessellate_planar change) -> no fuzz. Merged.

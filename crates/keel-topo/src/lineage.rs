@@ -5,12 +5,24 @@
 use crate::entity::EntityId;
 
 /// Monotonic per-body operation identity.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct OpId(pub u64);
 
 /// How an entity came to exist (the naming vocabulary shared by
 /// Kripac, FreeCAD MappedNames, OnShape qCreatedBy, Cascaval lineage).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Derivation {
     Created,
     Modified { from: EntityId },
@@ -19,7 +31,7 @@ pub enum Derivation {
     MergeResult { from: Vec<EntityId> },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Lineage {
     pub op: OpId,
     pub derivation: Derivation,

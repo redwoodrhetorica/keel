@@ -11,6 +11,8 @@ workspace = true
 [dependencies]
 keel-math = { path = "../keel-math" }
 keel-geom = { path = "../keel-geom" }
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

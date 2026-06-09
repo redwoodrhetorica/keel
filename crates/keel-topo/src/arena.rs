@@ -6,6 +6,8 @@
 use core::marker::PhantomData;
 
 /// Typed generational key into an [`Arena<T>`].
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(bound(serialize = "", deserialize = ""))]
 pub struct Key<T> {
     index: u32,
     generation: u32,
@@ -65,14 +67,14 @@ impl<T> Key<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 enum Slot<T> {
     Occupied { generation: u32, value: T },
     Free { generation: u32 },
 }
 
 /// Deterministic generational arena (LIFO free list).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Arena<T> {
     slots: Vec<Slot<T>>,
     free: Vec<u32>,
