@@ -3434,3 +3434,46 @@ warnings, fmt. fuzz unchanged: this addendum touches only chamfer.rs (a wrapper 
 fuzzed clean at the Addendum-110 merge); the boolean pipeline is byte-identical. Merged.
 NEXT (unblock family): shell (41), thicken (44), fillet/blend (47-60) -- all now have their
 general-position assembly foundation. Re-read the relevant dossier before each.
+
+## Addendum 112 (2026-06-09, attended): SHELL (item 41) design re-read + scoped; the gap is enclosed-void (3-region) assembly. No code; 83/144
+
+Re-read dossier 50 (shell/offset/thicken) before starting item 41. The algorithm (Forsyth,
+tweak-backed): shell = MAXIMAL MULTI-FACE TWEAK -- offset every face inward by t (exact for
+analytic: plane->parallel plane, cylinder/sphere r->r-t, cone axis-shift, torus tube-t), rebuild
+the inner shell by extend-and-reintersect (the inner shell is a COMBINATORIAL COPY of the outer:
+one inner face/edge/vertex per outer, identical adjacency, convexity flipped -- only geometry is
+recomputed), orient the inner shell inward (sense flip, bounds the void), bridge pierced faces
+with rim walls, assemble via the kernel/47 machinery. Feasibility: t_max(p)=lfs(p)=dist(p,medial
+axis); local pre-filter 1/kappa_concave_max; box t_max=min(a,b,c)/2. Policy (kernel/41 best-
+effort): predict first, collapse-merge clean vanishes, winding-trim/reduce crossings, always
+return a valid body with per-region disclosure. Per-face thickness and pierce fall out of the
+same algorithm; thicken (44) is the dual (offset both sides + rim band; shares one
+build_rim_wall(loop_a, loop_b) primitive with pierced-shell rim).
+
+VALIDATION ORACLES (dossier sec 6): (6.1) hollow box [0,a]x[0,b]x[0,c] shelled by t -> outer box
+(6,12,8) + inner box [t,a-t]... (6,12,8) = 12 faces, 24 edges, 16 verts, TWO shells, one enclosed
+void: V-E+F = 16-24+12 = 4 = 2(s-h) with s=2 shells. (6.2) pierce top -> open tray, SINGLE shell
+(void open to outside through the rim), no separate void region.
+
+THE IMPLEMENTATION GAP (why this is a fresh milestone, not a quick win on today's boolean fix):
+- CLOSED shell (6.1) needs ENCLOSED-VOID 3-region assembly (infinite + solid-wall + void). Today
+  stitch_by_import does only a 2-region partition (front->infinite, back->solid); the void is a
+  THIRD region and the solid-wall region carries TWO shells (outer facing out, inner facing into
+  the void). The region/shell infra EXISTS (M3: regions native, multi-shell regions, validate's
+  check_shells_regions + the Euler-Poincare void term); the STITCH does not yet PRODUCE it. This
+  is the long-deferred "enclosed-void 3-region stitch" (M6 ledger).
+- PIERCED shell (6.2) avoids the void (single shell) but needs the offset+reintersect+rim-wall
+  machinery (build_rim_wall + the multi-face tweak reintersect).
+- A nested-difference boolean (inner box strictly inside outer) is the SAME void case: it would
+  exercise the same 3-region stitch -- so fixing the void stitch unblocks both shell AND
+  enclosed-void booleans (union-with-cavity, etc.).
+
+PLAN (next milestone, start fresh): (1) extend stitch_by_import (or a sibling) to detect a closed
+sub-shell of kept faces all oriented inward and emit it as a VOID region (3-region partition);
+gate it with the Euler-Poincare void term + a hollow-box mass/mesh oracle (wall volume = outer -
+inner). (2) implement Body::hollow(t) / shell for the all-planar convex case first (box base
+case 6.1) -- offset planar faces to parallel planes, reintersect (for a box the inner box is the
+reintersection), build the void. (3) then pierce (rim walls, build_rim_wall), then per-face
+thickness, then curved faces, then thicken (44). t_max feasibility reuses the kernel/41 medial
+predictor. This is the disciplined hand-off point: shell is a milestone needing new void-region
+assembly; starting it deep in a long session risks the quality the rest of this session held.
