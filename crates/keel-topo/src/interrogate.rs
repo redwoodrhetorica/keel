@@ -18,6 +18,24 @@ pub struct FaceDraft {
     pub max: f64,
 }
 
+/// One render-ready facet (parity item 95): an outward-oriented triangle
+/// and its unit outward normal (flat shading). The triangle is wound CCW
+/// about `normal`, matching the tessellation the volume oracle uses.
+#[derive(Clone, Copy, Debug)]
+pub struct RenderFacet {
+    pub tri: [Vec3; 3],
+    pub normal: Vec3,
+}
+
+/// Render data for a body (parity item 95, render facets + lines): shaded
+/// facets plus the wireframe polylines of its topological edges (one
+/// polyline per edge, exact for straight edges, sampled for curved).
+#[derive(Clone, Debug, Default)]
+pub struct RenderMesh {
+    pub facets: Vec<RenderFacet>,
+    pub edges: Vec<Vec<Vec3>>,
+}
+
 /// Closest point on triangle `[a, b, c]` to `p` (Ericson, Real-Time
 /// Collision Detection).
 fn closest_on_tri(p: Vec3, tri: &[Vec3; 3]) -> Vec3 {
@@ -77,6 +95,93 @@ impl Body {
             .iter()
             .flat_map(|&f| self.tessellate_face(f))
             .collect()
+    }
+
+    /// Render facets + wireframe lines (parity item 95). Facets are the
+    /// same outward tessellation the volume oracle uses (each triangle CCW
+    /// about its outward normal); the wireframe is one polyline per
+    /// topological edge -- exact endpoints for straight edges, 32-segment
+    /// samples for circular/elliptic arcs and NURBS edges.
+    pub fn render_mesh(&self) -> RenderMesh {
+        let facets = self
+            .face_keys()
+            .iter()
+            .flat_map(|&f| self.tessellate_face(f))
+            .map(|tri| {
+                let normal = (tri[1] - tri[0])
+                    .cross(tri[2] - tri[0])
+                    .try_normalize()
+                    .unwrap_or(Vec3::ZERO);
+                RenderFacet { tri, normal }
+            })
+            .collect();
+        let edges = self
+            .edges
+            .iter()
+            .filter_map(|(k, _)| self.edge_polyline(k))
+            .collect();
+        RenderMesh { facets, edges }
+    }
+
+    /// Sample one topological edge into a 3D wireframe polyline (>= 2
+    /// points), used by `render_mesh`. Straight edges (line / degree-1
+    /// NURBS) give their two endpoints; circular/elliptic arcs sample the
+    /// arc between their endpoint parameters (a full revolution for a
+    /// closed edge); NURBS edges sample their parameter domain.
+    fn edge_polyline(&self, edge: crate::entity::EdgeKey) -> Option<Vec<Vec3>> {
+        use keel_geom::curve::Curve3;
+        let e = self.edges.get(edge)?;
+        let (v0, v1) = e.bounds;
+        let p0 = self.vertices.get(v0)?.point;
+        let p1 = self.vertices.get(v1)?.point;
+        let straight = vec![p0, p1];
+        let Some((ck, _)) = e.curve else {
+            return Some(straight);
+        };
+        let Some(curve) = self.curves.get(ck) else {
+            return Some(straight);
+        };
+        const N: usize = 32;
+        let tau = core::f64::consts::TAU;
+        // Periodic arc span [t0, t1]: a closed edge (coincident endpoint
+        // parameters) is a full revolution; otherwise the arc in the
+        // increasing-parameter direction.
+        let span = |t0: f64, mut t1: f64| -> (f64, f64) {
+            if (t1 - t0).abs() < 1e-9 {
+                t1 = t0 + tau;
+            } else {
+                if t1 < t0 {
+                    t1 += tau;
+                }
+                if t1 - t0 > tau {
+                    t1 -= tau;
+                }
+            }
+            (t0, t1)
+        };
+        let out = match curve {
+            Curve3::Line(_) => straight,
+            Curve3::Nurbs(n) if n.degree() <= 1 => straight,
+            Curve3::Circle(c) => {
+                let (t0, t1) = span(c.project(p0), c.project(p1));
+                (0..=N)
+                    .map(|i| c.point(t0 + (t1 - t0) * i as f64 / N as f64))
+                    .collect()
+            }
+            Curve3::Ellipse(el) => {
+                let (t0, t1) = span(el.project(p0), el.project(p1));
+                (0..=N)
+                    .map(|i| el.point(t0 + (t1 - t0) * i as f64 / N as f64))
+                    .collect()
+            }
+            Curve3::Nurbs(n) => {
+                let (a, b) = n.domain();
+                (0..=N)
+                    .map(|i| n.point(a + (b - a) * i as f64 / N as f64))
+                    .collect()
+            }
+        };
+        Some(out)
     }
 
     /// Area of a single face (parity interrogation), summed over its
@@ -792,5 +897,49 @@ mod tests {
         let mut q = Body::new();
         q.block(Vec3::ZERO, 2.0, 3.0, 4.0).unwrap();
         assert!(p.approx_equals(&q, 1e-6), "identical blocks equivalent");
+    }
+
+    #[test]
+    fn render_mesh_block_and_cylinder() {
+        // Block: 6 quads x 2 triangles = 12 facets, 12 straight edges (2
+        // points each); every facet normal is unit length.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let rm = b.render_mesh();
+        assert_eq!(rm.facets.len(), 12, "block facets");
+        assert_eq!(rm.edges.len(), 12, "block edges");
+        for f in &rm.facets {
+            assert!((f.normal.norm() - 1.0).abs() < 1e-9, "facet normal unit");
+        }
+        for e in &rm.edges {
+            assert_eq!(e.len(), 2, "block edge is a straight segment");
+        }
+        // Cylinder: the circular rim edges sample into many-point polylines
+        // whose points lie on radius 1 about the axis; facets are present.
+        let mut c = Body::new();
+        c.cylinder(
+            Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+            1.0,
+            2.0,
+        )
+        .unwrap();
+        let rmc = c.render_mesh();
+        assert!(rmc.facets.len() > 12, "cylinder facets present");
+        assert!(
+            rmc.edges.iter().any(|e| e.len() > 2),
+            "cylinder has a sampled curved rim"
+        );
+        for e in rmc.edges.iter().filter(|e| e.len() > 2) {
+            for &p in e {
+                let r = (p.x * p.x + p.y * p.y).sqrt();
+                assert!((r - 1.0).abs() < 1e-6, "rim point off radius: r={r}");
+            }
+        }
+        for f in &rmc.facets {
+            assert!(
+                (f.normal.norm() - 1.0).abs() < 1e-9,
+                "cyl facet normal unit"
+            );
+        }
     }
 }
