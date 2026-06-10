@@ -1567,9 +1567,13 @@ fn finalize_imported_sheet(
 
 /// Merge coincident vertices and glue dangling (radial-1) edges into
 /// radial pairs -- the representation-independent half of import-and-
-/// glue, shared by the solid finalize below and the SHEET finalize
-/// (item 28).
-fn merge_and_glue_imported(dst: &mut Body, rec: &mut crate::body::OpRecorder, vtol: f64) {
+/// glue, shared by the solid finalize below, the SHEET finalize
+/// (item 28), and Body::heal (item 130).
+pub(crate) fn merge_and_glue_imported(
+    dst: &mut Body,
+    rec: &mut crate::body::OpRecorder,
+    vtol: f64,
+) {
     use crate::entity::{EdgeKey, VertexKey};
     // Merge coincident vertices (the operands' independent seam vertices
     // along the shared SSI curve land at the same point).
