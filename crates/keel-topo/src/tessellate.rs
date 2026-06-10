@@ -797,9 +797,15 @@ impl Body {
             }
             // Open NURBS arc edges (the conic blend's cap sections,
             // item 49): sample the curve domain, oriented to this fin.
+            // DEGREE-1 NURBS is a straight segment (the boolean's seam
+            // edges): its vertices suffice, and sampling would trace
+            // the parent's FULL span on a split survivor (split_edge
+            // keeps the whole curve on both halves), folding spurious
+            // points into the polygon.
             if let Some(fin) = self.fins.get(cur)
                 && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
                 && let Some(Curve3::Nurbs(nc)) = self.curves.get(ck)
+                && nc.degree() > 1
                 && self.edges.get(fin.edge).map(|e| !e.is_closed()) == Some(true)
                 && let Some(ps) = self
                     .fin_start_vertex(cur)

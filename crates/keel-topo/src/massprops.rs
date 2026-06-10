@@ -254,11 +254,11 @@ impl Body {
             .loops
             .first()
             .and_then(|&l0| self.loop_uv_polyline_planar(l0, f).ok())
-            .map(|p| signed_area(&p).signum())
+            .map(|(p, _)| signed_area(&p).signum())
             .unwrap_or(1.0);
         let normal = f.z * sense_sign * outer_sign;
         for (li, &lk) in face.loops.iter().enumerate() {
-            let mut poly = self.loop_uv_polyline_planar(lk, f)?;
+            let (mut poly, mut lunes) = self.loop_uv_polyline_planar(lk, f)?;
             if poly.len() < 3 {
                 return Err(TopoError::Precondition("degenerate planar loop"));
             }
@@ -266,6 +266,9 @@ impl Body {
                 // Inner ring: force opposite to the outer winding.
                 if signed_area(&poly).signum() == outer_sign {
                     poly.reverse();
+                    for l in &mut lunes {
+                        l.2 = -l.2;
+                    }
                 }
             }
             for i in 1..poly.len() - 1 {
@@ -276,6 +279,13 @@ impl Body {
                     let v = bary[0] * a.1 + bary[1] * b.1 + bary[2] * c.1;
                     m.add(at(u, v), normal, w * tri_area);
                 }
+            }
+            // The chord polygon misses the LUNES between each chord and
+            // its true arc; the signed quadrature samples close that gap
+            // exactly (the formerly documented chordal residual on arc-
+            // bounded planar faces carrying flux).
+            for (u, v, w) in lunes {
+                m.add(at(u, v), normal, w);
             }
         }
         Ok(())
@@ -298,15 +308,21 @@ impl Body {
         }
     }
 
-    /// Sample a planar face loop into a UV polyline. Straight edges
-    /// contribute their endpoint UVs; curved pcurve edges (circle/
-    /// nurbs in the plane) are sampled. Vertex UVs come from projecting
-    /// the 3D vertex into the plane frame.
+    /// Sample a planar face loop into a UV polyline, plus SIGNED lune
+    /// quadrature samples (u, v, weight) for the regions between each
+    /// chord and its true circle/ellipse arc. The fan over the chord
+    /// polygon plus the lunes integrates arc-bounded planar faces
+    /// EXACTLY (the map (theta, t) -> lerp(chord, arc) carries a
+    /// signed Jacobian, so convex and concave arcs, full rings, and
+    /// reversed fins all fall out of one formula). NURBS fins above
+    /// degree 1 stay chordal. Vertex UVs come from projecting the 3D
+    /// vertex into the plane frame.
+    #[allow(clippy::type_complexity)]
     fn loop_uv_polyline_planar(
         &self,
         lk: crate::entity::LoopKey,
         f: &keel_geom::surface::Frame3,
-    ) -> Result<Vec<(f64, f64)>, TopoError> {
+    ) -> Result<(Vec<(f64, f64)>, Vec<(f64, f64, f64)>), TopoError> {
         let entry = self
             .loops
             .get(lk)
@@ -316,7 +332,40 @@ impl Body {
             let w = p - f.origin;
             (w.dot(f.x), w.dot(f.y))
         };
+        let uv_vec = |w: Vec3| -> (f64, f64) { (w.dot(f.x), w.dot(f.y)) };
         let mut poly = Vec::new();
+        let mut lunes: Vec<(f64, f64, f64)> = Vec::new();
+        let lune = |pt: &dyn Fn(f64) -> Vec3,
+                    dpt: &dyn Fn(f64) -> Vec3,
+                    th_a: f64,
+                    th_b: f64,
+                    out: &mut Vec<(f64, f64, f64)>| {
+            let dth = th_b - th_a;
+            if dth == 0.0 {
+                return;
+            }
+            let q0 = uv(pt(th_a));
+            let q1 = uv(pt(th_b));
+            let qd = ((q1.0 - q0.0) / dth, (q1.1 - q0.1) / dth);
+            for (xj, wj) in GL8_X.iter().zip(GL8_W) {
+                let th = 0.5 * (th_a + th_b) + 0.5 * dth * xj;
+                let p = uv(pt(th));
+                let pd = uv_vec(dpt(th));
+                let s = (th - th_a) / dth;
+                let q = (q0.0 + s * (q1.0 - q0.0), q0.1 + s * (q1.1 - q0.1));
+                let mt = (p.0 - q.0, p.1 - q.1);
+                for (xk, wk) in GL8_X.iter().zip(GL8_W) {
+                    let t = 0.5 * (xk + 1.0);
+                    let mu = ((1.0 - t) * q.0 + t * p.0, (1.0 - t) * q.1 + t * p.1);
+                    let mth = ((1.0 - t) * qd.0 + t * pd.0, (1.0 - t) * qd.1 + t * pd.1);
+                    // The (theta, t) patch is the lune traversed chord-
+                    // forward + arc-backward, MINUS the loop's own
+                    // orientation (chord-backward + arc-forward): negate.
+                    let det = mth.1 * mt.0 - mth.0 * mt.1;
+                    out.push((mu.0, mu.1, wj * (0.5 * dth) * wk * 0.5 * det));
+                }
+            }
+        };
         let mut cur = entry;
         const SAMPLES: usize = 24;
         loop {
@@ -387,9 +436,13 @@ impl Body {
                                 d.dot(c.y_axis).atan2(d.dot(c.x_axis))
                             };
                             let (t0, sweep) = arc_range(ang(p0), ang(p1));
+                            let pt = |t: f64| c.point(t);
+                            let dpt = |t: f64| (c.y_axis * t.cos() - c.x_axis * t.sin()) * c.radius;
                             for i in 0..SAMPLES {
                                 let t = t0 + sweep * i as f64 / SAMPLES as f64;
                                 poly.push(uv(c.point(t)));
+                                let tn = t0 + sweep * (i + 1) as f64 / SAMPLES as f64;
+                                lune(&pt, &dpt, t, tn, &mut lunes);
                             }
                         }
                         Curve3::Ellipse(e) if b0 != b1 => {
@@ -398,15 +451,23 @@ impl Body {
                                 (d.dot(e.y_axis) / e.b).atan2(d.dot(e.x_axis) / e.a)
                             };
                             let (t0, sweep) = arc_range(ang(p0), ang(p1));
+                            let pt = |t: f64| e.point(t);
+                            let dpt =
+                                |t: f64| e.y_axis * (e.b * t.cos()) - e.x_axis * (e.a * t.sin());
                             for i in 0..SAMPLES {
                                 let t = t0 + sweep * i as f64 / SAMPLES as f64;
                                 poly.push(uv(e.point(t)));
+                                let tn = t0 + sweep * (i + 1) as f64 / SAMPLES as f64;
+                                lune(&pt, &dpt, t, tn, &mut lunes);
                             }
                         }
                         _ => {
-                            for i in 0..SAMPLES {
+                            let smap = |i: usize| {
                                 let s = i as f64 / SAMPLES as f64;
-                                let s = if fin.forward == sense { s } else { 1.0 - s };
+                                if fin.forward == sense { s } else { 1.0 - s }
+                            };
+                            for i in 0..SAMPLES {
+                                let s = smap(i);
                                 let p = match ec {
                                     Curve3::Circle(c) => c.point(tau * s),
                                     Curve3::Ellipse(e) => e.point(tau * s),
@@ -417,6 +478,26 @@ impl Body {
                                     Curve3::Line(l) => l.point(s),
                                 };
                                 poly.push(uv(p));
+                                // Closed rings (annulus boundaries) get the
+                                // same lune closure; NURBS above degree 1
+                                // stay chordal.
+                                match ec {
+                                    Curve3::Circle(c) => {
+                                        let pt = |t: f64| c.point(t);
+                                        let dpt = |t: f64| {
+                                            (c.y_axis * t.cos() - c.x_axis * t.sin()) * c.radius
+                                        };
+                                        lune(&pt, &dpt, tau * s, tau * smap(i + 1), &mut lunes);
+                                    }
+                                    Curve3::Ellipse(e) => {
+                                        let pt = |t: f64| e.point(t);
+                                        let dpt = |t: f64| {
+                                            e.y_axis * (e.b * t.cos()) - e.x_axis * (e.a * t.sin())
+                                        };
+                                        lune(&pt, &dpt, tau * s, tau * smap(i + 1), &mut lunes);
+                                    }
+                                    _ => {}
+                                }
                             }
                         }
                     }
@@ -433,7 +514,7 @@ impl Body {
                 break;
             }
         }
-        Ok(poly)
+        Ok((poly, lunes))
     }
 
     /// UV bounds of a curved face whose boundary is ISO-RECTANGULAR:

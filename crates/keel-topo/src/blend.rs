@@ -2388,6 +2388,415 @@ impl Body {
         Ok(b)
     }
 
+    /// NOTCH overflow handler (dossier 56 sec 2.1): fillet two
+    /// collinear convex plane-plane edges `e1`, `e2` separated by a
+    /// notch element (a planar-walled groove crossing the blend
+    /// corridor) with one radius. Per the notch semantics the blend
+    /// cylinder stays UNDEFORMED ("the element affected by the
+    /// overflow is ignored... the surfaces of the notch element are
+    /// trimmed or extended to the rounding"): the groove walls trim
+    /// to cross-section arcs, the groove floor trims to the
+    /// cylinder's ruling line, and the blend's trim boundary extends
+    /// across the corridor IN PLACE, plain Euler surgery on the
+    /// existing faces with no separate sheet body and no sewing (the
+    /// US 8,935,130 design-around). The ribbon is built as THREE
+    /// cylinder faces split at the corridor cross arcs so every face
+    /// is an exact UV iso-rectangle (the roll-on transfer-curve
+    /// precedent): mass and mesh stay exact with the existing
+    /// rectangle integrators.
+    ///
+    /// Scope (the narrow honest slice): convex chains, coplanar tops,
+    /// ONE shared second support across the chain, notch walls
+    /// perpendicular to the spine, planar floor crossing the blend
+    /// strictly between its springs (0 < h < r). Tilted walls
+    /// (ellipse arcs), floors at or below the spine, and multi-face
+    /// notch elements stay declined.
+    pub fn fillet_edge_notch(
+        &self,
+        e1: EdgeKey,
+        e2: EdgeKey,
+        radius: f64,
+    ) -> Result<Body, TopoError> {
+        if !(radius.is_finite() && radius > 0.0) || e1 == e2 {
+            return Err(TopoError::Precondition("notch: bad input"));
+        }
+        // Order the chain along its line: v_start, vm1 | corridor |
+        // vm2, v_end. The edges must be collinear and disjoint.
+        let (a0, a1) = self.edges.get(e1).ok_or(TopoError::StaleKey)?.bounds;
+        let (b0, b1) = self.edges.get(e2).ok_or(TopoError::StaleKey)?.bounds;
+        let pt = |v: crate::entity::VertexKey| {
+            self.vertices
+                .get(v)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)
+        };
+        let (pa0, pa1) = (pt(a0)?, pt(a1)?);
+        let d = (pa1 - pa0)
+            .try_normalize()
+            .ok_or(TopoError::Precondition("notch: zero edge"))?;
+        for v in [b0, b1] {
+            if (pt(v)? - pa0).cross(d).norm() > 1e-9 {
+                return Err(TopoError::Precondition("notch: non-collinear chain"));
+            }
+        }
+        let t = |p: keel_math::vec::Vec3| (p - pa0).dot(d);
+        let (amin, amax) = if t(pa0) <= t(pa1) { (a0, a1) } else { (a1, a0) };
+        let (bmin, bmax) = if t(pt(b0)?) <= t(pt(b1)?) {
+            (b0, b1)
+        } else {
+            (b1, b0)
+        };
+        let (e1, e2, v_start, vm1, vm2, v_end) = if t(pt(bmin)?) > t(pt(amax)?) + 1e-12 {
+            (e1, e2, amin, amax, bmin, bmax)
+        } else if t(pt(amin)?) > t(pt(bmax)?) + 1e-12 {
+            (e2, e1, bmin, bmax, amin, amax)
+        } else {
+            return Err(TopoError::Precondition("notch: edges overlap"));
+        };
+        let (pm1, pm2) = (pt(vm1)?, pt(vm2)?);
+        // Supports: ONE face shared across the chain (the front), one
+        // top per edge, coplanar.
+        let fs1 = self.faces_around_edge(e1);
+        let fs2 = self.faces_around_edge(e2);
+        if fs1.len() != 2 || fs2.len() != 2 {
+            return Err(TopoError::Precondition("notch: edges need two faces"));
+        }
+        let front = *fs1
+            .iter()
+            .find(|f| fs2.contains(f))
+            .ok_or(TopoError::Precondition("notch: no shared support"))?;
+        let top1 = *fs1
+            .iter()
+            .find(|&&f| f != front)
+            .ok_or(TopoError::Precondition("notch: no top support"))?;
+        let top2 = *fs2
+            .iter()
+            .find(|&&f| f != front)
+            .ok_or(TopoError::Precondition("notch: no top support"))?;
+        for &f in &[top1, top2, front] {
+            if !matches!(
+                self.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition("notch: non-planar support"));
+            }
+        }
+        let n_top = self
+            .face_outward_normal(top1)
+            .ok_or(TopoError::Precondition("notch: top normal"))?;
+        let n_top2 = self
+            .face_outward_normal(top2)
+            .ok_or(TopoError::Precondition("notch: top normal"))?;
+        let n_front = self
+            .face_outward_normal(front)
+            .ok_or(TopoError::Precondition("notch: front normal"))?;
+        if n_top.cross(n_top2).norm() > 1e-9
+            || self
+                .face_outer_loop_points(top2)
+                .first()
+                .map(|&p| ((p - pm1).dot(n_top)).abs() > 1e-9)
+                .unwrap_or(true)
+        {
+            return Err(TopoError::Precondition("notch: tops not coplanar"));
+        }
+        if !self.edge_is_convex(e1).unwrap_or(true) {
+            return Err(TopoError::Precondition("notch: concave chain (follow-up)"));
+        }
+        let blend = self.blend_cylinder_for_edge(e1, radius)?;
+        let on_face = |l: &Line3, f| -> bool {
+            let p = self
+                .face_outer_loop_points(f)
+                .first()
+                .copied()
+                .unwrap_or(l.origin);
+            ((l.origin - p).dot(self.face_outward_normal(f).unwrap_or(Vec3::ZERO))).abs() < 1e-9
+        };
+        let (spring_t, spring_f) = if on_face(&blend.spring_a, top1) {
+            (blend.spring_a, blend.spring_b)
+        } else {
+            (blend.spring_b, blend.spring_a)
+        };
+        // The notch element: a wall at each corridor mouth,
+        // perpendicular to the spine, and one planar floor parallel
+        // to the tops, crossing the blend strictly between its
+        // springs.
+        let wall_at = |vm, top| {
+            self.faces_at_vertex(vm)
+                .into_iter()
+                .find(|&f| f != top && f != front)
+                .ok_or(TopoError::Precondition("notch: no corridor wall"))
+        };
+        let (wall1, wall2) = (wall_at(vm1, top1)?, wall_at(vm2, top2)?);
+        if wall1 == wall2 {
+            return Err(TopoError::Precondition("notch: degenerate corridor"));
+        }
+        for &w in &[wall1, wall2] {
+            if !matches!(
+                self.face_surface_geom(w),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition("notch: non-planar wall"));
+            }
+            let nw = self
+                .face_outward_normal(w)
+                .ok_or(TopoError::Precondition("notch: wall normal"))?;
+            if nw.cross(blend.spine.dir).norm() > 1e-9 {
+                return Err(TopoError::Precondition("notch: tilted wall (follow-up)"));
+            }
+        }
+        let shared_edge = |fa, fb| {
+            self.face_edge_set(fa)
+                .into_iter()
+                .find(|&e| self.face_has_edge(fb, e))
+        };
+        let floor = self
+            .face_edge_set(wall1)
+            .into_iter()
+            .filter_map(|e| self.faces_around_edge(e).into_iter().find(|&f| f != wall1))
+            .find(|&f| {
+                f != top1
+                    && f != front
+                    && self
+                        .face_outward_normal(f)
+                        .map(|n| n.cross(n_top).norm() < 1e-9 && n.dot(n_top) > 0.0)
+                        .unwrap_or(false)
+            })
+            .ok_or(TopoError::Precondition("notch: no floor"))?;
+        if !matches!(
+            self.face_surface_geom(floor),
+            Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+        ) {
+            return Err(TopoError::Precondition("notch: non-planar floor"));
+        }
+        let pf = *self
+            .face_outer_loop_points(floor)
+            .first()
+            .ok_or(TopoError::Precondition("notch: empty floor"))?;
+        let h = (pf - blend.spine.origin).dot(n_top);
+        if !(h > 1e-9 && h < radius - 1e-9) {
+            return Err(TopoError::Precondition(
+                "notch: floor outside the blend band (follow-up)",
+            ));
+        }
+        let s = (radius * radius - h * h).sqrt();
+        let ruling = Line3::new(
+            blend.spine.origin + n_top * h + n_front * s,
+            blend.spine.dir,
+        )
+        .map_err(|_| TopoError::Precondition("notch: ruling"))?;
+        // Snapshot the notch-profile edges before surgery: the two
+        // wall-front edges (and their lower corners u1/u2), the
+        // floor-front edge, the two wall-floor edges.
+        let wf1 =
+            shared_edge(wall1, front).ok_or(TopoError::Precondition("notch: no wall edge"))?;
+        let wf2 =
+            shared_edge(wall2, front).ok_or(TopoError::Precondition("notch: no wall edge"))?;
+        let other_end = |e: EdgeKey, v| -> Result<crate::entity::VertexKey, TopoError> {
+            let (x, y) = self.edges.get(e).ok_or(TopoError::StaleKey)?.bounds;
+            if x == v {
+                Ok(y)
+            } else if y == v {
+                Ok(x)
+            } else {
+                Err(TopoError::Precondition("notch: wall edge misses the chain"))
+            }
+        };
+        let u1 = other_end(wf1, vm1)?;
+        let u2 = other_end(wf2, vm2)?;
+        let ffe =
+            shared_edge(floor, front).ok_or(TopoError::Precondition("notch: no floor edge"))?;
+        let wb1 =
+            shared_edge(wall1, floor).ok_or(TopoError::Precondition("notch: no wall foot"))?;
+        let wb2 =
+            shared_edge(wall2, floor).ok_or(TopoError::Precondition("notch: no wall foot"))?;
+
+        let mut b = self.clone();
+        // Top springs, boundary-to-boundary on each side; the wall-
+        // boundary split vertices pw1/pw2 are reused for the arcs.
+        let (spr_t1, _strip_t1, top1k, t_start_v, pw1) =
+            b.imprint_spring_line(top1, e1, v_start, vm1, &spring_t, n_top)?;
+        let (spr_t2, _strip_t2, top2k, t_end_v, pw2) =
+            b.imprint_spring_line(top2, e2, v_end, vm2, &spring_t, n_top)?;
+        // The front spring runs the WHOLE chain across the one shared
+        // face (each end excludes its own sharp edge, so this is
+        // inlined rather than imprint_spring_line).
+        let e_fa = b
+            .boundary_edge_at_vertex_excluding(front, v_start, e1)
+            .ok_or(TopoError::Precondition("notch: no cap edge at start"))?;
+        let e_fb = b
+            .boundary_edge_at_vertex_excluding(front, v_end, e2)
+            .ok_or(TopoError::Precondition("notch: no cap edge at end"))?;
+        let mf = n_front.cross(spring_f.dir);
+        let pa = b
+            .line_crosses_edge(e_fa, spring_f.origin, mf)
+            .ok_or(TopoError::Precondition("notch: spring misses start cap"))?;
+        let pb = b
+            .line_crosses_edge(e_fb, spring_f.origin, mf)
+            .ok_or(TopoError::Precondition("notch: spring misses end cap"))?;
+        let f_start_v = b.split_edge(e_fa, pa)?.vertex;
+        let f_end_v = b.split_edge(e_fb, pb)?.vertex;
+        let lpf = b
+            .faces
+            .get(front)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let fa = b.fin_ending_at_vertex(lpf, f_start_v)?;
+        let fb = b.fin_ending_at_vertex(lpf, f_end_v)?;
+        let fsp = b.split_face(fa, fb, None)?;
+        if let Some(surf) = b.faces.get(front).and_then(|f| f.surface)
+            && let Some(nf) = b.faces.get_mut(fsp.face_new)
+        {
+            nf.surface = Some(surf);
+        }
+        let spr_f = fsp.edge;
+        // Split the front spring at the corridor mouths NOW (s1/s2
+        // anchor the cross-arc splits of the ribbon later).
+        let proj = |l: &Line3, p: Vec3| l.origin + l.dir * ((p - l.origin).dot(l.dir));
+        let s1 = b.split_edge(spr_f, proj(&spring_f, pm1))?.vertex;
+        let spr_f_rest = b
+            .edge_between(s1, f_end_v)
+            .ok_or(TopoError::Precondition("notch: lost front spring"))?;
+        let s2 = b.split_edge(spr_f_rest, proj(&spring_f, pm2))?.vertex;
+        for (va2, vb2) in [(f_start_v, s1), (s1, s2), (s2, f_end_v)] {
+            let e = b
+                .edge_between(va2, vb2)
+                .ok_or(TopoError::Precondition("notch: lost front spring"))?;
+            b.attach_edge_curve(e, Curve3::Line(spring_f), true);
+        }
+        // The floor trims to the ruling line between the wall feet.
+        let q1 = b.split_edge(wb1, proj(&ruling, pm1))?.vertex;
+        let q2 = b.split_edge(wb2, proj(&ruling, pm2))?.vertex;
+        let lpg = b
+            .faces
+            .get(floor)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let ga = b.fin_ending_at_vertex(lpg, q1)?;
+        let gb = b.fin_ending_at_vertex(lpg, q2)?;
+        let gsp = b.split_face(ga, gb, None)?;
+        if let Some(surf) = b.faces.get(floor).and_then(|f| f.surface)
+            && let Some(nf) = b.faces.get_mut(gsp.face_new)
+        {
+            nf.surface = Some(surf);
+        }
+        b.attach_edge_curve(gsp.edge, Curve3::Line(ruling), true);
+        let ruling_edge = gsp.edge;
+        let floor_kept = if b.face_has_edge(gsp.face_new, ffe) {
+            gsp.face_old
+        } else {
+            gsp.face_new
+        };
+        // The walls trim to cross-section arcs (pw down to q).
+        let mk_circle = |at: Vec3| {
+            let centre = blend.spine.origin
+                + blend.spine.dir * ((at - blend.spine.origin).dot(blend.spine.dir));
+            keel_geom::curve::Circle3::new(centre, n_top, blend.spine.dir.cross(n_top), radius)
+                .map_err(|_| TopoError::Precondition("notch: bad arc"))
+        };
+        let (c1, c2) = (mk_circle(pm1)?, mk_circle(pm2)?);
+        b.split_blend_cap(wall1, pw1, q1, Curve3::Circle(c1))?;
+        b.split_blend_cap(wall2, pw2, q2, Curve3::Circle(c2))?;
+        // Far caps at both chain ends (the standard end treatment).
+        for (v_far, t_endv, s_endv, sharp) in [
+            (v_start, t_start_v, f_start_v, e1),
+            (v_end, t_end_v, f_end_v, e2),
+        ] {
+            let cap = b
+                .faces_at_vertex(v_far)
+                .into_iter()
+                .find(|&f| !b.face_has_edge(f, sharp))
+                .ok_or(TopoError::Precondition("notch: no far cap"))?;
+            let pc = b
+                .vertices
+                .get(v_far)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let arc = mk_circle(pc)?;
+            b.split_blend_cap(cap, t_endv, s_endv, Curve3::Circle(arc))?;
+        }
+        // Dissolve: the sharps merge the top strips into the front
+        // strip; the wall-front and floor-front edges merge the notch
+        // slivers in; the far corners and the corridor spur chains
+        // collapse by kef/kev pairs.
+        b.kef(e1)?;
+        b.kef(e2)?;
+        b.kef(wf1)?;
+        b.kef(wf2)?;
+        b.kef(ffe)?;
+        for (t_endv, v_far, s_endv) in [(t_start_v, v_start, f_start_v), (t_end_v, v_end, f_end_v)]
+        {
+            let stub = b
+                .edge_between(t_endv, v_far)
+                .ok_or(TopoError::Precondition("notch: no far stub"))?;
+            b.kef(stub)?;
+            let spur = b
+                .edge_between(v_far, s_endv)
+                .ok_or(TopoError::Precondition("notch: no far spur"))?;
+            b.kev(spur)?;
+        }
+        for (x, y) in [(pw1, vm1), (pw2, vm2), (q1, u1), (q2, u2)] {
+            let spur = b
+                .edge_between(x, y)
+                .ok_or(TopoError::Precondition("notch: no corridor spur"))?;
+            b.kev(spur)?;
+        }
+        // Split the merged ribbon at the corridor cross arcs (q down
+        // to s on each wall circle) so all three pieces are exact UV
+        // iso-rectangles.
+        let bf = b
+            .faces_around_edge(spr_t1)
+            .into_iter()
+            .find(|&f| f != top1k)
+            .ok_or(TopoError::Precondition("notch: no blend face"))?;
+        let lpb = b
+            .faces
+            .get(bf)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let ba1 = b.fin_ending_at_vertex(lpb, q1)?;
+        let bb1 = b.fin_ending_at_vertex(lpb, s1)?;
+        let sp1 = b.split_face(ba1, bb1, None)?;
+        b.attach_edge_curve(sp1.edge, Curve3::Circle(c1), true);
+        let mut rest = sp1.face_old;
+        let lp_old = b
+            .faces
+            .get(rest)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        if b.fin_ending_at_vertex(lp_old, s2).is_err() {
+            rest = sp1.face_new;
+        }
+        let lpr = b
+            .faces
+            .get(rest)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let ba2 = b.fin_ending_at_vertex(lpr, q2)?;
+        let bb2 = b.fin_ending_at_vertex(lpr, s2)?;
+        let sp2 = b.split_face(ba2, bb2, None)?;
+        b.attach_edge_curve(sp2.edge, Curve3::Circle(c2), true);
+        // All three ribbon pieces carry the one undeformed cylinder.
+        let piece = |b: &Body, anchor: EdgeKey, not: crate::entity::FaceKey| {
+            b.faces_around_edge(anchor)
+                .into_iter()
+                .find(|&f| f != not)
+                .ok_or(TopoError::Precondition("notch: no ribbon piece"))
+        };
+        let outer1 = piece(&b, spr_t1, top1k)?;
+        let outer2 = piece(&b, spr_t2, top2k)?;
+        let mid = piece(&b, ruling_edge, floor_kept)?;
+        for f in [outer1, mid, outer2] {
+            b.attach_face_surface(
+                f,
+                SurfaceGeom::Analytic(Surface3::Cylinder(blend.surface.clone())),
+                true,
+            );
+        }
+        b.validate()
+            .map_err(|_| TopoError::Precondition("notch: result invalid"))?;
+        Ok(b)
+    }
+
     /// MITRED corner of two equal-radius fillets (parity item 56;
     /// dossier 55 milestone 1): blend two convex plane-plane edges
     /// sharing a corner vertex and one support face, joining the two
@@ -3733,6 +4142,80 @@ mod tests {
             ),
             "partial band seam must DECLINE"
         );
+    }
+
+    #[test]
+    fn notch_fillet_bridges_the_groove_with_an_undeformed_blend() {
+        // Dossier 56 sec 2.1 (notch overflow), the in-place trim-loop
+        // design-around of US 8,935,130: a groove crosses the blend
+        // corridor; the blend cylinder stays UNDEFORMED and the
+        // groove's walls and floor are trimmed to the rounding by
+        // plain Euler surgery on the existing faces (no separate
+        // sheet, no sewing). Closed-form exactness oracle written
+        // FIRST: box 4x2x2, groove x in [1.9, 2.1] depth 0.2 across
+        // the top, fillet r = 0.5 on the top-front chain.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 2.0, 2.0).unwrap();
+        let mut tool = Body::new();
+        tool.block(Vec3::new(1.9, -0.5, 1.8), 0.2, 3.0, 1.0)
+            .unwrap();
+        let g = crate::boolean::boolean(&b, &tool, crate::boolean::BoolOp::Difference, 1e-7)
+            .unwrap()
+            .body;
+        // The groove splits the sharp top-front edge into two
+        // collinear pieces either side of the corridor.
+        let sharps: Vec<EdgeKey> = g
+            .edges
+            .iter()
+            .filter(|&(_, e)| {
+                let (a, c) = e.bounds;
+                [a, c].iter().all(|&v| {
+                    let p = g.vertices.get(v).map(|x| x.point).unwrap_or(Vec3::ZERO);
+                    (p.y - 2.0).abs() < 1e-9 && (p.z - 2.0).abs() < 1e-9
+                })
+            })
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(sharps.len(), 2, "groove must split the sharp edge in two");
+        // The plain fillet declines on either piece (the corridor
+        // wall stops the front spring: the overflow guard).
+        assert!(g.fillet_edge(sharps[0], 0.5).is_err());
+        assert!(g.fillet_edge(sharps[1], 0.5).is_err());
+        let n = g.fillet_edge_notch(sharps[0], sharps[1], 0.5).unwrap();
+        assert!(n.validate().is_ok(), "notch body invalid");
+        // exact = 16 - groove - fillet cut + (the cut volume the
+        // groove had already removed); A_in is the circle band
+        // integral from w = 0.3 to the radius.
+        let pi = core::f64::consts::PI;
+        let cut = (0.25 - pi / 16.0) * 4.0;
+        let anti = |w: f64| w * (0.25 - w * w).sqrt() / 2.0 + 0.125 * (w / 0.5).asin();
+        let a_in = anti(0.5) - anti(0.3);
+        let exact = 16.0 - 0.08 - cut + 0.2 * (0.1 - a_in);
+        let v = n.mass_properties().unwrap().volume;
+        assert!((v - exact).abs() < 1e-9, "mass {v} != exact {exact}");
+        let m = n.mesh_volume();
+        assert!((m - exact).abs() < 0.02, "mesh {m} != exact {exact}");
+        // Structure: the ribbon is three iso-rectangle cylinder faces
+        // (split at the corridor cross arcs, the roll-on transfer-
+        // curve precedent) and the trimmed walls and floor survive.
+        let cyls = n
+            .face_keys()
+            .into_iter()
+            .filter(|&f| {
+                matches!(
+                    n.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )
+            })
+            .count();
+        assert_eq!(cyls, 3, "blend must be three iso-rect cylinder faces");
+        // 10 grooved-body faces (6 box faces with the top split in
+        // two, plus 2 walls and the floor) + the 3 ribbon pieces.
+        assert_eq!(n.face_keys().len(), 13);
+        // Order-agnostic.
+        let n2 = g.fillet_edge_notch(sharps[1], sharps[0], 0.5).unwrap();
+        let v2 = n2.mass_properties().unwrap().volume;
+        assert!((v2 - v).abs() < 1e-12, "argument order must not matter");
     }
 
     #[test]
