@@ -5427,3 +5427,41 @@ to 0.02, 11 faces, 3 recognized blends.
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 248 (+1) green; fuzz_boolean soak
 (massprops changed): count below. Next: dossier 53 milestone 3, the setback split +
 Charrot-Gregory convex-combination patch through the certified evaluator-to-NURBS fit.
+
+## Addendum 176 (2026-06-10, attended): SETBACK VERTEX BLEND (dossier 53 milestone 3): Varady-Rockwood split + Charrot-Gregory certified quads
+
+Branch corner-triangle (continues Add.175). The first corner construction OUTSIDE the
+analytic island, built exactly as the dossier prescribes: the certified-evaluator reduction,
+not a new surface type.
+
+NEW keel-geom::corner: the Charrot-Gregory convex-combination evaluator over the setback
+hexagon (pre-2006 prior art: Charrot-Gregory 1984, Plowman-Charrot Gregory twists,
+Varady-Rockwood setback split; the post-2006 US 8,004,517 / US 10,621,781 claim elements are
+not used). The load-bearing design facts: (1) the cross-derivative field of every side is
+FORCED by corner compatibility (D_i(0) = -B_{i-1}'(1), D_i(1) = +B_{i+1}'(0)), and those
+vectors lie in each side's host tangent plane EXACTLY because the cylinders are tangent to
+the supports along the springs, so interpolating the field in the side's own surface basis
+(axial/tangential coefficients on arcs, plane vectors on profiles) keeps the patch G1 against
+every band and support along the WHOLE side; (2) the rational perpendicular-distance-SQUARED
+weights localize each corner interpolant with first-order flatness; (3) the Gregory twist
+(eta M1 + xi M2)/(xi + eta) resolves the per-corner incompatible mixed partials. Evaluator
+oracle written FIRST and passed first run: boundary reproduction 1e-9 (the regular hexagon's
+radial-sweep parameter is exactly linear along each side), tangent-plane agreement 5e-5 just
+inside every side.
+
+Body::fillet_corner_setback(&[(edge, r, d); 3]): per-face surgery opens the L-strip by a spur
+chain (corner spur to the setback station, spring split, profile spur, second spring split;
+the profile is a REAL edge, the corner spurs are temporaries), far caps standard; the
+dissolve kefs the three sharps (strips to wings), kefs two corner spurs (wings to one), kevs
+the third with the corner vertex; the three bands peel off along exact cross-section arcs;
+the remaining HEXAGON face central-splits (six side midpoints + the centre vertex at
+eval(0,0)) into six quads, each fit by fit_foreign_surface and DECLINED if certification
+misses 1e-4. Sense per quad from the fitted normal against the material corner.
+
+Test (box corner, UNEQUAL radii 0.5/0.4/0.3, setbacks 0.8): validator, 15 faces, six
+certified NURBS quads, rigorous volume bounds, inside/outside winding probes. NURBS faces
+remain outside analytic mass properties (the documented M5 line), matching the dossier
+ladder's oracle level for this rung; the exactness burden sits on the evaluator oracle and
+the per-quad certification. CI: fmt; clippy -D warnings; workspace 133 + 77 + 249 (+2)
+green; fuzz_boolean soak: count below. Remaining on the dossier-53 ladder: curved supports
+(M4), n > 3 (M5), mixed convexity (M6): queued, not blocking #18.

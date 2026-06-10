@@ -3593,6 +3593,553 @@ impl Body {
             .map_err(|_| TopoError::Precondition("octant: result invalid"))?;
         Ok(b)
     }
+
+    /// SETBACK vertex blend (dossier 53 Q2/Q3, milestone 3): round a
+    /// convex trihedral corner whose three edge blends have UNEQUAL
+    /// radii by the Varady-Rockwood setback split. Each ribbon is
+    /// stopped at its per-edge setback distance `d` (the cross-
+    /// section arc in the plane perpendicular to the edge), straight
+    /// PROFILE edges on the supports connect adjacent arc endpoints,
+    /// and the resulting 2n-gon hole (n = 3: a hexagon of three arcs
+    /// alternating with three profiles) is filled with the
+    /// Charrot-Gregory convex-combination patch (pre-2006 prior art;
+    /// Gregory twists per Plowman-Charrot), realized as the file-26
+    /// CENTRAL SPLIT: six bicubic NURBS quads, each fit and CERTIFIED
+    /// against the evaluator by the existing foreign-surface pipeline
+    /// and DECLINED when the fit cannot meet tolerance. The patch
+    /// meets each band and each support with G1 by construction (the
+    /// cross fields live in the host tangent planes; spring tangency
+    /// makes the corner data compatible).
+    ///
+    /// Scope: three planar supports, all-convex edges, straight
+    /// profiles. Oracle level per the dossier ladder: validator + fit
+    /// certification + bounds (NURBS faces are outside analytic mass
+    /// properties, the documented M5 line).
+    pub fn fillet_corner_setback(
+        &self,
+        specs: &[(EdgeKey, f64, f64); 3],
+    ) -> Result<Body, TopoError> {
+        for &(_, r, d) in specs {
+            if !(r.is_finite() && r > 0.0 && d.is_finite() && d > 0.0) {
+                return Err(TopoError::Precondition("setback: bad radius/setback"));
+            }
+        }
+        // The shared corner vertex.
+        let ends = |e: EdgeKey| -> Result<(crate::entity::VertexKey, crate::entity::VertexKey), TopoError> {
+            self.edges
+                .get(e)
+                .map(|x| x.bounds)
+                .ok_or(TopoError::StaleKey)
+        };
+        let (a0, a1) = ends(specs[0].0)?;
+        let (b0, b1) = ends(specs[1].0)?;
+        let corner = if a0 == b0 || a0 == b1 { a0 } else { a1 };
+        let (c0, c1) = ends(specs[2].0)?;
+        if !((corner == b0 || corner == b1) && (corner == c0 || corner == c1)) {
+            return Err(TopoError::Precondition("setback: edges share no corner"));
+        }
+        let corner_pt = self.vertices.get(corner).ok_or(TopoError::StaleKey)?.point;
+        // Support faces and incidences (the octant bookkeeping).
+        let mut faces: Vec<crate::entity::FaceKey> = Vec::new();
+        for &(e, _, _) in specs {
+            for f in self.faces_around_edge(e) {
+                if !faces.contains(&f) {
+                    faces.push(f);
+                }
+            }
+        }
+        if faces.len() != 3 {
+            return Err(TopoError::Precondition("setback: corner needs three faces"));
+        }
+        let mut n = [Vec3::ZERO; 3];
+        let mut face_edges = [[0usize; 2]; 3];
+        for (i, &f) in faces.iter().enumerate() {
+            if !matches!(
+                self.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition("setback: non-planar support"));
+            }
+            n[i] = self
+                .face_outward_normal(f)
+                .ok_or(TopoError::Precondition("setback: support normal"))?;
+            let mut slot = 0usize;
+            for (j, &(e, _, _)) in specs.iter().enumerate() {
+                if self.faces_around_edge(e).contains(&f) {
+                    if slot == 2 {
+                        return Err(TopoError::Precondition("setback: face/edge incidence"));
+                    }
+                    face_edges[i][slot] = j;
+                    slot += 1;
+                }
+            }
+            if slot != 2 {
+                return Err(TopoError::Precondition("setback: face/edge incidence"));
+            }
+        }
+        // Per-edge blends, directions, cross-arc centres and the arc
+        // endpoints on each adjacent support (the spring feet at the
+        // setback station).
+        let mut blends = Vec::with_capacity(3);
+        let mut dir = [Vec3::ZERO; 3];
+        let mut centre = [Vec3::ZERO; 3];
+        for (j, &(e, r, d)) in specs.iter().enumerate() {
+            blends.push(self.blend_cylinder_for_edge(e, r)?);
+            let (e0, e1) = ends(e)?;
+            let vfar = if e0 == corner { e1 } else { e0 };
+            let far_pt = self.vertices.get(vfar).ok_or(TopoError::StaleKey)?.point;
+            dir[j] = (far_pt - corner_pt)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("setback: zero edge"))?;
+            let spine = &blends[j].spine;
+            let st = corner_pt + dir[j] * d;
+            centre[j] = spine.origin + spine.dir * ((st - spine.origin).dot(spine.dir));
+        }
+        // p_end[j][i]: edge j's cross-arc endpoint on face i (only the
+        // two incident faces are used).
+        let p_end = |j: usize, i: usize| centre[j] + n[i] * specs[j].1;
+
+        let mut b = self.clone();
+        // Per-face surgery: far splits at the spring crossings, the
+        // corner spur to the first arc endpoint, the spring-j split,
+        // the profile spur, the spring-k split.
+        let mut far_v = [[corner; 2]; 3];
+        let mut pv = [[corner; 2]; 3]; // arc-endpoint vertices per face slot
+        let mut spur_e = [EdgeKey::sentinel(); 3];
+        let mut spring_edge = [[EdgeKey::sentinel(); 2]; 3];
+        let mut kept = [crate::entity::FaceKey::sentinel(); 3];
+        for i in 0..3 {
+            let f = faces[i];
+            let (j, k) = (face_edges[i][0], face_edges[i][1]);
+            // Far boundary splits for both springs.
+            for (s, &je) in [j, k].iter().enumerate() {
+                let (e, _, _) = specs[je];
+                let (e0, e1) = ends(e)?;
+                let vfar = if e0 == corner { e1 } else { e0 };
+                let ef = b
+                    .boundary_edge_at_vertex_excluding(f, vfar, e)
+                    .ok_or(TopoError::Precondition("setback: no far edge"))?;
+                let spring = Line3::new(p_end(je, i), dir[je])
+                    .map_err(|_| TopoError::Precondition("setback: spring"))?;
+                let m = n[i].cross(spring.dir);
+                let p =
+                    b.line_crosses_edge(ef, spring.origin, m)
+                        .ok_or(TopoError::Precondition(
+                            "setback: spring misses far edge (overflow?)",
+                        ))?;
+                far_v[i][s] = b.split_edge(ef, p)?.vertex;
+            }
+            let lp = b
+                .faces
+                .get(f)
+                .map(|x| x.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            // Corner spur to A = edge-j's endpoint on this face.
+            let fin_c = b.fin_ending_at_vertex(lp, corner)?;
+            let va = b
+                .mev(crate::euler::MevSite::AfterFin(fin_c), p_end(j, i))?
+                .vertex;
+            pv[i][0] = va;
+            spur_e[i] = b
+                .edge_between(corner, va)
+                .ok_or(TopoError::Precondition("setback: no corner spur"))?;
+            // Spring-j split: A to the far crossing.
+            let fin_a = b.fin_ending_at_vertex(lp, va)?;
+            let fin_t = b.fin_ending_at_vertex(lp, far_v[i][0])?;
+            let split1 = b.split_face(fin_a, fin_t, None)?;
+            if let Some(surf) = b.faces.get(f).and_then(|x| x.surface)
+                && let Some(nf) = b.faces.get_mut(split1.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            b.attach_edge_curve(
+                split1.edge,
+                Curve3::Line(
+                    Line3::new(p_end(j, i), dir[j])
+                        .map_err(|_| TopoError::Precondition("setback: spring"))?,
+                ),
+                true,
+            );
+            spring_edge[i][0] = split1.edge;
+            // The host half carries the second far crossing.
+            let host = if b.faces_at_vertex(far_v[i][1]).contains(&split1.face_new) {
+                split1.face_new
+            } else {
+                split1.face_old
+            };
+            let lp_h = b
+                .faces
+                .get(host)
+                .map(|x| x.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            // Profile spur A -> B, then the spring-k split from B.
+            let fin_a2 = b.fin_ending_at_vertex(lp_h, va)?;
+            let vb = b
+                .mev(crate::euler::MevSite::AfterFin(fin_a2), p_end(k, i))?
+                .vertex;
+            pv[i][1] = vb;
+            let prof = b
+                .edge_between(va, vb)
+                .ok_or(TopoError::Precondition("setback: no profile"))?;
+            b.attach_edge_curve(
+                prof,
+                Curve3::Line(
+                    Line3::new(
+                        p_end(j, i),
+                        (p_end(k, i) - p_end(j, i))
+                            .try_normalize()
+                            .ok_or(TopoError::Precondition("setback: profile direction"))?,
+                    )
+                    .map_err(|_| TopoError::Precondition("setback: profile"))?,
+                ),
+                true,
+            );
+            let fin_b = b.fin_ending_at_vertex(lp_h, vb)?;
+            let fin_t2 = b.fin_ending_at_vertex(lp_h, far_v[i][1])?;
+            let split2 = b.split_face(fin_b, fin_t2, None)?;
+            if let Some(surf) = b.faces.get(host).and_then(|x| x.surface)
+                && let Some(nf) = b.faces.get_mut(split2.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            b.attach_edge_curve(
+                split2.edge,
+                Curve3::Line(
+                    Line3::new(p_end(k, i), dir[k])
+                        .map_err(|_| TopoError::Precondition("setback: spring"))?,
+                ),
+                true,
+            );
+            spring_edge[i][1] = split2.edge;
+            kept[i] = if b.face_has_edge(split2.face_new, specs[k].0) {
+                split2.face_old
+            } else {
+                split2.face_new
+            };
+        }
+        // Edge incidences for the far caps and bands.
+        let edge_inc = |j: usize| -> [(usize, usize); 2] {
+            let mut out = [(usize::MAX, usize::MAX); 2];
+            let mut kk = 0usize;
+            for (i, fe) in face_edges.iter().enumerate() {
+                for (s, &jj) in fe.iter().enumerate() {
+                    if jj == j {
+                        out[kk] = (i, s);
+                        kk += 1;
+                    }
+                }
+            }
+            out
+        };
+        // Far caps (the standard perpendicular end treatment).
+        for (j, &(e, r, _)) in specs.iter().enumerate() {
+            let (e0, e1) = ends(e)?;
+            let vfar = if e0 == corner { e1 } else { e0 };
+            let [(ia, sa), (ib, sb)] = edge_inc(j);
+            let (t_end, s_end) = (far_v[ia][sa], far_v[ib][sb]);
+            let cap = b
+                .faces_at_vertex(vfar)
+                .into_iter()
+                .find(|&f| !b.face_has_edge(f, e))
+                .ok_or(TopoError::Precondition("setback: no far cap"))?;
+            let spine = &blends[j].spine;
+            let pc = b
+                .vertices
+                .get(vfar)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let cc = spine.origin + spine.dir * ((pc - spine.origin).dot(spine.dir));
+            let p_t = b
+                .vertices
+                .get(t_end)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let ex = (p_t - cc)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("setback: arc axis"))?;
+            let arc = keel_geom::curve::Circle3::new(cc, ex, spine.dir.cross(ex), r)
+                .map_err(|_| TopoError::Precondition("setback: bad far arc"))?;
+            b.split_blend_cap(cap, t_end, s_end, Curve3::Circle(arc))?;
+        }
+        // Dissolve: the sharps merge the strips into wings, two corner
+        // spurs merge the wings, the third collapses with the corner;
+        // then the standard far chains.
+        for &(e, _, _) in specs {
+            b.kef(e)?;
+        }
+        for &sp in spur_e.iter().take(2) {
+            b.kef(sp)?;
+        }
+        b.kev(spur_e[2])?;
+        for (j, &(e, _, _)) in specs.iter().enumerate() {
+            let _ = e;
+            let (e0, e1) = ends(specs[j].0)?;
+            let vfar = if e0 == corner { e1 } else { e0 };
+            let [(ia, sa), (ib, sb)] = edge_inc(j);
+            let stub = b
+                .edge_between(far_v[ia][sa], vfar)
+                .ok_or(TopoError::Precondition("setback: no far stub"))?;
+            b.kef(stub)?;
+            let spur = b
+                .edge_between(vfar, far_v[ib][sb])
+                .ok_or(TopoError::Precondition("setback: no far spur"))?;
+            b.kev(spur)?;
+        }
+        // Peel the three bands off the merged complex along the exact
+        // cross-section arcs; the hexagon face remains.
+        let mut hex_face = crate::entity::FaceKey::sentinel();
+        for (j, blend) in blends.iter().enumerate() {
+            let [(ia, sa), (ib, sb)] = edge_inc(j);
+            let host = b
+                .faces_around_edge(spring_edge[ia][sa])
+                .into_iter()
+                .find(|&f| f != kept[ia])
+                .ok_or(TopoError::Precondition("setback: no band host"))?;
+            let lp = b
+                .faces
+                .get(host)
+                .map(|x| x.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let (va, vb) = (pv[ia][sa], pv[ib][sb]);
+            let fa = b.fin_ending_at_vertex(lp, va)?;
+            let fb = b.fin_ending_at_vertex(lp, vb)?;
+            let split = b.split_face(fa, fb, None)?;
+            let ey = dir[j]
+                .cross(n[ia])
+                .try_normalize()
+                .ok_or(TopoError::Precondition("setback: arc frame"))?;
+            let arc = keel_geom::curve::Circle3::new(centre[j], n[ia], ey, specs[j].1)
+                .map_err(|_| TopoError::Precondition("setback: bad cross arc"))?;
+            b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+            let band = if b.face_has_edge(split.face_new, spring_edge[ia][sa]) {
+                split.face_new
+            } else {
+                split.face_old
+            };
+            b.attach_face_surface(
+                band,
+                SurfaceGeom::Analytic(Surface3::Cylinder(blend.surface.clone())),
+                true,
+            );
+            hex_face = if band == split.face_new {
+                split.face_old
+            } else {
+                split.face_new
+            };
+        }
+        // Build the Charrot-Gregory evaluator from the hexagon's loop
+        // in fin order.
+        use keel_geom::corner::{CornerPatch, HexSide, QuadPatch, hex_vertex};
+        let lp_hex = b
+            .faces
+            .get(hex_face)
+            .map(|x| x.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let mut side_list: Vec<HexSide> = Vec::new();
+        let mut side_vertices: Vec<crate::entity::VertexKey> = Vec::new();
+        let mut side_edges: Vec<EdgeKey> = Vec::new();
+        {
+            let entry = b
+                .loops
+                .get(lp_hex)
+                .and_then(|l| l.fin)
+                .ok_or(TopoError::Precondition("setback: empty hexagon"))?;
+            let mut cur = entry;
+            loop {
+                let fin = b.fins.get(cur).ok_or(TopoError::StaleKey)?;
+                let edge = b.edges.get(fin.edge).ok_or(TopoError::StaleKey)?;
+                let sv = b
+                    .fin_start_vertex(cur)
+                    .ok_or(TopoError::Precondition("setback: open hexagon"))?;
+                let ps = b
+                    .vertices
+                    .get(sv)
+                    .map(|x| x.point)
+                    .ok_or(TopoError::StaleKey)?;
+                let pe = b
+                    .fin_end_vertex(cur)
+                    .and_then(|v| b.vertices.get(v))
+                    .map(|x| x.point)
+                    .ok_or(TopoError::StaleKey)?;
+                side_vertices.push(sv);
+                side_edges.push(fin.edge);
+                match edge.curve.and_then(|(ck, _)| b.curves.get(ck)) {
+                    Some(Curve3::Circle(c)) => {
+                        let c = *c;
+                        let ang = |p: Vec3| {
+                            (p - c.center)
+                                .dot(c.y_axis)
+                                .atan2((p - c.center).dot(c.x_axis))
+                        };
+                        let (aa, ab) = (ang(ps), ang(pe));
+                        let mut sweep = ab - aa;
+                        let pi = core::f64::consts::PI;
+                        while sweep <= -pi {
+                            sweep += core::f64::consts::TAU;
+                        }
+                        while sweep > pi {
+                            sweep -= core::f64::consts::TAU;
+                        }
+                        // The owning edge's spine axis.
+                        let j = (0..3)
+                            .find(|&j| (centre[j] - c.center).norm() < 1e-9)
+                            .ok_or(TopoError::Precondition("setback: stray arc"))?;
+                        side_list.push(HexSide::Arc {
+                            circle: c,
+                            t0: aa,
+                            t1: aa + sweep,
+                            axis: dir[j],
+                        });
+                    }
+                    _ => side_list.push(HexSide::Seg { a: ps, b: pe }),
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        if side_list.len() != 6 {
+            return Err(TopoError::Precondition("setback: hexagon side count"));
+        }
+        let sides: [HexSide; 6] = side_list
+            .try_into()
+            .map_err(|_| TopoError::Precondition("setback: hexagon sides"))?;
+        let patch =
+            CornerPatch::new(sides).map_err(|_| TopoError::Precondition("setback: bad hexagon"))?;
+        // Central split: midpoints on all six sides, the centre vertex,
+        // six quads.
+        let mut mid_v = [corner; 6];
+        for s in 0..6 {
+            let edge = b.edges.get(side_edges[s]).ok_or(TopoError::StaleKey)?;
+            let mp = match edge.curve.and_then(|(ck, _)| b.curves.get(ck)) {
+                Some(Curve3::Circle(c)) => {
+                    let c = *c;
+                    let (v0, v1) = edge.bounds;
+                    let p0 = b
+                        .vertices
+                        .get(v0)
+                        .map(|x| x.point)
+                        .ok_or(TopoError::StaleKey)?;
+                    let p1 = b
+                        .vertices
+                        .get(v1)
+                        .map(|x| x.point)
+                        .ok_or(TopoError::StaleKey)?;
+                    let ang = |p: Vec3| {
+                        (p - c.center)
+                            .dot(c.y_axis)
+                            .atan2((p - c.center).dot(c.x_axis))
+                    };
+                    let (aa, ab) = (ang(p0), ang(p1));
+                    let mut sweep = ab - aa;
+                    let pi = core::f64::consts::PI;
+                    while sweep <= -pi {
+                        sweep += core::f64::consts::TAU;
+                    }
+                    while sweep > pi {
+                        sweep -= core::f64::consts::TAU;
+                    }
+                    c.point(aa + 0.5 * sweep)
+                }
+                _ => {
+                    let (v0, v1) = edge.bounds;
+                    let p0 = b
+                        .vertices
+                        .get(v0)
+                        .map(|x| x.point)
+                        .ok_or(TopoError::StaleKey)?;
+                    let p1 = b
+                        .vertices
+                        .get(v1)
+                        .map(|x| x.point)
+                        .ok_or(TopoError::StaleKey)?;
+                    (p0 + p1) * 0.5
+                }
+            };
+            mid_v[s] = b.split_edge(side_edges[s], mp)?.vertex;
+        }
+        let centre_pt = patch.eval(0.0, 0.0);
+        let lp_hex = b
+            .faces
+            .get(hex_face)
+            .map(|x| x.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let fin_m0 = b.fin_ending_at_vertex(lp_hex, mid_v[0])?;
+        let vc = b
+            .mev(crate::euler::MevSite::AfterFin(fin_m0), centre_pt)?
+            .vertex;
+        let mut pieces = vec![hex_face];
+        for &mv in mid_v.iter().skip(1) {
+            // Find the piece whose loop carries both vc and this
+            // midpoint, then split between them.
+            let mut done = false;
+            for idx in 0..pieces.len() {
+                let pf = pieces[idx];
+                let lpp = b
+                    .faces
+                    .get(pf)
+                    .map(|x| x.loops[0])
+                    .ok_or(TopoError::StaleKey)?;
+                let (Ok(fc), Ok(fm)) = (
+                    b.fin_ending_at_vertex(lpp, vc),
+                    b.fin_ending_at_vertex(lpp, mv),
+                ) else {
+                    continue;
+                };
+                let sp = b.split_face(fc, fm, None)?;
+                pieces.push(sp.face_new);
+                done = true;
+                let _ = pf;
+                break;
+            }
+            if !done {
+                return Err(TopoError::Precondition("setback: central split"));
+            }
+        }
+        if pieces.len() != 6 {
+            return Err(TopoError::Precondition("setback: quad count"));
+        }
+        // Fit each domain quad and attach the certified NURBS. Quad i
+        // spans (V_i, mid(S_i), centre, mid(S_{i-1})); identify its
+        // face by the 3D hexagon corner vertex it touches.
+        let fit_tol = 1e-4;
+        for (i, &cv) in side_vertices.iter().enumerate() {
+            let quad_face = *pieces
+                .iter()
+                .find(|&&f| {
+                    b.faces_at_vertex(cv).contains(&f) && b.faces_at_vertex(vc).contains(&f)
+                })
+                .ok_or(TopoError::Precondition("setback: lost quad"))?;
+            let prev = (i + 5) % 6;
+            let mid = |s: usize| -> (f64, f64) {
+                let (ax, ay) = hex_vertex(s);
+                let (bx, by) = hex_vertex(s + 1);
+                (0.5 * (ax + bx), 0.5 * (ay + by))
+            };
+            let qp = QuadPatch {
+                patch: &patch,
+                quad: [hex_vertex(i), mid(i), (0.0, 0.0), mid(prev)],
+            };
+            let fit = keel_geom::foreign::fit_foreign_surface(&qp, fit_tol)
+                .map_err(|_| TopoError::Precondition("setback: quad fit failed"))?;
+            if fit.tol_achieved > fit_tol {
+                return Err(TopoError::Precondition(
+                    "setback: quad fit beyond tolerance (decline)",
+                ));
+            }
+            // Outward sense: away from the material corner.
+            let lg = fit
+                .surface
+                .local_geometry(0.5, 0.5)
+                .map_err(|_| TopoError::Precondition("setback: quad geometry"))?;
+            let sense = lg.normal.dot(lg.point - corner_pt) > 0.0;
+            b.attach_face_surface(quad_face, SurfaceGeom::Nurbs(fit.surface), sense);
+        }
+        b.validate()
+            .map_err(|_| TopoError::Precondition("setback: result invalid"))?;
+        Ok(b)
+    }
 }
 
 /// The exact ellipse where a cone meets a plane (the variable-radius
@@ -4724,6 +5271,75 @@ mod tests {
         assert!((v - exact).abs() < 1e-9, "mass {v} != exact {exact}");
         let m = o.mesh_volume();
         assert!((m - exact).abs() < 0.02, "mesh {m} != exact {exact}");
+    }
+
+    #[test]
+    fn setback_corner_blend_fills_the_hexagon_with_certified_quads() {
+        // Dossier 53 milestone 3: UNEQUAL radii at a box corner via
+        // the Varady-Rockwood setback split, the hexagon hole filled
+        // with the Charrot-Gregory patch as six certified bicubic
+        // NURBS quads (the central split). The evaluator's exactness
+        // oracle lives in keel-geom (boundary reproduction + G1); at
+        // the body level the gates are the validator, the fit
+        // certification (declines beyond tolerance), rigorous volume
+        // BOUNDS, and inside/outside spot probes (NURBS faces sit
+        // outside analytic mass properties, the documented M5 line).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let corner = b
+            .vertices
+            .iter()
+            .find(|(_, v)| (v.point - Vec3::new(2., 2., 2.)).norm() < 1e-9)
+            .map(|(k, _)| k)
+            .expect("corner vertex");
+        let edges: Vec<EdgeKey> = b
+            .edges
+            .iter()
+            .filter(|&(_, e)| e.bounds.0 == corner || e.bounds.1 == corner)
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(edges.len(), 3);
+        let specs = [
+            (edges[0], 0.5, 0.8),
+            (edges[1], 0.4, 0.8),
+            (edges[2], 0.3, 0.8),
+        ];
+        let o = b.fillet_corner_setback(&specs).unwrap();
+        assert!(o.validate().is_ok(), "setback body invalid");
+        // 6 box faces (3 kept supports + 3 trimmed far caps) + 3
+        // bands + 6 quad patches.
+        assert_eq!(o.face_keys().len(), 15, "setback face count");
+        let quads = o
+            .face_keys()
+            .into_iter()
+            .filter(|&fk| {
+                o.faces
+                    .get(fk)
+                    .and_then(|f| f.surface)
+                    .map(|(sk, _)| matches!(o.surfaces.get(sk), Some(SurfaceGeom::Nurbs(_))))
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(quads, 6, "six certified NURBS quads");
+        // Rigorous volume bounds: removal is at least the three edge
+        // prisms up to the cross planes, at most the prisms run all
+        // the way plus a box around the whole corner region.
+        let pi = core::f64::consts::PI;
+        let cut = |r: f64| r * r * (1.0 - pi / 4.0);
+        let cuts = cut(0.5) + cut(0.4) + cut(0.3);
+        let lo = 8.0 - cuts * 2.0 - (0.8f64 + 0.5).powi(3);
+        let hi = 8.0 - cuts * (2.0 - 0.8);
+        let v = o.mesh_volume();
+        assert!(v > lo && v < hi, "setback volume {v} outside ({lo}, {hi})");
+        // Spot probes: the corner is cut away; the body interior stays.
+        assert!(
+            o.generalized_winding_number(Vec3::new(1.95, 1.95, 1.95)) < 0.5,
+            "corner must be removed"
+        );
+        assert!(
+            o.generalized_winding_number(Vec3::new(1.0, 1.0, 1.0)) > 0.5,
+            "interior must remain"
+        );
     }
 
     #[test]

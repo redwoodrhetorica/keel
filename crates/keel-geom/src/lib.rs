@@ -8,6 +8,7 @@
 
 pub mod basis;
 pub mod convert;
+pub mod corner;
 pub mod curve;
 pub mod extend;
 pub mod fill;
