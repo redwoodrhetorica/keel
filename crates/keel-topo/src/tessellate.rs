@@ -382,8 +382,28 @@ impl Body {
             cyl.radius,
         );
         // Axial band from the face's circle/arc edges (cap circles and
-        // SSI arcs).
-        let heights = self.cyl_circle_heights(face, origin, ez);
+        // SSI arcs); a vertex-trimmed patch with fewer than two circle
+        // heights (the mitre blend, bounded by one cap arc + ellipse
+        // sub-arcs) takes its band from the raw boundary vertices.
+        let mut heights = self.cyl_circle_heights(face, origin, ez);
+        if heights.len() < 2 {
+            for lk in self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default()
+            {
+                for e in self.ring_edges(lk) {
+                    if let Some(ed) = self.edges.get(e) {
+                        for v in [ed.bounds.0, ed.bounds.1] {
+                            if let Some(p) = self.vertices.get(v).map(|x| x.point) {
+                                heights.push((p - origin).dot(ez));
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if heights.len() < 2 {
             return Vec::new();
         }
@@ -393,6 +413,34 @@ impl Body {
             return Vec::new();
         }
         let (plo, phi_hi) = self.cyl_angular_span(face, origin, ex, ey, ez);
+        // Oblique boundary planes (ellipse arcs / tilted circle arcs:
+        // a mitre seam or a partial-span stop) clamp each ruling, as in
+        // tessellate_cone.
+        let mut cap_planes: Vec<(Vec3, Vec3)> = Vec::new();
+        for lk in self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default()
+        {
+            for e in self.ring_edges(lk) {
+                let Some((ck, _)) = self.edges.get(e).and_then(|x| x.curve) else {
+                    continue;
+                };
+                match self.curves.get(ck) {
+                    Some(keel_geom::curve::Curve3::Ellipse(el)) => {
+                        cap_planes.push((el.center, el.x_axis.cross(el.y_axis)));
+                    }
+                    Some(keel_geom::curve::Curve3::Circle(ci)) => {
+                        let n = ci.x_axis.cross(ci.y_axis);
+                        if n.dot(ez).abs() < 1.0 - 1e-9 {
+                            cap_planes.push((ci.center, n));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         const NV: usize = 16;
         // Adaptive angular count (item 98) from the cylinder radius and the
         // actual angular span; axial NV stays fixed (a cylinder is exact
@@ -402,17 +450,39 @@ impl Body {
         let pt = |phi: f64, v: f64| -> Vec3 {
             origin + (ex * phi.cos() + ey * phi.sin()) * radius + ez * v
         };
+        let ruling_band = |phi: f64| -> (f64, f64) {
+            if cap_planes.is_empty() {
+                return (hlo, hhi);
+            }
+            let radial = ex * phi.cos() + ey * phi.sin();
+            let (mut l, mut h) = (hlo, hhi);
+            for (q, n) in &cap_planes {
+                let dv = ez.dot(*n);
+                if dv.abs() < 1e-12 {
+                    continue;
+                }
+                let base = (origin + radial * radius - *q).dot(*n);
+                let hc = -base / dv;
+                if (hc - l).abs() < (hc - h).abs() {
+                    l = hc;
+                } else {
+                    h = hc;
+                }
+            }
+            (l.min(h), l.max(h))
+        };
         let mut tris = Vec::new();
-        for i in 0..NV {
-            let v0 = hlo + (hhi - hlo) * i as f64 / NV as f64;
-            let v1 = hlo + (hhi - hlo) * (i + 1) as f64 / NV as f64;
-            for j in 0..np {
-                let p0 = plo + (phi_hi - plo) * j as f64 / np as f64;
-                let p1 = plo + (phi_hi - plo) * (j + 1) as f64 / np as f64;
-                let a = pt(p0, v0);
-                let b = pt(p0, v1);
-                let c = pt(p1, v1);
-                let d = pt(p1, v0);
+        for j in 0..np {
+            let p0 = plo + (phi_hi - plo) * j as f64 / np as f64;
+            let p1 = plo + (phi_hi - plo) * (j + 1) as f64 / np as f64;
+            let (l0, h0) = ruling_band(p0);
+            let (l1, h1) = ruling_band(p1);
+            for i in 0..NV {
+                let (f0, f1) = (i as f64 / NV as f64, (i + 1) as f64 / NV as f64);
+                let a = pt(p0, l0 + (h0 - l0) * f0);
+                let b = pt(p0, l0 + (h0 - l0) * f1);
+                let c = pt(p1, l1 + (h1 - l1) * f1);
+                let d = pt(p1, l1 + (h1 - l1) * f0);
                 let rad = |q: Vec3| -> Vec3 {
                     let w = q - origin;
                     (w - ez * w.dot(ez)) * sgn
