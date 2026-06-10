@@ -4179,3 +4179,39 @@ COUNTER: 122 -> 123/144 (item 10). Remaining tractable: 29, 31, 48-51, 54-60, 67
 recognition (58) + unblend (59) -- the inverse pair of the shipped fillet machinery (the
 plane-plane fillet's exact inverse is reconstructable: delete the cylinder face and re-intersect
 the two support planes); dossier 40/28 re-read first.
+
+## Addendum 137 (2026-06-10, attended): BLEND RECOGNITION + UNBLEND (items 58, 59; 123 ->
+125/144)
+
+THE INVERSE PAIR (branch blend-recognize-unblend; dossier 28 sec 6.3: model blends with their
+support data "exactly as the blend-removal literature describes the inverse"):
+
+58 RECOGNITION: Body::recognize_blends(angular_tol) -> Vec<RecognizedBlend { face, radius,
+supports, spring_edges }>. A blend face is a CYLINDRICAL (edge fillet) or TOROIDAL (cap rim)
+face TANGENT to exactly two distinct neighbors along shared edges -- tangency = parallel
+outward normals at the shared-edge midpoint (project + local_geometry, sense-adjusted). Radius =
+cylinder radius / torus minor. Negative control: a cylinder primitive's barrel meets its caps at
+90 degrees and is NOT recognized; planar faces (chamfers) are never candidates by construction.
+
+59 UNBLEND: Body::unblend(face, tol) -- the EXACT inverse of fillet_edge for plane-plane
+supports. The sharp edge is the support planes' intersection line; each end-arc's sharp vertex
+is that line cut by the arc's cap plane. Surgery (clone + gates, the heal.rs doctrine): move the
+four spring-end vertices onto the sharp positions, merge each arc's endpoint pair, splice the
+arc fins out of their loop rings (ids unregistered -- the IdMapInconsistent lesson: raw arena
+removals MUST unregister), drop the arcs, then kef the first spring edge (the blend face merges
+into support A; the survivor is re-pointed at A's plane since kef's keep-side is fin-order
+dependent), and the second spring edge BECOMES the sharp edge, carrying the intersection line.
+Gates: validate + mass == mesh, else DECLINE with the body untouched. Toroidal and
+curved-support unblends are follow-ups.
+
+ORACLE (the round trip): box -> fillet_edge(0.5) -> recognize exactly one blend (radius 0.5)
+-> unblend -> the EXACT original box: V8 E12 F6, volume 8, mass == mesh to 1e-9, and
+recognition then finds nothing. Construction and removal are mutual inverses on the rung-1
+fillet.
+
+CI: fmt, clippy -D warnings, workspace 123 + 77 + 213 (+2) green. No fuzz: additive module
+(recognition is read-only; unblend is clone-gated surgery; no boolean/imprint path change).
+
+COUNTER: 123 -> 125/144 (items 58, 59). Remaining tractable: 29, 31, 48-51, 54-57, 60, 67.
+NEXT: 31 selective booleans, then the remaining blend depth (48 variable radius is the
+spine-with-varying-r generalization; 54-57 are policy layers on the same engine).
