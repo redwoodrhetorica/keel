@@ -26,6 +26,7 @@ pub mod ops;
 pub mod partition;
 pub mod pmc;
 pub mod query;
+pub mod replace;
 pub mod session;
 pub mod sheet;
 pub mod shell;

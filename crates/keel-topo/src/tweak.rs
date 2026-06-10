@@ -418,6 +418,93 @@ impl Body {
 mod tests {
     use super::*;
 
+    /// Item 80: surface/face geometry DEFORMATION as the composed
+    /// tweak/offset/taper workflow (the capability-map row is the
+    /// workflow over items 35-39/78). One body, deformations in
+    /// sequence, exact volume at each step, valid + mass == mesh
+    /// throughout.
+    #[test]
+    fn deformation_workflow_composes_tweaks() {
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap(); // vol 8
+        // 1. Offset the top outward by 1: vol 12.
+        let top = top_face(&b);
+        b.offset_face(top, 1.0).unwrap();
+        assert!(b.validate().is_ok());
+        let v = b.mass_properties().unwrap().volume;
+        assert!((v - 12.0).abs() < 1e-9, "after offset: {v}");
+        // 2. Move the top up another 1: vol 16.
+        let top = top_face(&b);
+        b.move_face(top, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        assert!(b.validate().is_ok());
+        let v = b.mass_properties().unwrap().volume;
+        assert!((v - 16.0).abs() < 1e-9, "after move: {v}");
+        // 3. Taper the +x side inward about its bottom edge: the body
+        // stays valid and self-consistent and loses a wedge.
+        let side = {
+            let mut best = (f64::NEG_INFINITY, None);
+            for f in b.face_keys() {
+                if let Some(vs) = b.face_loop_vertices(f) {
+                    let n = vs.len() as f64;
+                    let x: f64 = vs
+                        .iter()
+                        .filter_map(|&v| b.vertices.get(v))
+                        .map(|p| p.point.x)
+                        .sum::<f64>()
+                        / n;
+                    if x > best.0 {
+                        best = (x, Some(f));
+                    }
+                }
+            }
+            best.1.unwrap()
+        };
+        // Negative angle = lean inward about the pivot edge: the 2x2x4
+        // prism loses a wedge of 0.5 * 4 * (4 * 0.25) * ... = 4.
+        b.taper_face(
+            side,
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            -(0.25_f64.atan()),
+        )
+        .unwrap();
+        assert!(b.validate().is_ok(), "after taper: {:?}", b.validate());
+        let v = b.mass_properties().unwrap().volume;
+        let mv = b.mesh_volume();
+        assert!(
+            (v - mv).abs() < 1e-9,
+            "deformed body must stay mass == mesh ({v} vs {mv})"
+        );
+        assert!(
+            (v - 12.0).abs() < 1e-9,
+            "inward taper must remove the 4-wedge (got {v})"
+        );
+    }
+
+    /// Item 140 (thread-safety half): a Body is Send + Sync by
+    /// construction (owned data, no interior mutability), so concurrent
+    /// READS are safe; mutation requires &mut (exclusive) by the borrow
+    /// checker. SMP-parallel algorithms are the opportunistic half and
+    /// remain follow-ups.
+    #[test]
+    fn concurrent_queries_are_safe() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Body>();
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 3.0, 4.0).unwrap();
+        let b = &b;
+        std::thread::scope(|s| {
+            let h1 = s.spawn(move || b.mass_properties().unwrap().volume);
+            let h2 = s.spawn(move || b.mesh_volume());
+            let h3 = s.spawn(move || b.facets(None).len());
+            let h4 = s.spawn(move || b.surface_area());
+            assert!((h1.join().unwrap() - 24.0).abs() < 1e-9);
+            assert!((h2.join().unwrap() - 24.0).abs() < 1e-9);
+            assert!(h3.join().unwrap() >= 12);
+            assert!((h4.join().unwrap() - 52.0).abs() < 1e-9);
+        });
+    }
+
     /// The planar face whose loop vertices have the greatest mean z (the
     /// "top" of an axis-aligned block).
     fn top_face(b: &Body) -> FaceKey {
