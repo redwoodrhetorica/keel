@@ -1442,22 +1442,135 @@ fn stitch_by_import(
     finalize_imported_assembly(dst, rec, faces, inf, solid, vtol)
 }
 
-/// The shared back half of import-and-glue assembly (used by the boolean
-/// stitch AND by `knit`): merge coincident vertices, glue coincident free /
-/// dangling edges into radial pairs, assert the planar shell-closure
-/// invariant, partition into solid / void / infinite regions (enclosed-void
-/// aware), then validate. Takes the body with its kept faces already
-/// imported (front -> `inf`, back -> `solid`) and the live op recorder.
-pub(crate) fn finalize_imported_assembly(
+/// Sheet-solid boolean (parity item 28, sheet-target MVP): trim the
+/// open SHEET against the SOLID tool. Intersection keeps the part of
+/// the sheet INSIDE the solid, Difference the part OUTSIDE (a tool
+/// punching through the sheet interior leaves a holed sheet, riding
+/// the interior-ring imprint). Union of mixed dimension is undefined
+/// and declines, as do coincident/tangent contacts (general position
+/// MVP, the same boundary the solid boolean started from). The result
+/// is an open sheet body: faces double-sided in the void, free edges.
+/// Sheet-SHEET booleans remain a follow-up (imprint exists; the kept-
+/// side semantics need defining).
+pub fn boolean_sheet_solid(
+    sheet: &Body,
+    tool: &Body,
+    op: BoolOp,
+    tol: f64,
+) -> Result<Body, BoolFault> {
+    use crate::query::BodyClass;
+    use std::collections::BTreeMap;
+    if sheet.body_class() != BodyClass::Sheet {
+        return Err(BoolFault::AssemblyFailed(
+            "boolean_sheet_solid: target must be a sheet body",
+        ));
+    }
+    if tool.body_class() != BodyClass::Solid {
+        return Err(BoolFault::AssemblyFailed(
+            "boolean_sheet_solid: tool must be a solid body",
+        ));
+    }
+    let want = match op {
+        BoolOp::Intersection => FaceClass::InsideOther,
+        BoolOp::Difference => FaceClass::OutsideOther,
+        BoolOp::Union => {
+            return Err(BoolFault::AssemblyFailed(
+                "boolean_sheet_solid: union of mixed dimension is undefined",
+            ));
+        }
+    };
+    let (seams, mut faults) = seam_curves(sheet, tool, tol);
+    let ia = imprint_operand(sheet, &seams, |s| s.face_a, tol, &mut faults);
+    if let Some(f) = faults.into_iter().next() {
+        return Err(f);
+    }
+    let ca = classify_faces(&ia.body, tool, tol);
+    let mut kept = Vec::new();
+    for (f, c) in &ca {
+        if *c == want {
+            kept.push(*f);
+        } else if !matches!(c, FaceClass::InsideOther | FaceClass::OutsideOther) {
+            return Err(BoolFault::AssemblyFailed(
+                "boolean_sheet_solid: coincident/unclassifiable contact (declined)",
+            ));
+        }
+    }
+    if kept.is_empty() {
+        return Err(BoolFault::AssemblyFailed(
+            "boolean_sheet_solid: empty result",
+        ));
+    }
+    // Import the kept sheet fragments, BOTH sides facing the void.
+    let mut dst = Body::new();
+    let inf = dst.infinite_region();
+    let mut rec = dst.begin_op();
+    let mut vmap = BTreeMap::new();
+    let mut emap = BTreeMap::new();
+    let mut faces = Vec::new();
+    for f in kept {
+        let nf = import_face(
+            &mut dst,
+            &ia.body,
+            f,
+            Operand::A,
+            false,
+            &mut rec,
+            &mut vmap,
+            &mut emap,
+            inf,
+            inf,
+        )
+        .ok_or(BoolFault::AssemblyFailed("import failed"))?;
+        faces.push(nf);
+    }
+    finalize_imported_sheet(dst, rec, faces, inf, tol.max(1e-7))
+}
+
+/// Sheet-result finalize (item 28): merge + glue, then one shell per
+/// connected component holding BOTH face sides in the void (a sheet
+/// borders the ambient void on both sides). No solid region, no
+/// closure invariant: free edges are the nature of an open sheet.
+fn finalize_imported_sheet(
     mut dst: Body,
     mut rec: crate::body::OpRecorder,
     faces: Vec<FaceKey>,
     inf: crate::entity::RegionKey,
-    solid: crate::entity::RegionKey,
     vtol: f64,
 ) -> Result<Body, BoolFault> {
-    use crate::entity::{EdgeKey, Side, VertexKey};
+    use crate::entity::Side;
     use crate::lineage::Derivation;
+    merge_and_glue_imported(&mut dst, &mut rec, vtol);
+    for comp in connected_face_components(&dst, &faces) {
+        let shell = dst.new_shell(&mut rec, inf, Derivation::Created);
+        if let Some(s) = dst.shells.get_mut(shell) {
+            s.faces = comp
+                .iter()
+                .flat_map(|&f| [(f, Side::Front), (f, Side::Back)])
+                .collect();
+        }
+        if let Some(r) = dst.regions.get_mut(inf) {
+            r.shells.push(shell);
+        }
+        for &f in &comp {
+            if let Some(face) = dst.faces.get_mut(f) {
+                face.front_region = inf;
+                face.back_region = inf;
+            }
+        }
+    }
+    let _ = rec.finish();
+    if dst.validate().is_err() {
+        return Err(BoolFault::AssemblyFailed("stitched sheet invalid"));
+    }
+    Ok(dst)
+}
+
+/// Merge coincident vertices and glue dangling (radial-1) edges into
+/// radial pairs -- the representation-independent half of import-and-
+/// glue, shared by the solid finalize below and the SHEET finalize
+/// (item 28).
+fn merge_and_glue_imported(dst: &mut Body, rec: &mut crate::body::OpRecorder, vtol: f64) {
+    use crate::entity::{EdgeKey, VertexKey};
     // Merge coincident vertices (the operands' independent seam vertices
     // along the shared SSI curve land at the same point).
     let vkeys: Vec<VertexKey> = dst.vertices.iter().map(|(k, _)| k).collect();
@@ -1492,7 +1605,7 @@ pub(crate) fn finalize_imported_assembly(
                     }
                 }
                 if let Some(id) = dst.vertices.get(vkeys[j]).map(|v| v.id) {
-                    dst.unregister(&mut rec, id);
+                    dst.unregister(rec, id);
                 }
                 dst.vertices.remove(vkeys[j]);
                 alive[j] = false;
@@ -1546,7 +1659,7 @@ pub(crate) fn finalize_imported_assembly(
                     e.radial.extend(moved);
                 }
                 if let Some(id) = dst.edges.get(dangling[j]).map(|e| e.id) {
-                    dst.unregister(&mut rec, id);
+                    dst.unregister(rec, id);
                 }
                 dst.edges.remove(dangling[j]);
                 used[i] = true;
@@ -1555,6 +1668,25 @@ pub(crate) fn finalize_imported_assembly(
             }
         }
     }
+}
+
+/// The shared back half of import-and-glue assembly (used by the boolean
+/// stitch AND by `knit`): merge coincident vertices, glue coincident free /
+/// dangling edges into radial pairs, assert the planar shell-closure
+/// invariant, partition into solid / void / infinite regions (enclosed-void
+/// aware), then validate. Takes the body with its kept faces already
+/// imported (front -> `inf`, back -> `solid`) and the live op recorder.
+pub(crate) fn finalize_imported_assembly(
+    mut dst: Body,
+    mut rec: crate::body::OpRecorder,
+    faces: Vec<FaceKey>,
+    inf: crate::entity::RegionKey,
+    solid: crate::entity::RegionKey,
+    vtol: f64,
+) -> Result<Body, BoolFault> {
+    use crate::entity::Side;
+    use crate::lineage::Derivation;
+    merge_and_glue_imported(&mut dst, &mut rec, vtol);
 
     // Shell-closure invariant (dossier 47 Q1 / synthesis step 5): every kept
     // coedge must land in a radial pairing (or a complete radial cycle). After
@@ -2985,6 +3117,89 @@ mod tests {
         b.cylinder(Frame3::from_z(base, Vec3::new(0., 0., 1.)).unwrap(), r, h)
             .unwrap();
         b
+    }
+
+    #[test]
+    fn sheet_solid_boolean_trims_and_punches() {
+        // Item 28 (sheet-target MVP): a 4x4 sheet at z=0 against a 2x2x2
+        // solid punching through its middle. Intersection = the interior
+        // 2x2 patch; Difference = the holed ring sheet (area 12); Union
+        // of mixed dimension declines.
+        use crate::query::BodyClass;
+        let sheet = Body::planar_sheet(&[
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(4.0, 0.0, 0.0),
+            Vec3::new(4.0, 4.0, 0.0),
+            Vec3::new(0.0, 4.0, 0.0),
+        ])
+        .unwrap();
+        let tool = block(Vec3::new(1.0, 1.0, -1.0), Vec3::new(2.0, 2.0, 2.0));
+
+        let inside = boolean_sheet_solid(&sheet, &tool, BoolOp::Intersection, 1e-7).unwrap();
+        assert!(inside.validate().is_ok(), "inside sheet invalid");
+        assert_eq!(inside.body_class(), BodyClass::Sheet);
+        assert_eq!(inside.face_keys().len(), 1, "one interior patch");
+        let a = inside.face_area(inside.face_keys()[0]);
+        assert!((a - 4.0).abs() < 1e-9, "interior patch area {a} != 4");
+
+        let outside = boolean_sheet_solid(&sheet, &tool, BoolOp::Difference, 1e-7).unwrap();
+        assert!(outside.validate().is_ok(), "ring sheet invalid");
+        assert_eq!(outside.body_class(), BodyClass::Sheet);
+        assert_eq!(outside.face_keys().len(), 1, "one holed ring face");
+        assert_eq!(
+            outside.counts().inner_rings,
+            1,
+            "the punch is an inner ring"
+        );
+        // SIGNED area against the sheet normal: the ring fan is reversed,
+        // so it subtracts: 16 - 4 = 12.
+        let n = Vec3::new(0.0, 0.0, 1.0);
+        let signed: f64 = outside
+            .tessellate_face(outside.face_keys()[0])
+            .iter()
+            .map(|t| 0.5 * n.dot((t[1] - t[0]).cross(t[2] - t[0])))
+            .sum();
+        assert!(
+            (signed.abs() - 12.0).abs() < 1e-9,
+            "holed sheet area {signed} != 12"
+        );
+
+        assert!(
+            boolean_sheet_solid(&sheet, &tool, BoolOp::Union, 1e-7).is_err(),
+            "mixed-dimension union must decline"
+        );
+    }
+
+    #[test]
+    fn sheet_solid_guillotine_difference() {
+        // A solid overlapping one side: Difference keeps the open-chain
+        // trimmed remainder (no ring), Intersection the covered strip.
+        use crate::query::BodyClass;
+        let sheet = Body::planar_sheet(&[
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(4.0, 0.0, 0.0),
+            Vec3::new(4.0, 2.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+        ])
+        .unwrap();
+        // Covers x in [3,5]: strip 1x2 inside.
+        let tool = block(Vec3::new(3.0, -1.0, -1.0), Vec3::new(2.0, 4.0, 2.0));
+        let outside = boolean_sheet_solid(&sheet, &tool, BoolOp::Difference, 1e-7).unwrap();
+        assert!(outside.validate().is_ok());
+        assert_eq!(outside.body_class(), BodyClass::Sheet);
+        let a: f64 = outside
+            .face_keys()
+            .iter()
+            .map(|&f| outside.face_area(f))
+            .sum();
+        assert!((a - 6.0).abs() < 1e-9, "kept sheet area {a} != 6");
+        let inside = boolean_sheet_solid(&sheet, &tool, BoolOp::Intersection, 1e-7).unwrap();
+        let a: f64 = inside
+            .face_keys()
+            .iter()
+            .map(|&f| inside.face_area(f))
+            .sum();
+        assert!((a - 2.0).abs() < 1e-9, "covered strip area {a} != 2");
     }
 
     #[test]
