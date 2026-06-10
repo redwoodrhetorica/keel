@@ -43,7 +43,30 @@ impl Body {
                 "foreign_sheet: evaluator does not fit to NURBS within tol (declined)",
             ));
         }
-        let s = fit.surface;
+        Body::nurbs_sheet_body(fit.surface)
+    }
+
+    /// Surface from boundary curves, n-sided (parity item 68): fill a
+    /// closed chain of boundary sides with one certified NURBS patch
+    /// (Coons interior, dossier 26 sec 1.1) and build the sheet body.
+    /// DECLINES when the boundary certificate misses `tol`.
+    pub fn filled_sheet(sides: &[Vec<keel_math::vec::Vec3>], tol: f64) -> Result<Body, TopoError> {
+        let fill = keel_geom::fill::fill_boundary(sides, tol).map_err(geom_err)?;
+        if fill.tol_achieved > tol {
+            return Err(TopoError::Precondition(
+                "filled_sheet: boundary does not certify within tol (declined)",
+            ));
+        }
+        Body::nurbs_sheet_body(fill.surface)
+    }
+
+    /// Build the open NURBS sheet lamina for a full-domain patch: the
+    /// `planar_sheet`-shaped topology (one double-sided face, four free
+    /// edges carrying the EXACT boundary iso-curves). Shared by
+    /// `foreign_sheet` (114) and `filled_sheet` (68).
+    pub(crate) fn nurbs_sheet_body(
+        s: keel_geom::nurbs_surface::NurbsSurface,
+    ) -> Result<Body, TopoError> {
         let ((u0, u1), (v0, v1)) = s.domain();
         // Ring corners (clamped surface: corners are exact net points).
         let corners = [
@@ -232,6 +255,54 @@ mod tests {
         assert!(
             tris.iter().flatten().any(|p| (*p - c).norm() < 1e-9),
             "tessellation must reach the patch corner"
+        );
+    }
+
+    fn straight(a: Vec3, b: Vec3, n: usize) -> Vec<Vec3> {
+        (0..n)
+            .map(|i| a + (b - a) * (i as f64 / (n - 1) as f64))
+            .collect()
+    }
+
+    #[test]
+    fn filled_sheet_flat_chains_to_native_plane() {
+        // Item 68 end-to-end: flat boundary -> Coons fill -> sheet body
+        // -> simplify recovers the native plane -> thicken to a slab.
+        let p = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+        let sides = vec![
+            straight(p(0., 0.), p(2., 0.), 5),
+            straight(p(2., 0.), p(2., 2.), 5),
+            straight(p(2., 2.), p(0., 2.), 5),
+            straight(p(0., 2.), p(0., 0.), 5),
+        ];
+        let mut sheet = Body::filled_sheet(&sides, 1e-9).unwrap();
+        assert!(sheet.validate().is_ok(), "filled sheet invalid");
+        let rep = sheet.simplify(1e-9);
+        assert_eq!(rep.surfaces_recovered, 1, "flat fill must recover a plane");
+        let slab = sheet.thicken(0.5).unwrap();
+        let v = slab.mass_properties().unwrap().volume;
+        assert!((v - 2.0).abs() < 1e-9, "filled slab volume {v} != 2");
+    }
+
+    #[test]
+    fn filled_sheet_saddle_validates_and_tessellates() {
+        let p = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
+        let sides = vec![
+            straight(p(0., 0., 0.), p(2., 0., 0.), 9),
+            straight(p(2., 0., 0.), p(2., 2., 1.), 9),
+            straight(p(2., 2., 1.), p(0., 2., 0.), 9),
+            straight(p(0., 2., 0.), p(0., 0., 0.), 9),
+        ];
+        let sheet = Body::filled_sheet(&sides, 1e-6).unwrap();
+        assert!(sheet.validate().is_ok(), "saddle sheet invalid");
+        assert_eq!(
+            sheet.body_class(),
+            crate::query::BodyClass::Sheet,
+            "open fill is a sheet body"
+        );
+        assert!(
+            !sheet.tessellate_face(sheet.face_keys()[0]).is_empty(),
+            "saddle fill must tessellate"
         );
     }
 
