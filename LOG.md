@@ -3768,3 +3768,43 @@ ASSEMBLY DAG (82-85), PERSISTENCE rollback layer (123/124/125/127). Roadmap real
 ~110-120; remaining tractable kernel items thin out into the invasive (foreign geometry 114-116
 needs a Surface3::Foreign variant threaded through SSI/tessellation), version control 128, and
 healing 130/132 (need imperfect/recognized geometry to exercise).
+
+## Addendum 127 (2026-06-09, attended): SESSION-END RESUME ANCHOR (session buttoned up; counter 100/144)
+
+WHERE WE ARE. master HEAD = e138f77, all green: workspace 108 math + 77 geom + 177 topo, clippy
+-D warnings, fmt, fuzz_boolean clean. Tree clean, all work merged (NOT pushed -- push only if
+asked; master is well ahead of origin). CodeGraph index synced (file watcher current). This
+session ran a +18 counter sprint 82->100 plus the #21/#16 Phase-0a keystones, the enclosed-void
+3-region stitch, the sheet-body representation (first non-solid body kind, crates/keel-topo/src/
+sheet.rs), the finalize_imported_assembly extraction (boolean.rs, shared by stitch + knit), the
+assembly layer (assembly.rs), the partition/persistence layer (partition.rs), and the prism
+CW-base correctness fix. Per-item detail is in Addenda 104-126.
+
+COMPLETE: SHELL FAMILY 41-45, PHASE 5 sheet ops 70/71/72/76/77, ASSEMBLY DAG 82-85, PERSISTENCE
+rollback 123/124/125/127.
+
+FOREIGN GEOMETRY (114-116) -- ARCHITECTURE CORRECTED before building (a brief /plan-eng-review
+investigation, cancelled mid-run but this finding kept): the earlier note "needs a Surface3::
+Foreign variant threaded through SSI/tessellation" is the WRONG shape. Facts from the code:
+Surface3 (keel-geom) is ANALYTIC-ONLY {Plane,Cylinder,Cone,Sphere,Torus}; non-analytic geometry
+lives one level up in SurfaceGeom { Analytic(Surface3), Nurbs(NurbsSurface) } (entity.rs:56),
+matched in ~9 files. A Surface3::Foreign / SurfaceGeom::Foreign(Box<dyn ...>) variant would (a)
+break the body/partition serde (a dyn trait object is not Serialize/Deserialize -- it would
+poison items 126/127 just shipped) and (b) cost a ~15-site match blast radius. RIGHT APPROACH
+(aligns with the kernel's founding NURBS-AS-CACHE doctrine): foreign geometry is an INPUT -- a
+host-implemented evaluator trait (ForeignSurface{eval(u,v)->Vec3, domain}, ForeignCurve) consumed
+by a constructor (e.g. Body::add_foreign_face(&dyn ForeignSurface, tol)) that SAMPLES + FITS to a
+certified NURBS face (reusing the M7a fit + M8 recover/certify machinery), storing a standard
+Nurbs SurfaceGeom. The procedural evaluator is the truth, the NURBS is the cache. Non-invasive (no
+new SurfaceGeom variant), serde-safe, and honest (a black-box evaluator has no exact predicates
+anyway -> NURBS-tolerant is the correct representation). This is the recommended next milestone
+plan; the variant approach is rejected.
+
+NEXT (pick one): (1) foreign geometry 114-116 via the evaluator->fit-to-NURBS plan above (~3
+items, non-invasive); (2) DEEPEN existing MVPs (no counter tick, higher correctness value):
+curved/multi-face generalizations of shell (offset_body is convex-planar only) and the sheet ops
+(thicken/trim/extend are single-planar-face only), or the oblique-cut blend classes; (3) version
+control 128 (thin over the partition pmarks already built -- watch for double-counting). Standing
+rules unchanged: re-read the relevant dossier first + cite it; data-first diagnose before fixing;
+verify the SUCCESS branch explicitly (never read "X or decline" as "X"); branch-per-milestone, run
+the exact CI triplet + a fuzz_boolean soak before merge, then a LOG addendum; NO EM-DASHES.
