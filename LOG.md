@@ -5152,3 +5152,22 @@ declines; crossing sheets decline.
 
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 241 (+1) green; fuzz_boolean soak (the
 pre-pass fix changes coincident boolean internals): 10 minutes, 662 runs, clean.
+
+## Addendum 167 (2026-06-10, attended): SURGERY PARAMETERIZATION, FIRST EXTRACTION (the cap skeleton)
+
+Branch surgery-extract (the queued tech-debt item): the blend CAP-SPLIT skeleton (find the cap
+face, split it between the fins ending at the two spring vertices, copy the support surface to
+the new piece, attach the end-arc curve) existed as SEVEN near-literal copies. It is now ONE
+method, Body::split_blend_cap(cap, a_end, b_end, arc) -> EdgeKey, adopted by the variable-
+radius cone, G2 quintic, conic-strip, hold-line, face-face (which consumes the returned edge
+for its signed arc sweep), mitre, and octant engines. Each engine keeps its own CAP SELECTOR
+and ARC GEOMETRY, which genuinely differ; only the topology skeleton was duplicated.
+Behavior-preserving: all 241 keel-topo tests green unchanged, ~140 lines removed.
+
+REMAINING SLICES (queued, not blockers): the dissolve-chain (kef stub / kef / kev spur)
+sequences still repeat per engine; the spring-imprint endpoint-kind dispatch (dossier 54
+OnBoundary / AtSharpStop / AtRunout) generalizes imprint_spring_line when the overflow
+handlers land.
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 241 green. No soak: behavior-preserving
+refactor, no boolean/tessellation logic change (the suite is the gate).

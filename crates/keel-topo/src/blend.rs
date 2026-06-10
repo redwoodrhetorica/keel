@@ -404,6 +404,36 @@ impl Body {
         }
     }
 
+    /// The shared blend CAP-SPLIT skeleton (surgery parameterization,
+    /// first extraction): split `cap` between the fins ending at the
+    /// two given vertices, copy the support surface onto the new
+    /// piece, attach the supplied end-arc curve, and return the new
+    /// edge. Each blend engine keeps its own cap SELECTOR and ARC
+    /// GEOMETRY (those genuinely differ); the topology skeleton is one.
+    fn split_blend_cap(
+        &mut self,
+        cap: crate::entity::FaceKey,
+        a_end: crate::entity::VertexKey,
+        b_end: crate::entity::VertexKey,
+        arc: Curve3,
+    ) -> Result<EdgeKey, TopoError> {
+        let lp = self
+            .faces
+            .get(cap)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let fin_a = self.fin_ending_at_vertex(lp, a_end)?;
+        let fin_b = self.fin_ending_at_vertex(lp, b_end)?;
+        let split = self.split_face(fin_a, fin_b, None)?;
+        if let Some(surf) = self.faces.get(cap).and_then(|f| f.surface)
+            && let Some(nf) = self.faces.get_mut(split.face_new)
+        {
+            nf.surface = Some(surf);
+        }
+        self.attach_edge_curve(split.edge, arc, true);
+        Ok(split.edge)
+    }
+
     /// Trim `face` to `spring` by splitting its two cap-side boundary
     /// edges (at the vertices near `va`/`vb`) at the spring crossings and
     /// splitting the face. Returns (spring edge, strip face still carrying
@@ -958,22 +988,9 @@ impl Body {
                 .get(v_corner)
                 .map(|x| x.point)
                 .ok_or(TopoError::StaleKey)?;
-            let lp = b
-                .faces
-                .get(cap)
-                .map(|f| f.loops[0])
-                .ok_or(TopoError::StaleKey)?;
-            let fin_a = b.fin_ending_at_vertex(lp, a_end)?;
-            let fin_b = b.fin_ending_at_vertex(lp, b_end)?;
-            let split = b.split_face(fin_a, fin_b, None)?;
-            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
-                && let Some(nf) = b.faces.get_mut(split.face_new)
-            {
-                nf.surface = Some(surf);
-            }
             let ell = cone_plane_ellipse(&cone, cap_p, cap_n)
                 .ok_or(TopoError::Precondition("fillet: cap ellipse"))?;
-            b.attach_edge_curve(split.edge, Curve3::Ellipse(ell), true);
+            b.split_blend_cap(cap, a_end, b_end, Curve3::Ellipse(ell))?;
             Ok(())
         };
         split_cap(&mut b, va_k, aa, ba)?;
@@ -1124,19 +1141,6 @@ impl Body {
                 .into_iter()
                 .find(|f| *f != strip1 && *f != strip2)
                 .ok_or(TopoError::Precondition("g2: no cap face"))?;
-            let lp = b
-                .faces
-                .get(cap)
-                .map(|f| f.loops[0])
-                .ok_or(TopoError::StaleKey)?;
-            let fin_a = b.fin_ending_at_vertex(lp, a_end)?;
-            let fin_b = b.fin_ending_at_vertex(lp, b_end)?;
-            let split = b.split_face(fin_a, fin_b, None)?;
-            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
-                && let Some(nf) = b.faces.get_mut(split.face_new)
-            {
-                nf.surface = Some(surf);
-            }
             let corner = b
                 .vertices
                 .get(v_corner)
@@ -1150,7 +1154,7 @@ impl Body {
                 None,
             )
             .map_err(|_| TopoError::Precondition("g2: bad cap arc"))?;
-            b.attach_edge_curve(split.edge, Curve3::Nurbs(arc), true);
+            b.split_blend_cap(cap, a_end, b_end, Curve3::Nurbs(arc))?;
             Ok(())
         };
         split_cap(&mut b, va_k, aa, ba)?;
@@ -1283,19 +1287,6 @@ impl Body {
                 .into_iter()
                 .find(|f| *f != strip1 && *f != strip2)
                 .ok_or(TopoError::Precondition("conic: no cap face"))?;
-            let lp = b
-                .faces
-                .get(cap)
-                .map(|f| f.loops[0])
-                .ok_or(TopoError::StaleKey)?;
-            let fin_a = b.fin_ending_at_vertex(lp, a_end)?;
-            let fin_b = b.fin_ending_at_vertex(lp, b_end)?;
-            let split = b.split_face(fin_a, fin_b, None)?;
-            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
-                && let Some(nf) = b.faces.get_mut(split.face_new)
-            {
-                nf.surface = Some(surf);
-            }
             let corner = b
                 .vertices
                 .get(v_corner)
@@ -1318,7 +1309,7 @@ impl Body {
                 Some(vec![1.0, w, 1.0]),
             )
             .map_err(|_| TopoError::Precondition("conic: bad cap arc"))?;
-            b.attach_edge_curve(split.edge, Curve3::Nurbs(arc), true);
+            b.split_blend_cap(cap, a_end, b_end, Curve3::Nurbs(arc))?;
             Ok(())
         };
         split_cap(&mut b, va_k, aa, ba)?;
@@ -1459,19 +1450,6 @@ impl Body {
                 .into_iter()
                 .find(|f| *f != strip1 && *f != strip2)
                 .ok_or(TopoError::Precondition("hold: no cap face"))?;
-            let lp = b
-                .faces
-                .get(cap)
-                .map(|f| f.loops[0])
-                .ok_or(TopoError::StaleKey)?;
-            let fin_a = b.fin_ending_at_vertex(lp, a_end)?;
-            let fin_b = b.fin_ending_at_vertex(lp, b_end)?;
-            let split = b.split_face(fin_a, fin_b, None)?;
-            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
-                && let Some(nf) = b.faces.get_mut(split.face_new)
-            {
-                nf.surface = Some(surf);
-            }
             let pc = b
                 .vertices
                 .get(v_corner)
@@ -1488,7 +1466,7 @@ impl Body {
                 .ok_or(TopoError::Precondition("hold: arc axis"))?;
             let arc = keel_geom::curve::Circle3::new(centre, ex, spine.dir.cross(ex), r)
                 .map_err(|_| TopoError::Precondition("hold: bad arc"))?;
-            b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+            b.split_blend_cap(cap, a_end, b_end, Curve3::Circle(arc))?;
             Ok(())
         };
         split_cap(&mut b, va_k, aa, ba)?;
@@ -1653,19 +1631,6 @@ impl Body {
                     }
                 })
                 .ok_or(TopoError::Precondition("faceface: no cap face"))?;
-            let lp = b
-                .faces
-                .get(cap)
-                .map(|f| f.loops[0])
-                .ok_or(TopoError::StaleKey)?;
-            let fin_a = b.fin_ending_at_vertex(lp, s1_end)?;
-            let fin_b = b.fin_ending_at_vertex(lp, s2_end)?;
-            let split = b.split_face(fin_a, fin_b, None)?;
-            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
-                && let Some(nf) = b.faces.get_mut(split.face_new)
-            {
-                nf.surface = Some(surf);
-            }
             let p_end = b
                 .vertices
                 .get(s1_end)
@@ -1678,15 +1643,15 @@ impl Body {
             let ey = axis_dir.cross(ex);
             let arc = keel_geom::curve::Circle3::new(centre, ex, ey, r)
                 .map_err(|_| TopoError::Precondition("faceface: bad arc"))?;
-            b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+            let new_edge = b.split_blend_cap(cap, s1_end, s2_end, Curve3::Circle(arc))?;
             let sweep = if ey.dot(n_wall) >= 0.0 {
                 core::f64::consts::PI
             } else {
                 -core::f64::consts::PI
             };
-            let (b0, _) = b.edges.get(split.edge).ok_or(TopoError::StaleKey)?.bounds;
+            let (b0, _) = b.edges.get(new_edge).ok_or(TopoError::StaleKey)?.bounds;
             let signed = if b0 == s1_end { sweep } else { -sweep };
-            b.set_edge_arc_sweep(split.edge, signed);
+            b.set_edge_arc_sweep(new_edge, signed);
             Ok(())
         };
         split_cap(&mut b, aa, ba)?;
@@ -2446,19 +2411,6 @@ impl Body {
                 .into_iter()
                 .find(|&f| !b.face_has_edge(f, sharp))
                 .ok_or(TopoError::Precondition("mitre: no far cap"))?;
-            let lp = b
-                .faces
-                .get(cap)
-                .map(|f| f.loops[0])
-                .ok_or(TopoError::StaleKey)?;
-            let fa = b.fin_ending_at_vertex(lp, t_end)?;
-            let fb = b.fin_ending_at_vertex(lp, s_end)?;
-            let split = b.split_face(fa, fb, None)?;
-            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
-                && let Some(nf) = b.faces.get_mut(split.face_new)
-            {
-                nf.surface = Some(surf);
-            }
             let pc = b
                 .vertices
                 .get(v_far)
@@ -2475,7 +2427,7 @@ impl Body {
                 .ok_or(TopoError::Precondition("mitre: arc axis"))?;
             let arc = keel_geom::curve::Circle3::new(centre, ex, spine.dir.cross(ex), radius)
                 .map_err(|_| TopoError::Precondition("mitre: bad arc"))?;
-            b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+            b.split_blend_cap(cap, t_end, s_end, Curve3::Circle(arc))?;
             Ok(())
         };
         split_cap(&mut b, far1, &blend1.spine, t1far_v, a1far, e1)?;
@@ -2785,19 +2737,6 @@ impl Body {
                 .into_iter()
                 .find(|&f| !b.face_has_edge(f, e))
                 .ok_or(TopoError::Precondition("octant: no far cap"))?;
-            let lp = b
-                .faces
-                .get(cap)
-                .map(|x| x.loops[0])
-                .ok_or(TopoError::StaleKey)?;
-            let fa = b.fin_ending_at_vertex(lp, t_end)?;
-            let fb = b.fin_ending_at_vertex(lp, s_end)?;
-            let split = b.split_face(fa, fb, None)?;
-            if let Some(surf) = b.faces.get(cap).and_then(|x| x.surface)
-                && let Some(nf) = b.faces.get_mut(split.face_new)
-            {
-                nf.surface = Some(surf);
-            }
             let spine = &blends[j].spine;
             let pc = b
                 .vertices
@@ -2815,7 +2754,7 @@ impl Body {
                 .ok_or(TopoError::Precondition("octant: arc axis"))?;
             let arc = keel_geom::curve::Circle3::new(centre, ex, spine.dir.cross(ex), radius)
                 .map_err(|_| TopoError::Precondition("octant: bad far arc"))?;
-            b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+            b.split_blend_cap(cap, t_end, s_end, Curve3::Circle(arc))?;
         }
         // Dissolve the sharp edges (each merges its two support trims
         // into one blend face), then the far corner chains.
