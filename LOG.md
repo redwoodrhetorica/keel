@@ -4659,3 +4659,38 @@ COUNTER: 136 -> 137/144 (item 29, the Rung-1 milestone; the dossier-57 ladder: R
 simplify; plus full soup retirement per dossier 47). This reaches the projected tractable
 ceiling: the remaining 7 items are the permanently-declined / out-of-scope set (Addendum 130
 ledger).
+
+## Addendum 152 (2026-06-10, attended): SESSION-END RESUME ANCHOR (137/144, the tractable ceiling)
+
+STATE: master = the merge of nonreg-union (#29), counter 137/144, ALL GREEN (123 geom + 77 math
++ 226 topo; fmt; clippy -D warnings), two clean 10-minute fuzz_boolean soaks this leg (856 runs
+after the octant tessellator change, 829 after the cellular boolean). NOT pushed (push only on
+request).
+
+THIS SESSION (Addenda 139-152): +37 ticks, 100 -> 137. The arc: foreign geometry 114-116
+(certified evaluator -> NURBS fit), genus-raising through-hole booleans, two breadth waves,
+sheet-solid booleans (28), Coons fill (68), heal + defeature (130/132), blend recognize +
+unblend (58/59), selective booleans (31), the BLEND DEEP END via analytic/reduction rungs (48
+variable-radius exact cone, 49 conic strip, 54 hold-line closed form, 50 face-face, 60 G2
+quintic, 67 Gordon-as-evaluator, 55 partial-span feathered cone, 56 mitred corner on the exact
+ellipse), 51 the SPHERE-OCTANT vertex blend (Add. 150), and 29 the NON-REGULARIZED CELLULAR
+boolean (Add. 151, dossier 57 Rung 1: selection layer + three stitcher relaxations, never a
+rebuild).
+
+THE CEILING, plainly: 137/144 is the projected tractable ceiling (Addendum 130 ledger + the
+dossier sweep). The remaining 7 counter slots correspond to the out-of-scope / declined set
+(Siemens convergent-mesh 86-93 family, U-splines, and the roadmap's excluded items 34, 46, 61,
+79, 81, 134-135 -- see Addendum 130 for the exact ledger and the anti-double-count rule). No
+new dossier surfaced a rung that converts any of them honestly.
+
+QUEUED DEPTH (not ticks): dossier-57 ladder Rungs 2-5 (sheet-as-partition, sheet-sheet, wire
+imprint, full SGC simplify); FULL soup retirement (dossier 47; the L-union partial-coincidence
+seam still falls back); blend-face pcurves so analytic mass_properties covers blend faces;
+parameterize the ~8 trim-and-stitch surgery copies; smooth/roll-on/notch overflow handlers
+(dossier 56); unequal-radius mitre (marched SSI); setback vertex blends (dossier 53 Q2/Q3);
+curved through-hole seam relocation; the completion gate (10h all-sector fuzz soak + the
+three-bucket billion-boolean oracle, see MEMORY).
+
+RESUME RECIPE: read this addendum, then Addendum 151/150 for the latest machinery; the ledger
+is Addendum 130; CI = exact triplet + fuzz_boolean WSL soak when boolean/tessellation internals
+change; constructors must emit mass == mesh bodies; LOG addendum then merge; NO EM-DASHES.
