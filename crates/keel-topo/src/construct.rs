@@ -69,6 +69,56 @@ impl Body {
         Ok(out)
     }
 
+    /// Acorn body (item 9): a single isolated vertex in the infinite
+    /// region. Wraps `embed_vertex` (the lone-vertex shell the PES
+    /// model already carries as `Shell::acorn`).
+    pub fn acorn(&mut self, p: Vec3) -> Result<crate::entity::VertexKey, TopoError> {
+        if !p.is_finite() {
+            return Err(TopoError::Precondition("acorn: non-finite point"));
+        }
+        let r = self.infinite_region();
+        let (v, _, _) = self.embed_vertex(r, p)?;
+        Ok(v)
+    }
+
+    /// Sweep by translation with lateral faces (item 62): a planar
+    /// profile swept along `dir`. This IS the right prism (`prism`
+    /// auto-orients any winding since the CW-base fix), published under
+    /// the sweep name the capability map uses.
+    pub fn sweep(&mut self, profile: &[Vec3], dir: Vec3) -> Result<PrimitiveOut, TopoError> {
+        self.prism(profile, dir)
+    }
+
+    /// Helix wire body (item 15): a wire edge carrying a CERTIFIED
+    /// NURBS helix (axis through `origin` along `axis`, radius,
+    /// `pitch` advance per turn, `turns` total) fit within `tol` by the
+    /// foreign-curve machinery. Declines when the certificate misses
+    /// `tol` (a black-box transcendental has no exact NURBS form; the
+    /// certified cache is the honest representation).
+    pub fn helix_wire(
+        &mut self,
+        origin: Vec3,
+        axis: Vec3,
+        radius: f64,
+        pitch: f64,
+        turns: f64,
+        tol: f64,
+    ) -> Result<crate::ops::EmbedWireOut, TopoError> {
+        let fit = keel_geom::foreign::fit_helix(origin, axis, radius, pitch, turns, tol)
+            .map_err(geom_err)?;
+        if fit.tol_achieved > tol {
+            return Err(TopoError::Precondition(
+                "helix_wire: helix does not fit to NURBS within tol (declined)",
+            ));
+        }
+        let (t0, t1) = fit.curve.domain();
+        let (p0, p1) = (fit.curve.point(t0), fit.curve.point(t1));
+        let r = self.infinite_region();
+        let out = self.embed_wire(r, None, p0, p1)?;
+        self.attach_edge_curve(out.edge, Curve3::Nurbs(fit.curve), true);
+        Ok(out)
+    }
+
     /// Axis-aligned block at `origin` with positive extents.
     pub fn block(
         &mut self,
@@ -1773,6 +1823,67 @@ mod tests {
         b.wire(Vec3::ZERO, Vec3::new(3.0, 0.0, 0.0)).unwrap();
         assert_eq!(b.body_class(), BodyClass::Wire, "should be a wire body");
         assert!(b.validate().is_ok(), "wire invalid: {:?}", b.validate());
+    }
+
+    #[test]
+    fn acorn_constructor_makes_acorn_body() {
+        // Item 9: a lone-vertex body classifies as Acorn and validates.
+        use crate::query::BodyClass;
+        let mut b = Body::new();
+        let v = b.acorn(Vec3::new(1.0, -2.0, 3.0)).unwrap();
+        assert_eq!(b.body_class(), BodyClass::Acorn, "should be an acorn body");
+        assert!(b.validate().is_ok(), "acorn invalid: {:?}", b.validate());
+        assert_eq!(
+            b.vertex(v).map(|x| x.point),
+            Some(Vec3::new(1.0, -2.0, 3.0))
+        );
+    }
+
+    #[test]
+    fn sweep_by_translation_is_the_prism() {
+        // Item 62: an L-profile swept along +z; lateral faces + caps,
+        // mass == mesh exact (prism's CCW auto-orient covers winding).
+        let l = [
+            Vec3::ZERO,
+            Vec3::new(3.0, 0.0, 0.0),
+            Vec3::new(3.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(1.0, 2.0, 0.0),
+            Vec3::new(0.0, 2.0, 0.0),
+        ];
+        let mut b = Body::new();
+        b.sweep(&l, Vec3::new(0.0, 0.0, 2.0)).unwrap();
+        assert!(b.validate().is_ok(), "swept L invalid");
+        let v = b.mass_properties().unwrap().volume;
+        let mv = b.mesh_volume();
+        // L area = 3*1 + 1*1 = 4; volume = 8.
+        assert!(
+            (v - 8.0).abs() < 1e-9 && (mv - 8.0).abs() < 1e-9,
+            "swept L volume must be 8 with mass == mesh (got {v}, {mv})"
+        );
+    }
+
+    #[test]
+    fn helix_wire_carries_certified_nurbs() {
+        // Item 15: a 2-turn certified helix wire validates as a Wire
+        // body whose edge curve stays on the helix cylinder.
+        use crate::query::BodyClass;
+        let mut b = Body::new();
+        let out = b
+            .helix_wire(Vec3::ZERO, Vec3::new(0., 0., 1.), 2.0, 0.5, 2.0, 1e-3)
+            .unwrap();
+        assert_eq!(b.body_class(), BodyClass::Wire);
+        assert!(b.validate().is_ok(), "helix wire invalid");
+        let (ck, _) = b.edge(out.edge).and_then(|e| e.curve).unwrap();
+        let Some(Curve3::Nurbs(c)) = b.curve(ck) else {
+            panic!("helix edge must carry the NURBS cache");
+        };
+        let (t0, t1) = c.domain();
+        for i in 0..=16 {
+            let p = c.point(t0 + (t1 - t0) * i as f64 / 16.0);
+            let r = (p.x * p.x + p.y * p.y).sqrt();
+            assert!((r - 2.0).abs() <= 2e-3, "radius {r} off the helix cylinder");
+        }
     }
 
     /// Watertightness oracle at the geometry level: sample every edge

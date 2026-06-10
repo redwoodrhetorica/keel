@@ -155,6 +155,75 @@ pub fn fit_foreign_curve(f: &dyn ForeignCurve, tol: f64) -> Result<ForeignCurveF
     best.ok_or(GeomError::Degenerate)
 }
 
+/// A certified NURBS helix (capability-map item 15): axis through
+/// `origin` along `axis`, `radius`, `pitch` advance per full turn,
+/// `turns` total (may be fractional), fit within `tol` by the
+/// foreign-curve machinery. A helix is transcendental (no exact NURBS
+/// form exists), so the certified fit IS the honest representation;
+/// callers read `tol_achieved` and decline when it misses.
+pub fn fit_helix(
+    origin: Vec3,
+    axis: Vec3,
+    radius: f64,
+    pitch: f64,
+    turns: f64,
+    tol: f64,
+) -> Result<ForeignCurveFit, GeomError> {
+    let ok = origin.is_finite()
+        && radius.is_finite()
+        && radius > 0.0
+        && pitch.is_finite()
+        && turns.is_finite()
+        && turns > 0.0;
+    if !ok {
+        return Err(GeomError::Degenerate);
+    }
+    let az = axis.try_normalize().ok_or(GeomError::Degenerate)?;
+    // Frame perpendicular to the axis.
+    let seed = if az.x.abs() < 0.9 {
+        Vec3::new(1.0, 0.0, 0.0)
+    } else {
+        Vec3::new(0.0, 1.0, 0.0)
+    };
+    let x = (seed - az * seed.dot(az))
+        .try_normalize()
+        .ok_or(GeomError::Degenerate)?;
+    let y = az.cross(x);
+    struct Helix {
+        origin: Vec3,
+        x: Vec3,
+        y: Vec3,
+        z: Vec3,
+        radius: f64,
+        pitch: f64,
+        turns: f64,
+    }
+    impl ForeignCurve for Helix {
+        fn domain(&self) -> (f64, f64) {
+            (0.0, self.turns)
+        }
+        fn eval(&self, t: f64) -> Vec3 {
+            let a = t * core::f64::consts::TAU;
+            self.origin
+                + self.x * (self.radius * a.cos())
+                + self.y * (self.radius * a.sin())
+                + self.z * (self.pitch * t)
+        }
+    }
+    fit_foreign_curve(
+        &Helix {
+            origin,
+            x,
+            y,
+            z: az,
+            radius,
+            pitch,
+            turns,
+        },
+        tol,
+    )
+}
+
 /// Tensor-product LSQ by two-stage curve fitting (NURBS Book 9.4.2):
 /// fit each v-row of samples over u to get intermediate control
 /// columns, then fit those columns over v. All row fits share the
@@ -358,6 +427,32 @@ mod tests {
         for &s in &[0.171, 0.503, 0.887] {
             let truth = HelixArc.eval(core::f64::consts::PI * s);
             assert!((fit.curve.point(s) - truth).norm() <= fit.tol_achieved);
+        }
+    }
+
+    #[test]
+    fn helix_fit_certifies_and_lands_on_the_helix() {
+        // Two full turns, radius 2, pitch 0.5, about +z through the
+        // origin. Spot-check fresh parameters against the analytic
+        // helix; certificate must hold there.
+        let fit = fit_helix(Vec3::ZERO, Vec3::new(0., 0., 1.), 2.0, 0.5, 2.0, 1e-3).unwrap();
+        assert!(
+            fit.tol_achieved <= 1e-3,
+            "helix must certify 1e-3 (got {})",
+            fit.tol_achieved
+        );
+        let (t0, t1) = fit.curve.domain();
+        for &s in &[0.083, 0.291, 0.566, 0.940] {
+            let p = fit.curve.point(t0 + s * (t1 - t0));
+            // The fit parameter is turns scaled to the domain.
+            let t = s * 2.0;
+            let a = t * core::f64::consts::TAU;
+            let truth = Vec3::new(2.0 * a.cos(), 2.0 * a.sin(), 0.5 * t);
+            assert!(
+                (p - truth).norm() <= fit.tol_achieved,
+                "helix point off by {} at s={s}",
+                (p - truth).norm()
+            );
         }
     }
 

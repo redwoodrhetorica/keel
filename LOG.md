@@ -3915,3 +3915,52 @@ WSL soak (mandatory, boolean internals changed): 15 minutes, 1724 runs, clean.
 COUNTER unchanged at 103/144 (this is correctness deepening, the kind Addendum 127 rated above
 thin ticks). NEXT: curved through-holes (relocation on curved faces, e.g. cylinder-through-block
 both-caps-out), or version control 128, or deepen shell/sheet MVPs.
+
+## Addendum 130 (2026-06-10, attended): PARITY BREADTH WAVE 1 -- items 7, 9, 15, 62, 74 (103 ->
+108/144)
+
+ENDGAME ACCOUNTING FIRST (the /goal is "finish the parity list"): reconstructed the tick ledger
+from every RUNNING TOTAL line in this LOG. Items cited as ticked nowhere in the LOG and still
+tractable: 7, 9, 10, 15, 28, 29, 31, 48-51, 54-60 (blend depth), 62, 67, 68, 74, 80, 94, 113,
+122, 128, 130, 132, 137-143 subset, 140. Out-of-scope per the roadmap stays 34, 46, 61, 79, 81,
+86-93, 134-135 (~15 items). The counter also contains ~8 capability-slice ticks with no named
+item (the partial-overlap completion, surface-area, fillet rungs 2-3, transform/mirror/scale,
+closest-point, flat-cap/washer/tube revolve slices); to avoid double-counting, NEW ticks will
+only ever use the never-cited numbers above. ANTI-DOUBLE-COUNT RULE in force.
+
+WAVE 1 SHIPPED (branch parity-breadth-1), five honest thin ticks, each a public API + tests over
+proven machinery (dossier 25 checklist rows; the construction items align with roadmap Phase 2):
+- 9 ACORN: Body::acorn(p) wraps the existing ops::embed_vertex lone-vertex shell;
+  BodyClass::Acorn (query.rs) already classified it. Test: classifies + validates.
+- 62 SWEEP BY TRANSLATION: Body::sweep(profile, dir) publishes prism under the capability name
+  (prism IS the translational sweep with lateral faces; its CW-base auto-orient from Addendum 124
+  makes it winding-safe). Test: swept L-profile, volume 8, mass == mesh to 1e-9.
+- 15 HELIX: keel_geom::foreign::fit_helix(origin, axis, radius, pitch, turns, tol) -- a helix is
+  transcendental (no exact NURBS form), so the CERTIFIED foreign-curve fit is the honest
+  representation (the Addendum 128 machinery earning rent immediately); Body::helix_wire embeds
+  the certified curve as a wire edge and DECLINES if the certificate misses tol. Tests: 2-turn
+  r=2 pitch=0.5 helix certifies 1e-3, fresh-parameter spot checks inside the certificate, wire
+  body validates, samples stay on the helix cylinder.
+- 7 SHEET PRIMITIVES: Body::rectangular_sheet (over planar_sheet) and Body::disc_sheet -- one
+  double-sided planar face bounded by a single FREE closed circular edge (the closed-circle loop
+  shape the flat-cap solids already use, now as a lamina). Tests: rect thickens to the exact
+  slab; disc validates and tessellates to pi r^2 within 2% (chordal undershoot, the tessellation-
+  tolerance lesson). BUG CAUGHT: Circle3::new takes IN-PLANE axes (center, x_axis, y_axis, r),
+  not (center, normal, x_ref, r); the first draft built a vertical circle and the disc
+  tessellated to ZERO area -- the area oracle caught it (loop_polygon diag confirmed).
+- 74 IMPRINT BODY ONTO BODY: Body::imprint_body(tool, tol) -- the body-level form of the
+  imprint-only option (32), straight over seam_curves + imprint_operand; any fault is an Err,
+  never dropped. Test: corner-overlapping blocks: faces/edges increase, volume EXACTLY unchanged
+  (mass == mesh == 64), valid.
+
+CI: fmt, clippy -D warnings, workspace 115 geom + 77 math + 190 topo (+1, +6) green. No fuzz
+soak: every change is ADDITIVE (new constructors + a new imprint entry point; no existing
+boolean/tessellation path modified), the Addendum 74/75-class justification.
+
+COUNTER: 103 -> 108/144 (items 7, 9, 15, 62, 74). NEXT (wave 2 menu): 122+113 sessions config +
+precision control; 128 version control (thin over pmarks, the double-count check done above
+clears it); 139 cosmetic threads over the attribute system; 137 convert-to-NURBS (exact quadric
+-> NURBS via revolve_full + bilinear plane patches); 94 tessellate-to-tolerance (body-level
+facet output exists as render_mesh_tol; tick with the documented API + test); then the heavier
+28 sheet-solid booleans / 31 selective booleans / 80 / 138 / 140 / 142, and blend depth 48-51,
+54-60 last.

@@ -120,6 +120,91 @@ impl Body {
         Ok(b)
     }
 
+    /// Rectangular sheet primitive (item 7): a w x h planar sheet at
+    /// `origin`, sides along `u_dir` and `normal x u_dir`. Convenience
+    /// over `planar_sheet`.
+    pub fn rectangular_sheet(
+        origin: Vec3,
+        normal: Vec3,
+        u_dir: Vec3,
+        w: f64,
+        h: f64,
+    ) -> Result<Body, TopoError> {
+        if !(w.is_finite() && w > 0.0 && h.is_finite() && h > 0.0) {
+            return Err(TopoError::Precondition("rectangular_sheet: bad extents"));
+        }
+        let n = normal
+            .try_normalize()
+            .ok_or(TopoError::Precondition("rectangular_sheet: bad normal"))?;
+        let u = (u_dir - n * u_dir.dot(n))
+            .try_normalize()
+            .ok_or(TopoError::Precondition("rectangular_sheet: bad u_dir"))?;
+        let v = n.cross(u);
+        Body::planar_sheet(&[
+            origin,
+            origin + u * w,
+            origin + u * w + v * h,
+            origin + v * h,
+        ])
+    }
+
+    /// Circular disc sheet primitive (item 7): one double-sided planar
+    /// face bounded by a single FREE closed circular edge (seam vertex
+    /// at +x of the disc frame), no solid region. Same lamina shape as
+    /// `planar_sheet`, with the polygon ring replaced by the closed-
+    /// circle loop the flat-cap solids already use.
+    pub fn disc_sheet(center: Vec3, normal: Vec3, radius: f64) -> Result<Body, TopoError> {
+        let ok = radius.is_finite() && radius > 0.0 && center.is_finite();
+        if !ok {
+            return Err(TopoError::Precondition("disc_sheet: bad radius/center"));
+        }
+        let frame = Frame3::from_z(center, normal)
+            .map_err(|_| TopoError::Precondition("disc_sheet: degenerate normal"))?;
+        let mut b = Body::new();
+        let void = b.infinite_region();
+        let mut rec = b.begin_op();
+        let face = b.new_face(&mut rec, void, void, Derivation::Created);
+        let lp = b.new_loop(&mut rec, face, LoopKind::Outer, Derivation::Created);
+        if let Some(f) = b.faces.get_mut(face) {
+            f.loops.push(lp);
+        }
+        let seam = b.new_vertex(&mut rec, center + frame.x * radius);
+        let e = b.new_edge(&mut rec, (seam, seam), Derivation::Created);
+        let fin = b.new_fin(&mut rec, e, true, lp, Derivation::Created);
+        if let Some(ed) = b.edges.get_mut(e) {
+            ed.radial.push(fin); // free closed edge: a single coedge
+        }
+        if let Some(f) = b.fins.get_mut(fin) {
+            f.next = fin;
+            f.prev = fin;
+        }
+        if let Some(l) = b.loops.get_mut(lp) {
+            l.fin = Some(fin);
+        }
+        if let Some(v) = b.vertices.get_mut(seam) {
+            v.fin = Some(fin);
+        }
+        let shell = b.new_shell(&mut rec, void, Derivation::Created);
+        if let Some(s) = b.shells.get_mut(shell) {
+            s.faces.push((face, Side::Front));
+            s.faces.push((face, Side::Back));
+        }
+        if let Some(r) = b.regions.get_mut(void) {
+            r.shells.push(shell);
+        }
+        let _ = rec.finish();
+
+        b.attach_face_surface(
+            face,
+            SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(frame.clone()))),
+            true,
+        );
+        if let Ok(circle) = keel_geom::curve::Circle3::new(center, frame.x, frame.y, radius) {
+            b.attach_edge_curve(e, Curve3::Circle(circle), true);
+        }
+        Ok(b)
+    }
+
     /// Thicken a planar sheet body into a solid of wall thickness `t`
     /// (parity item 44), two-sided (+/- t/2 about the sheet plane). MVP: a
     /// single planar face. The thickened solid is the sheet's boundary
@@ -319,6 +404,45 @@ mod tests {
         );
         // Open body: no enclosed solid, so zero solid volume by the mesh.
         assert_eq!(s.face_keys().len(), 1, "sheet must have one face");
+    }
+
+    #[test]
+    fn rectangular_sheet_primitive() {
+        // Item 7: the rect sheet primitive thickens to the exact slab.
+        let s = Body::rectangular_sheet(
+            Vec3::new(1.0, 1.0, 0.5),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            3.0,
+            2.0,
+        )
+        .unwrap();
+        assert!(s.validate().is_ok(), "rect sheet invalid");
+        let v = s.thicken(0.5).unwrap().mass_properties().unwrap().volume;
+        assert!(
+            (v - 3.0).abs() < 1e-9,
+            "3x2 sheet thickened by 0.5 must be 3.0 (got {v})"
+        );
+    }
+
+    #[test]
+    fn disc_sheet_primitive() {
+        // Item 7: the disc sheet validates and tessellates to ~pi r^2
+        // (chordal tessellation undershoots a curved boundary; allow 2%
+        // -- the tessellation-tolerance lesson).
+        let s = Body::disc_sheet(Vec3::new(0.5, -1.0, 2.0), Vec3::new(0.0, 0.0, 1.0), 1.5).unwrap();
+        assert!(
+            s.validate().is_ok(),
+            "disc sheet invalid: {:?}",
+            s.validate()
+        );
+        assert_eq!(s.face_keys().len(), 1, "one face");
+        let want = core::f64::consts::PI * 1.5 * 1.5;
+        let area = s.face_area(s.face_keys()[0]);
+        assert!(
+            (area - want).abs() < 0.02 * want,
+            "disc area {area} != ~{want}"
+        );
     }
 
     #[test]
