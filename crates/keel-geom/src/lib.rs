@@ -15,6 +15,7 @@ pub mod fit;
 pub mod foreign;
 pub mod intersect;
 pub mod knots;
+pub mod metrology;
 pub mod nurbs_curve;
 pub mod nurbs_surface;
 pub mod offset;
