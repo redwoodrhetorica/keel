@@ -736,25 +736,65 @@ impl Body {
                 {
                     nf.surface = Some(surf);
                 }
-                // Arc on the new edge: a quarter circle in the cap plane,
-                // centred at the spine projected into that plane.
+                // Arc on the new edge. PERPENDICULAR cap plane (the
+                // standard end): a quarter circle centred at the spine
+                // projected into that plane. OBLIQUE cap plane (the
+                // sec-2.2 CAP overflow: the adjoining end face is
+                // slanted): the exact plane-cylinder ELLIPSE, semi-
+                // major r/|n.dir| in the steep in-plane direction,
+                // semi-minor r along plane-normal x spine ("intersect
+                // model faces with the blend sheet to trim the sheet
+                // exactly to the model"; plane-quadric sections are
+                // old prior art). A cap plane PARALLEL to the spine
+                // never crosses the ribbon end: that is the genuine
+                // extend-two-faces case, declined.
                 let pc = b
                     .vertices
                     .get(v_corner)
                     .map(|x| x.point)
                     .unwrap_or(spine_pt);
-                let centre = spine_pt + dir * ((pc - spine_pt).dot(dir));
                 let pa_end = b
                     .vertices
                     .get(a_end)
                     .map(|x| x.point)
                     .ok_or(TopoError::StaleKey)?;
-                let ex = (pa_end - centre)
-                    .try_normalize()
-                    .ok_or(TopoError::Precondition("fillet: arc axis"))?;
-                let arc = keel_geom::curve::Circle3::new(centre, ex, dir.cross(ex), radius)
-                    .map_err(|_| TopoError::Precondition("fillet: bad arc"))?;
-                b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+                let n_cap = b
+                    .face_outward_normal(cap)
+                    .ok_or(TopoError::Precondition("fillet: cap normal"))?;
+                let d = n_cap.dot(dir);
+                let arc = if d.abs() > 1.0 - 1e-9 {
+                    let centre = spine_pt + dir * ((pc - spine_pt).dot(dir));
+                    let ex = (pa_end - centre)
+                        .try_normalize()
+                        .ok_or(TopoError::Precondition("fillet: arc axis"))?;
+                    Curve3::Circle(
+                        keel_geom::curve::Circle3::new(centre, ex, dir.cross(ex), radius)
+                            .map_err(|_| TopoError::Precondition("fillet: bad arc"))?,
+                    )
+                } else if d.abs() > 1e-9 {
+                    let centre = spine_pt + dir * (((pc - spine_pt).dot(n_cap)) / d);
+                    let minor = (dir.cross(n_cap))
+                        .try_normalize()
+                        .ok_or(TopoError::Precondition("fillet: cap axes"))?;
+                    let major = (n_cap.cross(minor))
+                        .try_normalize()
+                        .ok_or(TopoError::Precondition("fillet: cap axes"))?;
+                    Curve3::Ellipse(
+                        keel_geom::curve::Ellipse3::new(
+                            centre,
+                            major,
+                            minor,
+                            radius / d.abs(),
+                            radius,
+                        )
+                        .map_err(|_| TopoError::Precondition("fillet: bad cap ellipse"))?,
+                    )
+                } else {
+                    return Err(TopoError::Precondition(
+                        "fillet: cap face parallel to the spine (extend follow-up)",
+                    ));
+                };
+                b.attach_edge_curve(split.edge, arc, true);
                 Ok((split.face_new, split.edge))
             };
         let (_corner_a, _arc_a) = split_cap(&mut b, va_k, aa, ba)?;
@@ -4090,6 +4130,14 @@ mod tests {
             (v - want).abs() < 0.02,
             "mitre volume {v} != grid oracle {want} (removed {removed_true})"
         );
+        // The ellipse-seamed mitre ribbons formerly DECLINED mass
+        // properties (non-iso-rectangle cylinder trims); the
+        // Green-slab boundary integrator retires that gap.
+        let mp = m.mass_properties().unwrap().volume;
+        assert!(
+            (mp - want).abs() < 0.02,
+            "mitre mass {mp} != grid oracle {want}"
+        );
     }
 
     fn edge_between_faces(b: &Body, fa: Vec3, fb: Vec3) -> EdgeKey {
@@ -4142,6 +4190,70 @@ mod tests {
             ),
             "partial band seam must DECLINE"
         );
+    }
+
+    #[test]
+    fn cap_fillet_trims_the_ribbon_to_the_oblique_end_face() {
+        // Dossier 56 sec 2.2 (cap overflow): "a face or faces in the
+        // model will be intersected with the blend sheet to trim the
+        // sheet exactly to the model" (prior-art extend-and-trim, no
+        // separate sheet). Chamfered prism, profile (0,0) (4,0) (4,1)
+        // (3,2) (0,2) extruded 2 in y, fillet r = 0.5 on the edge
+        // between the top (z = 2) and the y = 2 cap. The far end face
+        // is the chamfer plane x + z = 5, OBLIQUE to the spine: the
+        // ribbon end trims to the exact plane-cylinder ELLIPSE
+        // (semi-axes r/cos45, r), the springs end at different spine
+        // stations (x = 3 on top, x = 3.5 on the cap), and the slant
+        // face's trim loop absorbs the arc. Closed-form oracle
+        // written FIRST.
+        let mut b = Body::new();
+        let profile = [
+            Vec3::new(0., 0., 0.),
+            Vec3::new(4., 0., 0.),
+            Vec3::new(4., 0., 1.),
+            Vec3::new(3., 0., 2.),
+            Vec3::new(0., 0., 2.),
+        ];
+        b.prism(&profile, Vec3::new(0., 2., 0.)).unwrap();
+        let e = edge_between_faces(&b, Vec3::new(0., 0., 1.), Vec3::new(0., 1., 0.));
+        let f = b.fillet_edge(e, 0.5).unwrap();
+        assert!(f.validate().is_ok(), "cap body invalid");
+        // exact = 15 - straight cut - slant-corridor cut. Straight
+        // (x in [0,3]): (1/4 - pi/16) per unit length. Corridor
+        // (x in [3, 3.5], top capped by z = 5 - x): with c = 3.5 - x,
+        // integral of [c/2 - int_0^c sqrt(1/4 - w^2) dw] dc over
+        // [0, 1/2] = 1/16 - (pi/32 - 1/24).
+        let pi = core::f64::consts::PI;
+        let cut_straight = (0.25 - pi / 16.0) * 3.0;
+        let cut_slant = 0.0625 - (0.5 * pi / 16.0 - 0.125 / 3.0);
+        let exact = 15.0 - cut_straight - cut_slant;
+        let v = f.mass_properties().unwrap().volume;
+        assert!((v - exact).abs() < 1e-9, "mass {v} != exact {exact}");
+        let m = f.mesh_volume();
+        assert!((m - exact).abs() < 0.02, "mesh {m} != exact {exact}");
+        // Structure: one cylinder ribbon; the chamfer face survives
+        // trimmed; 7 prism faces + the blend.
+        let cyls = f
+            .face_keys()
+            .into_iter()
+            .filter(|&fk| {
+                matches!(
+                    f.face_surface_geom(fk),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )
+            })
+            .count();
+        assert_eq!(cyls, 1, "cap blend is one ellipse-ended cylinder face");
+        let slant = Vec3::new(1., 0., 1.).try_normalize().unwrap();
+        assert!(
+            f.face_keys().into_iter().any(|fk| {
+                f.face_outward_normal(fk)
+                    .map(|n| (n - slant).norm() < 1e-9)
+                    .unwrap_or(false)
+            }),
+            "the chamfer face must survive trimmed"
+        );
+        assert_eq!(f.face_keys().len(), 8);
     }
 
     #[test]
