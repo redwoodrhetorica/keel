@@ -4502,3 +4502,36 @@ classification ladder remain the dossier-56 follow-ups, as do creeping/partial c
 CI: fmt, clippy -D warnings, workspace 123 + 77 + 222 (+1) green. No fuzz: additive blend.rs.
 
 COUNTER: 132 -> 133/144 (item 57). Remaining: 29, 51, 55, 56.
+
+## Addendum 148 (2026-06-10, attended): PARTIAL-SPAN BLEND (item 55; 133 -> 134/144)
+
+fillet_edge_partial(edge, t0, t1, radius) (branch partial-span-blend; dossier 54 Q3/Q4/Q5):
+round only the interior interval of a plane-plane edge, tapering linearly from r at t0 to ZERO
+at t1 -- the feathered runout, an EXACT CONE with apex at the vanishing vertex -- with a planar
+SQUARE-STOP cross face at t0. The cap-into-supports end surgery, exactly the dossier recipe:
+split the sharp edge at both stations (junction + vanishing vertices), mev-SPUR each spring
+landing into its support's interior, split_face the CONVERGING spring lines to the apex, kef
+the interior sharp interval (merging the two trim slivers), and the cross-arc split then leaves
+the little planar face between the arc and the corner -- which IS the kept square-stop face.
+The sharp edge RESUMES on both sides (asserted: two collinear fragments on the original line);
+the apex vertex joins both springs and the resumed edge.
+
+TWO REAL FINDS BEYOND THE FEATURE:
+1. cyl_angular_span REWRITTEN: the span now comes from loop_polygon SAMPLES via the largest-
+   angular-gap method -- branch-cut-free (the old vertex min..max broke when a patch straddles
+   +-pi) -- with on-axis points SKIPPED (a cone apex has no angle and polluted the span).
+   Tilted-CIRCLE boundaries now clamp cone ruling bands exactly like the ellipse caps (the stop
+   arc lies in the plane perpendicular to the EDGE, not the tilted cone axis). Zero regressions
+   across the 222 existing tests; fuzz_boolean soak (tessellation feeds the winding oracle):
+   10 minutes, 808 runs, clean.
+2. THE ORACLE WAS WRONG, NOT THE MESH: the dossier-54 closed form (1 - pi/4) integral is the
+   UNTILTED idealization; the true tilted envelope (spine from the t0 section center to the
+   apex) removes measurably less material. A brute SWEPT-SPHERE grid oracle (per-station spine-
+   quadrant gate + closed-form min over the rolling balls) agrees with the mesh within 0.01.
+   Verify-the-success-branch earned out again: three candidate numbers (mesh, closed form,
+   naive grid) disagreed until the characterization was made exact.
+
+CI: fmt, clippy -D warnings, workspace 123 + 77 + 223 (+1) green; soak clean as above.
+
+COUNTER: 133 -> 134/144 (item 55). Remaining tractable: 29, 51, 56. Ladder per dossier 54:
+two square stops, curved spines (torus segment + canal runout), partial recognition/unblend.
