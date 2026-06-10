@@ -5101,4 +5101,4 @@ minus quarter disc, 2 pi xbar A; the formula independently lands on the old mesh
 all revolve bodies unchanged (their valid pcurves pass the guard).
 
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 240 (+1) green; fuzz_boolean soak
-(mass_properties is load-bearing in the boolean gates): 10 minutes, count below.
+(mass_properties is load-bearing in the boolean gates): 10 minutes, 733 runs, clean.
