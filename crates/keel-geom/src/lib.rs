@@ -10,6 +10,7 @@ pub mod basis;
 pub mod convert;
 pub mod curve;
 pub mod extend;
+pub mod fill;
 pub mod fit;
 pub mod foreign;
 pub mod intersect;

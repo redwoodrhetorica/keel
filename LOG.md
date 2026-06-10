@@ -4095,3 +4095,36 @@ COUNTER: 118 -> 119/144 (item 28). Remaining tractable: 10, 29, 31, 48-51, 54-60
 132 (+ 141/143 pending the consumed-slice check). NEXT: 31 selective/local booleans (face-pair
 scoped imprint over the same machinery) or 68 variational n-sided fill (dossier 32 sec 4,
 patent-cleared), then 132 defeature over delete_face, 130 gap-tighten heal.
+
+## Addendum 134 (2026-06-10, attended): N-SIDED BOUNDARY FILL (item 68, 119 -> 120/144)
+
+THE CONSTRUCTOR (branch nsided-fill): keel-geom fill.rs fill_boundary(sides, tol) +
+Body::filled_sheet -- surface from boundary curves. Method per dossier 26 sec 1.1 (Coons 1967,
+MAC-TR-41): per-side end-pinned LSQ (shared resampled parameterization so the four fits share
+knots; corners interpolate EXACTLY) gives the boundary control rows; the interior net is the
+DISCRETE bilinearly blended Coons sum (lofts minus the bilinear corner correction). N != 4 sides
+join and re-quarter by arc length. Certification against fresh side samples, foreign-fit style,
+SAFETY x max deviation; Body::filled_sheet DECLINES over tol. The sheet topology builder was
+extracted from foreign_sheet into nurbs_sheet_body (shared by items 114 and 68, behavior-
+preserving; foreign tests unchanged).
+
+HONEST LIMITATION recorded in the module doc and the hexagon test: quartering places N != 4
+corners INSIDE the virtual sides where the cubic fit ROUNDS them; the certificate reports it
+(~7e-3 on the unit hexagon) rather than hiding it. The corner-exact central-split scheme
+(dossier 26 sec 4) and the variational fairing upgrade (dossiers 31/32, patent-clear per
+Addendum 131) are the follow-ups on this same skeleton.
+
+ORACLES: flat 2x2 square boundary -> certifies at 1e-9, whole patch flat to 1e-12, and the
+CHAIN test: filled sheet -> simplify recovers the native Plane -> thicken to the exact 2.0 slab
+(68 -> 116 -> 44 composing). Saddle boundary (one corner lifted): certifies 1e-6, corners exact,
+valid Sheet body, tessellates. Hexagon: quartering path, in-plane to 1e-9, certificate honest.
+Open chain: rejected.
+
+CI: fmt, clippy -D warnings, workspace 123 geom + 77 math + 206 topo (+4, +2) green. No fuzz:
+additive constructor (no boolean/imprint/tessellation change; the foreign_sheet refactor is a
+verbatim extraction covered by its existing tests).
+
+COUNTER: 119 -> 120/144 (item 68). THE REALISTIC TARGET BAND (110-120) IS NOW FULLY REACHED.
+Remaining tractable: 10, 29, 31, 48-51, 54-60 (the blend deep end), 67, 130, 132 (+141/143
+pending slice-check). NEXT: 132 defeature (delete_face exists) and 130 gap-tighten are the
+moderate pair; 31 selective booleans; the blend family is the long tail.
