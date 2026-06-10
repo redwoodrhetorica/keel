@@ -28,7 +28,12 @@
 //! against hostile files.
 
 use crate::Body;
-use keel_math::vec::Vec3;
+use keel_geom::curve::{Circle3, Curve3, Ellipse3, Line3};
+use keel_geom::knots::KnotVector;
+use keel_geom::nurbs_curve::NurbsCurve;
+use keel_geom::nurbs_surface::NurbsSurface;
+use keel_geom::surface::{Cone3, Cylinder3, Frame3, Plane3, Sphere3, Surface3, Torus3};
+use keel_math::vec::{Vec3, Vec4};
 use std::collections::BTreeMap;
 
 /// Error from STEP import. `Parse` carries the byte offset where the
@@ -422,6 +427,447 @@ fn length_scale(f: &StepFile) -> Result<f64, StepImportError> {
     Ok(1.0)
 }
 
+/// Radians per file plane-angle unit (degrees arrive as a
+/// CONVERSION_BASED_UNIT chaining to radians). Defaults to 1.0.
+fn angle_scale(f: &StepFile) -> Result<f64, StepImportError> {
+    for (id, _) in f.find_all("PLANE_ANGLE_UNIT") {
+        if let Some(si) = f.rec(id, "SI_UNIT") {
+            if matches!(si.args.last(), Some(Val::Enum(n)) if n == "RADIAN") {
+                return Ok(1.0);
+            }
+            return Err(StepImportError::Unsupported("non-radian SI angle unit"));
+        }
+        if let Some(cb) = f.rec(id, "CONVERSION_BASED_UNIT") {
+            let mid = cb
+                .args
+                .get(1)
+                .and_then(Val::as_ref_id)
+                .ok_or(StepImportError::Malformed("angle conversion factor"))?;
+            let mwu = f
+                .rec(mid, "PLANE_ANGLE_MEASURE_WITH_UNIT")
+                .or_else(|| f.rec(mid, "MEASURE_WITH_UNIT"))
+                .ok_or(StepImportError::Malformed("angle conversion measure"))?;
+            let value = mwu
+                .args
+                .first()
+                .and_then(Val::as_real)
+                .ok_or(StepImportError::Malformed("angle conversion value"))?;
+            return Ok(value);
+        }
+    }
+    Ok(1.0)
+}
+
+/// Skip the leading name string when present: a SIMPLE instance's
+/// record starts with the inherited name, a COMPLEX leaf usually does
+/// not (the name lives on the REPRESENTATION_ITEM leaf).
+fn unnamed(args: &[Val]) -> &[Val] {
+    match args.first() {
+        Some(Val::Str(_)) => &args[1..],
+        _ => args,
+    }
+}
+
+/// A converted STEP surface: exact analytic or NURBS.
+#[derive(Clone, Debug)]
+pub enum ImportedSurface {
+    Analytic(Surface3),
+    Nurbs(NurbsSurface),
+}
+
+impl StepFile {
+    fn point3(&self, id: u64, scale: f64) -> Result<Vec3, StepImportError> {
+        let cp = self
+            .rec(id, "CARTESIAN_POINT")
+            .ok_or(StepImportError::Malformed("cartesian_point"))?;
+        let coords = unnamed(&cp.args)
+            .first()
+            .and_then(Val::as_list)
+            .ok_or(StepImportError::Malformed("point coordinates"))?;
+        if coords.len() < 3 {
+            return Err(StepImportError::Malformed("point dimensionality"));
+        }
+        let g = |i: usize| coords.get(i).and_then(Val::as_real).unwrap_or(0.0);
+        Ok(Vec3::new(g(0) * scale, g(1) * scale, g(2) * scale))
+    }
+
+    fn dir3(&self, id: u64) -> Result<Vec3, StepImportError> {
+        let d = self
+            .rec(id, "DIRECTION")
+            .ok_or(StepImportError::Malformed("direction"))?;
+        let ratios = unnamed(&d.args)
+            .first()
+            .and_then(Val::as_list)
+            .ok_or(StepImportError::Malformed("direction ratios"))?;
+        let g = |i: usize| ratios.get(i).and_then(Val::as_real).unwrap_or(0.0);
+        // Files are NOT guaranteed to normalize (classic import bug).
+        Vec3::new(g(0), g(1), g(2))
+            .try_normalize()
+            .ok_or(StepImportError::Malformed("zero direction"))
+    }
+
+    /// AXIS2_PLACEMENT_3D -> orthonormal Keel frame: Z = axis (default
+    /// global Z when `$`), X = ref_direction GRAM-SCHMIDT projected
+    /// orthogonal to Z (files may supply a non-orthogonal seed; default
+    /// global X), Y = Z x X.
+    fn frame_at(&self, id: u64, scale: f64) -> Result<Frame3, StepImportError> {
+        let ax = self
+            .rec(id, "AXIS2_PLACEMENT_3D")
+            .ok_or(StepImportError::Malformed("axis2_placement_3d"))?;
+        let a = unnamed(&ax.args);
+        let origin = a
+            .first()
+            .and_then(Val::as_ref_id)
+            .map(|pid| self.point3(pid, scale))
+            .transpose()?
+            .ok_or(StepImportError::Malformed("placement location"))?;
+        let z = match a.get(1) {
+            Some(Val::Ref(did)) => self.dir3(*did)?,
+            _ => Vec3::new(0.0, 0.0, 1.0),
+        };
+        let x_seed = match a.get(2) {
+            Some(Val::Ref(did)) => self.dir3(*did)?,
+            _ => Vec3::new(1.0, 0.0, 0.0),
+        };
+        let x = (x_seed - z * x_seed.dot(z))
+            .try_normalize()
+            .or_else(|| {
+                // Seed parallel to the axis: any perpendicular works.
+                let alt = if z.x.abs() < 0.9 {
+                    Vec3::new(1.0, 0.0, 0.0)
+                } else {
+                    Vec3::new(0.0, 1.0, 0.0)
+                };
+                (alt - z * alt.dot(z)).try_normalize()
+            })
+            .ok_or(StepImportError::Malformed("degenerate placement"))?;
+        Ok(Frame3 {
+            origin,
+            x,
+            y: z.cross(x),
+            z,
+        })
+    }
+
+    /// Expand a (multiplicities, distinct-knots) pair into the full
+    /// clamped knot array.
+    fn expand_knots(mults: &[Val], knots: &[Val]) -> Result<Vec<f64>, StepImportError> {
+        if mults.len() != knots.len() {
+            return Err(StepImportError::Malformed("knot/multiplicity mismatch"));
+        }
+        let mut out = Vec::new();
+        for (m, k) in mults.iter().zip(knots) {
+            let m = m.as_real().ok_or(StepImportError::Malformed("knot mult"))? as usize;
+            let k = k
+                .as_real()
+                .ok_or(StepImportError::Malformed("knot value"))?;
+            out.extend(core::iter::repeat_n(k, m));
+        }
+        Ok(out)
+    }
+
+    /// Convert a B-spline SURFACE instance (simple flattened form or
+    /// complex/AND form, rational via the RATIONAL leaf or simple
+    /// 13-arg layout) to a homogeneous-4D Keel NURBS surface.
+    fn convert_bspline_surface(
+        &self,
+        id: u64,
+        scale: f64,
+    ) -> Result<NurbsSurface, StepImportError> {
+        let base = self
+            .rec(id, "B_SPLINE_SURFACE")
+            .or_else(|| self.rec(id, "B_SPLINE_SURFACE_WITH_KNOTS"))
+            .ok_or(StepImportError::Malformed("b_spline_surface"))?;
+        let b = unnamed(&base.args);
+        let u_deg = b.first().and_then(Val::as_real).map(|d| d as usize);
+        let v_deg = b.get(1).and_then(Val::as_real).map(|d| d as usize);
+        let (u_deg, v_deg) = match (u_deg, v_deg) {
+            (Some(u), Some(v)) => (u, v),
+            _ => return Err(StepImportError::Malformed("b-spline degrees")),
+        };
+        let grid = b
+            .get(2)
+            .and_then(Val::as_list)
+            .ok_or(StepImportError::Malformed("control grid"))?;
+        let wk = self
+            .rec(id, "B_SPLINE_SURFACE_WITH_KNOTS")
+            .ok_or(StepImportError::Unsupported("b-spline without knots"))?;
+        let w = unnamed(&wk.args);
+        // Complex leaf carries 5 args (mults x2, knots x2, spec); the
+        // simple flattened form embeds them after the 7 base args.
+        let off = if w.len() >= 12 { 7 } else { 0 };
+        let u_mults = w
+            .get(off)
+            .and_then(Val::as_list)
+            .ok_or(StepImportError::Malformed("u multiplicities"))?;
+        let v_mults = w
+            .get(off + 1)
+            .and_then(Val::as_list)
+            .ok_or(StepImportError::Malformed("v multiplicities"))?;
+        let u_knots = w
+            .get(off + 2)
+            .and_then(Val::as_list)
+            .ok_or(StepImportError::Malformed("u knots"))?;
+        let v_knots = w
+            .get(off + 3)
+            .and_then(Val::as_list)
+            .ok_or(StepImportError::Malformed("v knots"))?;
+        let weights = self.rec(id, "RATIONAL_B_SPLINE_SURFACE").map(|r| {
+            unnamed(&r.args)
+                .first()
+                .and_then(Val::as_list)
+                .ok_or(StepImportError::Malformed("weight grid"))
+        });
+        let weights = match weights {
+            Some(w) => Some(w?),
+            None => None,
+        };
+        let kv_u = KnotVector::new(u_deg, Self::expand_knots(u_mults, u_knots)?)
+            .map_err(|_| StepImportError::Unsupported("non-clamped u knots (periodic?)"))?;
+        let kv_v = KnotVector::new(v_deg, Self::expand_knots(v_mults, v_knots)?)
+            .map_err(|_| StepImportError::Unsupported("non-clamped v knots (periodic?)"))?;
+        let (nu, nv) = (kv_u.control_count(), kv_v.control_count());
+        if grid.len() != nu {
+            return Err(StepImportError::Malformed("control grid U count"));
+        }
+        // STEP grid is ROW-MAJOR BY U (outer list U, inner V), the same
+        // u-outer / v-inner layout Keel stores. Pre-multiply weights:
+        // homogeneous (w x, w y, w z, w), never point-plus-weight.
+        let mut ctrl = Vec::with_capacity(nu * nv);
+        for (iu, row) in grid.iter().enumerate() {
+            let row = row
+                .as_list()
+                .ok_or(StepImportError::Malformed("control row"))?;
+            if row.len() != nv {
+                return Err(StepImportError::Malformed("control grid V count"));
+            }
+            for (iv, pref) in row.iter().enumerate() {
+                let pid = pref
+                    .as_ref_id()
+                    .ok_or(StepImportError::Malformed("control point ref"))?;
+                let p = self.point3(pid, scale)?;
+                let w = match weights {
+                    Some(wg) => wg
+                        .get(iu)
+                        .and_then(Val::as_list)
+                        .and_then(|r| r.get(iv))
+                        .and_then(Val::as_real)
+                        .ok_or(StepImportError::Malformed("weight grid shape"))?,
+                    None => 1.0,
+                };
+                ctrl.push(Vec4::new(p.x * w, p.y * w, p.z * w, w));
+            }
+        }
+        NurbsSurface::from_homogeneous(kv_u, kv_v, ctrl)
+            .map_err(|_| StepImportError::Malformed("invalid b-spline surface"))
+    }
+
+    /// Convert a B-spline CURVE instance (simple or complex form).
+    fn convert_bspline_curve(&self, id: u64, scale: f64) -> Result<NurbsCurve, StepImportError> {
+        let base = self
+            .rec(id, "B_SPLINE_CURVE")
+            .or_else(|| self.rec(id, "B_SPLINE_CURVE_WITH_KNOTS"))
+            .ok_or(StepImportError::Malformed("b_spline_curve"))?;
+        let b = unnamed(&base.args);
+        let degree = b
+            .first()
+            .and_then(Val::as_real)
+            .ok_or(StepImportError::Malformed("curve degree"))? as usize;
+        let pts = b
+            .get(1)
+            .and_then(Val::as_list)
+            .ok_or(StepImportError::Malformed("curve control list"))?;
+        let wk = self
+            .rec(id, "B_SPLINE_CURVE_WITH_KNOTS")
+            .ok_or(StepImportError::Unsupported("b-spline curve without knots"))?;
+        let w = unnamed(&wk.args);
+        let off = if w.len() >= 8 { 5 } else { 0 };
+        let mults = w
+            .get(off)
+            .and_then(Val::as_list)
+            .ok_or(StepImportError::Malformed("curve multiplicities"))?;
+        let knots = w
+            .get(off + 1)
+            .and_then(Val::as_list)
+            .ok_or(StepImportError::Malformed("curve knots"))?;
+        let weights = match self.rec(id, "RATIONAL_B_SPLINE_CURVE") {
+            Some(r) => Some(
+                unnamed(&r.args)
+                    .first()
+                    .and_then(Val::as_list)
+                    .ok_or(StepImportError::Malformed("curve weights"))?,
+            ),
+            None => None,
+        };
+        let kv = KnotVector::new(degree, Self::expand_knots(mults, knots)?)
+            .map_err(|_| StepImportError::Unsupported("non-clamped curve knots (periodic?)"))?;
+        if pts.len() != kv.control_count() {
+            return Err(StepImportError::Malformed("curve control count"));
+        }
+        let mut ctrl = Vec::with_capacity(pts.len());
+        for (i, pref) in pts.iter().enumerate() {
+            let pid = pref
+                .as_ref_id()
+                .ok_or(StepImportError::Malformed("curve control ref"))?;
+            let p = self.point3(pid, scale)?;
+            let w = match weights {
+                Some(wl) => wl
+                    .get(i)
+                    .and_then(Val::as_real)
+                    .ok_or(StepImportError::Malformed("curve weight count"))?,
+                None => 1.0,
+            };
+            ctrl.push(Vec4::new(p.x * w, p.y * w, p.z * w, w));
+        }
+        NurbsCurve::from_homogeneous(kv, ctrl)
+            .map_err(|_| StepImportError::Malformed("invalid b-spline curve"))
+    }
+
+    /// Convert any recognized surface instance (dossier 38 table).
+    fn convert_surface(
+        &self,
+        id: u64,
+        scale: f64,
+        ang: f64,
+    ) -> Result<Option<ImportedSurface>, StepImportError> {
+        let analytic = |s: Surface3| Ok(Some(ImportedSurface::Analytic(s)));
+        let bad = |_| StepImportError::Malformed("degenerate analytic surface");
+        if let Some(r) = self.rec(id, "PLANE") {
+            let f = self.placement_of(r, scale)?;
+            return analytic(Surface3::Plane(Plane3::new(f)));
+        }
+        if let Some(r) = self.rec(id, "CYLINDRICAL_SURFACE") {
+            let a = unnamed(&r.args);
+            let f = self.placement_of(r, scale)?;
+            let radius = a.get(1).and_then(Val::as_real).unwrap_or(0.0) * scale;
+            return analytic(Surface3::Cylinder(Cylinder3::new(f, radius).map_err(bad)?));
+        }
+        if let Some(r) = self.rec(id, "CONICAL_SURFACE") {
+            let a = unnamed(&r.args);
+            let f = self.placement_of(r, scale)?;
+            let radius = a.get(1).and_then(Val::as_real).unwrap_or(0.0) * scale;
+            let semi = a.get(2).and_then(Val::as_real).unwrap_or(0.0) * ang;
+            return analytic(Surface3::Cone(Cone3::new(f, radius, semi).map_err(bad)?));
+        }
+        if let Some(r) = self.rec(id, "SPHERICAL_SURFACE") {
+            let a = unnamed(&r.args);
+            let f = self.placement_of(r, scale)?;
+            let radius = a.get(1).and_then(Val::as_real).unwrap_or(0.0) * scale;
+            return analytic(Surface3::Sphere(Sphere3::new(f, radius).map_err(bad)?));
+        }
+        if let Some(r) = self.rec(id, "TOROIDAL_SURFACE") {
+            let a = unnamed(&r.args);
+            let f = self.placement_of(r, scale)?;
+            let major = a.get(1).and_then(Val::as_real).unwrap_or(0.0) * scale;
+            let minor = a.get(2).and_then(Val::as_real).unwrap_or(0.0) * scale;
+            return analytic(Surface3::Torus(Torus3::new(f, major, minor).map_err(bad)?));
+        }
+        if self.rec(id, "B_SPLINE_SURFACE").is_some()
+            || self.rec(id, "B_SPLINE_SURFACE_WITH_KNOTS").is_some()
+        {
+            return Ok(Some(ImportedSurface::Nurbs(
+                self.convert_bspline_surface(id, scale)?,
+            )));
+        }
+        Ok(None)
+    }
+
+    /// The placement frame referenced by an analytic surface/conic
+    /// record (first non-name argument).
+    fn placement_of(&self, r: &Record, scale: f64) -> Result<Frame3, StepImportError> {
+        let pid = unnamed(&r.args)
+            .first()
+            .and_then(Val::as_ref_id)
+            .ok_or(StepImportError::Malformed("surface placement"))?;
+        self.frame_at(pid, scale)
+    }
+
+    /// Convert any recognized curve instance.
+    fn convert_curve(&self, id: u64, scale: f64) -> Result<Option<Curve3>, StepImportError> {
+        if let Some(r) = self.rec(id, "LINE") {
+            let a = unnamed(&r.args);
+            let p = a
+                .first()
+                .and_then(Val::as_ref_id)
+                .map(|pid| self.point3(pid, scale))
+                .transpose()?
+                .ok_or(StepImportError::Malformed("line point"))?;
+            let vid = a
+                .get(1)
+                .and_then(Val::as_ref_id)
+                .ok_or(StepImportError::Malformed("line vector"))?;
+            let v = self
+                .rec(vid, "VECTOR")
+                .ok_or(StepImportError::Malformed("vector"))?;
+            let did = unnamed(&v.args)
+                .first()
+                .and_then(Val::as_ref_id)
+                .ok_or(StepImportError::Malformed("vector direction"))?;
+            let dir = self.dir3(did)?;
+            let line =
+                Line3::new(p, dir).map_err(|_| StepImportError::Malformed("degenerate line"))?;
+            return Ok(Some(Curve3::Line(line)));
+        }
+        if let Some(r) = self.rec(id, "CIRCLE") {
+            let a = unnamed(&r.args);
+            let f = self.placement_of(r, scale)?;
+            let radius = a.get(1).and_then(Val::as_real).unwrap_or(0.0) * scale;
+            let c = Circle3::new(f.origin, f.x, f.y, radius)
+                .map_err(|_| StepImportError::Malformed("degenerate circle"))?;
+            return Ok(Some(Curve3::Circle(c)));
+        }
+        if let Some(r) = self.rec(id, "ELLIPSE") {
+            let a = unnamed(&r.args);
+            let f = self.placement_of(r, scale)?;
+            let sa = a.get(1).and_then(Val::as_real).unwrap_or(0.0) * scale;
+            let sb = a.get(2).and_then(Val::as_real).unwrap_or(0.0) * scale;
+            let e = Ellipse3::new(f.origin, f.x, f.y, sa, sb)
+                .map_err(|_| StepImportError::Malformed("degenerate ellipse"))?;
+            return Ok(Some(Curve3::Ellipse(e)));
+        }
+        if self.rec(id, "B_SPLINE_CURVE").is_some()
+            || self.rec(id, "B_SPLINE_CURVE_WITH_KNOTS").is_some()
+        {
+            return Ok(Some(Curve3::Nurbs(self.convert_bspline_curve(id, scale)?)));
+        }
+        Ok(None)
+    }
+}
+
+/// Convert every recognized SURFACE entity in a Part 21 file (dossier
+/// 38 build-plan step 3, the geometry layer of import milestone 2):
+/// analytic placements orthonormalized, coordinates in millimetres,
+/// angles in radians, NURBS in homogeneous 4D. Curved TOPOLOGY assembly
+/// (seams, pcurves) is the next milestone; this layer is what it
+/// consumes.
+pub fn surfaces_from_step(text: &str) -> Result<Vec<ImportedSurface>, StepImportError> {
+    let f = parse(text)?;
+    let scale = length_scale(&f)?;
+    let ang = angle_scale(&f)?;
+    let ids: Vec<u64> = f.ents.keys().copied().collect();
+    let mut out = Vec::new();
+    for id in ids {
+        if let Some(s) = f.convert_surface(id, scale, ang)? {
+            out.push(s);
+        }
+    }
+    Ok(out)
+}
+
+/// Convert every recognized CURVE entity in a Part 21 file.
+pub fn curves_from_step(text: &str) -> Result<Vec<Curve3>, StepImportError> {
+    let f = parse(text)?;
+    let scale = length_scale(&f)?;
+    let ids: Vec<u64> = f.ents.keys().copied().collect();
+    let mut out = Vec::new();
+    for id in ids {
+        if let Some(c) = f.convert_curve(id, scale)? {
+            out.push(c);
+        }
+    }
+    Ok(out)
+}
+
 /// Import the FIRST manifold solid from a Part 21 STEP file (AP203 /
 /// AP214 / AP242, shared Part 42 core). Planar milestone: every face a
 /// PLANE with one outer bound of straight edges; anything else declines
@@ -667,6 +1113,152 @@ mod tests {
             from_step_string(&text, 1e-3),
             Err(StepImportError::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn analytic_surfaces_convert_with_dirty_placements_and_units() {
+        // METRE units, a NON-NORMALIZED axis, and a ref_direction NOT
+        // orthogonal to the axis (both classic import bugs, dossier 38
+        // sec 5): every analytic surface converts with an orthonormal
+        // frame and millimetre radii.
+        let text = "DATA;\n\
+            #10=CARTESIAN_POINT('',(0.,0.,0.001));\n\
+            #11=DIRECTION('',(0.,0.,2.));\n\
+            #12=DIRECTION('',(1.,0.,0.5));\n\
+            #13=AXIS2_PLACEMENT_3D('',#10,#11,#12);\n\
+            #20=CYLINDRICAL_SURFACE('',#13,0.002);\n\
+            #21=CONICAL_SURFACE('',#13,0.003,0.5);\n\
+            #22=SPHERICAL_SURFACE('',#13,0.004);\n\
+            #23=TOROIDAL_SURFACE('',#13,0.005,0.001);\n\
+            #24=PLANE('',#13);\n\
+            #200=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT($,.METRE.));\n\
+            #201=(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.));\n\
+            ENDSEC;";
+        let surfs = surfaces_from_step(text).unwrap();
+        assert_eq!(surfs.len(), 5, "five analytic surfaces");
+        let mut seen_cyl = false;
+        for s in &surfs {
+            let ImportedSurface::Analytic(a) = s else {
+                panic!("unexpected NURBS")
+            };
+            let f = match a {
+                keel_geom::surface::Surface3::Plane(p) => &p.frame,
+                keel_geom::surface::Surface3::Cylinder(c) => {
+                    assert!((c.radius - 2.0).abs() < 1e-12, "cyl radius {}", c.radius);
+                    seen_cyl = true;
+                    &c.frame
+                }
+                keel_geom::surface::Surface3::Cone(c) => {
+                    assert!((c.radius - 3.0).abs() < 1e-12);
+                    assert!((c.half_angle - 0.5).abs() < 1e-12);
+                    &c.frame
+                }
+                keel_geom::surface::Surface3::Sphere(sp) => {
+                    assert!((sp.radius - 4.0).abs() < 1e-12);
+                    &sp.frame
+                }
+                keel_geom::surface::Surface3::Torus(t) => {
+                    assert!((t.major - 5.0).abs() < 1e-12 && (t.minor - 1.0).abs() < 1e-12);
+                    &t.frame
+                }
+            };
+            // Orthonormal, Gram-Schmidt corrected, metre-scaled origin.
+            assert!((f.z - Vec3::new(0., 0., 1.)).norm() < 1e-12);
+            assert!((f.x - Vec3::new(1., 0., 0.)).norm() < 1e-12, "{:?}", f.x);
+            assert!(f.x.dot(f.z).abs() < 1e-12 && (f.y - f.z.cross(f.x)).norm() < 1e-12);
+            assert!((f.origin - Vec3::new(0., 0., 1.0)).norm() < 1e-12);
+        }
+        assert!(seen_cyl);
+    }
+
+    #[test]
+    fn rational_bspline_surface_complex_instance_is_exact() {
+        // THE high-stakes conversion (dossier 38 sec 5): a complex/AND
+        // instance gluing B_SPLINE_SURFACE + ..._WITH_KNOTS +
+        // RATIONAL_B_SPLINE_SURFACE. The patch is an exact rational
+        // quarter cylinder (radius 2 about z, w = sqrt(2)/2 middle
+        // row): every sampled point must satisfy x^2 + y^2 = 4 to
+        // 1e-12, proving knot expansion, the row-major-by-U grid, and
+        // the homogeneous weight pre-multiplication.
+        let text = "DATA;\n\
+            #30=CARTESIAN_POINT('',(2.,0.,0.));\n\
+            #31=CARTESIAN_POINT('',(2.,0.,3.));\n\
+            #32=CARTESIAN_POINT('',(2.,2.,0.));\n\
+            #33=CARTESIAN_POINT('',(2.,2.,3.));\n\
+            #34=CARTESIAN_POINT('',(0.,2.,0.));\n\
+            #35=CARTESIAN_POINT('',(0.,2.,3.));\n\
+            #40=(B_SPLINE_SURFACE(2,1,((#30,#31),(#32,#33),(#34,#35)),.UNSPECIFIED.,.F.,.F.,.F.)\n\
+              B_SPLINE_SURFACE_WITH_KNOTS((3,3),(2,2),(0.,1.),(0.,1.),.UNSPECIFIED.)\n\
+              GEOMETRIC_REPRESENTATION_ITEM()\n\
+              RATIONAL_B_SPLINE_SURFACE(((1.,1.),(0.7071067811865476,0.7071067811865476),(1.,1.)))\n\
+              REPRESENTATION_ITEM('') SURFACE() BOUNDED_SURFACE());\n\
+            ENDSEC;";
+        let surfs = surfaces_from_step(text).unwrap();
+        assert_eq!(surfs.len(), 1);
+        let ImportedSurface::Nurbs(n) = &surfs[0] else {
+            panic!("expected NURBS")
+        };
+        let ((u0, u1), (v0, v1)) = n.domain();
+        for i in 0..=8 {
+            for j in 0..=4 {
+                let u = u0 + (u1 - u0) * i as f64 / 8.0;
+                let v = v0 + (v1 - v0) * j as f64 / 4.0;
+                let p = n.point(u, v);
+                let r = (p.x * p.x + p.y * p.y).sqrt();
+                assert!((r - 2.0).abs() < 1e-12, "off cylinder: {r} at ({u},{v})");
+                assert!((-1e-9..=3.0 + 1e-9).contains(&p.z));
+            }
+        }
+    }
+
+    #[test]
+    fn curves_convert_including_rational_arcs() {
+        let text = "DATA;\n\
+            #10=CARTESIAN_POINT('',(1.,1.,0.));\n\
+            #11=DIRECTION('',(0.,0.,1.));\n\
+            #12=DIRECTION('',(1.,0.,0.));\n\
+            #13=AXIS2_PLACEMENT_3D('',#10,#11,#12);\n\
+            #30=CARTESIAN_POINT('',(2.,0.,0.));\n\
+            #32=CARTESIAN_POINT('',(2.,2.,0.));\n\
+            #34=CARTESIAN_POINT('',(0.,2.,0.));\n\
+            #50=CIRCLE('',#13,1.5);\n\
+            #60=B_SPLINE_CURVE_WITH_KNOTS('',1,(#30,#34),.UNSPECIFIED.,.F.,.F.,(2,2),(0.,1.),.PIECEWISE_BEZIER_KNOTS.);\n\
+            #61=(B_SPLINE_CURVE(2,(#30,#32,#34),.UNSPECIFIED.,.F.,.F.)\n\
+              B_SPLINE_CURVE_WITH_KNOTS((3,3),(0.,1.),.UNSPECIFIED.)\n\
+              RATIONAL_B_SPLINE_CURVE((1.,0.7071067811865476,1.))\n\
+              BOUNDED_CURVE() CURVE() GEOMETRIC_REPRESENTATION_ITEM() REPRESENTATION_ITEM(''));\n\
+            ENDSEC;";
+        let curves = curves_from_step(text).unwrap();
+        assert_eq!(curves.len(), 3);
+        let mut found_circle = false;
+        let mut found_arc = false;
+        for c in &curves {
+            match c {
+                keel_geom::curve::Curve3::Circle(ci) => {
+                    assert!((ci.radius - 1.5).abs() < 1e-12);
+                    let p = ci.point(0.0);
+                    assert!((p - Vec3::new(2.5, 1.0, 0.0)).norm() < 1e-12);
+                    found_circle = true;
+                }
+                keel_geom::curve::Curve3::Nurbs(n) => {
+                    let (t0, t1) = n.domain();
+                    if n.degree() == 2 {
+                        // The rational quarter arc: exactly on r = 2.
+                        for i in 0..=8 {
+                            let t = t0 + (t1 - t0) * i as f64 / 8.0;
+                            let p = n.point(t);
+                            let r = (p.x * p.x + p.y * p.y).sqrt();
+                            assert!((r - 2.0).abs() < 1e-12, "arc off circle: {r}");
+                        }
+                        found_arc = true;
+                    } else {
+                        assert!((n.point(t0) - Vec3::new(2., 0., 0.)).norm() < 1e-12);
+                    }
+                }
+                other => panic!("unexpected curve {other:?}"),
+            }
+        }
+        assert!(found_circle && found_arc);
     }
 
     /// A hand-written AP203 cube [0,s]^3 with one face bound stored CW
