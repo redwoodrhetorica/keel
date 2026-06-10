@@ -134,10 +134,13 @@ fn point_tri_distance(p: Vec3, tri: &[Vec3; 3]) -> f64 {
 
 impl Body {
     /// All outward triangles of the body (the tessellation the winding
-    /// classifier and volume use).
+    /// classifier and volume use). Interior partition walls (both sides
+    /// solid, item 29) are not part of the outer boundary; including
+    /// them would corrupt the divergence-theorem volume.
     fn all_triangles(&self) -> Vec<[Vec3; 3]> {
         self.face_keys()
             .iter()
+            .filter(|&&f| !self.is_interior_wall(f))
             .flat_map(|&f| self.tessellate_face(f))
             .collect()
     }

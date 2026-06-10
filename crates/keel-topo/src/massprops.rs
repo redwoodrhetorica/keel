@@ -129,6 +129,12 @@ impl Body {
                 .get(face.back_region)
                 .map(|r| r.solid)
                 .ok_or(TopoError::StaleKey)?;
+            // An interior partition wall (both sides solid, item 29)
+            // contributes equal and opposite flux from its two cells:
+            // net zero. Skip it; the outer boundary carries the mass.
+            if (fs, bs) == (true, true) {
+                continue;
+            }
             // Validity: a solid face bounds exactly one solid region (a
             // double-sided / lamina face has no single material side).
             if (fs, bs) != (false, true) && (fs, bs) != (true, false) {

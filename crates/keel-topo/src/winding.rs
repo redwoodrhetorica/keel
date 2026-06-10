@@ -25,13 +25,31 @@ pub fn tri_solid_angle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
 }
 
 impl Body {
+    /// Is `face` an interior partition wall: a double-sided face whose
+    /// BOTH sides bound solid material (the non-regularized boolean's
+    /// numReg=2 interface, item 29)? Such a face separates two solid
+    /// cells and contributes no net boundary flux: the volume / winding
+    /// integrals over the OUTER boundary alone are the body's.
+    pub(crate) fn is_interior_wall(&self, face: crate::entity::FaceKey) -> bool {
+        let Some(f) = self.faces.get(face) else {
+            return false;
+        };
+        self.regions.get(f.front_region).map(|r| r.solid) == Some(true)
+            && self.regions.get(f.back_region).map(|r| r.solid) == Some(true)
+    }
+
     /// Generalized winding number of `p` against this body's boundary:
     /// `(1/4pi) * sum_triangles signed_solid_angle`. ~1 inside, ~0
     /// outside, ~0.5 on the boundary. Surface-type-agnostic (works on
-    /// periodic faces with no pcurve dependency).
+    /// periodic faces with no pcurve dependency). Interior partition
+    /// walls (both sides solid) are not part of the OUTER boundary and
+    /// are skipped.
     pub fn generalized_winding_number(&self, p: Vec3) -> f64 {
         let mut total = 0.0f64;
         for face in self.face_keys() {
+            if self.is_interior_wall(face) {
+                continue;
+            }
             for tri in self.tessellate_face(face) {
                 total += tri_solid_angle(p, tri[0], tri[1], tri[2]);
             }
@@ -50,6 +68,9 @@ impl Body {
     pub fn tessellated_volume(&self) -> f64 {
         let mut v = 0.0f64;
         for face in self.face_keys() {
+            if self.is_interior_wall(face) {
+                continue;
+            }
             for tri in self.tessellate_face(face) {
                 v += tri[0].dot(tri[1].cross(tri[2])) / 6.0;
             }
