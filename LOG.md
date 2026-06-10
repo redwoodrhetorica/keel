@@ -4810,7 +4810,7 @@ two-bite pair (r 1 piercing R 2) = entry + exit loops; offset one-bite; disjoint
 parallel rulings exact; shared cylinder Coincident.
 
 CI: fmt; clippy -D warnings; workspace 126 + 77 + 233 (+3, +2) green; DUAL soak (seam handling
-changed): fuzz_boolean + fuzz_cyl_boolean 10 minutes each, counts below.
+changed): fuzz_boolean 822 runs + fuzz_cyl_boolean 890 runs, 10 minutes each, both clean.
 
 CONSUMERS UNBLOCKED: the unequal-radius mitre (dossier 55, queued) now has its junction curve
 in closed form; cylinder-cylinder boolean assembly has certified seams waiting.
