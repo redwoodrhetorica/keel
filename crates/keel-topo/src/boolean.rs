@@ -2000,7 +2000,7 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, B
         Some((pa, pb)) => (pa, pb),
         None => (a, b),
     };
-    let (seams, mut faults) = seam_curves(a, b, tol);
+    let (seams, faults) = seam_curves(a, b, tol);
     // Tangential face pairs (touch at a point/curve without crossing) are
     // still declined. COINCIDENT (coplanar overlapping) faces now PROCEED:
     // the winding classifier marks them FaceClass::OnOther and select_faces
@@ -2016,8 +2016,58 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, B
     {
         return Err(f);
     }
-    let ia = imprint_operand(a, &seams, |s| s.face_a, tol, &mut faults);
-    let ib = imprint_operand(b, &seams, |s| s.face_b, tol, &mut faults);
+    assemble_boolean(a, b, op, tol, &seams, faults)
+}
+
+/// Local / selective face-pair boolean (parity item 31): the boolean
+/// restricted to the intersection seams of the given (target-face,
+/// tool-face) pairs only. Imprint, classification, selection, stitch,
+/// and EVERY honesty gate run unchanged, so an insufficient selection
+/// (one whose seams cannot bound a closed result) DECLINES rather than
+/// emitting a wrong body. The coincident-overlap pre-pass is skipped
+/// (it re-clones the operands and would remap the caller's face keys);
+/// coincident contacts decline as in the general-position MVP.
+pub fn boolean_selective(
+    a: &Body,
+    b: &Body,
+    op: BoolOp,
+    pairs: &[(FaceKey, FaceKey)],
+    tol: f64,
+) -> Result<BoolResult, BoolFault> {
+    let (all, faults) = seam_curves(a, b, tol);
+    let seams: Vec<SeamCurve> = all
+        .into_iter()
+        .filter(|s| pairs.contains(&(s.face_a, s.face_b)))
+        .collect();
+    if seams.is_empty() {
+        return Err(BoolFault::AssemblyFailed(
+            "boolean_selective: no seams from the selected pairs",
+        ));
+    }
+    if let Some(f) = faults
+        .iter()
+        .find(|f| matches!(f, BoolFault::Tangent(..)))
+        .cloned()
+    {
+        return Err(f);
+    }
+    assemble_boolean(a, b, op, tol, &seams, faults)
+}
+
+/// The shared post-seam boolean tail: imprint both operands along the
+/// given seams, classify, select, stitch, and apply the degeneracy /
+/// self-consistency gates. Used by `boolean` (all seams) and
+/// `boolean_selective` (a face-pair subset).
+fn assemble_boolean(
+    a: &Body,
+    b: &Body,
+    op: BoolOp,
+    tol: f64,
+    seams: &[SeamCurve],
+    mut faults: Vec<BoolFault>,
+) -> Result<BoolResult, BoolFault> {
+    let ia = imprint_operand(a, seams, |s| s.face_a, tol, &mut faults);
+    let ib = imprint_operand(b, seams, |s| s.face_b, tol, &mut faults);
     let class_a = classify_faces(&ia.body, b, tol);
     let class_b = classify_faces(&ib.body, a, tol);
     let kept = select_faces(op, &class_a, &class_b);
@@ -3121,6 +3171,38 @@ mod tests {
         b.cylinder(Frame3::from_z(base, Vec3::new(0., 0., 1.)).unwrap(), r, h)
             .unwrap();
         b
+    }
+
+    #[test]
+    fn selective_boolean_matches_full_when_complete() {
+        // Item 31: selecting exactly the intersecting face pairs
+        // reproduces the full boolean; dropping a needed pair DECLINES
+        // (the gates refuse an unbounded selection) instead of lying.
+        let a = block(Vec3::ZERO, Vec3::new(2., 2., 2.));
+        let b = block(Vec3::new(1.0, 0.5, 0.5), Vec3::new(2., 2., 2.));
+        let (seams, _) = seam_curves(&a, &b, 1e-7);
+        let mut pairs: Vec<_> = seams.iter().map(|s| (s.face_a, s.face_b)).collect();
+        pairs.dedup();
+        let full = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
+        let sel = boolean_selective(&a, &b, BoolOp::Union, &pairs, 1e-7).unwrap();
+        let (vf, vs) = (
+            full.body.mass_properties().unwrap().volume,
+            sel.body.mass_properties().unwrap().volume,
+        );
+        assert!(
+            (vf - vs).abs() < 1e-9,
+            "selective(all pairs) must match full ({vf} vs {vs})"
+        );
+        assert!(sel.body.validate().is_ok());
+
+        // Remove every pair touching one seam's target face: incomplete.
+        let drop_face = pairs[0].0;
+        let partial: Vec<_> = pairs.iter().copied().filter(|p| p.0 != drop_face).collect();
+        assert!(
+            partial.len() < pairs.len()
+                && boolean_selective(&a, &b, BoolOp::Union, &partial, 1e-7).is_err(),
+            "an insufficient selection must decline"
+        );
     }
 
     #[test]
