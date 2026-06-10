@@ -1270,6 +1270,139 @@ pub fn boolean_sheet_solid(
     finalize_imported_sheet(dst, rec, faces, inf, tol.max(1e-7))
 }
 
+/// Sheet-sheet boolean (dossier 57 Rung 3, dossier 39 sec 1.2): the 2D
+/// arrangement of two COPLANAR planar sheets. The overlap's interior
+/// boundary imprints onto each sheet (the same machinery as the
+/// solid-solid coincident pre-pass), fragments classify by a 2D
+/// point-in-polygon test against the other sheet, selection follows the
+/// dimension table (union = all of A + B-outside; intersection =
+/// A-inside; difference = A-outside), and the kept fragments knit into
+/// one sheet body (shared seam edges glue radial-2). CROSSING
+/// (non-coplanar) sheets intersect in a wire and DECLINE here (the
+/// mixed-dimension rung-4/5 ladder).
+pub fn boolean_sheet_sheet(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<Body, BoolFault> {
+    use crate::query::BodyClass;
+    if a.body_class() != BodyClass::Sheet || b.body_class() != BodyClass::Sheet {
+        return Err(BoolFault::AssemblyFailed(
+            "boolean_sheet_sheet: both operands must be sheet bodies",
+        ));
+    }
+    let one_planar_face = |s: &Body| -> Option<(FaceKey, keel_math::vec::Vec3)> {
+        let faces = s.face_keys();
+        let [f] = faces[..] else { return None };
+        match s.face_surface3(f) {
+            Some(Surface3::Plane(p)) => Some((f, p.frame.z)),
+            _ => None,
+        }
+    };
+    let (Some((fa, na)), Some((fb, nb))) = (one_planar_face(a), one_planar_face(b)) else {
+        return Err(BoolFault::AssemblyFailed(
+            "boolean_sheet_sheet: single planar face per sheet (MVP)",
+        ));
+    };
+    let pa = a.face_outer_loop_points(fa);
+    let pb = b.face_outer_loop_points(fb);
+    if pa.len() < 3 || pb.len() < 3 {
+        return Err(BoolFault::AssemblyFailed("boolean_sheet_sheet: degenerate"));
+    }
+    // Coplanarity: same carrier within tol (parallel normals, zero
+    // offset). Crossing sheets decline.
+    let n = na;
+    if na.cross(nb).norm() > 1e-9 || ((pb[0] - pa[0]).dot(n)).abs() > tol.max(1e-9) {
+        return Err(BoolFault::AssemblyFailed(
+            "boolean_sheet_sheet: non-coplanar sheets (follow-up)",
+        ));
+    }
+    // 2D frame on the shared plane for point-in-polygon tests.
+    let bx = (pa[1] - pa[0])
+        .try_normalize()
+        .ok_or(BoolFault::AssemblyFailed("boolean_sheet_sheet: degenerate"))?;
+    let by = n.cross(bx);
+    let origin = pa[0];
+    let to2d = |p: keel_math::vec::Vec3| -> (f64, f64) {
+        let d = p - origin;
+        (d.dot(bx), d.dot(by))
+    };
+    let poly_a2: Vec<(f64, f64)> = pa.iter().map(|&p| to2d(p)).collect();
+    let poly_b2: Vec<(f64, f64)> = pb.iter().map(|&p| to2d(p)).collect();
+    // Imprint the overlap's interior boundary onto an operand, then
+    // keep fragments by their interior point's containment in the
+    // OTHER sheet (None keeps everything).
+    let fragments = |src: &Body,
+                     face: FaceKey,
+                     own: &[keel_math::vec::Vec3],
+                     other: &[keel_math::vec::Vec3],
+                     other2: &[(f64, f64)],
+                     keep_inside: Option<bool>|
+     -> (Body, Vec<FaceKey>) {
+        let mut work = src.clone();
+        for (s, e) in crate::coincident::overlap_interior_segments(own, other, n) {
+            // The open-imprint contract is a PRE-BOUNDED curve (t in
+            // [0,1] = the segment); Line3 normalizes its direction, so
+            // a degree-1 NURBS carries the exact segment.
+            if let Ok(seg) =
+                keel_geom::nurbs_curve::NurbsCurve::new(1, vec![0., 0., 1., 1.], vec![s, e], None)
+            {
+                let _ = work.imprint_open_curve(face, &keel_geom::curve::Curve3::Nurbs(seg), tol);
+            }
+        }
+        let mut kept = Vec::new();
+        for f in work.face_keys() {
+            let Some(q) = work.face_interior_point(f) else {
+                continue;
+            };
+            let inside = winding_nonzero(other2, to2d(q));
+            if keep_inside.is_none_or(|want| want == inside) {
+                kept.push(f);
+            }
+        }
+        (work, kept)
+    };
+    let mut sources: Vec<(Body, Vec<FaceKey>, Operand)> = Vec::new();
+    match op {
+        BoolOp::Union => {
+            // All of A, plus B outside A (one copy of the overlap).
+            let (wa, ka) = fragments(a, fa, &pa, &pb, &poly_b2, None);
+            let (wb, kb) = fragments(b, fb, &pb, &pa, &poly_a2, Some(false));
+            sources.push((wa, ka, Operand::A));
+            sources.push((wb, kb, Operand::B));
+        }
+        BoolOp::Intersection => {
+            let (wa, ka) = fragments(a, fa, &pa, &pb, &poly_b2, Some(true));
+            sources.push((wa, ka, Operand::A));
+        }
+        BoolOp::Difference => {
+            let (wa, ka) = fragments(a, fa, &pa, &pb, &poly_b2, Some(false));
+            sources.push((wa, ka, Operand::A));
+        }
+    }
+    if sources.iter().all(|(_, k, _)| k.is_empty()) {
+        return Err(BoolFault::AssemblyFailed(
+            "boolean_sheet_sheet: empty result",
+        ));
+    }
+    // Import the kept fragments and finalize as a SHEET (free edges
+    // are the nature of an open lamina; the solid closure invariant
+    // does not apply).
+    use std::collections::BTreeMap;
+    let mut dst = Body::new();
+    let inf = dst.infinite_region();
+    let mut rec = dst.begin_op();
+    let mut vmap = BTreeMap::new();
+    let mut emap = BTreeMap::new();
+    let mut faces = Vec::new();
+    for (src_body, kept, tag) in &sources {
+        for &f in kept {
+            let nf = import_face(
+                &mut dst, src_body, f, *tag, false, &mut rec, &mut vmap, &mut emap, inf, inf,
+            )
+            .ok_or(BoolFault::AssemblyFailed("boolean_sheet_sheet: import"))?;
+            faces.push(nf);
+        }
+    }
+    finalize_imported_sheet(dst, rec, faces, inf, tol.max(1e-7))
+}
+
 /// Partition a SOLID by a SHEET into a cellular solid (item 29 Rung 2,
 /// dossier 57: "sheet-as-knife"): the part of the sheet INSIDE the
 /// solid becomes a DOUBLE-SIDED interior wall splitting the region it
@@ -2061,8 +2194,14 @@ fn preimprint_coincident_overlaps(a: &Body, b: &Body, tol: f64) -> Option<(Body,
                         other: &[keel_math::vec::Vec3],
                         n: keel_math::vec::Vec3| {
         for (s, e) in crate::coincident::overlap_interior_segments(subj, other, n) {
-            if let Ok(line) = keel_geom::curve::Line3::new(s, e - s) {
-                let _ = body.imprint_open_curve(face, &keel_geom::curve::Curve3::Line(line), tol);
+            // PRE-BOUNDED segment per the open-imprint contract (a
+            // Line3 normalizes its direction, so t in [0,1] would not
+            // span the segment; this was a silent no-op for non-unit
+            // cuts).
+            if let Ok(seg) =
+                keel_geom::nurbs_curve::NurbsCurve::new(1, vec![0., 0., 1., 1.], vec![s, e], None)
+            {
+                let _ = body.imprint_open_curve(face, &keel_geom::curve::Curve3::Nurbs(seg), tol);
             }
         }
     };
@@ -4171,6 +4310,47 @@ mod tests {
             boolean(&a, &far, BoolOp::Intersection, 1e-5),
             Err(BoolFault::UnassemblableSeam(..))
         ));
+    }
+
+    #[test]
+    fn sheet_sheet_booleans_are_the_2d_arrangement() {
+        // Dossier 57 Rung 3 oracle: two overlapping 4x4 coplanar
+        // sheets offset by 2: intersection area 8, difference area 8,
+        // union area 24, all exact; disjoint union 32; crossing
+        // sheets DECLINE.
+        let z = Vec3::new(0., 0., 1.);
+        let x = Vec3::new(1., 0., 0.);
+        let a = Body::rectangular_sheet(Vec3::ZERO, z, x, 4.0, 4.0).unwrap();
+        let b = Body::rectangular_sheet(Vec3::new(2.0, 0.0, 0.0), z, x, 4.0, 4.0).unwrap();
+        let i = boolean_sheet_sheet(&a, &b, BoolOp::Intersection, 1e-7).unwrap();
+        assert!(i.validate().is_ok());
+        assert!(
+            (i.surface_area() - 8.0).abs() < 1e-9,
+            "i {}",
+            i.surface_area()
+        );
+        let d = boolean_sheet_sheet(&a, &b, BoolOp::Difference, 1e-7).unwrap();
+        assert!(d.validate().is_ok());
+        assert!(
+            (d.surface_area() - 8.0).abs() < 1e-9,
+            "d {}",
+            d.surface_area()
+        );
+        let u = boolean_sheet_sheet(&a, &b, BoolOp::Union, 1e-7).unwrap();
+        assert!(u.validate().is_ok());
+        assert!(
+            (u.surface_area() - 24.0).abs() < 1e-9,
+            "u {}",
+            u.surface_area()
+        );
+        // Disjoint: union is both, intersection declines empty.
+        let far = Body::rectangular_sheet(Vec3::new(10.0, 0.0, 0.0), z, x, 4.0, 4.0).unwrap();
+        let u2 = boolean_sheet_sheet(&a, &far, BoolOp::Union, 1e-7).unwrap();
+        assert!((u2.surface_area() - 32.0).abs() < 1e-9);
+        assert!(boolean_sheet_sheet(&a, &far, BoolOp::Intersection, 1e-7).is_err());
+        // Crossing sheets decline (the wire intersection is rung 4/5).
+        let v = Body::rectangular_sheet(Vec3::new(2.0, 0.0, -2.0), x, z, 4.0, 4.0).unwrap();
+        assert!(boolean_sheet_sheet(&a, &v, BoolOp::Intersection, 1e-7).is_err());
     }
 
     #[test]
