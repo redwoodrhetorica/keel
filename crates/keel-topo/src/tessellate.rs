@@ -678,6 +678,31 @@ impl Body {
                     verts.push(el.point(ts + d * (k as f64 / seg as f64)));
                 }
             }
+            // Open NURBS arc edges (the conic blend's cap sections,
+            // item 49): sample the curve domain, oriented to this fin.
+            if let Some(fin) = self.fins.get(cur)
+                && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                && let Some(Curve3::Nurbs(nc)) = self.curves.get(ck)
+                && self.edges.get(fin.edge).map(|e| !e.is_closed()) == Some(true)
+                && let Some(ps) = self
+                    .fin_start_vertex(cur)
+                    .and_then(|v| self.vertices.get(v))
+                    .map(|v| v.point)
+            {
+                let nc = nc.clone();
+                let (t0, t1) = nc.domain();
+                let forward = (nc.point(t0) - ps).norm() <= (nc.point(t1) - ps).norm();
+                const SEG: usize = 8;
+                for k in 1..SEG {
+                    let f = k as f64 / SEG as f64;
+                    let t = if forward {
+                        t0 + (t1 - t0) * f
+                    } else {
+                        t1 - (t1 - t0) * f
+                    };
+                    verts.push(nc.point(t));
+                }
+            }
             let Some(next) = self.fins.get(cur).map(|f| f.next) else {
                 break;
             };

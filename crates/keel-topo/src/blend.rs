@@ -1015,6 +1015,175 @@ impl Body {
             .map_err(|_| TopoError::Precondition("fillet: result invalid"))?;
         Ok(b)
     }
+
+    /// Blend a plane-plane `edge` with a CONIC cross-section (parity
+    /// item 49): springs set back `d` along each support from the
+    /// edge, the section a rational quadratic with the shoulder ON the
+    /// old sharp edge and weight `w` -- the chamfer-to-circle
+    /// continuum. w -> 0 flattens toward the chamfer chord; for
+    /// PERPENDICULAR supports w = sqrt(2)/2 is the EXACT circular
+    /// fillet of radius d (the oracle); larger w hugs the sharp
+    /// corner. The blend face carries the exact rational strip
+    /// (degree 2 x 1 NURBS); the end arcs are the same conic in each
+    /// cap plane. G2/curvature-continuous sections (item 60) stay a
+    /// follow-up; `w` controls fullness, not curvature matching.
+    pub fn fillet_edge_conic(&self, edge: EdgeKey, d: f64, w: f64) -> Result<Body, TopoError> {
+        let ok = d.is_finite() && d > 0.0 && w.is_finite() && w > 0.0;
+        if !ok {
+            return Err(TopoError::Precondition("conic: bad setback/weight"));
+        }
+        let faces = self.faces_around_edge(edge);
+        if faces.len() != 2 {
+            return Err(TopoError::Precondition("conic: edge needs two faces"));
+        }
+        for &f in &faces {
+            if !matches!(
+                self.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition(
+                    "conic: non-planar support (follow-up)",
+                ));
+            }
+        }
+        let convex = self.edge_is_convex(edge).unwrap_or(true);
+        let (f1, f2) = (faces[0], faces[1]);
+        let n1 = self
+            .face_outward_normal(f1)
+            .ok_or(TopoError::Precondition("conic: face normal"))?;
+        let n2 = self
+            .face_outward_normal(f2)
+            .ok_or(TopoError::Precondition("conic: face normal"))?;
+        let (va_k, vb_k) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
+        let pa = self.vertices.get(va_k).ok_or(TopoError::StaleKey)?.point;
+        let pb = self.vertices.get(vb_k).ok_or(TopoError::StaleKey)?.point;
+        let e = (pb - pa)
+            .try_normalize()
+            .ok_or(TopoError::Precondition("conic: degenerate edge"))?;
+        // In-face setback directions: in plane A, perpendicular to the
+        // edge, pointing AWAY from support B's outward side (convex; the
+        // reverse for concave).
+        let away = |np: Vec3, nq: Vec3| -> Result<Vec3, TopoError> {
+            let u = e
+                .cross(np)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("conic: degenerate setback"))?;
+            // Convex: the setback moves AWAY from the other support's
+            // outward side (u . nq < 0); concave: toward it.
+            let s = if convex { 1.0 } else { -1.0 };
+            Ok(if u.dot(nq) * s > 0.0 { u * -1.0 } else { u })
+        };
+        let u_a = away(n1, n2)?;
+        let u_b = away(n2, n1)?;
+        let (sa0, sa1) = (pa + u_a * d, pb + u_a * d);
+        let (sb0, sb1) = (pa + u_b * d, pb + u_b * d);
+        let spring_a =
+            Line3::new(sa0, sa1 - sa0).map_err(|_| TopoError::Precondition("conic: spring a"))?;
+        let spring_b =
+            Line3::new(sb0, sb1 - sb0).map_err(|_| TopoError::Precondition("conic: spring b"))?;
+        // The rational strip: degree 2 section x degree 1 along the
+        // edge, shoulder row on the old sharp edge with weight w.
+        let strip = keel_geom::nurbs_surface::NurbsSurface::new(
+            2,
+            1,
+            vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            vec![0.0, 0.0, 1.0, 1.0],
+            vec![sa0, sa1, pa, pb, sb0, sb1],
+            Some(vec![1.0, 1.0, w, w, 1.0, 1.0]),
+        )
+        .map_err(|_| TopoError::Precondition("conic: bad strip"))?;
+
+        let mut b = self.clone();
+        let (spring_a_edge, strip1, f1k, aa, ab) =
+            b.imprint_spring_line(f1, edge, va_k, vb_k, &spring_a, n1)?;
+        let (spring_b_edge, strip2, _f2k, ba, bb) =
+            b.imprint_spring_line(f2, edge, va_k, vb_k, &spring_b, n2)?;
+
+        // Split each cap along the conic section arc (the same rational
+        // quadratic, in that cap plane, shoulder at the old corner).
+        let split_cap = |b: &mut Body,
+                         v_corner: crate::entity::VertexKey,
+                         a_end: crate::entity::VertexKey,
+                         b_end: crate::entity::VertexKey|
+         -> Result<(), TopoError> {
+            let cap = b
+                .faces_at_vertex(v_corner)
+                .into_iter()
+                .find(|f| *f != strip1 && *f != strip2)
+                .ok_or(TopoError::Precondition("conic: no cap face"))?;
+            let lp = b
+                .faces
+                .get(cap)
+                .map(|f| f.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fin_a = b.fin_ending_at_vertex(lp, a_end)?;
+            let fin_b = b.fin_ending_at_vertex(lp, b_end)?;
+            let split = b.split_face(fin_a, fin_b, None)?;
+            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
+                && let Some(nf) = b.faces.get_mut(split.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            let corner = b
+                .vertices
+                .get(v_corner)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let qa = b
+                .vertices
+                .get(a_end)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let qb = b
+                .vertices
+                .get(b_end)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let arc = keel_geom::nurbs_curve::NurbsCurve::new(
+                2,
+                vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                vec![qa, corner, qb],
+                Some(vec![1.0, w, 1.0]),
+            )
+            .map_err(|_| TopoError::Precondition("conic: bad cap arc"))?;
+            b.attach_edge_curve(split.edge, Curve3::Nurbs(arc), true);
+            Ok(())
+        };
+        split_cap(&mut b, va_k, aa, ba)?;
+        split_cap(&mut b, vb_k, ab, bb)?;
+
+        // Dissolve the corner fragments (the standard surgery).
+        b.kef(edge)?;
+        let e_a = b
+            .edge_between(aa, va_k)
+            .ok_or(TopoError::Precondition("conic: no A spring stub"))?;
+        b.kef(e_a)?;
+        let spur_a = b
+            .edge_between(va_k, ba)
+            .ok_or(TopoError::Precondition("conic: no A spur"))?;
+        b.kev(spur_a)?;
+        let e_b = b
+            .edge_between(ab, vb_k)
+            .ok_or(TopoError::Precondition("conic: no B spring stub"))?;
+        b.kef(e_b)?;
+        let spur_b = b
+            .edge_between(vb_k, bb)
+            .ok_or(TopoError::Precondition("conic: no B spur"))?;
+        b.kev(spur_b)?;
+
+        let blend_face = b
+            .faces_around_edge(spring_a_edge)
+            .into_iter()
+            .find(|f| *f != f1k)
+            .ok_or(TopoError::Precondition("conic: no blend face"))?;
+        b.attach_face_surface(blend_face, SurfaceGeom::Nurbs(strip), convex);
+        b.attach_edge_curve(spring_a_edge, Curve3::Line(spring_a), true);
+        b.attach_edge_curve(spring_b_edge, Curve3::Line(spring_b), true);
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("conic: result invalid"))?;
+        Ok(b)
+    }
 }
 
 /// The exact ellipse where a cone meets a plane (the variable-radius
@@ -1399,6 +1568,47 @@ mod tests {
             }
         }
         panic!("no top-right edge");
+    }
+
+    #[test]
+    fn conic_blend_spans_chamfer_to_circle() {
+        // Item 49: the rational-quadratic section sweeps the chamfer-
+        // to-circle continuum on perpendicular supports. w = sqrt(2)/2
+        // IS the circular fillet of radius d (volume 7.8927); w -> 0
+        // flattens toward the chamfer chord (7.75); large w hugs the
+        // sharp corner (-> 8). Monotone in w.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e = top_right_edge(&b);
+
+        let circle_like = b
+            .fillet_edge_conic(e, 0.5, core::f64::consts::FRAC_1_SQRT_2)
+            .unwrap();
+        assert!(circle_like.validate().is_ok(), "conic (circle) invalid");
+        let v_circle = circle_like.mesh_volume();
+        let want_circle = 8.0 - (1.0 - core::f64::consts::FRAC_PI_4) * 0.25 * 2.0;
+        assert!(
+            (v_circle - want_circle).abs() < 0.02,
+            "w = sqrt(2)/2 must reproduce the fillet ({v_circle} vs {want_circle})"
+        );
+
+        let flat = b.fillet_edge_conic(e, 0.5, 0.02).unwrap();
+        assert!(flat.validate().is_ok(), "conic (flat) invalid");
+        let v_flat = flat.mesh_volume();
+        assert!(
+            (v_flat - 7.75).abs() < 0.02,
+            "w -> 0 must approach the chamfer ({v_flat} vs 7.75)"
+        );
+
+        let sharp = b.fillet_edge_conic(e, 0.5, 25.0).unwrap();
+        assert!(sharp.validate().is_ok(), "conic (sharp) invalid");
+        let v_sharp = sharp.mesh_volume();
+        assert!(v_sharp > 7.95, "large w must hug the corner ({v_sharp})");
+
+        assert!(
+            v_flat < v_circle && v_circle < v_sharp,
+            "fullness must be monotone in w ({v_flat}, {v_circle}, {v_sharp})"
+        );
     }
 
     #[test]
