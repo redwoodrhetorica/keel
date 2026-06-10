@@ -4427,3 +4427,41 @@ CI: fmt, clippy -D warnings, workspace 123 + 77 + 221 (+1) green. No fuzz: addit
 
 COUNTER: 131 -> 132/144 (item 67). Remaining: 29, 51, 55, 56, 57 -- vertex blends, range/runout,
 networks/mitring, overflow policies, non-manifold booleans: the five true multi-session engines.
+
+## Addendum 146 (2026-06-10, attended): SESSION-END RESUME ANCHOR (counter 132/144)
+
+WHERE WE ARE. master HEAD all green: workspace 123 geom + 77 math + 221 topo, clippy -D
+warnings, fmt; six clean fuzz_boolean soaks across the session at every boolean/tessellation
+change. NOT pushed (push only if asked). A +29 SESSION: 103 -> 132/144, far past the roadmap's
+realistic band (110-120).
+
+THE SECOND HALF OF THE RUN (Addenda 140-145) cracked the blend deep end faster than the roadmap
+priced it, by finding analytic/reduction rungs: 48 variable-radius = an EXACT CONE (tilted
+offset planes stay planes; ellipse cap arcs closed-form); 49 conic sections = a rational
+quadratic strip on the same surgery (w = sqrt(2)/2 IS the circle); 54 hold-line = closed-form
+floating radius (the sqrt(2)-1 wedge oracle, cross-checked by item-58 recognition); 50
+face-face = the half-cylinder rounded-end slab (signed arc-sweep disambiguation); 60 G2 = a
+quintic with collinear end triples (zero spring curvature VERIFIED numerically on the attached
+surface); 67 Gordon loft = a TRANSFINITE EVALUATOR fed to the certified foreign-surface fit.
+Pattern worth remembering: before building a marching/NURBS engine, look for the analytic rung
+and for a reduction to the certified-evaluator pipeline.
+
+THE WALL (this session's honest stopping point): the five remaining tractable items are true
+multi-session engines needing NEW machinery, not reductions: 29 general/non-manifold-body
+booleans (dossier 02); 51 vertex/setback blends (corner patches where three blends meet); 55
+range-controlled blends (partial-span springs + setback runout mid-face); 56 blend networks +
+mitring (multi-edge propagation); 57 overflow handling (dossier 41 policy engine; today
+overflow declines via the spring-misses-cap guard, honest but not "handling"). Out-of-scope
+stays as ledgered (Addendum 130; the counter includes the historic slice ticks recorded there).
+
+QUEUED CLEANUPS: parameterize the five-fold trim-and-stitch surgery copies (each currently
+gated by its own oracles); curved through-hole relocation ("unlocated seam component");
+sheet-sheet booleans; central-split corner-exact n-sided fill; variational fairing pass
+(patent-clear, Addendum 131); toroidal/curved-support unblend; coincident-union tolerance
+sensitivity (Addendum 131 data point); the 10h all-sector fuzz + three-bucket billion-boolean
+completion gate before any 1.0 claim.
+
+STANDING RULES unchanged: read this LOG first (this addendum is the anchor); dossier re-read +
+citation per item; data-first diagnosis; verify the SUCCESS branch explicitly; branch-per-
+milestone; exact CI triplet + fuzz_boolean soak when boolean/tessellation internals change; LOG
+addendum then merge; anti-double-count rule (Addendum 130); NO EM-DASHES; push only if asked.
