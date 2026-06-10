@@ -4610,3 +4610,52 @@ CI: fmt; clippy -D warnings; workspace 123 + 77 + 225 (+1) green; fuzz_boolean s
 
 COUNTER: 135 -> 136/144 (item 51, the perpendicular equal-radius rung; setbacks, unequal
 radii, and oblique dihedrals are the dossier-53 ladder). Remaining tractable: 29.
+
+## Addendum 151 (2026-06-10, attended): NON-REGULARIZED CELLULAR BOOLEAN (item 29; 136 -> 137/144)
+
+boolean_with(a, b, op, tol, BooleanOptions { regularize }) (branch nonreg-union; dossier 57,
+the deep dossier of the batch): item 29 lands as the dossier's verdict prescribed -- a CELL
+SELECTION LAYER over the existing imprint/classify/select/stitch pipeline plus the three
+stitcher relaxations, NOT a stitcher rebuild. Rung 1 (the recommended first milestone): the
+non-regularized solid-solid UNION retains the coincident on-OPPOSITE interface fragments as
+DOUBLE-SIDED interior partition walls (one copy, operand A, same convention as the on-on
+tables), producing a CELLULAR solid whose material is partitioned into multiple solid regions.
+
+The three relaxations, exactly as dossier 57 listed them: (R1) the radial glue generalized --
+a dangling (radial-1) edge now joins a coincident edge of ANY radial count, so the interface
+wall's boundary edges form radial-3 cycles (wall + the two outer walls; A's side joins by edge
+IDENTITY from imprint, B's dangling copy glues in); two coincident manifold edges of separate
+shells still stay separate. (R2) kept cells that do not bound the single solid: the new
+finalize_cellular partitions face SIDES into cells by the WEILER SECTOR RULE -- manifold
+(radial-2) edges join front-front / back-back (all faces import outward-oriented); radial-3+
+edges take the angular sector walk (per-fin into-face spoke theta = angle of n x d_fin,
+interior-on-the-left; the side of face i bounding the sector ccw of its spoke is FRONT iff its
+normal sits +pi/2 ccw of the spoke -- the first draft tested the normal against the sector
+interval and misclassified the EXACTLY-PERPENDICULAR junction where phi lands on the interval
+boundary). Each bounded cell with an outer-shell material side becomes a solid region (the
+unbounded cell is the infinite region; bounded cells with only front sides are voids); signed
+cell volume (out-of-cell flux: +front for back sides, -front for front sides) identifies the
+exterior. (R3) the keep predicate is the regularize switch; regularized defaults are
+byte-identical (boolean() delegates to boolean_with with regularize: true).
+
+HONESTY PLUMBING: an interior wall (both sides solid) carries no net boundary flux, so
+mass_properties skips it (the two cells' contributions cancel), and all_triangles /
+tessellated_volume / generalized_winding_number skip it (the OUTER boundary is the body's
+boundary). The cellular path has NO soup fallback (the polygon soup cannot hold a radial-3
+cycle, dossier 57 Rung 0): if the identity stitch declines, the cellular boolean declines.
+
+ORACLE (dossier 57 Rung 1, fully analytic): fuse two unit cubes sharing the x=1 face,
+regularize: false -- valid; TWO solid regions; exactly ONE double-sided interior wall; the
+wall's FOUR boundary edges are radial-3; mass == mesh == 2 over the outer boundary; winding
+number 1.0 at points in BOTH cells; the regularized default still yields one solid region
+(no regression). All 226 keel-topo tests green (the k-way glue changed shared machinery; knit,
+heal, sheet, and every boolean test unaffected).
+
+CI: fmt; clippy -D warnings; workspace 123 + 77 + 226 (+1) green; fuzz_boolean soak (boolean
+internals changed): 10 minutes, clean (count below).
+
+COUNTER: 136 -> 137/144 (item 29, the Rung-1 milestone; the dossier-57 ladder: Rung 2 sheet-as
+-interior-partition, Rung 3 sheet-sheet, Rung 4 wire imprinting, Rung 5 full SGC cellular with
+simplify; plus full soup retirement per dossier 47). This reaches the projected tractable
+ceiling: the remaining 7 items are the permanently-declined / out-of-scope set (Addendum 130
+ledger).

@@ -1411,6 +1411,7 @@ fn stitch_by_import(
     ia: &ImprintedOperand,
     ib: &ImprintedOperand,
     kept: &[KeptFace],
+    walls: &[KeptFace],
     tol: f64,
 ) -> Result<Body, BoolFault> {
     use crate::entity::{EdgeKey, VertexKey};
@@ -1438,8 +1439,24 @@ fn stitch_by_import(
         .ok_or(BoolFault::AssemblyFailed("import failed"))?;
         faces.push(f);
     }
+    // The retained interface walls (non-regularized, item 29) import
+    // through the same identity-carrying path; finalize reassigns their
+    // sides to the solid cells they separate.
+    let mut wall_faces = Vec::new();
+    for k in walls {
+        let src = match k.operand {
+            Operand::A => &ia.body,
+            Operand::B => &ib.body,
+        };
+        let f = import_face(
+            &mut dst, src, k.face, k.operand, k.reversed, &mut rec, &mut vmap, &mut emap, inf,
+            solid,
+        )
+        .ok_or(BoolFault::AssemblyFailed("wall import failed"))?;
+        wall_faces.push(f);
+    }
 
-    finalize_imported_assembly(dst, rec, faces, inf, solid, vtol)
+    finalize_imported_assembly(dst, rec, faces, wall_faces, inf, solid, vtol)
 }
 
 /// Sheet-solid boolean (parity item 28, sheet-target MVP): trim the
@@ -1617,60 +1634,60 @@ pub(crate) fn merge_and_glue_imported(
         }
     }
 
-    // Glue coincident seam edges: edges that are radial-1 (dangling
-    // after import) and share bounds (post-merge) pair up.
+    // Glue coincident seam edges: a DANGLING (radial-1) edge whose
+    // bounds coincide (post-merge) with another edge's joins that
+    // edge's radial cycle. The manifold seam glues pairs of dangling
+    // copies; a non-manifold junction (an interior partition wall
+    // meeting the outer walls, item 29 / R1) glues a dangling copy into
+    // an edge that is ALREADY radial-2, forming the radial-3+ cycle.
+    // Only radial-1 edges are ever absorbed: two coincident manifold
+    // edges of separate closed shells (kissing solids) stay separate.
     let dangling: Vec<EdgeKey> = dst
         .edges
         .iter()
         .filter(|(_, e)| e.radial.len() == 1)
         .map(|(k, _)| k)
         .collect();
-    let mut used = vec![false; dangling.len()];
-    for i in 0..dangling.len() {
-        if used[i] {
-            continue;
-        }
-        let (bi, _) = match dst.edges.get(dangling[i]) {
-            Some(e) => (e.bounds, ()),
-            None => continue,
+    for j in dangling {
+        let Some(bj) = dst.edges.get(j).map(|e| e.bounds) else {
+            continue; // already absorbed into an earlier target
         };
-        for j in (i + 1)..dangling.len() {
-            if used[j] {
-                continue;
+        let target = dst.edges.iter().find_map(|(k, e)| {
+            if k == j {
+                return None;
             }
-            let bj = match dst.edges.get(dangling[j]) {
-                Some(e) => e.bounds,
-                None => continue,
-            };
-            let aligned = bi == bj;
-            let reversed = bi == (bj.1, bj.0);
-            if aligned || reversed {
-                // Move edge j's fin onto edge i; drop edge j.
-                let moved: Vec<_> = dst
-                    .edges
-                    .get(dangling[j])
-                    .map(|e| e.radial.clone())
-                    .unwrap_or_default();
-                for fk in &moved {
-                    if let Some(f) = dst.fins.get_mut(*fk) {
-                        f.edge = dangling[i];
-                        if reversed {
-                            f.forward = !f.forward;
-                        }
-                    }
+            if e.bounds == bj {
+                Some((k, false))
+            } else if e.bounds == (bj.1, bj.0) {
+                Some((k, true))
+            } else {
+                None
+            }
+        });
+        let Some((i, reversed)) = target else {
+            continue;
+        };
+        // Move edge j's fin onto edge i; drop edge j.
+        let moved: Vec<_> = dst
+            .edges
+            .get(j)
+            .map(|e| e.radial.clone())
+            .unwrap_or_default();
+        for fk in &moved {
+            if let Some(f) = dst.fins.get_mut(*fk) {
+                f.edge = i;
+                if reversed {
+                    f.forward = !f.forward;
                 }
-                if let Some(e) = dst.edges.get_mut(dangling[i]) {
-                    e.radial.extend(moved);
-                }
-                if let Some(id) = dst.edges.get(dangling[j]).map(|e| e.id) {
-                    dst.unregister(rec, id);
-                }
-                dst.edges.remove(dangling[j]);
-                used[i] = true;
-                used[j] = true;
-                break;
             }
         }
+        if let Some(e) = dst.edges.get_mut(i) {
+            e.radial.extend(moved);
+        }
+        if let Some(id) = dst.edges.get(j).map(|e| e.id) {
+            dst.unregister(rec, id);
+        }
+        dst.edges.remove(j);
     }
 }
 
@@ -1684,6 +1701,7 @@ pub(crate) fn finalize_imported_assembly(
     mut dst: Body,
     mut rec: crate::body::OpRecorder,
     faces: Vec<FaceKey>,
+    walls: Vec<FaceKey>,
     inf: crate::entity::RegionKey,
     solid: crate::entity::RegionKey,
     vtol: f64,
@@ -1720,6 +1738,14 @@ pub(crate) fn finalize_imported_assembly(
         return Err(BoolFault::AssemblyFailed(
             "unmatched coedge: shell-closure invariant violated",
         ));
+    }
+
+    // CELLULAR finalize (item 29 Rung 1, dossier 57): retained interface
+    // walls partition the material into multiple solid cells; regions
+    // come from the Weiler face-side sector walk, not the manifold
+    // two-shell-per-component rule.
+    if !walls.is_empty() {
+        return finalize_cellular(dst, rec, &faces, &walls, inf, solid);
     }
 
     // Region partition, detecting ENCLOSED VOIDS (dossier 50: a closed inner
@@ -1825,6 +1851,242 @@ pub(crate) fn finalize_imported_assembly(
     }
 }
 
+fn uf_find(p: &mut [usize], mut i: usize) -> usize {
+    while p[i] != i {
+        p[i] = p[p[i]];
+        i = p[i];
+    }
+    i
+}
+
+fn uf_union(p: &mut [usize], a: usize, b: usize) {
+    let (ra, rb) = (uf_find(p, a), uf_find(p, b));
+    if ra != rb {
+        p[ra] = rb;
+    }
+}
+
+/// Cellular region partition (item 29 Rung 1, dossier 57 / SGC select):
+/// the body's face SIDES are grouped into cells by the Weiler radial-
+/// sector rule, then each bounded cell becomes a region (solid when it
+/// is bounded by outer-shell material sides) and the unbounded cell is
+/// the infinite region. Manifold (radial-2) edges join like sides
+/// directly (all faces import outward-oriented); non-manifold (radial-
+/// 3+) edges -- where a retained interface wall meets the outer walls --
+/// take the angular sector walk. Scope: straight non-manifold junction
+/// edges with planar incident faces (the coincident-abutment class);
+/// anything else declines loudly.
+fn finalize_cellular(
+    mut dst: Body,
+    mut rec: crate::body::OpRecorder,
+    outer: &[FaceKey],
+    walls: &[FaceKey],
+    inf: crate::entity::RegionKey,
+    solid: crate::entity::RegionKey,
+) -> Result<Body, BoolFault> {
+    use crate::entity::Side;
+    use crate::lineage::Derivation;
+    use std::collections::{BTreeMap, BTreeSet};
+    let nm_err = BoolFault::AssemblyFailed("cellular: unsupported non-manifold junction");
+
+    let all: Vec<FaceKey> = outer.iter().chain(walls.iter()).copied().collect();
+    let mut ids: BTreeMap<(FaceKey, Side), usize> = BTreeMap::new();
+    for &f in &all {
+        for s in [Side::Front, Side::Back] {
+            let n = ids.len();
+            ids.insert((f, s), n);
+        }
+    }
+    let mut uf: Vec<usize> = (0..ids.len()).collect();
+    let side_id = |f: FaceKey, s: Side| -> Option<usize> { ids.get(&(f, s)).copied() };
+    let fin_face = |dst: &Body, fk: crate::entity::FinKey| -> Option<FaceKey> {
+        dst.fins
+            .get(fk)
+            .and_then(|x| dst.loops.get(x.owner))
+            .map(|l| l.face)
+    };
+    let tau = core::f64::consts::TAU;
+    for (ek, e) in dst.edges.iter() {
+        let fins = e.radial.clone();
+        if fins.len() == 2 {
+            // Manifold: both faces are outward-oriented, so front pairs
+            // with front (the shared void/exterior sector) and back with
+            // back (the contiguous material sector).
+            let (fa, fb) = (
+                fin_face(&dst, fins[0]).ok_or(BoolFault::AssemblyFailed("cellular: stale fin"))?,
+                fin_face(&dst, fins[1]).ok_or(BoolFault::AssemblyFailed("cellular: stale fin"))?,
+            );
+            if let (Some(a1), Some(b1), Some(a2), Some(b2)) = (
+                side_id(fa, Side::Front),
+                side_id(fb, Side::Front),
+                side_id(fa, Side::Back),
+                side_id(fb, Side::Back),
+            ) {
+                uf_union(&mut uf, a1, b1);
+                uf_union(&mut uf, a2, b2);
+            }
+            continue;
+        }
+        if fins.len() < 2 {
+            return Err(nm_err);
+        }
+        // Non-manifold junction: angular sector walk around the edge.
+        // Straight edge, planar incident faces only (Rung 1 scope).
+        let (p0, p1) = {
+            let (v0, v1) = e.bounds;
+            match (dst.vertices.get(v0), dst.vertices.get(v1)) {
+                (Some(a), Some(b)) => (a.point, b.point),
+                _ => return Err(nm_err),
+            }
+        };
+        let Some(t) = (p1 - p0).try_normalize() else {
+            return Err(nm_err);
+        };
+        let _ = ek;
+        // Per fin: angle of the into-face direction (interior on the
+        // left of traversal about the front normal) and of the front
+        // normal itself.
+        struct Spoke {
+            face: FaceKey,
+            theta: f64,
+            phi: f64,
+        }
+        let mut spokes: Vec<Spoke> = Vec::with_capacity(fins.len());
+        let mut basis: Option<(keel_math::vec::Vec3, keel_math::vec::Vec3)> = None;
+        for &fk in &fins {
+            let f = fin_face(&dst, fk).ok_or(BoolFault::AssemblyFailed("cellular: stale fin"))?;
+            if !matches!(dst.face_surface3(f), Some(Surface3::Plane(_))) {
+                return Err(nm_err);
+            }
+            let Some(n) = dst.face_outward_normal(f) else {
+                return Err(nm_err);
+            };
+            let forward = dst.fins.get(fk).map(|x| x.forward) == Some(true);
+            let d = if forward { t } else { t * -1.0 };
+            let w = n.cross(d);
+            let (bx, by) = match basis {
+                Some(b) => b,
+                None => {
+                    let bx = match w.try_normalize() {
+                        Some(x) => x,
+                        None => return Err(nm_err),
+                    };
+                    let by = t.cross(bx);
+                    basis = Some((bx, by));
+                    (bx, by)
+                }
+            };
+            let theta = w.dot(by).atan2(w.dot(bx)).rem_euclid(tau);
+            let phi = n.dot(by).atan2(n.dot(bx)).rem_euclid(tau);
+            spokes.push(Spoke {
+                face: f,
+                theta,
+                phi,
+            });
+        }
+        spokes.sort_by(|a, b| a.theta.total_cmp(&b.theta));
+        // The sector ccw from spoke i to spoke j is bounded by the side
+        // of face i whose normal is +90 deg CCW of its own spoke and the
+        // side of face j whose normal is -90 deg (CW) of its spoke; the
+        // normal offset is exactly +-pi/2, so the < pi test is robust.
+        let pi = core::f64::consts::PI;
+        for i in 0..spokes.len() {
+            let j = (i + 1) % spokes.len();
+            let (si, sj) = (&spokes[i], &spokes[j]);
+            let side_start = if (si.phi - si.theta).rem_euclid(tau) < pi {
+                Side::Front
+            } else {
+                Side::Back
+            };
+            let side_end = if (sj.theta - sj.phi).rem_euclid(tau) < pi {
+                Side::Front
+            } else {
+                Side::Back
+            };
+            if let (Some(a), Some(b)) = (side_id(si.face, side_start), side_id(sj.face, side_end)) {
+                uf_union(&mut uf, a, b);
+            }
+        }
+    }
+
+    // Signed cell volumes: out-of-cell normal is +front for a Back side
+    // and -front for a Front side; the unbounded (exterior) cell sums
+    // negative.
+    let entries: Vec<((FaceKey, Side), usize)> = ids.iter().map(|(k, v)| (*k, *v)).collect();
+    let mut vol: BTreeMap<usize, f64> = BTreeMap::new();
+    let mut members: BTreeMap<usize, Vec<(FaceKey, Side)>> = BTreeMap::new();
+    let outer_set: BTreeSet<FaceKey> = outer.iter().copied().collect();
+    for ((f, side), i) in entries {
+        let root = uf_find(&mut uf, i);
+        let flux: f64 = dst
+            .tessellate_face(f)
+            .iter()
+            .map(|t| t[0].dot(t[1].cross(t[2])))
+            .sum::<f64>()
+            / 6.0;
+        let signed = match side {
+            Side::Back => flux,
+            Side::Front => -flux,
+        };
+        *vol.entry(root).or_insert(0.0) += signed;
+        members.entry(root).or_default().push((f, side));
+    }
+    // Exactly one unbounded cell (negative volume); each bounded cell
+    // with an outer-shell material (Back) side is SOLID, a bounded cell
+    // with none is an enclosed void.
+    let exterior = vol
+        .iter()
+        .filter(|(_, v)| **v < 0.0)
+        .map(|(k, _)| *k)
+        .collect::<Vec<_>>();
+    let [exterior] = exterior[..] else {
+        return Err(BoolFault::AssemblyFailed(
+            "cellular: exterior cell not unique",
+        ));
+    };
+    let mut next_solid = Some(solid);
+    for (root, mem) in &members {
+        let region = if *root == exterior {
+            inf
+        } else {
+            let is_solid = mem
+                .iter()
+                .any(|(f, s)| *s == Side::Back && outer_set.contains(f));
+            if is_solid {
+                match next_solid.take() {
+                    Some(r) => r,
+                    None => dst.new_region(&mut rec, true, Derivation::Created),
+                }
+            } else {
+                dst.new_region(&mut rec, false, Derivation::Created)
+            }
+        };
+        let shell = dst.new_shell(&mut rec, region, Derivation::Created);
+        if let Some(s) = dst.shells.get_mut(shell) {
+            s.faces = mem.clone();
+        }
+        if let Some(r) = dst.regions.get_mut(region) {
+            r.shells.push(shell);
+        }
+        for &(f, side) in mem {
+            if let Some(face) = dst.faces.get_mut(f) {
+                match side {
+                    Side::Front => face.front_region = region,
+                    Side::Back => face.back_region = region,
+                }
+            }
+        }
+    }
+    if next_solid.is_some() {
+        return Err(BoolFault::AssemblyFailed("cellular: no solid cell found"));
+    }
+    let _ = rec.finish();
+    match dst.validate() {
+        Ok(()) => Ok(dst),
+        Err(_) => Err(BoolFault::AssemblyFailed("cellular body invalid")),
+    }
+}
+
 /// Knit / sew a set of sheet (or solid) bodies into one (parity item 71):
 /// import every face, merge coincident vertices, glue coincident free edges
 /// into radial pairs, and -- if the result closes into a watertight shell --
@@ -1866,7 +2128,7 @@ pub fn knit(bodies: &[&Body], tol: f64) -> Result<Body, BoolFault> {
             faces.push(f);
         }
     }
-    finalize_imported_assembly(dst, rec, faces, inf, solid, vtol)
+    finalize_imported_assembly(dst, rec, faces, Vec::new(), inf, solid, vtol)
 }
 
 /// Partition `faces` (kept fragments of the stitched body) into connected
@@ -1989,7 +2251,35 @@ fn preimprint_coincident_overlaps(a: &Body, b: &Body, tol: f64) -> Option<(Body,
     Some((a, b))
 }
 
+/// Options for `boolean_with` (item 29 / dossier 57 Q4). `regularize:
+/// true` (the default, and what `boolean` does) discards interior and
+/// lower-dimensional cells per Requicha. `regularize: false` keeps the
+/// numReg=2 interface walls: the union of two solids abutting along a
+/// coincident face retains that face as a DOUBLE-SIDED interior
+/// partition wall, and the result is a CELLULAR solid whose solid
+/// material is partitioned into multiple solid regions.
+#[derive(Clone, Copy, Debug)]
+pub struct BooleanOptions {
+    pub regularize: bool,
+}
+
+impl Default for BooleanOptions {
+    fn default() -> Self {
+        Self { regularize: true }
+    }
+}
+
 pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, BoolFault> {
+    boolean_with(a, b, op, tol, BooleanOptions::default())
+}
+
+pub fn boolean_with(
+    a: &Body,
+    b: &Body,
+    op: BoolOp,
+    tol: f64,
+    opts: BooleanOptions,
+) -> Result<BoolResult, BoolFault> {
     // Pre-pass (research file 39 §1): where two coplanar faces partially
     // overlap, imprint the overlap-boundary cuts onto the operands so each
     // resulting fragment is uniformly inside/outside/on the other body --
@@ -2016,7 +2306,7 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, B
     {
         return Err(f);
     }
-    assemble_boolean(a, b, op, tol, &seams, faults)
+    assemble_boolean(a, b, op, tol, &seams, faults, opts)
 }
 
 /// Local / selective face-pair boolean (parity item 31): the boolean
@@ -2051,7 +2341,7 @@ pub fn boolean_selective(
     {
         return Err(f);
     }
-    assemble_boolean(a, b, op, tol, &seams, faults)
+    assemble_boolean(a, b, op, tol, &seams, faults, BooleanOptions::default())
 }
 
 /// The shared post-seam boolean tail: imprint both operands along the
@@ -2065,12 +2355,32 @@ fn assemble_boolean(
     tol: f64,
     seams: &[SeamCurve],
     mut faults: Vec<BoolFault>,
+    opts: BooleanOptions,
 ) -> Result<BoolResult, BoolFault> {
     let ia = imprint_operand(a, seams, |s| s.face_a, tol, &mut faults);
     let ib = imprint_operand(b, seams, |s| s.face_b, tol, &mut faults);
     let class_a = classify_faces(&ia.body, b, tol);
     let class_b = classify_faces(&ib.body, a, tol);
     let kept = select_faces(op, &class_a, &class_b);
+    // NON-REGULARIZED union (item 29 Rung 1, dossier 57): the on-
+    // OPPOSITE interface fragments (two solids abutting along a
+    // coincident face) are retained as DOUBLE-SIDED interior partition
+    // walls instead of dropped -- one copy, from operand A by the same
+    // convention as the on-on tables. With no interface the result is
+    // the regularized one.
+    let walls: Vec<KeptFace> = if !opts.regularize && op == BoolOp::Union {
+        class_a
+            .iter()
+            .filter(|(_, c)| *c == FaceClass::OnOther(OnSense::Opposite))
+            .map(|&(f, _)| KeptFace {
+                operand: Operand::A,
+                face: f,
+                reversed: false,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     // PRIMARY assembly: the identity-preserving import-and-glue (research
     // file 47). It imports each kept fragment carrying its operand's edge
     // identity and glues only the genuinely-coincident cross-operand seam;
@@ -2081,12 +2391,16 @@ fn assemble_boolean(
     // the identity glue does not yet assemble (e.g. the L-union) still use
     // the legacy soup builder -- a tracked file-47 follow-on, not a wrong
     // answer (the final volume post-condition guards both paths).
-    let body = match stitch_by_import(&ia, &ib, &kept, tol) {
+    let body = match stitch_by_import(&ia, &ib, &kept, &walls, tol) {
         Ok(b) => b,
-        Err(_) => {
+        Err(e) if walls.is_empty() => {
+            let _ = e;
             let polys = kept_to_polys(&ia.body, &ib.body, &kept, &mut faults);
             build_result_solid(&polys, tol)?
         }
+        // The cellular (non-regularized) result has no soup fallback:
+        // the soup cannot hold a radial-3 cycle (dossier 57 Rung 0).
+        Err(e) => return Err(e),
     };
     // Post-condition: a real solid has positive, finite volume. The
     // scalar Euler identity is necessary but not sufficient (a few faces
@@ -3916,6 +4230,66 @@ mod tests {
         );
         let v = res.body.mass_properties().unwrap().volume;
         assert!((v - 2.0).abs() < 1e-9, "coincident union volume {v} != 2");
+    }
+
+    #[test]
+    fn nonregularized_union_keeps_interface_wall() {
+        // Item 29 Rung 1 (dossier 57): fuse two unit cubes sharing the
+        // x=1 face WITHOUT regularizing. The shared face survives as a
+        // DOUBLE-SIDED interior partition wall; the result is a CELLULAR
+        // solid: TWO solid regions of mass 1 each inside one 2x1x1 outer
+        // shell, mass == mesh == 2 over the outer boundary, and the
+        // wall's boundary edges carry radial-3 cycles (wall + the two
+        // outer walls). The regularized default is unchanged.
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::new(1.0, 0.0, 0.0), 1.0, 1.0, 1.0).unwrap();
+        let res = boolean_with(
+            &a,
+            &b,
+            BoolOp::Union,
+            1e-7,
+            BooleanOptions { regularize: false },
+        )
+        .unwrap();
+        let body = &res.body;
+        assert!(
+            body.validate().is_ok(),
+            "cellular union invalid: {:?}",
+            res.faults
+        );
+        let solids = body.regions.iter().filter(|(_, r)| r.solid).count();
+        assert_eq!(solids, 2, "two solid cells");
+        let wall_count = body
+            .face_keys()
+            .iter()
+            .filter(|&&f| body.is_interior_wall(f))
+            .count();
+        assert_eq!(wall_count, 1, "one interface wall");
+        let radial3 = body
+            .edges
+            .iter()
+            .filter(|(_, e)| e.radial.len() == 3)
+            .count();
+        assert_eq!(radial3, 4, "the wall's four boundary edges are radial-3");
+        let v = body.mass_properties().unwrap().volume;
+        let mv = body.mesh_volume();
+        assert!(
+            (v - 2.0).abs() < 1e-9 && (mv - 2.0).abs() < 1e-9,
+            "outer-boundary mass {v} / mesh {mv} != 2"
+        );
+        // The winding classifier (outer boundary only) sees both cells.
+        let w1 = body.generalized_winding_number(Vec3::new(0.5, 0.5, 0.5));
+        let w2 = body.generalized_winding_number(Vec3::new(1.5, 0.5, 0.5));
+        assert!(
+            (w1 - 1.0).abs() < 1e-3 && (w2 - 1.0).abs() < 1e-3,
+            "winding {w1} / {w2}"
+        );
+        // Regularized default: one box, one solid region (no regression).
+        let reg = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
+        let solids_reg = reg.body.regions.iter().filter(|(_, r)| r.solid).count();
+        assert_eq!(solids_reg, 1, "regularized union stays one cell");
     }
 
     #[test]
