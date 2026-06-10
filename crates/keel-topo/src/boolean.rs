@@ -488,58 +488,6 @@ pub enum FaceClass {
 }
 
 impl Body {
-    /// Corner points of a face's outer-loop polygon. Uses the loop's
-    /// vertices when there are 3+; for a loop that is a single closed
-    /// edge (the rectangle ring from imprint_closed_curve) it falls back
-    /// to that edge's degree-1 NURBS control points.
-    pub(crate) fn face_ring_points(&self, face: FaceKey) -> Vec<keel_math::vec::Vec3> {
-        let pts = self.face_outer_loop_points(face);
-        if pts.len() >= 3 {
-            return pts;
-        }
-        // Single closed-edge loop: read corners from the curve.
-        let Some(lp) = self.faces.get(face).and_then(|f| f.loops.first().copied()) else {
-            return pts;
-        };
-        let Some(fin) = self.loops.get(lp).and_then(|l| l.fin) else {
-            return pts;
-        };
-        let Some((ck, _)) = self
-            .fins
-            .get(fin)
-            .map(|f| f.edge)
-            .and_then(|e| self.edges.get(e))
-            .and_then(|e| e.curve)
-        else {
-            return pts;
-        };
-        if let Some(keel_geom::curve::Curve3::Nurbs(n)) = self.curves.get(ck) {
-            let mut corners: Vec<keel_math::vec::Vec3> = Vec::new();
-            for h in n.homogeneous_control() {
-                if h.w.abs() < 1e-300 {
-                    continue;
-                }
-                let p = keel_math::vec::Vec3::new(h.x / h.w, h.y / h.w, h.z / h.w);
-                if corners
-                    .last()
-                    .map(|q| (*q - p).norm() > 1e-9)
-                    .unwrap_or(true)
-                {
-                    corners.push(p);
-                }
-            }
-            // Drop the closing duplicate of the first corner.
-            if let Some(&last) = corners.last()
-                && corners.len() >= 2
-                && (corners[0] - last).norm() <= 1e-9
-            {
-                corners.pop();
-            }
-            return corners;
-        }
-        pts
-    }
-
     /// Sample a fin's edge 3D curve in the fin's traversal direction
     /// (`m` points, start inclusive). Returns None if the edge has no
     /// curve.
@@ -1012,241 +960,15 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, tol: f64) -> Vec<(Fac
     out
 }
 
-/// A kept face reduced to geometry for stitching: its outer-loop ring
-/// (3D points, in any order) and the outward normal the result needs.
-struct ResultPoly {
-    ring: Vec<keel_math::vec::Vec3>,
-    outward: keel_math::vec::Vec3,
-    surface: SurfaceGeom,
-}
-
-/// Extract each kept face as an oriented polygon. Faces with inner
-/// loops (holes) are deferred (M6a proof cases produce simple faces).
-fn kept_to_polys(
-    ia: &Body,
-    ib: &Body,
-    kept: &[KeptFace],
-    faults: &mut Vec<BoolFault>,
-) -> Vec<ResultPoly> {
-    let mut out = Vec::new();
-    for k in kept {
-        let body = match k.operand {
-            Operand::A => ia,
-            Operand::B => ib,
-        };
-        let Some(face) = body.faces.get(k.face) else {
-            continue;
-        };
-        if face.loops.len() != 1 {
-            faults.push(BoolFault::AssemblyFailed("kept face has holes (M6b)"));
-            continue;
-        }
-        let ring = body.face_ring_points(k.face);
-        if ring.len() < 3 {
-            faults.push(BoolFault::AssemblyFailed("kept face ring too small"));
-            continue;
-        }
-        // Operand outward normal: front faces outside, so the operand's
-        // outward is sense ? frame.z : -frame.z. Reversal flips it.
-        let Some((sk, opsense)) = face.surface else {
-            continue;
-        };
-        let Some(sg) = body.surfaces.get(sk).cloned() else {
-            continue;
-        };
-        let nz = match &sg {
-            SurfaceGeom::Analytic(Surface3::Plane(p)) => p.frame.z,
-            _ => {
-                faults.push(BoolFault::AssemblyFailed("non-planar kept face (M6b)"));
-                continue;
-            }
-        };
-        let mut outward = if opsense { nz } else { nz * -1.0 };
-        if k.reversed {
-            outward = outward * -1.0;
-        }
-        out.push(ResultPoly {
-            ring,
-            outward,
-            surface: sg,
-        });
-    }
-    out
-}
-
-/// Newell normal of a 3D polygon ring.
-fn newell_normal(ring: &[keel_math::vec::Vec3]) -> keel_math::vec::Vec3 {
-    use keel_math::vec::Vec3;
-    let mut n = Vec3::ZERO;
-    let m = ring.len();
-    for i in 0..m {
-        let a = ring[i];
-        let b = ring[(i + 1) % m];
-        n = n + Vec3::new(
-            (a.y - b.y) * (a.z + b.z),
-            (a.z - b.z) * (a.x + b.x),
-            (a.x - b.x) * (a.y + b.y),
-        );
-    }
-    n
-}
-
-/// Stitch oriented polygons into one valid manifold solid: dedup
-/// vertices, share edges, build fins/loops/faces, and a two-region
-/// partition (solid interior + the infinite void) with its two shells.
-/// Built directly in the arenas (the Euler operators forbid the
-/// intermediate non-solid states a soup passes through), then validated.
-fn build_result_solid(polys: &[ResultPoly], tol: f64) -> Result<Body, BoolFault> {
-    use crate::entity::{EdgeKey, LoopKind, Side, VertexKey};
-    use crate::lineage::Derivation;
-    use keel_math::vec::Vec3;
-    use std::collections::BTreeMap;
-
-    let vtol = tol.max(1e-7);
-    let mut b = Body::new();
-    let inf = b.infinite_region();
-    let mut rec = b.begin_op();
-    let solid = b.new_region(&mut rec, true, Derivation::Created);
-
-    // Global vertex dedup.
-    let mut vpts: Vec<Vec3> = Vec::new();
-    let mut vkeys: Vec<VertexKey> = Vec::new();
-    let mut vindex = |p: Vec3, b: &mut Body, rec: &mut crate::body::OpRecorder| -> usize {
-        for (i, q) in vpts.iter().enumerate() {
-            if (*q - p).norm() <= vtol {
-                return i;
-            }
-        }
-        let vk = b.new_vertex(rec, p);
-        vpts.push(p);
-        vkeys.push(vk);
-        vpts.len() - 1
-    };
-
-    // Orient each ring CCW about its outward normal, map to vertex ids.
-    let mut faces_vi: Vec<Vec<usize>> = Vec::new();
-    for poly in polys {
-        let mut ring = poly.ring.clone();
-        if newell_normal(&ring).dot(poly.outward) < 0.0 {
-            ring.reverse();
-        }
-        let vis: Vec<usize> = ring
-            .into_iter()
-            .map(|p| vindex(p, &mut b, &mut rec))
-            .collect();
-        faces_vi.push(vis);
-    }
-
-    // Edge sharing: undirected (min,max) vertex id -> edge + bounds.
-    let mut edge_of: BTreeMap<(usize, usize), (EdgeKey, (usize, usize))> = BTreeMap::new();
-    let mut get_edge = |vi: usize,
-                        vj: usize,
-                        b: &mut Body,
-                        rec: &mut crate::body::OpRecorder|
-     -> (EdgeKey, bool) {
-        let key = (vi.min(vj), vi.max(vj));
-        if let Some(&(ek, (a, _))) = edge_of.get(&key) {
-            return (ek, a == vi); // forward iff bounds.0 == vi
-        }
-        let ek = b.new_edge(rec, (vkeys[vi], vkeys[vj]), Derivation::Created);
-        edge_of.insert(key, (ek, (vi, vj)));
-        (ek, true)
-    };
-
-    let mut face_keys = Vec::new();
-    for (fi, vis) in faces_vi.iter().enumerate() {
-        let face = b.new_face(&mut rec, inf, solid, Derivation::Created);
-        let lp = b.new_loop(&mut rec, face, LoopKind::Outer, Derivation::Created);
-        if let Some(f) = b.faces.get_mut(face) {
-            f.loops = vec![lp];
-        }
-        let n = vis.len();
-        let mut fins = Vec::with_capacity(n);
-        for k in 0..n {
-            let (vi, vj) = (vis[k], vis[(k + 1) % n]);
-            let (ek, forward) = get_edge(vi, vj, &mut b, &mut rec);
-            let fin = b.new_fin(&mut rec, ek, forward, lp, Derivation::Created);
-            if let Some(e) = b.edges.get_mut(ek) {
-                e.radial.push(fin);
-            }
-            fins.push(fin);
-        }
-        for k in 0..n {
-            let (nx, pv) = (fins[(k + 1) % n], fins[(k + n - 1) % n]);
-            if let Some(f) = b.fins.get_mut(fins[k]) {
-                f.next = nx;
-                f.prev = pv;
-            }
-        }
-        if let Some(l) = b.loops.get_mut(lp) {
-            l.fin = Some(fins[0]);
-        }
-        for &fin in &fins {
-            if let Some(sv) = b.fin_start_vertex(fin)
-                && let Some(v) = b.vertices.get_mut(sv)
-                && v.fin.is_none()
-            {
-                v.fin = Some(fin);
-            }
-        }
-        // Surface: attach so the front normal points outward.
-        let nz = match &polys[fi].surface {
-            SurfaceGeom::Analytic(Surface3::Plane(p)) => p.frame.z,
-            _ => Vec3::new(0., 0., 1.),
-        };
-        let sense = nz.dot(polys[fi].outward) > 0.0;
-        b.attach_face_surface(face, polys[fi].surface.clone(), sense);
-        face_keys.push(face);
-    }
-
-    // Shells: the solid region owns every (face, Back); the infinite
-    // region owns every (face, Front). (Front normal points outward.)
-    let solid_shell = b.new_shell(&mut rec, solid, Derivation::Created);
-    let inf_shell = b.new_shell(&mut rec, inf, Derivation::Created);
-    if let Some(s) = b.shells.get_mut(solid_shell) {
-        s.faces = face_keys.iter().map(|&f| (f, Side::Back)).collect();
-    }
-    if let Some(s) = b.shells.get_mut(inf_shell) {
-        s.faces = face_keys.iter().map(|&f| (f, Side::Front)).collect();
-    }
-    if let Some(r) = b.regions.get_mut(solid) {
-        r.shells.push(solid_shell);
-    }
-    if let Some(r) = b.regions.get_mut(inf) {
-        r.shells.push(inf_shell);
-    }
-    let _ = rec.finish();
-
-    // Planar pcurves so trimmed-face mass properties can integrate.
-    for &face in &face_keys {
-        let _ = b.attach_plane_pcurves(face);
-    }
-
-    match b.validate() {
-        Ok(()) => Ok(b),
-        Err(_) => Err(BoolFault::AssemblyFailed("stitched body invalid")),
-    }
-}
-
-/// The result of a boolean: the body, accumulated faults, and the
-/// operation tag.
-#[derive(Clone, Debug)]
+/// A boolean result: the assembled body plus any non-fatal faults
+/// gathered along the way.
+#[derive(Debug)]
 pub struct BoolResult {
     pub body: Body,
     pub faults: Vec<BoolFault>,
     pub op: BoolOp,
 }
 
-/// Regularized boolean of two solids (M6a: clean transversal cases).
-/// Pipeline: imprint both operands along the SSI seams, classify each
-/// fragment against the other solid, select per the r-set tables, and
-/// stitch the kept faces into a new solid. Partial-success: recoverable
-/// faults ride along in `BoolResult::faults`; an unbuildable result is
-/// `Err`.
-/// Import one entity-subtree (vertices, edges, fins, loops, the face,
-/// and its geometry) from `src` into `dst`, deduping by source EntityId
-/// within the same operand. `reversed` flips the face's orientation
-/// (fin senses, loop traversal order, surface sense) for difference.
 #[allow(clippy::too_many_arguments)]
 fn import_face(
     dst: &mut Body,
@@ -2487,23 +2209,11 @@ fn assemble_boolean(
     // file 47). It imports each kept fragment carrying its operand's edge
     // identity and glues only the genuinely-coincident cross-operand seam;
     // with the matching seam subdivision (subdivide_seam_ring) the planar
-    // seam coedges now pair 1:1, so it correctly assembles the thin/oblique
-    // cuts the old polygon-soup stitcher mis-built (the asymmetric-chamfer
-    // class). FALLBACK: partial-coincidence unions whose coincident seam
-    // the identity glue does not yet assemble (e.g. the L-union) still use
-    // the legacy soup builder -- a tracked file-47 follow-on, not a wrong
-    // answer (the final volume post-condition guards both paths).
-    let body = match stitch_by_import(&ia, &ib, &kept, &walls, tol) {
-        Ok(b) => b,
-        Err(e) if walls.is_empty() => {
-            let _ = e;
-            let polys = kept_to_polys(&ia.body, &ib.body, &kept, &mut faults);
-            build_result_solid(&polys, tol)?
-        }
-        // The cellular (non-regularized) result has no soup fallback:
-        // the soup cannot hold a radial-3 cycle (dossier 57 Rung 0).
-        Err(e) => return Err(e),
-    };
+    // seam coedges pair 1:1, so it correctly assembles the thin/oblique
+    // cuts the old polygon-soup stitcher mis-built. The soup is RETIRED
+    // (dossier 47 Rung 0): a stitch failure DECLINES the boolean rather
+    // than building a body the closure invariant cannot protect.
+    let body = stitch_by_import(&ia, &ib, &kept, &walls, tol)?;
     // Post-condition: a real solid has positive, finite volume. The
     // scalar Euler identity is necessary but not sufficient (a few faces
     // can satisfy it without bounding a solid), so near-degenerate
@@ -4535,12 +4245,10 @@ mod tests {
         a.block(Vec3::ZERO, 2.0, 2.0, 1.0).unwrap();
         let mut b = Body::new();
         b.block(Vec3::new(0.0, 0.0, 1.0), 1.0, 2.0, 1.0).unwrap();
-        // CONTRACT (research file 47, self-consistency gate): the coincident
-        // (partial-overlap) union seam is not yet assembled identity-clean,
-        // so build_result_solid drops a face -> a body whose sense-exact mass
-        // (6) disagrees with its tessellated mesh (5.333). The gate now
-        // catches that disagreement and DECLINES rather than return the
-        // malformed body. So the honest contract is correct-or-decline,
+        // CONTRACT (research file 47, self-consistency gate): the
+        // identity-preserving stitch is now the ONLY assembly (the
+        // polygon soup is retired); the honest contract is
+        // correct-or-decline,
         // NEVER a wrong-positive: if Ok, the L-solid must be the true 6 with
         // mass == mesh; if the seam can't yet assemble, Err. Making this
         // union actually build (mass == mesh == 6) is the dossier-47
