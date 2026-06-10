@@ -455,7 +455,12 @@ impl Body {
                 return (hlo, hhi);
             }
             let radial = ex * phi.cos() + ey * phi.sin();
-            let (mut l, mut h) = (hlo, hhi);
+            // A clipping plane REPLACES the vertex band on its end (the
+            // mitre ellipse legitimately bulges past the extreme
+            // boundary vertices), but several planes on ONE end (the
+            // two-face roof cap) combine to the BINDING innermost one,
+            // not the last visited.
+            let (mut lo_clip, mut hi_clip): (Option<f64>, Option<f64>) = (None, None);
             for (q, n) in &cap_planes {
                 let dv = ez.dot(*n);
                 if dv.abs() < 1e-12 {
@@ -463,12 +468,14 @@ impl Body {
                 }
                 let base = (origin + radial * radius - *q).dot(*n);
                 let hc = -base / dv;
-                if (hc - l).abs() < (hc - h).abs() {
-                    l = hc;
+                if (hc - hlo).abs() < (hc - hhi).abs() {
+                    lo_clip = Some(lo_clip.map_or(hc, |x: f64| x.max(hc)));
                 } else {
-                    h = hc;
+                    hi_clip = Some(hi_clip.map_or(hc, |x: f64| x.min(hc)));
                 }
             }
+            let l = lo_clip.unwrap_or(hlo);
+            let h = hi_clip.unwrap_or(hhi);
             (l.min(h), l.max(h))
         };
         let mut tris = Vec::new();

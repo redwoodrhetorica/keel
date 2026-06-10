@@ -706,120 +706,187 @@ impl Body {
             b.imprint_spring_line(f2, edge, va_k, vb_k, &blend.spring_b, n2)?;
         let _ = (p_a, p_b);
 
-        // --- Phase 2: split each cap face along its end arc. ---
-        // Cap at the A end: the face incident to va_k that is neither strip.
-        let split_cap =
-            |b: &mut Body,
-             v_corner: crate::entity::VertexKey,
-             a_end: crate::entity::VertexKey,
-             b_end: crate::entity::VertexKey|
-             -> Result<(crate::entity::FaceKey, crate::entity::EdgeKey), TopoError> {
-                let cap = b
-                    .faces_at_vertex(v_corner)
-                    .into_iter()
-                    .find(|f| *f != strip1 && *f != strip2)
-                    .ok_or(TopoError::Precondition("fillet: no cap face"))?;
-                let lp = b
-                    .faces
-                    .get(cap)
-                    .map(|f| f.loops[0])
-                    .ok_or(TopoError::StaleKey)?;
-                let fin_a = b.fin_ending_at_vertex(lp, a_end)?;
-                let fin_b = b.fin_ending_at_vertex(lp, b_end)?;
-                let split = b.split_face(fin_a, fin_b, None)?;
-                // split_face leaves the new face surfaceless; both halves
-                // lie on the cap plane, so copy it (matches every other
-                // split_face caller; needed once the concave path, where
-                // the kept cap is the new face, is un-gated).
-                if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
-                    && let Some(nf) = b.faces.get_mut(split.face_new)
-                {
-                    nf.surface = Some(surf);
-                }
-                // Arc on the new edge. PERPENDICULAR cap plane (the
-                // standard end): a quarter circle centred at the spine
-                // projected into that plane. OBLIQUE cap plane (the
-                // sec-2.2 CAP overflow: the adjoining end face is
-                // slanted): the exact plane-cylinder ELLIPSE, semi-
-                // major r/|n.dir| in the steep in-plane direction,
-                // semi-minor r along plane-normal x spine ("intersect
-                // model faces with the blend sheet to trim the sheet
-                // exactly to the model"; plane-quadric sections are
-                // old prior art). A cap plane PARALLEL to the spine
-                // never crosses the ribbon end: that is the genuine
-                // extend-two-faces case, declined.
-                let pc = b
-                    .vertices
-                    .get(v_corner)
-                    .map(|x| x.point)
-                    .unwrap_or(spine_pt);
-                let pa_end = b
-                    .vertices
-                    .get(a_end)
-                    .map(|x| x.point)
-                    .ok_or(TopoError::StaleKey)?;
-                let n_cap = b
-                    .face_outward_normal(cap)
-                    .ok_or(TopoError::Precondition("fillet: cap normal"))?;
-                let d = n_cap.dot(dir);
-                let arc = if d.abs() > 1.0 - 1e-9 {
-                    let centre = spine_pt + dir * ((pc - spine_pt).dot(dir));
-                    let ex = (pa_end - centre)
-                        .try_normalize()
-                        .ok_or(TopoError::Precondition("fillet: arc axis"))?;
-                    Curve3::Circle(
-                        keel_geom::curve::Circle3::new(centre, ex, dir.cross(ex), radius)
-                            .map_err(|_| TopoError::Precondition("fillet: bad arc"))?,
-                    )
-                } else if d.abs() > 1e-9 {
-                    let centre = spine_pt + dir * (((pc - spine_pt).dot(n_cap)) / d);
-                    let minor = (dir.cross(n_cap))
-                        .try_normalize()
-                        .ok_or(TopoError::Precondition("fillet: cap axes"))?;
-                    let major = (n_cap.cross(minor))
-                        .try_normalize()
-                        .ok_or(TopoError::Precondition("fillet: cap axes"))?;
-                    Curve3::Ellipse(
-                        keel_geom::curve::Ellipse3::new(
-                            centre,
-                            major,
-                            minor,
-                            radius / d.abs(),
-                            radius,
-                        )
+        // --- Phase 2: split each cap face along its end arc(s). ---
+        // ONE cap face at the end vertex: the standard end. The arc is
+        // a quarter CIRCLE when the cap plane is perpendicular to the
+        // spine, and the exact plane-cylinder ELLIPSE when it is
+        // oblique (the sec-2.2 cap overflow: "intersect model faces
+        // with the blend sheet to trim the sheet exactly to the
+        // model"; plane-quadric sections are old prior art). TWO cap
+        // faces meeting at a model RIDGE: the two-face cap
+        // ("extending at most two of the adjoining faces to meet",
+        // zero-extension because the ridge already exists): the ridge
+        // splits where it first crosses the cylinder and each cap
+        // face trims to its own conic sub-arc, the arcs meeting at
+        // the crossing. A cap plane PARALLEL to the spine never
+        // crosses the ribbon end (the genuine extend case), and more
+        // than two cap faces is the multi-face cap: both decline.
+        #[derive(Clone, Copy)]
+        enum EndPlan {
+            Single,
+            Roof(crate::entity::VertexKey),
+        }
+        let conic_for = |b: &Body,
+                         cap: crate::entity::FaceKey,
+                         pc: Vec3,
+                         seed: Vec3|
+         -> Result<Curve3, TopoError> {
+            let n_cap = b
+                .face_outward_normal(cap)
+                .ok_or(TopoError::Precondition("fillet: cap normal"))?;
+            let d = n_cap.dot(dir);
+            if d.abs() > 1.0 - 1e-9 {
+                let centre = spine_pt + dir * ((pc - spine_pt).dot(dir));
+                let ex = (seed - centre)
+                    .try_normalize()
+                    .ok_or(TopoError::Precondition("fillet: arc axis"))?;
+                Ok(Curve3::Circle(
+                    keel_geom::curve::Circle3::new(centre, ex, dir.cross(ex), radius)
+                        .map_err(|_| TopoError::Precondition("fillet: bad arc"))?,
+                ))
+            } else if d.abs() > 1e-9 {
+                let centre = spine_pt + dir * (((pc - spine_pt).dot(n_cap)) / d);
+                let minor = (dir.cross(n_cap))
+                    .try_normalize()
+                    .ok_or(TopoError::Precondition("fillet: cap axes"))?;
+                let major = (n_cap.cross(minor))
+                    .try_normalize()
+                    .ok_or(TopoError::Precondition("fillet: cap axes"))?;
+                Ok(Curve3::Ellipse(
+                    keel_geom::curve::Ellipse3::new(centre, major, minor, radius / d.abs(), radius)
                         .map_err(|_| TopoError::Precondition("fillet: bad cap ellipse"))?,
-                    )
-                } else {
-                    return Err(TopoError::Precondition(
-                        "fillet: cap face parallel to the spine (extend follow-up)",
-                    ));
-                };
-                b.attach_edge_curve(split.edge, arc, true);
-                Ok((split.face_new, split.edge))
-            };
-        let (_corner_a, _arc_a) = split_cap(&mut b, va_k, aa, ba)?;
-        let (_corner_b, _arc_b) = split_cap(&mut b, vb_k, ab, bb)?;
+                ))
+            } else {
+                Err(TopoError::Precondition(
+                    "fillet: cap face parallel to the spine (extend follow-up)",
+                ))
+            }
+        };
+        let split_cap = |b: &mut Body,
+                         v_corner: crate::entity::VertexKey,
+                         a_end: crate::entity::VertexKey,
+                         b_end: crate::entity::VertexKey|
+         -> Result<EndPlan, TopoError> {
+            let caps: Vec<crate::entity::FaceKey> = b
+                .faces_at_vertex(v_corner)
+                .into_iter()
+                .filter(|f| *f != strip1 && *f != strip2)
+                .collect();
+            let pc = b
+                .vertices
+                .get(v_corner)
+                .map(|x| x.point)
+                .unwrap_or(spine_pt);
+            let pa_end = b
+                .vertices
+                .get(a_end)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let pb_end = b
+                .vertices
+                .get(b_end)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            match caps[..] {
+                [cap] => {
+                    let arc = conic_for(b, cap, pc, pa_end)?;
+                    b.split_blend_cap(cap, a_end, b_end, arc)?;
+                    Ok(EndPlan::Single)
+                }
+                [c0, c1] => {
+                    // Match each cap face to the spring end on its loop.
+                    let holds = |b: &Body, f: crate::entity::FaceKey, v| -> bool {
+                        b.faces
+                            .get(f)
+                            .map(|x| x.loops[0])
+                            .map(|lp| b.fin_ending_at_vertex(lp, v).is_ok())
+                            .unwrap_or(false)
+                    };
+                    let (cap_a, cap_b) = if holds(b, c0, a_end) {
+                        (c0, c1)
+                    } else {
+                        (c1, c0)
+                    };
+                    if !holds(b, cap_a, a_end) || !holds(b, cap_b, b_end) {
+                        return Err(TopoError::Precondition("fillet: roof cap ends astray"));
+                    }
+                    let ridge = b
+                        .face_edge_set(cap_a)
+                        .into_iter()
+                        .find(|&e2| {
+                            b.face_has_edge(cap_b, e2)
+                                && b.edges
+                                    .get(e2)
+                                    .map(|x| x.bounds.0 == v_corner || x.bounds.1 == v_corner)
+                                    .unwrap_or(false)
+                        })
+                        .ok_or(TopoError::Precondition("fillet: no roof ridge"))?;
+                    let (r0, r1) = b.edges.get(ridge).ok_or(TopoError::StaleKey)?.bounds;
+                    let far = if r0 == v_corner { r1 } else { r0 };
+                    let pr = b
+                        .vertices
+                        .get(far)
+                        .map(|x| x.point)
+                        .ok_or(TopoError::StaleKey)?;
+                    // First crossing of the ridge with the blend
+                    // cylinder: the corner is outside, so the smaller
+                    // quadratic root enters on the material quarter.
+                    let perp = |v: Vec3| v - dir * v.dot(dir);
+                    let uu = perp(pr - pc);
+                    let ww = perp(pc - spine_pt);
+                    let (qa, qb, qc) = (uu.dot(uu), 2.0 * uu.dot(ww), ww.dot(ww) - radius * radius);
+                    let disc = qb * qb - 4.0 * qa * qc;
+                    if !(qa > 1e-18 && disc > 0.0) {
+                        return Err(TopoError::Precondition("fillet: ridge misses the blend"));
+                    }
+                    let t = (-qb - disc.sqrt()) / (2.0 * qa);
+                    if !(t > 1e-9 && t < 1.0 - 1e-9) {
+                        return Err(TopoError::Precondition("fillet: ridge crossing off-edge"));
+                    }
+                    let vr = b.split_edge(ridge, pc + (pr - pc) * t)?.vertex;
+                    let arc_a = conic_for(b, cap_a, pc, pa_end)?;
+                    b.split_blend_cap(cap_a, a_end, vr, arc_a)?;
+                    let arc_b = conic_for(b, cap_b, pc, pb_end)?;
+                    b.split_blend_cap(cap_b, vr, b_end, arc_b)?;
+                    Ok(EndPlan::Roof(vr))
+                }
+                _ => Err(TopoError::Precondition(
+                    "fillet: multi-face cap (follow-up)",
+                )),
+            }
+        };
+        let plan_a = split_cap(&mut b, va_k, aa, ba)?;
+        let plan_b = split_cap(&mut b, vb_k, ab, bb)?;
 
-        // --- Phase 3: dissolve the four corner fragments into one face. ---
-        // Merge the two strips across the sharp edge.
+        // --- Phase 3: dissolve the corner fragments into one face. ---
+        // Merge the two strips across the sharp edge, then per end:
+        // merge the cap sliver(s) in and kill the degree-1 spur (the
+        // old corner vertex with its ridge stub, for a roof end).
         b.kef(edge)?;
-        // Merge each cap corner in, then kill the resulting degree-1 spur.
-        let e_a = b
-            .edge_between(aa, va_k)
-            .ok_or(TopoError::Precondition("fillet: no A spring stub"))?;
-        b.kef(e_a)?;
-        let spur_a = b
-            .edge_between(va_k, ba)
-            .ok_or(TopoError::Precondition("fillet: no A spur"))?;
-        b.kev(spur_a)?;
-        let e_b = b
-            .edge_between(ab, vb_k)
-            .ok_or(TopoError::Precondition("fillet: no B spring stub"))?;
-        b.kef(e_b)?;
-        let spur_b = b
-            .edge_between(vb_k, bb)
-            .ok_or(TopoError::Precondition("fillet: no B spur"))?;
-        b.kev(spur_b)?;
+        for (plan, s_end, vk, t_end) in [(plan_a, aa, va_k, ba), (plan_b, ab, vb_k, bb)] {
+            let stub = b
+                .edge_between(s_end, vk)
+                .ok_or(TopoError::Precondition("fillet: no spring stub"))?;
+            b.kef(stub)?;
+            match plan {
+                EndPlan::Single => {
+                    let spur = b
+                        .edge_between(vk, t_end)
+                        .ok_or(TopoError::Precondition("fillet: no spur"))?;
+                    b.kev(spur)?;
+                }
+                EndPlan::Roof(vr) => {
+                    let stub2 = b
+                        .edge_between(vk, t_end)
+                        .ok_or(TopoError::Precondition("fillet: no roof stub"))?;
+                    b.kef(stub2)?;
+                    let rspur = b
+                        .edge_between(vk, vr)
+                        .ok_or(TopoError::Precondition("fillet: no ridge spur"))?;
+                    b.kev(rspur)?;
+                }
+            }
+        }
 
         // --- Phase 4: the surviving face on the spring-a edge (other than
         // the trimmed support) is the blend face; give it the cylinder. ---
@@ -4254,6 +4321,89 @@ mod tests {
             "the chamfer face must survive trimmed"
         );
         assert_eq!(f.face_keys().len(), 8);
+    }
+
+    #[test]
+    fn roof_cap_fillet_closes_the_ribbon_end_on_two_planes() {
+        // Dossier 56 sec 2.2, the TWO-face cap ("extending at most
+        // two of the adjoining faces to meet"; here they already meet
+        // at a model ridge, the zero-extension planar-exact bucket-(a)
+        // case). Box 4x2x2 with the end corner cut by BOTH x + z = 5
+        // and x + y = 5: the sharp top-front edge ends at the 4-face
+        // corner (3,2,2) and the ridge runs to (4,1,1). Fillet r =
+        // 0.5: the ribbon end closes with TWO plane-cylinder ellipse
+        // sub-arcs meeting where the ridge crosses the cylinder at
+        // x = 3.5 - r/sqrt2. Closed-form oracle written FIRST: the
+        // corner cut integrates to r^3 (1/3 + sqrt2/3 - pi/4).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 2.0, 2.0).unwrap();
+        let mut w1 = Body::new();
+        w1.prism(
+            &[
+                Vec3::new(2.8, -0.5, 2.2),
+                Vec3::new(4.2, -0.5, 0.8),
+                Vec3::new(4.2, -0.5, 2.2),
+            ],
+            Vec3::new(0., 3.0, 0.),
+        )
+        .unwrap();
+        let mut w2 = Body::new();
+        w2.prism(
+            &[
+                Vec3::new(2.8, 2.2, -0.5),
+                Vec3::new(4.2, 0.8, -0.5),
+                Vec3::new(4.2, 2.2, -0.5),
+            ],
+            Vec3::new(0., 0., 3.0),
+        )
+        .unwrap();
+        let g1 = crate::boolean::boolean(&b, &w1, crate::boolean::BoolOp::Difference, 1e-7)
+            .unwrap()
+            .body;
+        let g = crate::boolean::boolean(&g1, &w2, crate::boolean::BoolOp::Difference, 1e-7)
+            .unwrap()
+            .body;
+        let body_v = g.mass_properties().unwrap().volume;
+        assert!(
+            (body_v - (14.0 + 1.0 / 3.0)).abs() < 1e-9,
+            "roofed body {body_v}"
+        );
+        let e = edge_between_faces(&g, Vec3::new(0., 0., 1.), Vec3::new(0., 1., 0.));
+        let f = g.fillet_edge(e, 0.5).unwrap();
+        assert!(f.validate().is_ok(), "roof-cap body invalid");
+        let pi = core::f64::consts::PI;
+        let cut_straight = (0.25 - pi / 16.0) * 3.0;
+        let cut_corner = 0.125 * (1.0 / 3.0 + 2f64.sqrt() / 3.0 - pi / 4.0);
+        let exact = 14.0 + 1.0 / 3.0 - cut_straight - cut_corner;
+        let v = f.mass_properties().unwrap().volume;
+        assert!((v - exact).abs() < 1e-9, "mass {v} != exact {exact}");
+        let m = f.mesh_volume();
+        assert!((m - exact).abs() < 0.02, "mesh {m} != exact {exact}");
+        // One cylinder ribbon; both roof planes survive trimmed.
+        let cyls = f
+            .face_keys()
+            .into_iter()
+            .filter(|&fk| {
+                matches!(
+                    f.face_surface_geom(fk),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )
+            })
+            .count();
+        assert_eq!(cyls, 1, "roof cap blend is one cylinder face");
+        for want in [
+            Vec3::new(1., 0., 1.).try_normalize().unwrap(),
+            Vec3::new(1., 1., 0.).try_normalize().unwrap(),
+        ] {
+            assert!(
+                f.face_keys().into_iter().any(|fk| {
+                    f.face_outward_normal(fk)
+                        .map(|n| (n - want).norm() < 1e-9)
+                        .unwrap_or(false)
+                }),
+                "roof plane must survive trimmed"
+            );
+        }
     }
 
     #[test]
