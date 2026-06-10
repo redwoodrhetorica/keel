@@ -5004,3 +5004,22 @@ interrogation only.
 
 LADDER: the exact medial-axis structure (Culver-Keyser-Manocha seams) stays queued; this field
 is its query-level MVP and the bridge for retiring the per-feature r_max duplicates.
+
+## Addendum 162 (2026-06-10, attended): TOLERANCE PROPAGATION SPECIFICATION (the unfixable-late gap)
+
+docs/superpowers/specs/2026-06-10-tolerance-propagation.md (branch tol-propagation-spec): the
+corpus audit named tolerance propagation the single most serious unvalidated dependency (spec
+D2 promised "per-entity tolerances WITH PROPAGATION"; the algorithms are proprietary everywhere
+and absent from open literature; the audit verdict: write the specification BEFORE the model
+calcifies). The spec adopts the C3D sphere/tube formalization (dossier 42: vertex = ball, edge
+= tube, geometry stays exact), three containment invariants, six propagation rules (creation
+from certificates; ADDITIVE conservative growth on merge gaps; max-inheritance on dissolution;
+isometry/scale transport; the lfs-relative RE-INTERSECTION TRIGGER at k = 0.01 wired to the new
+inscribed-radius medial field; and the chaining bound stated as a MEASURED conjecture, not an
+assumption), and the measurement program that turns the missing literature into data: the fuzz
+/ billion-boolean infrastructure gains a tolerance-growth bucket, chains run at depth 8-32 with
+per-op growth logging, and any super-additive case becomes a repro. Honest conformance
+inventory included: P1/P3/P4 already conform; P2 gap recording, the lfs trigger, and the M1-M3
+instrumentation are the named follow-ups.
+
+CI: docs only; no code changed (workspace remains 132 + 77 + 239 green from Addendum 161).
