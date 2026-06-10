@@ -4947,3 +4947,35 @@ formatting change matters).
 
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 237 (+1) green. No soak: the gate consumes
 already-parsed values (no new parsing path), no boolean/tessellation change.
+
+## Addendum 160 (2026-06-10, attended): BLEND-CHAIN ORDERED SUPPRESSION + THE WEDGE ORACLE
+
+Body::unblend_all(tol) (branch blend-chains; dossiers 03 sec 2.2 / 15 sec 1.4, the
+Venkataraman-Sohoni ordering): whole-model blend suppression, LEAVES FIRST. A blend whose face
+serves as another blend's SUPPORT is a junction and waits until its dependents are gone (the
+dependency edge that prevents re-intersection targets vanishing); recognition re-runs after
+every removal; declines are tracked per face and re-tried after any successful removal (a
+removal can unlock its neighbors). Returns (removed, remaining): a nonzero remaining means
+those blends honestly DECLINED with the body at the last valid state.
+
+THE GATE THE CHAIN CASE EXPOSED (and its fix): unblend's commit gate demanded analytic
+mass_properties == mesh on the candidate. On a body with MORE THAN ONE blend, the candidate
+still carries another blend's pcurve-less cylinder face, the analytic integral fails (the
+documented blend-pcurve follow-up), and EVERY chain unblend declined: item 59 had only ever
+been exercised on single-blend bodies. The gate is now TIERED: when mass_properties succeeds,
+the strong mass == mesh identity applies unchanged; when it is blocked, the fallback is the
+EXACT WEDGE ORACLE: this unblend must change the mesh volume by exactly the removed fillet's
+analytic wedge r^2 (cot(theta/2) - (pi - theta)/2) per unit length at interior dihedral theta
+(sign-agnostic for convex/concave). The untouched faces' tessellation error CANCELS in the
+before/after difference, leaving only the removed band's own chordal error (2 percent gate at
+default density). DECLINE-never-WRONG is preserved with a quantified independent oracle, not a
+weakened one.
+
+ORACLES: two independent fillets on a box suppress completely back to the EXACT sharp box
+(volume 8 to 1e-9, 6 faces, removed/remaining = 2/0, the second removal passing through the
+wedge oracle and the final one through the strong gate); the mitred-corner body's two blends
+are not the plane-plane unblend class and decline wholesale (0 removed, 2 remaining, mesh
+volume bit-identical).
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 238 (+1) green. No soak: no
+boolean/tessellation path touched (blend surgery + recognition only).
