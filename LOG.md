@@ -3702,3 +3702,28 @@ GATE: workspace 108 + 77 + 171 green (two new assembly tests), clippy -D warning
 Def::Part variant), fmt. No boolean.rs change -> fuzz unchanged. Merged.
 Counter 96/144 -- a +14 run this session. Phase 9 assemblies 82-85 done; foreign geometry
 114-116 remains in Phase 9.
+
+## Addendum 124 (2026-06-09, attended): FIX the "latent boolean bug" -- it was a prism CW-base inconsistency, NOT a boolean asymmetry. Stays 96/144 (correctness fix)
+
+CORRECTS Addendum 119's misdiagnosis. Data-first repro (box[0,4]^3 INTERSECT a half-slab at
+x=2): with AXIS-ALIGNED slabs BOTH sides assemble (back=32, front=32, identical kept=6/5A+1B) ->
+the boolean is NOT asymmetric. The failure was specific to split's ORIENTED slab: the front
+slab gave kept=1 (0 A-faces, 1 B-face) -- classify found ZERO box faces inside it, even the x=4
+face plainly inside. ROOT CAUSE (slab volume probe): the oriented front slab had
+mass_properties = +54309 but mesh_volume = -18103 -- prism produced a body whose SENSE-based
+volume is positive yet whose TESSELLATION winding is INVERTED. So the generalized winding number
+(tessellation-based) was inverted -> classify_faces saw every box face as outside -> nothing kept.
+The trigger: split's self-correcting slab fed prism a base wound CW about the extrude dir; prism
+attaches face senses as if the base were CCW, so mass (sense) and mesh (winding) disagree.
+
+FIX (construct.rs, prism -- the ROOT, helps every caller): auto-orient the base to CCW about
+`dir` (reverse the profile when its Newell normal opposes dir) so prism NEVER emits a
+sense-vs-tessellation-inconsistent body. Backward-compatible: every existing caller passes a CCW
+base (no-op); only CW bases are flipped. After the fix the oriented front slab is consistent
+(mass==mesh==54309) and box INTERSECT either oriented slab gives 32. Simplified split_by_plane's
+slab (removed the now-redundant volume self-correct). REGRESSION TESTS: prism_cw_base_is_consistent
+(a CW-about-+z square prism -> mass==mesh==12) and intersection_with_oriented_slabs_is_symmetric
+(4^3 split by x=2 -> two valid 32 halves). The Addendum-119 note is hereby retracted: there is no
+boolean intersection asymmetry; the bug was a prism orientation footgun, fixed at the source.
+GATE: workspace 108 + 77 + 173 green, clippy -D warnings, fmt + fuzz_boolean (WSL nightly, 200s,
+Done 361 runs, clean). Merged. Counter stays 96/144 (a correctness fix, no new feature).

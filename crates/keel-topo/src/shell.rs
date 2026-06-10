@@ -114,21 +114,16 @@ impl Body {
             .ok_or(TopoError::Precondition("split: axis"))?;
         let v = n.cross(u);
         // A half-space slab on `side` of the plane (-1 back, +1 front): a big
-        // square at the far face extruded back toward the plane. The base
-        // winding is self-corrected so the slab is a positive-volume solid.
+        // square at the far face extruded back toward the plane. prism
+        // auto-orients the base to dir, so either winding yields a consistent
+        // solid (mass == mesh).
         let slab = |side: f64| -> Result<Body, TopoError> {
             let far = point + n * (side * big);
             let q = |a: f64, b: f64| far + u * a + v * b;
             let dir = n * (-side * big);
-            let mut base = vec![q(-big, -big), q(big, -big), q(big, big), q(-big, big)];
+            let base = vec![q(-big, -big), q(big, -big), q(big, big), q(-big, big)];
             let mut s = Body::new();
-            let ok = s.prism(&base, dir).is_ok()
-                && s.mass_properties().map(|m| m.volume > 0.0).unwrap_or(false);
-            if !ok {
-                base.reverse();
-                s = Body::new();
-                s.prism(&base, dir)?;
-            }
+            s.prism(&base, dir)?;
             Ok(s)
         };
         let back = slab(-1.0)?;
@@ -178,6 +173,52 @@ impl Body {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prism_cw_base_is_consistent() {
+        // A prism whose base is wound CW about the extrude direction must
+        // still produce a CONSISTENT solid (mass_properties == mesh_volume).
+        // Before the auto-orient fix this gave mass > 0 but mesh < 0, which
+        // inverted the generalized winding number and broke intersection with
+        // an oriented half-slab (the symptom that masqueraded as a boolean
+        // asymmetry). Square base, CW about +z; extrude +z; volume 2*2*3 = 12.
+        let mut p = Body::new();
+        p.prism(
+            // CW about +z (clockwise) -- the auto-orient must fix it.
+            &[
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(0.0, 2.0, 0.0),
+                Vec3::new(2.0, 2.0, 0.0),
+                Vec3::new(2.0, 0.0, 0.0),
+            ],
+            Vec3::new(0.0, 0.0, 3.0),
+        )
+        .unwrap();
+        assert!(p.validate().is_ok(), "CW-base prism invalid");
+        let mass = p.mass_properties().unwrap().volume;
+        let mesh = p.mesh_volume();
+        assert!(
+            (mass - 12.0).abs() < 1e-9 && (mesh - 12.0).abs() < 1e-9,
+            "CW-base prism must be consistent: mass {mass}, mesh {mesh} (both 12)"
+        );
+    }
+
+    #[test]
+    fn intersection_with_oriented_slabs_is_symmetric() {
+        // Regression for the prism CW-base fix via split's oriented slabs:
+        // a 4^3 box split by x=2 must give two valid 32-volume halves (the
+        // front half previously failed because its slab was GWN-inverted).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 4.0, 4.0).unwrap();
+        let (back, front) = b
+            .split_by_plane(Vec3::new(2.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0))
+            .unwrap();
+        for (p, who) in [(back, "back"), (front, "front")] {
+            assert!(p.validate().is_ok(), "{who} piece invalid");
+            let v = p.mass_properties().unwrap().volume;
+            assert!((v - 32.0).abs() < 1e-6, "{who} half must be 32 (got {v})");
+        }
+    }
 
     #[test]
     fn split_box_by_plane_halves() {
