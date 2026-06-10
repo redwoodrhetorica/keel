@@ -5322,3 +5322,37 @@ mesh to 0.02 (chordal), exactly 3 cylinder ribbon faces, 13 faces total, argumen
 agnostic. CI: fmt; clippy -D warnings; workspace 132 + 77 + 245 (+1) green; fuzz_boolean soak
 (tessellation + massprops changed): count below. Remaining in the leg: planar CAP (sec 2.2),
 then setbacks (dossier 53), Rung 5 + completion gate.
+
+## Addendum 173 (2026-06-10, attended): CAP OVERFLOW HANDLER (dossier 56 sec 2.2) + Green-slab cylinder massprops
+
+Branch cap-handler. The cap construction, per the dossier verbatim: "a face or faces in the
+model will be intersected with the blend sheet to trim the sheet exactly to the model"
+(prior-art extend-and-trim, unencumbered; no separate sheet). The honest narrow slice is the
+OBLIQUE-END cap, implemented INSIDE fillet_edge itself: the split_cap step now reads the cap
+face's plane: perpendicular to the spine = the standard quarter circle (unchanged);
+oblique = the EXACT plane-cylinder ELLIPSE (centre at spine-plane intersection, semi-major
+r/|n.dir| along the steep in-plane direction, semi-minor r along n x dir); parallel to the
+spine = the genuine extend-two-faces case, declined with its own message. The surgery
+skeleton needed NOTHING else: imprint_spring_line already lands springs at different spine
+stations, split_blend_cap takes any conic, and the standard kef/kev dissolve consumes the
+slant sliver. Test: chamfered prism (profile (0,0)(4,0)(4,1)(3,2)(0,2) extruded 2 in y),
+fillet r 0.5 between top and cap: springs end at x 3 (top) and x 3.5 (front), ribbon ends on
+the exact ellipse in the chamfer plane x+z=5.
+
+The enabling piece: non-iso-rectangle cylinder trims used to DECLINE mass_properties (the
+mitre note in Add.156). NEW integrate_cylinder_face_green: the region integral folds onto the
+boundary (int_R F du dv = -loop_int G du, G the inner v-antiderivative), each boundary Gauss
+node carrying an inner v-slab of Moments::add samples. Lines and degree-1 NURBS are rulings
+and contribute zero through u-prime = 0; circles and ellipses carry the flux; the integrand
+is u-periodic so fins need only LOCAL angle continuity (no seam unwrap); weights normalize by
+the sign of the enclosed UV area. Curved NURBS fins still decline. The MITRE test now asserts
+mass against its grid oracle (formerly mesh-only): the Add.156 decline is retired.
+
+Closed-form oracle written FIRST (the streak holds, though this one passed first try: every
+piece was already precedented): exact = 15 - (1/4 - pi/16) x 3 - [1/16 - (pi/32 - 1/24)];
+mass to 1e-9 (through BOTH the new Green slab on the ribbon and the Add.172 lunes on the
+ellipse-bounded chamfer face), mesh to 0.02, 8 faces, chamfer survives trimmed.
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 246 (+1) green; fuzz_boolean soak
+(massprops changed): count below. Dossier 56 sec 2 is now COMPLETE (notch + cap); remaining
+in the leg: setbacks (dossier 53), Rung 5 SGC + completion gate.

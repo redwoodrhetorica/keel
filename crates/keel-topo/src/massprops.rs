@@ -782,6 +782,13 @@ impl Body {
                 match self.projected_rect_bounds(fk, surf) {
                     Some(b) => b,
                     None => {
+                        // Non-iso-rectangle CYLINDER trims (the mitre's
+                        // ellipse seams, the oblique-end cap) integrate
+                        // via the Green-slab boundary path; other
+                        // surfaces keep declining.
+                        if matches!(surf, Surface3::Cylinder(_)) {
+                            return self.integrate_cylinder_face_green(fk, surf, sense_sign, m);
+                        }
                         return Err(TopoError::Precondition("curved face without pcurve bounds"));
                     }
                 }
@@ -809,6 +816,211 @@ impl Body {
                     }
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// GREEN-SLAB integrator for a cylinder face whose UV trim is NOT
+    /// an iso-rectangle (the mitre's ellipse seams, the oblique-end
+    /// cap). The region integral folds onto the boundary,
+    /// `int_R F du dv = -loop_int G du` with `G(u, v) = int_{v0}^{v}
+    /// F(u, s) ds`, and each boundary Gauss node carries an inner
+    /// v-slab of quadrature samples, so the ordinary Moments::add
+    /// machinery integrates any trim whose fins are evaluable with
+    /// derivatives: lines and degree-1 NURBS are rulings and
+    /// contribute zero through u' = 0; circles and ellipses carry the
+    /// flux. The integrand is u-periodic, so fins need only LOCAL
+    /// angle continuity (no global seam unwrap), and weights are
+    /// normalized by the sign of the enclosed UV area to match the
+    /// positively-covered rectangle convention of the iso path.
+    /// Curved NURBS fins decline.
+    fn integrate_cylinder_face_green(
+        &self,
+        fk: FaceKey,
+        surf: &Surface3,
+        sense_sign: f64,
+        m: &mut Moments,
+    ) -> Result<(), TopoError> {
+        let Surface3::Cylinder(cyl) = surf else {
+            return Err(TopoError::Precondition("green-slab: not a cylinder"));
+        };
+        let (o, ex, ey, ez, r) = (
+            cyl.frame.origin,
+            cyl.frame.x,
+            cyl.frame.y,
+            cyl.frame.z,
+            cyl.radius,
+        );
+        enum FinCurve {
+            Seg(Vec3, Vec3),
+            Circ(keel_geom::curve::Circle3, f64, f64),
+            Ell(keel_geom::curve::Ellipse3, f64, f64),
+        }
+        let tau = core::f64::consts::TAU;
+        let face = self.faces.get(fk).ok_or(TopoError::StaleKey)?;
+        let mut fins_c: Vec<FinCurve> = Vec::new();
+        let mut v_base = f64::INFINITY;
+        for &lk in &face.loops {
+            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            loop {
+                let fin = self.fins.get(cur).ok_or(TopoError::StaleKey)?;
+                let edge = self.edges.get(fin.edge).ok_or(TopoError::StaleKey)?;
+                let (b0, b1) = edge.bounds;
+                let p0 = self
+                    .vertices
+                    .get(b0)
+                    .map(|x| x.point)
+                    .ok_or(TopoError::StaleKey)?;
+                let p1 = self
+                    .vertices
+                    .get(b1)
+                    .map(|x| x.point)
+                    .ok_or(TopoError::StaleKey)?;
+                v_base = v_base.min((p0 - o).dot(ez)).min((p1 - o).dot(ez));
+                // Fin-ordered parameter range for an angle-parameterized
+                // conic: edge-direction sweep (bounds.0 -> bounds.1,
+                // honoring an explicit arc_sweep), flipped when the fin
+                // runs the edge backward.
+                let range = |a0: f64, a1: f64| -> (f64, f64) {
+                    let s = edge.arc_sweep.unwrap_or_else(|| {
+                        let mut d = a1 - a0;
+                        let pi = core::f64::consts::PI;
+                        while d <= -pi {
+                            d += tau;
+                        }
+                        while d > pi {
+                            d -= tau;
+                        }
+                        d
+                    });
+                    if fin.forward {
+                        (a0, a0 + s)
+                    } else {
+                        (a1, a1 - s)
+                    }
+                };
+                match edge.curve.and_then(|(ck, _)| self.curves.get(ck)) {
+                    Some(Curve3::Circle(c)) => {
+                        let ang = |p: Vec3| {
+                            (p - c.center)
+                                .dot(c.y_axis)
+                                .atan2((p - c.center).dot(c.x_axis))
+                        };
+                        if b0 == b1 {
+                            let a0 = ang(p0);
+                            let s = if fin.forward { tau } else { -tau };
+                            fins_c.push(FinCurve::Circ(*c, a0, a0 + s));
+                        } else {
+                            let (t0, t1) = range(ang(p0), ang(p1));
+                            fins_c.push(FinCurve::Circ(*c, t0, t1));
+                        }
+                    }
+                    Some(Curve3::Ellipse(el)) => {
+                        let ang = |p: Vec3| {
+                            let w = p - el.center;
+                            (w.dot(el.y_axis) / el.b).atan2(w.dot(el.x_axis) / el.a)
+                        };
+                        if b0 == b1 {
+                            let a0 = ang(p0);
+                            let s = if fin.forward { tau } else { -tau };
+                            fins_c.push(FinCurve::Ell(*el, a0, a0 + s));
+                        } else {
+                            let (t0, t1) = range(ang(p0), ang(p1));
+                            fins_c.push(FinCurve::Ell(*el, t0, t1));
+                        }
+                    }
+                    Some(Curve3::Nurbs(n)) if n.degree() > 1 => {
+                        return Err(TopoError::Precondition(
+                            "green-slab: curved NURBS boundary fin",
+                        ));
+                    }
+                    _ => {
+                        let (ps, pe) = if fin.forward { (p0, p1) } else { (p1, p0) };
+                        fins_c.push(FinCurve::Seg(ps, pe));
+                    }
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        if !v_base.is_finite() {
+            return Err(TopoError::Precondition("green-slab: empty boundary"));
+        }
+        let mut acc: Vec<(f64, f64, f64)> = Vec::new();
+        let mut area = 0.0;
+        let mut emit = |p: Vec3, dp: Vec3, wt: f64| {
+            let w = p - o;
+            let (x, y) = (w.dot(ex), w.dot(ey));
+            let nrm = (x * x + y * y).sqrt();
+            if nrm < 1e-12 {
+                return;
+            }
+            let (cu, su) = (x / nrm, y / nrm);
+            let theta_hat = ey * cu - ex * su;
+            let up = dp.dot(theta_hat) / r;
+            let u = su.atan2(cu);
+            let v_t = w.dot(ez);
+            let wu = wt * up;
+            area -= wu * (v_t - v_base);
+            let half = 0.5 * (v_t - v_base);
+            for (xk, wk) in GL8_X.iter().zip(GL8_W) {
+                let s = v_base + half * (xk + 1.0);
+                acc.push((u, s, -wu * wk * half));
+            }
+        };
+        for fc in &fins_c {
+            match fc {
+                FinCurve::Seg(a, b2) => {
+                    for (xj, wj) in GL8_X.iter().zip(GL8_W) {
+                        let t = 0.5 * (xj + 1.0);
+                        emit(*a + (*b2 - *a) * t, *b2 - *a, wj * 0.5);
+                    }
+                }
+                FinCurve::Circ(c, t0, t1) => {
+                    let panels = ((t1 - t0).abs() / core::f64::consts::FRAC_PI_4)
+                        .ceil()
+                        .max(1.0) as usize;
+                    for ip in 0..panels {
+                        let a0 = t0 + (t1 - t0) * ip as f64 / panels as f64;
+                        let a1 = t0 + (t1 - t0) * (ip + 1) as f64 / panels as f64;
+                        for (xj, wj) in GL8_X.iter().zip(GL8_W) {
+                            let t = 0.5 * (a0 + a1) + 0.5 * (a1 - a0) * xj;
+                            let dp = (c.y_axis * t.cos() - c.x_axis * t.sin()) * c.radius;
+                            emit(c.point(t), dp, wj * 0.5 * (a1 - a0));
+                        }
+                    }
+                }
+                FinCurve::Ell(el, t0, t1) => {
+                    let panels = ((t1 - t0).abs() / core::f64::consts::FRAC_PI_4)
+                        .ceil()
+                        .max(1.0) as usize;
+                    for ip in 0..panels {
+                        let a0 = t0 + (t1 - t0) * ip as f64 / panels as f64;
+                        let a1 = t0 + (t1 - t0) * (ip + 1) as f64 / panels as f64;
+                        for (xj, wj) in GL8_X.iter().zip(GL8_W) {
+                            let t = 0.5 * (a0 + a1) + 0.5 * (a1 - a0) * xj;
+                            let dp = el.y_axis * (el.b * t.cos()) - el.x_axis * (el.a * t.sin());
+                            emit(el.point(t), dp, wj * 0.5 * (a1 - a0));
+                        }
+                    }
+                }
+            }
+        }
+        if area.abs() < 1e-12 {
+            return Err(TopoError::Precondition("green-slab: degenerate UV region"));
+        }
+        let flip = area.signum();
+        for (u, s, w) in acc {
+            let Ok(lg) = surf.local_geometry(u, s) else {
+                continue;
+            };
+            let n = lg.du.cross(lg.dv) * sense_sign;
+            m.add(lg.point, n, w * flip);
         }
         Ok(())
     }
