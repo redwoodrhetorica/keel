@@ -4848,3 +4848,38 @@ justification).
 CONSUMERS: GD&T datum simulation (dossier 17) and inspection-grade profile evaluation get
 their fitting engine; the connection B insight stands (one engine, objective-parameterized,
 shared with recovery).
+
+## Addendum 157 (2026-06-10, attended): NURBS EXTENSION VIA KNOT UNCLAMPING (the staged engine lands)
+
+extend.rs (branch unclamp-extend; dossier 13 sec 2.1, corpus-audit top-tier item): the M5b
+staged Err is retired. The engine is the POLAR-FORM construction: the natural extension past a
+clamped end is the SAME polynomial as the boundary span, so the appended segment's control
+points are blossoms of that span at mixed (u1, e) arguments, computed by the generalized
+de Boor triangle (a different argument per elimination level) over the last p+1 control
+points, all in HOMOGENEOUS 4D so rational surfaces extend exactly. New knot vector = the
+original with ONE end knot dropped (u1 becomes interior at multiplicity p) plus p+1 knots at
+e; every original control window is untouched (the polar-form windows for j <= n are
+unchanged), so the original domain reproduces BITWISE and the join is C-infinity. Min-end
+extension by reverse/extend/reverse; surfaces extend per control row/column (v-curves are
+contiguous chunks; u via transpose). Public API: extend_nurbs_curve(curve, at_end, amount) +
+the existing extend_nurbs_surface signature now returning real surfaces, still guarded by the
+safe-reach cap, weight positivity, and fold detection.
+
+FOLD-DETECTOR FIX (first real consumer caught it): the validator compared every sampled normal
+against a fixed reference, which FALSE-POSITIVES on a closed patch (a full cylinder rotates
+the normal a full turn). A fold flips the normal between ADJACENT samples; compare
+consecutively.
+
+ORACLES (exactness, not approximation): a rational quadratic on a circle satisfies x^2 + y^2 =
+r^2 w^2 as a POLYNOMIAL identity, so its natural extension must stay exactly on the circle:
+the extended full-circle curve stays within 1e-9 of radius at both ends, with the original
+domain unchanged to 1e-12. The rational cylinder surface (arc x line) extends along the axis
+(degree-1 direction) AND around the arc (rational direction) staying exactly on the infinite
+cylinder; over-cap requests still decline.
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 233 (+1 net) green. No soak: additive
+geometry service, no boolean/tessellation path touched.
+
+CONSUMERS UNBLOCKED: NURBS delete-face healing, curved tweak re-intersection, and the
+untrimming strategy (the corpus's "chief obstacle to robust booleans on NURBS solids") now
+have their extension primitive.
