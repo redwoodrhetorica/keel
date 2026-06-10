@@ -23,6 +23,7 @@ pub mod imprint;
 pub mod interrogate;
 pub mod lineage;
 pub mod massprops;
+pub mod merge;
 pub mod ops;
 pub mod partition;
 pub mod pmc;
