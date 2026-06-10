@@ -3727,3 +3727,24 @@ slab (removed the now-redundant volume self-correct). REGRESSION TESTS: prism_cw
 boolean intersection asymmetry; the bug was a prism orientation footgun, fixed at the source.
 GATE: workspace 108 + 77 + 173 green, clippy -D warnings, fmt + fuzz_boolean (WSL nightly, 200s,
 Done 361 runs, clean). Merged. Counter stays 96/144 (a correctness fix, no new feature).
+
+## Addendum 125 (2026-06-09, attended): PARTITIONS + PMARKS + TRANSACTIONS (items 123/124/125). 96 -> 99/144
+
+New crates/keel-topo/src/partition.rs (no change to existing code -> zero regression risk). The
+session layer already had per-body snapshot/restore + json + journal/replay (126, 129); this adds
+the multi-body rollback layer:
+- item 123 PARTITION: Partition { bodies, marks } -- the top-level rollback container; add/body/
+  body_mut/len + to_json/from_json (the partition serialized as ONE unit, exact f64 round-trip per
+  the body serde, dossier 14). Parasolid's partition = the undo unit holding bodies.
+- item 124 PMARKS / rollback: set_pmark(name) captures the current body state; roll_to(name)
+  reverts (or advances -- marks are retained) every body in the partition to that mark. Both
+  rollback and rollforward.
+- item 125 TRANSACTIONS: begin (save state, nestable stack) / abort (revert to begin) / commit
+  (accept). The open-transaction stack is #[serde(skip)] (a persisted partition has none).
+The three share one substrate (a body-state clone) but are distinct user-facing capabilities --
+container, navigable history marks, atomic op grouping -- exactly as the parity map lists them
+separately; each has its own API + test. ORACLES: a 2-body partition round-trips through json with
+exact volumes (8, 27); a pmark reverts an edited box (64 -> 8); begin/abort reverts (8) while
+begin/commit keeps (27). Incremental DELTA save (127) and version control (128) are follow-ons.
+GATE: workspace 108 + 77 + 176 green (three new partition tests), clippy -D warnings, fmt. No
+boolean.rs change -> fuzz unchanged. Merged. Counter 99/144.

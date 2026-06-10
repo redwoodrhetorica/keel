@@ -20,6 +20,7 @@ pub mod interrogate;
 pub mod lineage;
 pub mod massprops;
 pub mod ops;
+pub mod partition;
 pub mod pmc;
 pub mod query;
 pub mod session;
