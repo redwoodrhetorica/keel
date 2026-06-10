@@ -5390,3 +5390,40 @@ CI: fmt; clippy -D warnings; workspace 132 + 77 + 247 (+1) green; fuzz_boolean s
 (tessellation changed): count below. Dossier 56 sec 2 (notch + one-face cap + two-face roof
 cap) COMPLETE; #15 overflow handlers close (ov_smooth transition patch = procedural-evaluator
 follow-up per the three-bucket verdict). Next: #16 setbacks (dossier 53).
+
+## Addendum 175 (2026-06-10, attended): OBLIQUE TRIHEDRAL CORNER (dossier 53 milestone 2) + Green-slab SPHERES
+
+Branch corner-triangle, the analytic rung of #16 setback corners taken FIRST per the standing
+lesson. fillet_corner_octant generalizes to NON-perpendicular equal-radius trihedral corners:
+the inscribed sphere exists whenever the three inward offset planes meet at one point M, and
+EVERY cylinder spine passes through M (each spine is the intersection of two of the three
+offset planes), so the cube-corner surgery generalizes verbatim. Only two things actually
+changed: (1) the corner-arc circle frame (the second axis is dir x n, orthonormal by
+construction; the old code passed the OTHER support normal, orthogonal only for the cube),
+and (2) the spherical patch's mass integration.
+
+(2) is the milestone's enabling piece: integrate_face_green now serves SPHERES as well as
+cylinders. The per-point u' = dp.theta_hat / rho uses the point's own equatorial radius
+(cylinder r, sphere R cos lat), v maps to latitude, and the slab base is chosen by the
+boundary's total u-WINDING, the subtlety this surface class introduces: a sphere trim
+enclosing a pole has winding +-1 and the base-shift term -loop_int g(u) du does NOT vanish,
+so the slab anchors at the enclosed pole (the corner constructors put the patch's interior
+pole at frame +z; boundaries touching the anchor pole, |winding| > 1, and non-circle sphere
+fins decline). Winding-0 trims keep the boundary-minimum base; inner slabs go composite GL8
+per quarter-pi (the sphere integrand is trigonometric in latitude; one panel was 2e-7, three
+are 1e-15). The OCTANT's documented massprops decline is retired: both the suitcase test and
+the projected-bounds test now assert the closed form at 1e-9.
+
+Test oblique_corner_blend_is_an_exact_inscribed_sphere_triangle: pentagon prism, base corner
+60 degrees, sides arranged so all three far caps stay perpendicular; M = (r sqrt3, r, r).
+Closed-form oracle written FIRST and it tiles exactly: per-edge wedge cuts
+r^2 (cot(t/2) - (pi-t)/2) over cross-plane-to-far-cap lengths (the cross planes through M
+make the three cut prisms PAIRWISE DISJOINT: prism i lies on the far side of the very
+support-offset plane that bounds prism j), plus the corner region (sqrt3 r^3) minus the kept
+ball sector (polar-cone solid angle 2pi - perimeter = 2pi/3, volume 2 pi r^3/9; the
+perpendicular case reproduces pi/2 and the octant pi r^3/6). Mass to 1e-9 ON FIRST RUN, mesh
+to 0.02, 11 faces, 3 recognized blends.
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 248 (+1) green; fuzz_boolean soak
+(massprops changed): count below. Next: dossier 53 milestone 3, the setback split +
+Charrot-Gregory convex-combination patch through the certified evaluator-to-NURBS fit.

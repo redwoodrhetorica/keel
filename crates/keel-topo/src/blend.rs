@@ -3267,9 +3267,14 @@ impl Body {
     /// the exact quarter circle of radius r about M in the plane
     /// perpendicular to its edge.
     ///
-    /// Scope: three mutually perpendicular planar supports (the cube
-    /// corner), equal radius. Setbacks, unequal radii, and oblique
-    /// dihedrals are follow-ups (dossier 53 Q2/Q3).
+    /// Scope: three planar supports with all-convex edges and equal
+    /// radius; the dihedrals need NOT be perpendicular (dossier 53
+    /// milestone 2: the inscribed sphere exists whenever the three
+    /// inward offset planes meet, and every spine passes through that
+    /// point, so the perpendicular-cube surgery generalizes verbatim;
+    /// only the corner-arc frame and the spherical patch's mass
+    /// integration needed generalizing). Setbacks and unequal radii
+    /// are the dossier 53 Q2/Q3 follow-ups.
     pub fn fillet_corner_octant(
         &self,
         corner: crate::entity::VertexKey,
@@ -3336,14 +3341,13 @@ impl Body {
                 return Err(TopoError::Precondition("octant: face/edge incidence"));
             }
         }
-        // Exact octant: mutually perpendicular supports only.
-        for i in 0..3 {
-            if n[i].dot(n[(i + 1) % 3]).abs() > 1e-9 {
-                return Err(TopoError::Precondition(
-                    "octant: non-perpendicular supports (follow-up)",
-                ));
-            }
-        }
+        // General trihedral corner (dossier 53 milestone 2): the
+        // supports need not be mutually perpendicular; the inscribed
+        // sphere exists whenever the three inward offset planes meet
+        // at one point (checked below) and every edge is convex
+        // (validated by blend_cylinder_for_edge). Degenerate near-
+        // parallel support pairs are rejected by the triple-product
+        // guard on M.
         // M: the three INWARD offset planes' (n_i . x = n_i . p_i - r)
         // common point, by triple products.
         let m_pt = {
@@ -3534,7 +3538,17 @@ impl Body {
             let fa = b.fin_ending_at_vertex(lp, q_v[ia])?;
             let fb = b.fin_ending_at_vertex(lp, q_v[ib])?;
             let split = b.split_face(fa, fb, None)?;
-            let arc = keel_geom::curve::Circle3::new(m_pt, n[ia], n[ib], radius)
+            // The corner arc: the circle (centre M, radius r) in the
+            // plane PERPENDICULAR TO THE EDGE through M. Both support
+            // normals of edge j are perpendicular to the edge, so both
+            // q feet lie on it; the frame must be orthonormal, so the
+            // second axis is dir x n (NOT the other normal, which is
+            // only orthogonal for the perpendicular cube corner).
+            let ey = dir[j]
+                .cross(n[ia])
+                .try_normalize()
+                .ok_or(TopoError::Precondition("octant: corner arc frame"))?;
+            let arc = keel_geom::curve::Circle3::new(m_pt, n[ia], ey, radius)
                 .map_err(|_| TopoError::Precondition("octant: bad corner arc"))?;
             b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
             let band = if b.faces_at_vertex(corner).contains(&split.face_new) {
@@ -4644,9 +4658,72 @@ mod tests {
             (v - want).abs() < 0.02,
             "octant volume {v} != exact {want} (removed {removed})"
         );
-        // (Analytic mass_properties over blend faces needs blend-face
-        // pcurves, the documented follow-up shared by all fillets; the
-        // honesty gate here is the exact closed-form volume above.)
+        // Analytic mass over the sphere triangle comes from the
+        // Green-slab sphere path (winding-1 polar anchor).
+        let mass = o.mass_properties().unwrap().volume;
+        assert!((mass - want).abs() < 1e-9, "octant mass {mass} != {want}");
+    }
+
+    #[test]
+    fn oblique_corner_blend_is_an_exact_inscribed_sphere_triangle() {
+        // Dossier 53 milestone 2: the equal-radius trihedral corner
+        // with NON-perpendicular supports. Pentagon prism whose base
+        // corner at the origin has a 60-degree interior angle, sides
+        // chosen so all three far caps stay perpendicular to their
+        // edges. The inscribed sphere sits at M = (r sqrt3, r, r);
+        // every cylinder spine passes through M; the corner patch is
+        // the exact spherical triangle. Closed-form oracle written
+        // FIRST: per-edge wedge cuts r^2 (cot(t/2) - (pi - t)/2) over
+        // the cross-plane-to-far-cap lengths, plus the corner region
+        // (prism content sqrt3 r^3) minus the kept ball sector
+        // (polar-cone solid angle 2pi/3, volume 2 pi r^3 / 9).
+        let h = 3.0f64;
+        let s3 = 3.0f64.sqrt();
+        let p4 = Vec3::new(1.5, 1.5 * s3, 0.0);
+        let p3 = p4 + Vec3::new(s3 / 2.0, -0.5, 0.0);
+        let profile = [
+            Vec3::new(0., 0., 0.),
+            Vec3::new(3., 0., 0.),
+            Vec3::new(3., 2., 0.),
+            p3,
+            p4,
+        ];
+        let mut b = Body::new();
+        b.prism(&profile, Vec3::new(0., 0., h)).unwrap();
+        let corner = b
+            .vertices
+            .iter()
+            .find(|(_, v)| v.point.norm() < 1e-9)
+            .map(|(k, _)| k)
+            .expect("origin corner");
+        let r = 0.5f64;
+        let o = b.fillet_corner_octant(corner, r).unwrap();
+        assert!(o.validate().is_ok(), "oblique corner body invalid");
+        // Faces: 7 prism faces (5 sides + top + bottom, the three caps
+        // are trimmed existing sides) + 3 bands + 1 sphere triangle.
+        assert_eq!(o.face_keys().len(), 11, "oblique corner face count");
+        let found = o.recognize_blends(1e-6);
+        assert_eq!(found.len(), 3, "three cylinder blends at the corner");
+        // Oracle. Base area by shoelace; cut lengths run from the
+        // cross plane (at M . dir along each edge) to the far cap.
+        let pi = core::f64::consts::PI;
+        let mut area2 = 0.0;
+        for i in 0..5 {
+            let p = profile[i];
+            let q = profile[(i + 1) % 5];
+            area2 += p.x * q.y - q.x * p.y;
+        }
+        let v_prism = 0.5 * area2.abs() * h;
+        let cut = |t: f64| r * r * (1.0 / (0.5 * t).tan() - (pi - t) / 2.0);
+        let s_base = r * s3; // M . dir for both base edges
+        let removed = cut(pi / 2.0) * (3.0 - s_base) * 2.0
+            + cut(pi / 3.0) * (h - r)
+            + (s3 * r.powi(3) - 2.0 * pi * r.powi(3) / 9.0);
+        let exact = v_prism - removed;
+        let v = o.mass_properties().unwrap().volume;
+        assert!((v - exact).abs() < 1e-9, "mass {v} != exact {exact}");
+        let m = o.mesh_volume();
+        assert!((m - exact).abs() < 0.02, "mesh {m} != exact {exact}");
     }
 
     #[test]
@@ -5347,8 +5424,9 @@ mod tests {
             "rim mass {mass} != Pappus {exact}"
         );
 
-        // 3. The sphere octant is NOT iso-rectangular in UV: that body
-        // keeps declining analytic mass properties honestly.
+        // 3. The sphere octant is NOT iso-rectangular in UV: it used
+        // to decline analytic mass properties; the Green-slab sphere
+        // path now integrates it to the closed form.
         let mut c = Body::new();
         c.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
         let corner = c
@@ -5358,7 +5436,16 @@ mod tests {
             .map(|(k, _)| k)
             .expect("corner vertex");
         let oct = c.fillet_corner_octant(corner, 0.5).unwrap();
-        assert!(oct.mass_properties().is_err(), "octant declines");
+        let r = 0.5f64;
+        let pi = core::f64::consts::PI;
+        let removed =
+            3.0 * (r * r - pi * r * r / 4.0) * (2.0 - r) + (r.powi(3) - pi * r.powi(3) / 6.0);
+        let vol = oct.mass_properties().unwrap().volume;
+        assert!(
+            (vol - (8.0 - removed)).abs() < 1e-9,
+            "octant mass {vol} != exact {}",
+            8.0 - removed
+        );
     }
 
     #[test]
