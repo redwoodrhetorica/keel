@@ -336,23 +336,89 @@ impl Body {
                 })
                 .unwrap_or(false);
             if curved {
-                // Sample the 3D edge curve (it lies in the plane).
+                // Sample the 3D edge curve (it lies in the plane). An
+                // OPEN circle/ellipse arc samples its TRUE EXTENT by
+                // endpoint angles + arc_sweep, in the fin's traversal
+                // direction; the full-periodic sweep here corrupted
+                // any planar polygon with an open-arc boundary (the
+                // fillet end caps), visible whenever such a face
+                // carries x-flux.
                 if let Some((eck, sense)) = self.edges.get(fin.edge).and_then(|e| e.curve)
                     && let Some(ec) = self.curves.get(eck)
                 {
-                    for i in 0..SAMPLES {
-                        let s = i as f64 / SAMPLES as f64;
-                        let s = if fin.forward == sense { s } else { 1.0 - s };
-                        let p = match ec {
-                            Curve3::Circle(c) => c.point(core::f64::consts::TAU * s),
-                            Curve3::Ellipse(e) => e.point(core::f64::consts::TAU * s),
-                            Curve3::Nurbs(n) => {
-                                let (a, b) = n.domain();
-                                n.point(a + s * (b - a))
+                    let edge = self.edges.get(fin.edge).ok_or(TopoError::StaleKey)?;
+                    let (b0, b1) = edge.bounds;
+                    let p0 = self
+                        .vertices
+                        .get(b0)
+                        .map(|x| x.point)
+                        .ok_or(TopoError::StaleKey)?;
+                    let p1 = self
+                        .vertices
+                        .get(b1)
+                        .map(|x| x.point)
+                        .ok_or(TopoError::StaleKey)?;
+                    let tau = core::f64::consts::TAU;
+                    let arc_range = |ang0: f64, ang1: f64| -> (f64, f64) {
+                        // Edge-direction sweep (bounds.0 -> bounds.1),
+                        // honoring an explicit arc_sweep; then flip for
+                        // a reversed fin.
+                        let sweep_edge = edge.arc_sweep.unwrap_or_else(|| {
+                            let mut d = ang1 - ang0;
+                            let pi = core::f64::consts::PI;
+                            while d <= -pi {
+                                d += tau;
                             }
-                            Curve3::Line(l) => l.point(s),
-                        };
-                        poly.push(uv(p));
+                            while d > pi {
+                                d -= tau;
+                            }
+                            d
+                        });
+                        if fin.forward {
+                            (ang0, sweep_edge)
+                        } else {
+                            (ang1, -sweep_edge)
+                        }
+                    };
+                    match ec {
+                        Curve3::Circle(c) if b0 != b1 => {
+                            let ang = |p: keel_math::vec::Vec3| {
+                                let d = p - c.center;
+                                d.dot(c.y_axis).atan2(d.dot(c.x_axis))
+                            };
+                            let (t0, sweep) = arc_range(ang(p0), ang(p1));
+                            for i in 0..SAMPLES {
+                                let t = t0 + sweep * i as f64 / SAMPLES as f64;
+                                poly.push(uv(c.point(t)));
+                            }
+                        }
+                        Curve3::Ellipse(e) if b0 != b1 => {
+                            let ang = |p: keel_math::vec::Vec3| {
+                                let d = p - e.center;
+                                (d.dot(e.y_axis) / e.b).atan2(d.dot(e.x_axis) / e.a)
+                            };
+                            let (t0, sweep) = arc_range(ang(p0), ang(p1));
+                            for i in 0..SAMPLES {
+                                let t = t0 + sweep * i as f64 / SAMPLES as f64;
+                                poly.push(uv(e.point(t)));
+                            }
+                        }
+                        _ => {
+                            for i in 0..SAMPLES {
+                                let s = i as f64 / SAMPLES as f64;
+                                let s = if fin.forward == sense { s } else { 1.0 - s };
+                                let p = match ec {
+                                    Curve3::Circle(c) => c.point(tau * s),
+                                    Curve3::Ellipse(e) => e.point(tau * s),
+                                    Curve3::Nurbs(n) => {
+                                        let (a, b) = n.domain();
+                                        n.point(a + s * (b - a))
+                                    }
+                                    Curve3::Line(l) => l.point(s),
+                                };
+                                poly.push(uv(p));
+                            }
+                        }
                     }
                 }
             } else {

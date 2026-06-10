@@ -5171,3 +5171,37 @@ handlers land.
 
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 241 green. No soak: behavior-preserving
 refactor, no boolean/tessellation logic change (the suite is the gate).
+
+## Addendum 168 (2026-06-10, attended): CO-ANALYTIC PLANAR ROLL-ON (dossier 56 ladder step 1) + THE PLANAR ARC-SAMPLING FIX
+
+fillet_edge_chain(e1, e2, r) (branch overflow-handlers; dossier 56 sec 6, the ladder step after
+the parity-shipped cliff): ONE constant-radius cylinder fillet rolled across TWO COLLINEAR
+convex edges whose support pairs are COPLANAR (the "fillet wider than the face, same plane
+beyond" case). The blend surface never changes (one exact cylinder, one straight spine, ONE
+ribbon face); the transverse boundary's corridor segments dissolve (the wall segment kef-merges
+the ribbon halves, the floor segment dangles and kev absorbs the old mid vertex) while the
+boundary OUTSIDE the corridor SURVIVES on the kept supports, the fidelity point distinguishing
+a roll-on from heal-then-fillet. Surgery: fragment pair 1 takes the standard boundary-to-
+boundary spring imprint (splitting the transverse boundaries at the crossings); pair 2 reuses
+those crossing vertices (the mitre side-2 pattern); far caps via the shared split_blend_cap.
+
+THE PRE-EXISTING BUG THE DIFFERENTIAL ORACLE EXPOSED: the planar mass-properties integrator
+(loop_uv_polyline_planar) sampled OPEN circle/ellipse arc edges over the FULL periodic curve,
+corrupting any planar polygon with an arc boundary (a fillet END CAP). The corruption was
+INVISIBLE until now because the divergence form takes only x-flux and no prior oracle gave an
+arc-bounded cap an x-normal: the 4x2x2 fillet (edge along x, caps x-normal) read mass 17.106
+against mesh 15.784. Open arcs now sample their true extent (endpoint angles + arc_sweep, fin-
+direction aware), leaving only the inherent polyline chordal residue (5e-4 here, documented).
+
+ORACLES: the DIFFERENTIAL form (immune to the shared cap approximation): the chain fillet of
+the abutting-union body (two 2-cubes fused = the 4x2x2 box with every transverse face split at
+x = 2) equals the plain fillet of the unsplit box to 1e-9; exactly ONE cylinder ribbon; the
+kept supports keep their artificial split (more faces than the plain body); valid. The test
+setup itself exercises the regularized union + the collinear-chain detection.
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 242 (+1) green; fuzz_boolean soak
+(mass_properties planar path changed, load-bearing in the boolean gates): count below.
+
+LADDER NEXT: planar notch bridge (in-place trim-loop extension, the US 8,935,130 design-
+around), then planar cap (extend two planes), then the bucket-b evaluators (creeping cliff,
+smooth merge).

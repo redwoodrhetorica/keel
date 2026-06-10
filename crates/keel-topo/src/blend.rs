@@ -2160,6 +2160,234 @@ impl Body {
 }
 
 impl Body {
+    /// CO-ANALYTIC PLANAR ROLL-ON (dossier 56 sec 6, ladder step 1
+    /// after the shipped cliff): one constant-radius cylinder fillet
+    /// rolled across TWO COLLINEAR convex edges whose support pairs
+    /// are COPLANAR (the artificial transverse boundary case: the
+    /// fillet is "wider than the face" but the face beyond is the same
+    /// plane). The blend surface never changes (one exact cylinder,
+    /// one straight spine); the transverse boundary's segments inside
+    /// the blend corridor dissolve, while the boundary OUTSIDE the
+    /// corridor survives on the kept supports (the fidelity point that
+    /// distinguishes a roll-on from a heal-then-fillet). Surgery: the
+    /// first fragment pair takes the standard boundary-to-boundary
+    /// spring imprint (splitting the transverse boundary at the spring
+    /// crossing); the second pair reuses those crossing vertices (the
+    /// mitre side-2 pattern); far caps take the standard end arcs; the
+    /// two sharp edges, the far chains, and the corridor segments of
+    /// the transverse boundaries dissolve, leaving ONE blend face.
+    pub fn fillet_edge_chain(
+        &self,
+        e1: EdgeKey,
+        e2: EdgeKey,
+        radius: f64,
+    ) -> Result<Body, TopoError> {
+        if !(radius.is_finite() && radius > 0.0) || e1 == e2 {
+            return Err(TopoError::Precondition("rollon: bad input"));
+        }
+        // The shared mid vertex and the chain's far endpoints.
+        let (a0, a1) = self.edges.get(e1).ok_or(TopoError::StaleKey)?.bounds;
+        let (b0, b1) = self.edges.get(e2).ok_or(TopoError::StaleKey)?.bounds;
+        let (vm, v_start) = if b0 == a0 || b1 == a0 {
+            (a0, a1)
+        } else if b0 == a1 || b1 == a1 {
+            (a1, a0)
+        } else {
+            return Err(TopoError::Precondition("rollon: edges share no vertex"));
+        };
+        let v_end = if b0 == vm { b1 } else { b0 };
+        // Collinear check.
+        let (ps, pm, pe) = (
+            self.vertices.get(v_start).ok_or(TopoError::StaleKey)?.point,
+            self.vertices.get(vm).ok_or(TopoError::StaleKey)?.point,
+            self.vertices.get(v_end).ok_or(TopoError::StaleKey)?.point,
+        );
+        let d1 = (pm - ps)
+            .try_normalize()
+            .ok_or(TopoError::Precondition("rollon: zero edge"))?;
+        let d2 = (pe - pm)
+            .try_normalize()
+            .ok_or(TopoError::Precondition("rollon: zero edge"))?;
+        if d1.cross(d2).norm() > 1e-9 {
+            return Err(TopoError::Precondition(
+                "rollon: non-collinear chain (follow-up)",
+            ));
+        }
+        // Support pairs: e1 between (w1, f1), e2 between (w2, f2),
+        // matched by coplanarity (w1 coplanar w2, f1 coplanar f2).
+        let fs1 = self.faces_around_edge(e1);
+        let fs2 = self.faces_around_edge(e2);
+        if fs1.len() != 2 || fs2.len() != 2 {
+            return Err(TopoError::Precondition("rollon: edges need two faces"));
+        }
+        let n_of = |f| self.face_outward_normal(f);
+        let (Some(n1a), Some(n1b), Some(n2a), Some(n2b)) =
+            (n_of(fs1[0]), n_of(fs1[1]), n_of(fs2[0]), n_of(fs2[1]))
+        else {
+            return Err(TopoError::Precondition("rollon: support normals"));
+        };
+        let (w1, f1, w2, f2, _nw, _nf) = if n1a.cross(n2a).norm() < 1e-9 {
+            (fs1[0], fs1[1], fs2[0], fs2[1], n1a, n1b)
+        } else if n1a.cross(n2b).norm() < 1e-9 {
+            (fs1[0], fs1[1], fs2[1], fs2[0], n1a, n1b)
+        } else {
+            return Err(TopoError::Precondition(
+                "rollon: supports not coplanar across the chain",
+            ));
+        };
+        for &f in &[w1, f1, w2, f2] {
+            if !matches!(
+                self.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition("rollon: non-planar support"));
+            }
+        }
+        // One exact cylinder for the whole chain (coplanar supports
+        // give the SAME spine line for both edges).
+        let blend = self.blend_cylinder_for_edge(e1, radius)?;
+        let nw1 = n_of(w1).ok_or(TopoError::StaleKey)?;
+        let nf1 = n_of(f1).ok_or(TopoError::StaleKey)?;
+        // Match springs to supports: spring_a lies on the face whose
+        // plane contains it.
+        let on_face = |l: &Line3, f| -> bool {
+            let p = self
+                .face_outer_loop_points(f)
+                .first()
+                .copied()
+                .unwrap_or(l.origin);
+            let n = n_of(f).unwrap_or(keel_math::vec::Vec3::ZERO);
+            ((l.origin - p).dot(n)).abs() < 1e-9
+        };
+        let (spring_w, spring_f) = if on_face(&blend.spring_a, w1) {
+            (blend.spring_a, blend.spring_b)
+        } else {
+            (blend.spring_b, blend.spring_a)
+        };
+
+        let mut b = self.clone();
+        // Fragment 1 (standard boundary-to-boundary): the spring on w1
+        // runs from the start cap to the transverse wall boundary,
+        // SPLITTING it at the crossing; likewise on f1.
+        let (spr_w1, _strip_w1, w1k, w_start_v, pw_v) =
+            b.imprint_spring_line(w1, e1, v_start, vm, &spring_w, nw1)?;
+        let (spr_f1, _strip_f1, f1k, f_start_v, pf_v) =
+            b.imprint_spring_line(f1, e1, v_start, vm, &spring_f, nf1)?;
+        // Fragment 2 (mitre side-2 pattern): reuse the crossing
+        // vertices on the already-split transverse boundaries.
+        let side2 = |b: &mut Body,
+                     face: crate::entity::FaceKey,
+                     sharp: EdgeKey,
+                     far_vertex: crate::entity::VertexKey,
+                     reuse_v: crate::entity::VertexKey,
+                     spring: &Line3,
+                     n: keel_math::vec::Vec3|
+         -> Result<
+            (EdgeKey, crate::entity::FaceKey, crate::entity::VertexKey),
+            TopoError,
+        > {
+            let e_far = b
+                .boundary_edge_at_vertex_excluding(face, far_vertex, sharp)
+                .ok_or(TopoError::Precondition("rollon: no far cap edge"))?;
+            let m = n.cross(spring.dir);
+            let far_pt = b
+                .line_crosses_edge(e_far, spring.origin, m)
+                .ok_or(TopoError::Precondition("rollon: spring misses far cap"))?;
+            let sv = b.split_edge(e_far, far_pt)?;
+            let lp = b
+                .faces
+                .get(face)
+                .map(|f| f.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fa = b.fin_ending_at_vertex(lp, sv.vertex)?;
+            let fb = b.fin_ending_at_vertex(lp, reuse_v)?;
+            let split = b.split_face(fa, fb, None)?;
+            if let Some(surf) = b.faces.get(face).and_then(|f| f.surface)
+                && let Some(nf) = b.faces.get_mut(split.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            b.attach_edge_curve(split.edge, Curve3::Line(*spring), true);
+            let kept = if b.face_has_edge(split.face_new, sharp) {
+                split.face_old
+            } else {
+                split.face_new
+            };
+            Ok((split.edge, kept, sv.vertex))
+        };
+        let (_spr_w2, w2k, w_end_v) = side2(&mut b, w2, e2, v_end, pw_v, &spring_w, nw1)?;
+        let (_spr_f2, f2k, f_end_v) = side2(&mut b, f2, e2, v_end, pf_v, &spring_f, nf1)?;
+        let _ = (w1k, f1k, w2k, f2k);
+        // Far caps at both chain ends (the standard end treatment).
+        for (v_far, t_end, s_end, sharp) in [
+            (v_start, w_start_v, f_start_v, e1),
+            (v_end, w_end_v, f_end_v, e2),
+        ] {
+            let cap = b
+                .faces_at_vertex(v_far)
+                .into_iter()
+                .find(|&f| !b.face_has_edge(f, sharp))
+                .ok_or(TopoError::Precondition("rollon: no far cap"))?;
+            let pc = b
+                .vertices
+                .get(v_far)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let centre = blend.spine.origin
+                + blend.spine.dir * ((pc - blend.spine.origin).dot(blend.spine.dir));
+            let p_t = b
+                .vertices
+                .get(t_end)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let ex = (p_t - centre)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("rollon: arc axis"))?;
+            let arc = keel_geom::curve::Circle3::new(centre, ex, blend.spine.dir.cross(ex), radius)
+                .map_err(|_| TopoError::Precondition("rollon: bad arc"))?;
+            b.split_blend_cap(cap, t_end, s_end, Curve3::Circle(arc))?;
+        }
+        // Dissolve: sharp edges, far chains, then the corridor
+        // segments of the transverse boundaries (the wall segment kef-
+        // merges the two ribbon halves; the floor segment dangles in
+        // the merged face and kev absorbs the old mid vertex).
+        b.kef(e1)?;
+        b.kef(e2)?;
+        for (t_end, v_far, s_end) in [(w_start_v, v_start, f_start_v), (w_end_v, v_end, f_end_v)] {
+            let stub = b
+                .edge_between(t_end, v_far)
+                .ok_or(TopoError::Precondition("rollon: no far stub"))?;
+            b.kef(stub)?;
+            let spur = b
+                .edge_between(v_far, s_end)
+                .ok_or(TopoError::Precondition("rollon: no far spur"))?;
+            b.kev(spur)?;
+        }
+        let bw_corridor = b
+            .edge_between(vm, pw_v)
+            .ok_or(TopoError::Precondition("rollon: no wall corridor edge"))?;
+        b.kef(bw_corridor)?;
+        let bf_corridor = b
+            .edge_between(vm, pf_v)
+            .ok_or(TopoError::Precondition("rollon: no floor corridor edge"))?;
+        b.kev(bf_corridor)?;
+        // The single ribbon: the face carrying the fragment-1 springs.
+        let blend_face = b
+            .faces_around_edge(spr_w1)
+            .into_iter()
+            .find(|&f| f != w1k)
+            .ok_or(TopoError::Precondition("rollon: no blend face"))?;
+        let _ = spr_f1;
+        b.attach_face_surface(
+            blend_face,
+            SurfaceGeom::Analytic(Surface3::Cylinder(blend.surface.clone())),
+            true,
+        );
+        b.validate()
+            .map_err(|_| TopoError::Precondition("rollon: result invalid"))?;
+        Ok(b)
+    }
+
     /// MITRED corner of two equal-radius fillets (parity item 56;
     /// dossier 55 milestone 1): blend two convex plane-plane edges
     /// sharing a corner vertex and one support face, joining the two
@@ -3472,6 +3700,92 @@ mod tests {
                 }
             })
             .expect("edge")
+    }
+
+    #[test]
+    fn rollon_chain_fillet_equals_the_unsplit_fillet() {
+        // Dossier 56 sec 6, the co-analytic planar roll-on: split a
+        // 4x2x2 box's top and side faces transversely at x = 2 (so the
+        // top-right edge becomes two collinear edges with coplanar
+        // support pairs), then chain-fillet both edges with r = 0.5.
+        // DIFFERENTIAL ORACLE: the result must carry the same exact
+        // volume as the plain fillet of the UNSPLIT box; the analytic
+        // mass equals the closed form to 1e-9 (one cylinder ribbon,
+        // projected bounds); and the transverse boundary SURVIVES on
+        // the kept supports outside the corridor (the roll-on fidelity
+        // point that a heal-then-fillet would lose).
+        let pi = core::f64::consts::PI;
+        let r = 0.5f64;
+        let mut plain = Body::new();
+        plain.block(Vec3::ZERO, 4.0, 2.0, 2.0).unwrap();
+        let e = edge_between_faces(&plain, Vec3::new(0., 0., 1.), Vec3::new(0., 1., 0.));
+        let plain_f = plain.fillet_edge(e, r).unwrap();
+        let exact = 16.0 - (r * r - pi * r * r / 4.0) * 4.0;
+        // The planar cap integrator approximates its ARC boundary by a
+        // polyline (the arc-true sampling fix in this milestone took
+        // the cap from a FULL-CIRCLE corruption of 1.32 down to the
+        // 5e-4 chordal residue), so the absolute check is loose and
+        // the LOAD-BEARING oracle is DIFFERENTIAL: chain == plain to
+        // 1e-9, both sharing the same approximation.
+        let v_plain = plain_f.mass_properties().unwrap().volume;
+        assert!(
+            (v_plain - exact).abs() < 2e-3,
+            "plain mass {v_plain}, mesh {}, exact {exact}",
+            plain_f.mesh_volume()
+        );
+
+        // The split body: the REGULARIZED UNION of two abutting cubes
+        // is the 4x2x2 box whose every transverse face is split at
+        // x = 2 (the natural source of artificial coplanar boundaries).
+        let mut ua = Body::new();
+        ua.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let mut ub = Body::new();
+        ub.block(Vec3::new(2.0, 0.0, 0.0), 2.0, 2.0, 2.0).unwrap();
+        let split = crate::boolean::boolean(&ua, &ub, crate::boolean::BoolOp::Union, 1e-7)
+            .unwrap()
+            .body;
+        // The two collinear top-right edges (top ^ side normals).
+        let chain: Vec<EdgeKey> = split
+            .edges
+            .iter()
+            .map(|(k, _)| k)
+            .filter(|&k| {
+                let fs = split.faces_around_edge(k);
+                fs.len() == 2 && {
+                    let (Some(na), Some(nb)) = (
+                        split.face_outward_normal(fs[0]),
+                        split.face_outward_normal(fs[1]),
+                    ) else {
+                        return false;
+                    };
+                    (na - Vec3::new(0., 0., 1.)).norm() < 1e-9
+                        && (nb - Vec3::new(0., 1., 0.)).norm() < 1e-9
+                        || (na - Vec3::new(0., 1., 0.)).norm() < 1e-9
+                            && (nb - Vec3::new(0., 0., 1.)).norm() < 1e-9
+                }
+            })
+            .collect();
+        assert_eq!(chain.len(), 2, "two collinear sub-edges");
+        let rolled = split.fillet_edge_chain(chain[0], chain[1], r).unwrap();
+        assert!(rolled.validate().is_ok(), "roll-on invalid");
+        let v = rolled.mass_properties().unwrap().volume;
+        assert!(
+            (v - v_plain).abs() < 1e-9,
+            "roll-on mass {v} != plain fillet {v_plain} (differential oracle)"
+        );
+        // Exactly ONE blend cylinder (the ribbon never split).
+        let cyls = rolled
+            .face_keys()
+            .into_iter()
+            .filter(|&f| matches!(rolled.face_surface3(f), Some(Surface3::Cylinder(_))))
+            .count();
+        assert_eq!(cyls, 1, "one ribbon");
+        // The transverse boundary SURVIVES outside the corridor: the
+        // split body has more faces than the plain fillet's 7.
+        assert!(
+            rolled.face_keys().len() > plain_f.face_keys().len(),
+            "kept supports must keep their artificial split"
+        );
     }
 
     #[test]
