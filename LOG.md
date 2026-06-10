@@ -5123,4 +5123,4 @@ build on a single stitcher.
 
 CI: fmt; clippy -D warnings (the deletion surfaced a stale allow and one orphan, both
 cleaned); workspace 132 + 77 + 240 green; fuzz_boolean soak (assembly path changed): 10
-minutes, count below.
+minutes, 706 runs, clean.
