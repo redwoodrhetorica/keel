@@ -14,7 +14,8 @@
 //! user-facing capabilities -- a rollback container, navigable history marks,
 //! and atomic op grouping -- exactly as the Parasolid map lists them. The
 //! partition serializes with exact f64 round-trip via the body serde
-//! (dossier 14); incremental DELTA save (item 127) is a follow-on.
+//! (dossier 14), and DELTA save (127) stores only the changed bodies (by
+//! `topology_hash`) between two states for efficient incremental persistence.
 
 use crate::Body;
 
@@ -26,6 +27,28 @@ pub type BodyId = usize;
 struct Pmark {
     name: String,
     bodies: Vec<Body>,
+}
+
+/// An incremental change between two partition states (item 127): only the
+/// changed/added bodies and the new length. Serializable as a compact save
+/// unit.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct PartitionDelta {
+    new_len: usize,
+    changed: Vec<(usize, Body)>,
+}
+
+impl PartitionDelta {
+    /// Number of bodies carried by this delta (the ones that changed).
+    pub fn changed_count(&self) -> usize {
+        self.changed.len()
+    }
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+    pub fn from_json(s: &str) -> Result<PartitionDelta, serde_json::Error> {
+        serde_json::from_str(s)
+    }
 }
 
 /// The top-level rollback container (item 123): a set of bodies with named
@@ -122,6 +145,48 @@ impl Partition {
         self.txns.len()
     }
 
+    // ---- incremental delta save (item 127) ------------------------------
+
+    /// Compute the delta from `base` to `self`: only the bodies whose
+    /// `topology_hash` differs from `base` (or are newly added) are stored,
+    /// plus the new length. This is the efficient incremental-save unit (a
+    /// small delta instead of a full partition serialization) -- the
+    /// serialize-only-what-changed half of dossier 14's persistence contract.
+    pub fn delta_from(&self, base: &Partition) -> PartitionDelta {
+        let mut changed = Vec::new();
+        for (i, body) in self.bodies.iter().enumerate() {
+            let same = base
+                .bodies
+                .get(i)
+                .is_some_and(|b| b.topology_hash() == body.topology_hash());
+            if !same {
+                changed.push((i, body.clone()));
+            }
+        }
+        PartitionDelta {
+            new_len: self.bodies.len(),
+            changed,
+        }
+    }
+
+    /// Reconstruct the partition state by applying `delta` to `base` (the
+    /// inverse of [`delta_from`](Self::delta_from)). Marks and open
+    /// transactions are not part of a delta.
+    pub fn apply_delta(base: &Partition, delta: &PartitionDelta) -> Partition {
+        let mut bodies = base.bodies.clone();
+        bodies.resize_with(delta.new_len, Body::new);
+        for (i, body) in &delta.changed {
+            if *i < bodies.len() {
+                bodies[*i] = body.clone();
+            }
+        }
+        Partition {
+            bodies,
+            marks: Vec::new(),
+            txns: Vec::new(),
+        }
+    }
+
     // ---- serialization (the partition as a unit, dossier 14) ------------
 
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
@@ -173,6 +238,34 @@ mod tests {
         assert!((vol(&p, id) - 64.0).abs() < 1e-9);
         assert!(p.roll_to("start"), "mark must exist");
         assert!((vol(&p, id) - 8.0).abs() < 1e-9, "roll_to must revert");
+    }
+
+    #[test]
+    fn delta_stores_only_changed_bodies() {
+        // item 127: a 3-body partition, change one body -> the delta carries
+        // exactly one body, and applying it to the base reconstructs the new
+        // state exactly.
+        let mut base = Partition::new();
+        base.add(box_of(2.0)); // 8
+        let mid = base.add(box_of(3.0)); // 27
+        base.add(box_of(4.0)); // 64
+        let mut next = base.clone();
+        *next.body_mut(mid).unwrap() = box_of(5.0); // 125
+        let delta = next.delta_from(&base);
+        assert_eq!(delta.changed_count(), 1, "only one body changed");
+        // Round-trip the delta and rebuild.
+        let delta = PartitionDelta::from_json(&delta.to_json().unwrap()).unwrap();
+        let rebuilt = Partition::apply_delta(&base, &delta);
+        assert_eq!(rebuilt.len(), 3);
+        assert!((vol(&rebuilt, 0) - 8.0).abs() < 1e-9);
+        assert!(
+            (vol(&rebuilt, mid) - 125.0).abs() < 1e-9,
+            "changed body applied"
+        );
+        assert!(
+            (vol(&rebuilt, 2) - 64.0).abs() < 1e-9,
+            "unchanged body preserved"
+        );
     }
 
     #[test]

@@ -3748,3 +3748,23 @@ exact volumes (8, 27); a pmark reverts an edited box (64 -> 8); begin/abort reve
 begin/commit keeps (27). Incremental DELTA save (127) and version control (128) are follow-ons.
 GATE: workspace 108 + 77 + 176 green (three new partition tests), clippy -D warnings, fmt. No
 boolean.rs change -> fuzz unchanged. Merged. Counter 99/144.
+
+## Addendum 126 (2026-06-09, attended): DELTA save (item 127) -- counter hits 100/144
+
+Added Partition::delta_from(base) -> PartitionDelta and Partition::apply_delta(base, delta):
+incremental save storing ONLY the bodies whose topology_hash differs from base (or are newly
+added) plus the new length, serializable as a compact unit. The serialize-only-what-changed half
+of dossier 14's persistence contract (full to_json is the other half). ORACLE: a 3-body partition
+with one body edited -> the delta carries exactly 1 body; round-tripping the delta through json and
+applying it to the base reconstructs all three exactly (unchanged bodies preserved, changed body
+applied). No core change -> fuzz unchanged.
+GATE: workspace 108 + 77 + 177 green, clippy -D warnings, fmt. Merged.
+
+*** COUNTER 100/144 *** -- a +18 run this session (53/41/43/42/44/72/76/77/71/70 + 82/83/84/85 +
+123/124/125/127) on top of the #21/#16 Phase-0a keystones, the enclosed-void 3-region stitch, the
+sheet-body representation, the finalize_imported_assembly extraction, and the prism CW-base
+correctness fix. Complete this session: SHELL FAMILY (41-45), PHASE 5 sheet ops (70/71/72/76/77),
+ASSEMBLY DAG (82-85), PERSISTENCE rollback layer (123/124/125/127). Roadmap realistic target is
+~110-120; remaining tractable kernel items thin out into the invasive (foreign geometry 114-116
+needs a Surface3::Foreign variant threaded through SSI/tessellation), version control 128, and
+healing 130/132 (need imperfect/recognized geometry to exercise).
