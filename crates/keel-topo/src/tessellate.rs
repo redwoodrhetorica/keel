@@ -303,7 +303,7 @@ impl Body {
                 }
             }
         }
-        let (mut lo, mut hi, mut any) = (f64::INFINITY, f64::NEG_INFINITY, false);
+        // Closed boundary edge (a full-circle rim): whole revolution.
         for &lk in &f.loops {
             let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
                 continue;
@@ -313,25 +313,52 @@ impl Body {
                 if self.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true) {
                     return (0.0, tau);
                 }
-                if let Some(p) = self
-                    .fin_end_vertex(cur)
-                    .and_then(|vk| self.vertices.get(vk))
-                    .map(|v| v.point)
-                {
-                    let w = p - origin;
-                    let w = w - ez * w.dot(ez);
-                    let phi = w.dot(ey).atan2(w.dot(ex));
-                    lo = lo.min(phi);
-                    hi = hi.max(phi);
-                    any = true;
-                }
                 cur = fin.next;
                 if cur == entry {
                     break;
                 }
             }
         }
-        if any && hi > lo { (lo, hi) } else { (0.0, tau) }
+        // Boundary SAMPLE angles (loop_polygon follows arcs, so the
+        // span is right even when the trim is curved), skipping
+        // near-axis points (a cone APEX has no angle and previously
+        // polluted the span). The span is the complement of the
+        // LARGEST angular gap, which is branch-cut-free (a plain
+        // min..max breaks when the patch straddles +-pi).
+        let mut angles: Vec<f64> = Vec::new();
+        for &lk in &f.loops {
+            for p in self.loop_polygon(lk) {
+                let w = p - origin;
+                let w = w - ez * w.dot(ez);
+                if w.norm() < 1e-9 * (1.0 + (p - origin).norm()) {
+                    continue; // on the axis (apex/pole): no angle
+                }
+                angles.push(w.dot(ey).atan2(w.dot(ex)));
+            }
+        }
+        if angles.len() < 2 {
+            return (0.0, tau);
+        }
+        angles.sort_by(f64::total_cmp);
+        let n = angles.len();
+        let (mut gap, mut gap_at) = (tau - (angles[n - 1] - angles[0]), n - 1);
+        for i in 0..n - 1 {
+            let g = angles[i + 1] - angles[i];
+            if g > gap {
+                gap = g;
+                gap_at = i;
+            }
+        }
+        if gap <= 1e-9 {
+            return (0.0, tau);
+        }
+        if gap_at == n - 1 {
+            // The gap wraps through +-pi: the span is contiguous.
+            (angles[0], angles[n - 1])
+        } else {
+            // The span itself wraps: start after the gap, extend past tau.
+            (angles[gap_at + 1], angles[gap_at] + tau)
+        }
     }
 
     /// Lat-band tessellate a cylindrical face. The axial band [hlo,hhi]
@@ -473,10 +500,24 @@ impl Body {
             .unwrap_or_default()
         {
             for e in self.ring_edges(lk) {
-                if let Some((ck, _)) = self.edges.get(e).and_then(|x| x.curve)
-                    && let Some(keel_geom::curve::Curve3::Ellipse(el)) = self.curves.get(ck)
-                {
-                    cap_planes.push((el.center, el.x_axis.cross(el.y_axis)));
+                let Some((ck, _)) = self.edges.get(e).and_then(|x| x.curve) else {
+                    continue;
+                };
+                match self.curves.get(ck) {
+                    Some(keel_geom::curve::Curve3::Ellipse(el)) => {
+                        cap_planes.push((el.center, el.x_axis.cross(el.y_axis)));
+                    }
+                    // A TILTED circle boundary (the partial-span blend's
+                    // stop arc lies in the plane perpendicular to the
+                    // EDGE, not to the cone axis) also bounds the band;
+                    // axis-perpendicular rims stay with the height path.
+                    Some(keel_geom::curve::Curve3::Circle(ci)) => {
+                        let n = ci.x_axis.cross(ci.y_axis);
+                        if n.dot(ez).abs() < 1.0 - 1e-9 {
+                            cap_planes.push((ci.center, n));
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -492,20 +533,26 @@ impl Body {
         // exact cap-plane intersections for the two-ellipse blend patch
         // (pt(phi, v) is linear in v, so each cap is a linear solve).
         let ruling_band = |phi: f64| -> (f64, f64) {
-            if cap_planes.len() != 2 {
+            if cap_planes.is_empty() {
                 return (hlo, hhi);
             }
             let radial = ex * phi.cos() + ey * phi.sin();
-            let mut hs = [0.0f64; 2];
-            for (k, (q, n)) in cap_planes.iter().enumerate() {
+            let (mut l, mut h) = (hlo, hhi);
+            for (q, n) in &cap_planes {
                 let base = (origin + radial * cone.radius - *q).dot(*n);
                 let dv = (radial * slope + ez).dot(*n);
                 if dv.abs() < 1e-12 {
-                    return (hlo, hhi);
+                    continue;
                 }
-                hs[k] = -base / dv;
+                let hc = -base / dv;
+                // The plane clamps the band end it is nearer to.
+                if (hc - l).abs() < (hc - h).abs() {
+                    l = hc;
+                } else {
+                    h = hc;
+                }
             }
-            (hs[0].min(hs[1]), hs[0].max(hs[1]))
+            (l.min(h), l.max(h))
         };
         let mut tris = Vec::new();
         for j in 0..np {
