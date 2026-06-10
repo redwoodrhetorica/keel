@@ -4565,3 +4565,48 @@ fmt; fuzz_boolean soak (tessellate_cylinder changed): 10 minutes, 785 runs, clea
 
 COUNTER: 134 -> 135/144 (item 56, the milestone-1 rung; unequal radii via marched SSI, chain
 contraction, and roll-over junctions are the dossier-55 ladder). Remaining: 29, 51.
+
+## Addendum 150 (2026-06-10, attended): SPHERE-OCTANT VERTEX BLEND (item 51; 135 -> 136/144)
+
+fillet_corner_octant(corner, r) (branch octant-corner; dossier 53 Q1 + the worked topology
+diagram): a convex trihedral corner of three mutually perpendicular planar supports rounds to
+the EXACT SPHERE OCTANT. All the geometry is closed-form: M = the three inward offset planes
+intersection (triple products, d_i = n_i . p_i - r); the sphere tangency feet q_i = M + n_i r
+(both of face i springs meet there); every edge cylinder axis passes through M; each cylinder
+meets the sphere along the exact QUARTER CIRCLE of radius r about M in the plane perpendicular
+to its edge (axes n_a, n_b of the adjacent supports).
+
+SURGERY (the mitre-top treatment applied to all three faces, then a three-way merge): per face,
+split the two far boundaries at the spring crossings, spur the corner to q_i (mev AfterFin),
+two split_faces along the springs; far caps take the standard end treatment x3 (cap = the face
+at the far vertex NOT carrying that edge); kef each sharp edge merges its two support trims
+into one blend face; each blend face then splits along its exact quarter circle between q_a and
+q_b (the band keeps the cylinder); finally the three corner pieces merge by kef on two spurs
+and kev on the third, which absorbs the old corner vertex (net +1 face, 0 edges, -1 vertex over
+the merge, per the dossier). The octant face is the unique face touching all three q vertices;
+it carries Sphere3 at M (frame z along n1+n2+n3), sense true.
+
+TESSELLATION (the sphere learns vertex trimming): tessellate_sphere previously meshed the FULL
+sphere for any face without a closed circle edge; the octant face is bounded by three OPEN
+circle arcs. New arc-plane trim: collect the open-circle-arc boundary planes (>= 2 of them, cap
+trim absent) and keep triangles whose centroid lies on the boundary-vertex-average side of
+EVERY plane. The closed-circle cap trim path is untouched.
+
+RECOGNITION taught about smooth junctions: the octant band has THREE tangent neighbours (two
+supports + the sphere it runs into), so recognize_blends' exactly-two-tangents test rejected
+it. A cylinder blend's springs are STRAIGHT edges parallel to its axis; tangent ARC junctions
+(the smooth run into a vertex blend) are not springs and no longer count. Torus path unchanged;
+all prior recognition tests (plain fillet, mitre, unblend) still green.
+
+ORACLES: box [0,2]^3 corner at (2,2,2), r = 0.5 -- valid; face count 10 (3 kept + 3 caps + 3
+bands + 1 sphere); exactly one Sphere face; all THREE cylinder blends recognized at exactly
+r = 0.5; mesh volume against the exact closed form 8 - [3 (r^2 - pi r^2/4)(2 - r) +
+(r^3 - pi r^3/6)] within 0.02. (Analytic mass_properties over blend faces still needs
+blend-face pcurves -- the documented follow-up shared by every fillet; the honesty gate here is
+the exact closed-form volume.)
+
+CI: fmt; clippy -D warnings; workspace 123 + 77 + 225 (+1) green; fuzz_boolean soak
+(tessellate_sphere changed): 10 minutes, clean (run count in session notes).
+
+COUNTER: 135 -> 136/144 (item 51, the perpendicular equal-radius rung; setbacks, unequal
+radii, and oblique dihedrals are the dossier-53 ladder). Remaining tractable: 29.

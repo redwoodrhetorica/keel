@@ -868,6 +868,51 @@ impl Body {
         // keep only triangles on the cap side of that circle's plane;
         // a whole-sphere face (no circle edge) meshes fully.
         let cap = self.sphere_cap_trim(face);
+        // A spherical POLYGON face (the vertex-blend octant, item 51):
+        // bounded by OPEN circle arcs, each lying in a plane; keep the
+        // triangles on the face side of EVERY arc plane (side = where
+        // the boundary-vertex average lies).
+        let mut arc_planes: Vec<(Vec3, Vec3, f64)> = Vec::new();
+        if cap.is_none() {
+            let mut planes: Vec<(Vec3, Vec3)> = Vec::new();
+            let mut avg = Vec3::ZERO;
+            let mut n_pts = 0usize;
+            for lk in self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default()
+            {
+                for e in self.ring_edges(lk) {
+                    let Some(ed) = self.edges.get(e) else {
+                        continue;
+                    };
+                    if ed.is_closed() {
+                        continue;
+                    }
+                    if let Some((ck, _)) = ed.curve
+                        && let Some(keel_geom::curve::Curve3::Circle(ci)) = self.curves.get(ck)
+                    {
+                        planes.push((ci.center, ci.x_axis.cross(ci.y_axis)));
+                    }
+                    for v in [ed.bounds.0, ed.bounds.1] {
+                        if let Some(p) = self.vertices.get(v).map(|x| x.point) {
+                            avg = avg + p;
+                            n_pts += 1;
+                        }
+                    }
+                }
+            }
+            if planes.len() >= 2 && n_pts > 0 {
+                let avg = avg * (1.0 / n_pts as f64);
+                for (q, n) in planes {
+                    let s = (avg - q).dot(n);
+                    if s.abs() > 1e-12 {
+                        arc_planes.push((q, n, s.signum()));
+                    }
+                }
+            }
+        }
         // theta in [0, pi] (polar), phi in [0, 2pi). Coarse grid.
         let tau = core::f64::consts::TAU;
         let pi = core::f64::consts::PI;
@@ -878,10 +923,14 @@ impl Body {
         let mut tris = Vec::new();
         let sgn = if sense { 1.0 } else { -1.0 };
         let on_cap = |q: Vec3| -> bool {
-            match cap {
+            let cap_ok = match cap {
                 Some((cc, ax, side)) => ((q - cc).dot(ax) * side) >= 0.0,
                 None => true,
-            }
+            };
+            cap_ok
+                && arc_planes
+                    .iter()
+                    .all(|(c, n, s)| ((q - *c).dot(*n)) * s >= 0.0)
         };
         for i in 0..nt {
             let t0 = pi * i as f64 / nt as f64;

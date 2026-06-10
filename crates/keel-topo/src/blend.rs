@@ -2561,6 +2561,341 @@ impl Body {
             .map_err(|_| TopoError::Precondition("mitre: result invalid"))?;
         Ok(b)
     }
+
+    /// Round a convex trihedral corner with the exact SPHERE-OCTANT
+    /// vertex blend (item 51, dossier 53 Q1): the three edge fillets
+    /// are exact cylinders whose axes all pass through M, the common
+    /// point of the three inward offset planes, and they are capped by
+    /// the spherical patch centred at M (radius r) tangent to each
+    /// support at q_i = M + n_i r. Each cylinder meets the sphere along
+    /// the exact quarter circle of radius r about M in the plane
+    /// perpendicular to its edge.
+    ///
+    /// Scope: three mutually perpendicular planar supports (the cube
+    /// corner), equal radius. Setbacks, unequal radii, and oblique
+    /// dihedrals are follow-ups (dossier 53 Q2/Q3).
+    pub fn fillet_corner_octant(
+        &self,
+        corner: crate::entity::VertexKey,
+        radius: f64,
+    ) -> Result<Body, TopoError> {
+        if !(radius.is_finite() && radius > 0.0) {
+            return Err(TopoError::Precondition("octant: bad radius"));
+        }
+        let corner_pt = self.vertices.get(corner).ok_or(TopoError::StaleKey)?.point;
+        // The three edges meeting at the corner, with their far vertices.
+        let edges: Vec<(EdgeKey, crate::entity::VertexKey)> = self
+            .edges
+            .iter()
+            .filter_map(|(k, e)| {
+                if e.bounds.0 == corner {
+                    Some((k, e.bounds.1))
+                } else if e.bounds.1 == corner {
+                    Some((k, e.bounds.0))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if edges.len() != 3 {
+            return Err(TopoError::Precondition("octant: corner needs three edges"));
+        }
+        // The three support faces; each carries exactly two of the edges.
+        let mut faces: Vec<crate::entity::FaceKey> = Vec::new();
+        for &(e, _) in &edges {
+            for f in self.faces_around_edge(e) {
+                if !faces.contains(&f) {
+                    faces.push(f);
+                }
+            }
+        }
+        if faces.len() != 3 {
+            return Err(TopoError::Precondition("octant: corner needs three faces"));
+        }
+        let mut n = [Vec3::ZERO; 3];
+        let mut face_edges = [[0usize; 2]; 3];
+        for (i, &f) in faces.iter().enumerate() {
+            if !matches!(
+                self.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition(
+                    "octant: non-planar support (follow-up)",
+                ));
+            }
+            n[i] = self
+                .face_outward_normal(f)
+                .ok_or(TopoError::Precondition("octant: support normal"))?;
+            let mut slot = 0usize;
+            for (j, &(e, _)) in edges.iter().enumerate() {
+                if self.faces_around_edge(e).contains(&f) {
+                    if slot == 2 {
+                        return Err(TopoError::Precondition("octant: face/edge incidence"));
+                    }
+                    face_edges[i][slot] = j;
+                    slot += 1;
+                }
+            }
+            if slot != 2 {
+                return Err(TopoError::Precondition("octant: face/edge incidence"));
+            }
+        }
+        // Exact octant: mutually perpendicular supports only.
+        for i in 0..3 {
+            if n[i].dot(n[(i + 1) % 3]).abs() > 1e-9 {
+                return Err(TopoError::Precondition(
+                    "octant: non-perpendicular supports (follow-up)",
+                ));
+            }
+        }
+        // M: the three INWARD offset planes' (n_i . x = n_i . p_i - r)
+        // common point, by triple products.
+        let m_pt = {
+            let mut d = [0.0f64; 3];
+            for i in 0..3 {
+                let p = self
+                    .face_outer_loop_points(faces[i])
+                    .first()
+                    .copied()
+                    .ok_or(TopoError::Precondition("octant: empty support"))?;
+                d[i] = n[i].dot(p) - radius;
+            }
+            let den = n[0].dot(n[1].cross(n[2]));
+            if den.abs() < 1e-12 {
+                return Err(TopoError::Precondition("octant: degenerate supports"));
+            }
+            (n[1].cross(n[2]) * d[0] + n[2].cross(n[0]) * d[1] + n[0].cross(n[1]) * d[2])
+                * (1.0 / den)
+        };
+        // q_i: the sphere's tangency foot on support i (both of that
+        // face's springs meet there).
+        let q = [
+            m_pt + n[0] * radius,
+            m_pt + n[1] * radius,
+            m_pt + n[2] * radius,
+        ];
+        // Per-edge exact cylinders (validates convexity); their axes all
+        // pass through M. Edge directions point away from the corner.
+        let mut blends = Vec::with_capacity(3);
+        let mut dir = [Vec3::ZERO; 3];
+        for (j, &(e, vfar)) in edges.iter().enumerate() {
+            blends.push(self.blend_cylinder_for_edge(e, radius)?);
+            let far_pt = self.vertices.get(vfar).ok_or(TopoError::StaleKey)?.point;
+            dir[j] = (far_pt - corner_pt)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("octant: zero edge"))?;
+        }
+
+        let mut b = self.clone();
+        // Per-face surgery (the mitre-top treatment on all three faces):
+        // split the two far boundaries at the spring crossings, spur the
+        // corner to q_i, then two face splits along the springs.
+        let mut far_v = [[corner; 2]; 3];
+        let mut q_v = [corner; 3];
+        let mut spring_edge = [[EdgeKey::sentinel(); 2]; 3];
+        let mut kept = [crate::entity::FaceKey::sentinel(); 3];
+        for i in 0..3 {
+            let f = faces[i];
+            let springs = [
+                Line3 {
+                    origin: q[i],
+                    dir: dir[face_edges[i][0]],
+                },
+                Line3 {
+                    origin: q[i],
+                    dir: dir[face_edges[i][1]],
+                },
+            ];
+            for s in 0..2 {
+                let (e, vfar) = edges[face_edges[i][s]];
+                let ef = b
+                    .boundary_edge_at_vertex_excluding(f, vfar, e)
+                    .ok_or(TopoError::Precondition("octant: no far edge"))?;
+                let m = n[i].cross(springs[s].dir);
+                let p = b.line_crosses_edge(ef, springs[s].origin, m).ok_or(
+                    TopoError::Precondition("octant: spring misses far edge (overflow?)"),
+                )?;
+                far_v[i][s] = b.split_edge(ef, p)?.vertex;
+            }
+            let lp = b
+                .faces
+                .get(f)
+                .map(|x| x.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fin_c = b.fin_ending_at_vertex(lp, corner)?;
+            q_v[i] = b.mev(crate::euler::MevSite::AfterFin(fin_c), q[i])?.vertex;
+            let fin_q = b.fin_ending_at_vertex(lp, q_v[i])?;
+            let fin_t = b.fin_ending_at_vertex(lp, far_v[i][0])?;
+            let split1 = b.split_face(fin_q, fin_t, None)?;
+            if let Some(surf) = b.faces.get(f).and_then(|x| x.surface)
+                && let Some(nf) = b.faces.get_mut(split1.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            b.attach_edge_curve(split1.edge, Curve3::Line(springs[0]), true);
+            spring_edge[i][0] = split1.edge;
+            let host = if b.faces_at_vertex(far_v[i][1]).contains(&split1.face_new) {
+                split1.face_new
+            } else {
+                split1.face_old
+            };
+            let lp_h = b
+                .faces
+                .get(host)
+                .map(|x| x.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fin_q2 = b.fin_ending_at_vertex(lp_h, q_v[i])?;
+            let fin_t2 = b.fin_ending_at_vertex(lp_h, far_v[i][1])?;
+            let split2 = b.split_face(fin_q2, fin_t2, None)?;
+            if let Some(surf) = b.faces.get(host).and_then(|x| x.surface)
+                && let Some(nf) = b.faces.get_mut(split2.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            b.attach_edge_curve(split2.edge, Curve3::Line(springs[1]), true);
+            spring_edge[i][1] = split2.edge;
+            // The kept support piece carries neither sharp edge.
+            kept[i] = if b.face_has_edge(split2.face_new, edges[face_edges[i][1]].0) {
+                split2.face_old
+            } else {
+                split2.face_new
+            };
+        }
+        // The (face, slot) incidences of each edge, for the far caps and
+        // the cylinder bands.
+        let edge_inc = |j: usize| -> [(usize, usize); 2] {
+            let mut out = [(usize::MAX, usize::MAX); 2];
+            let mut k = 0usize;
+            for (i, fe) in face_edges.iter().enumerate() {
+                for (s, &jj) in fe.iter().enumerate() {
+                    if jj == j {
+                        out[k] = (i, s);
+                        k += 1;
+                    }
+                }
+            }
+            out
+        };
+        // Far-end caps: the standard fillet end treatment per edge.
+        for (j, &(e, vfar)) in edges.iter().enumerate() {
+            let [(ia, sa), (ib, sb)] = edge_inc(j);
+            let (t_end, s_end) = (far_v[ia][sa], far_v[ib][sb]);
+            let cap = b
+                .faces_at_vertex(vfar)
+                .into_iter()
+                .find(|&f| !b.face_has_edge(f, e))
+                .ok_or(TopoError::Precondition("octant: no far cap"))?;
+            let lp = b
+                .faces
+                .get(cap)
+                .map(|x| x.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fa = b.fin_ending_at_vertex(lp, t_end)?;
+            let fb = b.fin_ending_at_vertex(lp, s_end)?;
+            let split = b.split_face(fa, fb, None)?;
+            if let Some(surf) = b.faces.get(cap).and_then(|x| x.surface)
+                && let Some(nf) = b.faces.get_mut(split.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            let spine = &blends[j].spine;
+            let pc = b
+                .vertices
+                .get(vfar)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let centre = spine.origin + spine.dir * ((pc - spine.origin).dot(spine.dir));
+            let p_t = b
+                .vertices
+                .get(t_end)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let ex = (p_t - centre)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("octant: arc axis"))?;
+            let arc = keel_geom::curve::Circle3::new(centre, ex, spine.dir.cross(ex), radius)
+                .map_err(|_| TopoError::Precondition("octant: bad far arc"))?;
+            b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+        }
+        // Dissolve the sharp edges (each merges its two support trims
+        // into one blend face), then the far corner chains.
+        for &(e, _) in &edges {
+            b.kef(e)?;
+        }
+        for (j, &(_, vfar)) in edges.iter().enumerate() {
+            let [(ia, sa), (ib, sb)] = edge_inc(j);
+            let stub = b
+                .edge_between(far_v[ia][sa], vfar)
+                .ok_or(TopoError::Precondition("octant: no far stub"))?;
+            b.kef(stub)?;
+            let spur = b
+                .edge_between(vfar, far_v[ib][sb])
+                .ok_or(TopoError::Precondition("octant: no far spur"))?;
+            b.kev(spur)?;
+        }
+        // Carve the octant out of each blend face: split along the exact
+        // quarter circle (centre M, radius r, plane perpendicular to the
+        // edge) between the two q points, and give the band its cylinder.
+        for (j, blend) in blends.iter().enumerate() {
+            let [(ia, sa), (ib, _)] = edge_inc(j);
+            let blend_face = b
+                .faces_around_edge(spring_edge[ia][sa])
+                .into_iter()
+                .find(|&f| f != kept[ia])
+                .ok_or(TopoError::Precondition("octant: no blend face"))?;
+            let lp = b
+                .faces
+                .get(blend_face)
+                .map(|x| x.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fa = b.fin_ending_at_vertex(lp, q_v[ia])?;
+            let fb = b.fin_ending_at_vertex(lp, q_v[ib])?;
+            let split = b.split_face(fa, fb, None)?;
+            let arc = keel_geom::curve::Circle3::new(m_pt, n[ia], n[ib], radius)
+                .map_err(|_| TopoError::Precondition("octant: bad corner arc"))?;
+            b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+            let band = if b.faces_at_vertex(corner).contains(&split.face_new) {
+                split.face_old
+            } else {
+                split.face_new
+            };
+            b.attach_face_surface(
+                band,
+                SurfaceGeom::Analytic(Surface3::Cylinder(blend.surface.clone())),
+                true,
+            );
+        }
+        // Merge the three corner pieces into the single octant face:
+        // kill two spurs (each borders two pieces), then the last spur
+        // (now dangling) together with the old corner vertex.
+        for &qv in q_v.iter().take(2) {
+            let spur = b
+                .edge_between(corner, qv)
+                .ok_or(TopoError::Precondition("octant: no corner spur"))?;
+            b.kef(spur)?;
+        }
+        let spur = b
+            .edge_between(corner, q_v[2])
+            .ok_or(TopoError::Precondition("octant: no corner spur"))?;
+        b.kev(spur)?;
+        // The octant face is the one touching all three q vertices.
+        let oct = b
+            .faces_at_vertex(q_v[0])
+            .into_iter()
+            .find(|&f| {
+                b.faces_at_vertex(q_v[1]).contains(&f) && b.faces_at_vertex(q_v[2]).contains(&f)
+            })
+            .ok_or(TopoError::Precondition("octant: no sphere face"))?;
+        let frame = keel_geom::surface::Frame3::from_z(m_pt, n[0] + n[1] + n[2])
+            .map_err(|_| TopoError::Precondition("octant: sphere frame"))?;
+        let sphere = keel_geom::surface::Sphere3::new(frame, radius)
+            .map_err(|_| TopoError::Precondition("octant: bad sphere"))?;
+        b.attach_face_surface(oct, SurfaceGeom::Analytic(Surface3::Sphere(sphere)), true);
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("octant: result invalid"))?;
+        Ok(b)
+    }
 }
 
 /// The exact ellipse where a cone meets a plane (the variable-radius
@@ -2658,9 +2993,12 @@ impl Body {
     pub fn recognize_blends(&self, angular_tol: f64) -> Vec<RecognizedBlend> {
         let mut out = Vec::new();
         for face in self.face_keys() {
-            let radius = match self.face_surface3(face) {
-                Some(Surface3::Cylinder(c)) => c.radius,
-                Some(Surface3::Torus(t)) => t.minor,
+            // A cylinder blend's springs are straight edges parallel to
+            // its axis; tangent ARC junctions (the smooth run into a
+            // vertex-blend sphere, item 51) are not springs.
+            let (radius, axis) = match self.face_surface3(face) {
+                Some(Surface3::Cylinder(c)) => (c.radius, Some(c.frame.z)),
+                Some(Surface3::Torus(t)) => (t.minor, None),
                 _ => continue,
             };
             let mut tangents: Vec<(crate::entity::FaceKey, EdgeKey)> = Vec::new();
@@ -2674,6 +3012,20 @@ impl Body {
                 let Some(mid) = self.edge_midpoint_point(e) else {
                     continue;
                 };
+                if let Some(ax) = axis {
+                    let along_axis = self.edges.get(e).map(|ed| ed.bounds).is_some_and(|(a, b)| {
+                        match (self.vertices.get(a), self.vertices.get(b)) {
+                            (Some(va), Some(vb)) => match (vb.point - va.point).try_normalize() {
+                                Some(d) => d.cross(ax).norm() <= 1e-7,
+                                None => false,
+                            },
+                            _ => false,
+                        }
+                    });
+                    if !along_axis {
+                        continue;
+                    }
+                }
                 let (Some(na), Some(nb)) =
                     (self.face_normal_at(face, mid), self.face_normal_at(p, mid))
                 else {
@@ -3065,6 +3417,53 @@ mod tests {
             (v - want).abs() < 0.02,
             "mitre volume {v} != grid oracle {want} (removed {removed_true})"
         );
+    }
+
+    #[test]
+    fn octant_corner_blend_caps_three_fillets_with_a_sphere() {
+        // Item 51 (dossier 53 Q1): box [0,2]^3, round the trihedral
+        // corner at (2,2,2) with r = 0.5. The three edge cylinders
+        // (axes through M = (1.5,1.5,1.5)) are capped by the exact
+        // sphere octant centred at M; recognition finds the three
+        // cylinder blends; the removed volume is closed-form (three
+        // square-minus-quarter-disc prisms of length 2 - r, plus the
+        // corner cube minus the ball octant).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let corner = b
+            .vertices
+            .iter()
+            .find(|(_, v)| (v.point - Vec3::new(2., 2., 2.)).norm() < 1e-9)
+            .map(|(k, _)| k)
+            .expect("corner vertex");
+        let r = 0.5f64;
+        let o = b.fillet_corner_octant(corner, r).unwrap();
+        assert!(o.validate().is_ok(), "octant body invalid");
+        // Faces: 3 kept supports + 3 far caps + 3 bands + 1 sphere.
+        assert_eq!(o.face_keys().len(), 10, "octant face count");
+        let spheres = o
+            .face_keys()
+            .into_iter()
+            .filter(|&fk| matches!(o.face_surface3(fk), Some(Surface3::Sphere(_))))
+            .count();
+        assert_eq!(spheres, 1, "one sphere octant face");
+        let found = o.recognize_blends(1e-6);
+        assert_eq!(found.len(), 3, "three cylinder blends at the corner");
+        for f in &found {
+            assert!((f.radius - r).abs() < 1e-9, "radius {}", f.radius);
+        }
+        let pi = core::f64::consts::PI;
+        let removed =
+            3.0 * (r * r - pi * r * r / 4.0) * (2.0 - r) + (r.powi(3) - pi * r.powi(3) / 6.0);
+        let want = 8.0 - removed;
+        let v = o.mesh_volume();
+        assert!(
+            (v - want).abs() < 0.02,
+            "octant volume {v} != exact {want} (removed {removed})"
+        );
+        // (Analytic mass_properties over blend faces needs blend-face
+        // pcurves, the documented follow-up shared by all fillets; the
+        // honesty gate here is the exact closed-form volume above.)
     }
 
     #[test]
