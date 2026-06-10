@@ -4979,3 +4979,28 @@ volume bit-identical).
 
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 238 (+1) green. No soak: no
 boolean/tessellation path touched (blend surgery + recognition only).
+
+## Addendum 161 (2026-06-10, attended): INSCRIBED-RADIUS MEDIAL FIELD (wall-thickness MVP)
+
+interrogate.rs (branch wall-thickness; corpus-audit connection A first slice, dossiers 10 / 41
+/ 50): Body::inscribed_radius(p, outward) = the radius of the largest inscribed sphere tangent
+at surface point p = the DISTANCE TO THE MEDIAL AXIS at p. Implementation: the sphere at
+p - n r is empty iff the closest surface distance from its centre stays r (the tangent contact
+itself); emptiness is monotone in r, so a doubling-bounded bisection (60 steps) converges;
+resolution follows closest_point (exact planar, tessellation-resolution curved). This is the
+SHARED FEASIBILITY FIELD the corpus synthesis identified with four consumers: shell t_max,
+the blend overflow ceiling, defeature safety, and wall-thickness analysis (this milestone's
+face-level convenience: Body::min_wall_thickness = 2x the smallest inscribed radius at each
+face interior point, documented as sample-point dependent).
+
+ORACLES (closed form): 4x4x1 slab at the top centre r = 0.5 exactly; near a rim the medial
+distance shrinks to the rim distance (0.2 at 0.2 in, the field honestly reflecting edge
+proximity); a side-face centre is governed by the vertical clearance (0.5). The hollowed 4^3
+box with 1-thick walls: the cavity bounds the sphere from inside (outer-face centre 0.5) and
+the cavity wall sees the outer face (0.5); the face-sampled aggregate stays within (0, 1].
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 239 (+1) green. No soak: additive
+interrogation only.
+
+LADDER: the exact medial-axis structure (Culver-Keyser-Manocha seams) stays queued; this field
+is its query-level MVP and the bridge for retiring the per-feature r_max duplicates.
