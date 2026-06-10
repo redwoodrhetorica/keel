@@ -5023,3 +5023,47 @@ inventory included: P1/P3/P4 already conform; P2 gap recording, the lfs trigger,
 instrumentation are the named follow-ups.
 
 CI: docs only; no code changed (workspace remains 132 + 77 + 239 green from Addendum 161).
+
+## Addendum 163 (2026-06-10, attended): SESSION-END ANCHOR -- THE POST-PARITY OPPORTUNITY PROGRAM
+
+STATE: master = the merge of tol-propagation-spec, all green (132 geom + 77 math + 239 topo;
+fmt; clippy -D warnings), NOT pushed. The parity counter remains CLOSED at 137/144 (Add. 152);
+everything after it is the post-parity opportunity program born from the FULL CORPUS RE-READ
+(all 78 research files, 8-reader audit + cross-synthesis; findings and novel cross-connections
+recorded in the conversation and actioned below).
+
+SHIPPED THIS PROGRAM (Addenda 153-162, ten milestones, each branch-gated):
+153 STEP import planar (pure-Rust Part 21 tokenizer + two-pass resolver; 3.16M-run parser
+    soak); 154 sheet-as-knife cellular partition (dossier 57 Rung 2; Newell winding fix
+    hardening Rung 1); 155 cylinder-cylinder SSI (three rungs, Chebyshev-regularized certified
+    bites) + the UnassemblableSeam HARD FAULT retiring a pre-existing wrong-positive (seamless
+    Steinmetz, 12.5 vs 16/3); 156 metrology fitting (explicit Shakarji objectives; exact
+    min-zone plane/annulus, Welzl MCC, exact MIC); 157 NURBS extension via knot unclamping
+    (polar-form blossom, C-infinity joins, exactness oracles); 158 STEP geometry conversion
+    layer (complex-instance rational NURBS to homogeneous 4D; 1.52M-run soak); 159 validation-
+    property round trip (GVP oracle; shortest-round-trip reals closing the serialization
+    finding); 160 blend-chain ordered suppression (unblend_all leaves-first; TIERED commit gate
+    with the exact-wedge fallback oracle, fixing chain unblends that all declined); 161 the
+    inscribed-radius MEDIAL FIELD (the four-consumer feasibility query) + min wall thickness;
+    162 the tolerance-propagation SPECIFICATION (the D2 unfixable-late gap: sphere/tube
+    containment algebra + the measured-growth program).
+
+DISPOSITIONS (audit items resolved without code): Dupin-cyclide recognition DECLINED (needs a
+new first-class surface kind, contra spec D4); Park knot reduction MOOT until multi-section
+skinning exists (the loft is ruled); cubic hybrid clipping + IGA half-point quadrature stay
+documented perf-queued.
+
+REMAINING OPPORTUNITY BACKLOG (ranked; each has its dossier): STEP curved-topology assembly
+(milestone 3: advanced_face on analytics/NURBS, seams, vertex_loop poles, pcurve supply-or-
+reconstruct -- the conversion layer is ready); cellular Rungs 3-5 (sheet-sheet, wire imprint,
+SGC simplify); the crossing-seam imprint that turns UnassemblableSeam declines into assemblies
+(certified curves waiting); Spainhour-Weiss boundary-integral GWN for open operands; the
+P2/P5/M1-M3 tolerance-spec follow-ups; exact medial-axis structure over the new field; HLR
+(needs the 2D arrangement); virtual-topology operator family; blend-face pcurves; the
+surgery parameterization; reblend-after-edit; 3D constraint solver / relation inference
+(companion crate); FFD via the foreign-evaluator back door; sheet-metal hinge graph; model-diff
+cascade over lineage + topology hash; soup retirement; the completion gate.
+
+RESUME RECIPE unchanged (Add. 152): read this anchor, the exact CI triplet, fuzz when
+boolean/tessellation/parser internals change, mass == mesh constructors, branch-per-milestone,
+LOG addendum then merge, NO EM-DASHES, push only on request.
