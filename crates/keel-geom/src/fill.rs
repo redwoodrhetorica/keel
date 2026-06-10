@@ -183,6 +183,104 @@ pub fn fill_boundary(sides: &[Vec<Vec3>], tol: f64) -> Result<BoundaryFill, Geom
     best.ok_or(GeomError::Degenerate)
 }
 
+/// Gordon surface through SECTIONS with GUIDE curves (parity item 67;
+/// dossier 26 sec 2: the Gordon surface is the Boolean sum of the loft
+/// through the sections, the loft through the guides, and minus the
+/// tensor interpolant of their intersection grid). Built TRANSFINITELY:
+/// the Boolean-sum EVALUATOR (bilinear blends between adjacent
+/// sections/guides, piecewise-bilinear node tensor) interpolates every
+/// section at its station and every guide along its run by the Gordon
+/// identity; the evaluator then feeds the certified foreign-surface
+/// fit, so the returned NURBS carries an honest `tol_achieved` against
+/// the transfinite truth. Sections are stationed uniformly in v and
+/// guides uniformly in u (the caller orders them); guides must MEET
+/// every section near the corresponding grid node or the construction
+/// declines.
+pub fn gordon_surface(
+    sections: &[Vec<Vec3>],
+    guides: &[Vec<Vec3>],
+    tol: f64,
+) -> Result<crate::foreign::ForeignSurfaceFit, GeomError> {
+    if sections.len() < 2 || guides.len() < 2 {
+        return Err(GeomError::Degenerate);
+    }
+    for s in sections.iter().chain(guides.iter()) {
+        if s.len() < 2 || s.iter().any(|p| !p.is_finite()) {
+            return Err(GeomError::Degenerate);
+        }
+    }
+    let nk = sections.len();
+    let ng = guides.len();
+    // Grid nodes: section k at fraction u_g must meet guide g at
+    // fraction v_k. Validate the meeting (within a slack of 10 tol) and
+    // take the midpoint as the node.
+    let mut nodes = vec![Vec3::ZERO; nk * ng];
+    let slack = (10.0 * tol).max(1e-7);
+    for (k, sec) in sections.iter().enumerate() {
+        let ls = polyline_length(sec);
+        for (g, gd) in guides.iter().enumerate() {
+            let lg = polyline_length(gd);
+            let u = g as f64 / (ng - 1) as f64;
+            let v = k as f64 / (nk - 1) as f64;
+            let ps = point_at(sec, ls * u);
+            let pg = point_at(gd, lg * v);
+            if (ps - pg).norm() > slack {
+                return Err(GeomError::Degenerate);
+            }
+            nodes[k * ng + g] = (ps + pg) * 0.5;
+        }
+    }
+    struct Gordon<'a> {
+        sections: &'a [Vec<Vec3>],
+        guides: &'a [Vec<Vec3>],
+        sec_len: Vec<f64>,
+        gd_len: Vec<f64>,
+        nodes: Vec<Vec3>,
+        nk: usize,
+        ng: usize,
+    }
+    impl Gordon<'_> {
+        /// Piecewise-linear blend index: for fraction t over n stations,
+        /// the bracketing pair and the local weight.
+        fn bracket(t: f64, n: usize) -> (usize, usize, f64) {
+            let x = t.clamp(0.0, 1.0) * (n - 1) as f64;
+            let i = (x.floor() as usize).min(n - 2);
+            (i, i + 1, x - i as f64)
+        }
+    }
+    impl crate::foreign::ForeignSurface for Gordon<'_> {
+        fn domain(&self) -> ((f64, f64), (f64, f64)) {
+            ((0.0, 1.0), (0.0, 1.0))
+        }
+        fn eval(&self, u: f64, v: f64) -> Vec3 {
+            // L1: blend between the bracketing sections, each sampled
+            // at arc fraction u.
+            let (k0, k1, wv) = Self::bracket(v, self.nk);
+            let l1 = point_at(&self.sections[k0], self.sec_len[k0] * u) * (1.0 - wv)
+                + point_at(&self.sections[k1], self.sec_len[k1] * u) * wv;
+            // L2: blend between the bracketing guides at fraction v.
+            let (g0, g1, wu) = Self::bracket(u, self.ng);
+            let l2 = point_at(&self.guides[g0], self.gd_len[g0] * v) * (1.0 - wu)
+                + point_at(&self.guides[g1], self.gd_len[g1] * v) * wu;
+            // T: bilinear through the four bracketing nodes.
+            let n = |k: usize, g: usize| self.nodes[k * self.ng + g];
+            let t = (n(k0, g0) * (1.0 - wu) + n(k0, g1) * wu) * (1.0 - wv)
+                + (n(k1, g0) * (1.0 - wu) + n(k1, g1) * wu) * wv;
+            l1 + l2 - t
+        }
+    }
+    let ev = Gordon {
+        sections,
+        guides,
+        sec_len: sections.iter().map(|s| polyline_length(s)).collect(),
+        gd_len: guides.iter().map(|g| polyline_length(g)).collect(),
+        nodes,
+        nk,
+        ng,
+    };
+    crate::foreign::fit_foreign_surface(&ev, tol)
+}
+
 fn polyline_length(pts: &[Vec3]) -> f64 {
     pts.windows(2).map(|w| (w[1] - w[0]).norm()).sum()
 }

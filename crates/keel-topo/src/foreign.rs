@@ -60,6 +60,25 @@ impl Body {
         Body::nurbs_sheet_body(fill.surface)
     }
 
+    /// Loft through sections WITH guide curves (parity item 67): the
+    /// Gordon surface (dossier 26 sec 2) as a certified NURBS sheet.
+    /// Sections station uniformly in v, guides in u; guides must meet
+    /// every section near the grid nodes. DECLINES when the certificate
+    /// misses `tol`.
+    pub fn lofted_sheet_with_guides(
+        sections: &[Vec<keel_math::vec::Vec3>],
+        guides: &[Vec<keel_math::vec::Vec3>],
+        tol: f64,
+    ) -> Result<Body, TopoError> {
+        let fit = keel_geom::fill::gordon_surface(sections, guides, tol).map_err(geom_err)?;
+        if fit.tol_achieved > tol {
+            return Err(TopoError::Precondition(
+                "lofted_sheet_with_guides: surface does not certify within tol (declined)",
+            ));
+        }
+        Body::nurbs_sheet_body(fit.surface)
+    }
+
     /// Build the open NURBS sheet lamina for a full-domain patch: the
     /// `planar_sheet`-shaped topology (one double-sided face, four free
     /// edges carrying the EXACT boundary iso-curves). Shared by
@@ -303,6 +322,45 @@ mod tests {
         assert!(
             !sheet.tessellate_face(sheet.face_keys()[0]).is_empty(),
             "saddle fill must tessellate"
+        );
+    }
+
+    #[test]
+    fn gordon_loft_reproduces_the_cylinder() {
+        // Item 67: three identical quarter-circle sections stacked in z
+        // with the two end RULINGS as guides: the Gordon surface IS the
+        // quarter cylinder (the section blend is an extrusion), so the
+        // sheet certifies, validates, and simplify recovers the native
+        // analytic cylinder.
+        let arc = |z: f64| -> Vec<Vec3> {
+            (0..=48)
+                .map(|i| {
+                    let a = core::f64::consts::FRAC_PI_2 * i as f64 / 48.0;
+                    Vec3::new(2.0 * a.cos(), 2.0 * a.sin(), z)
+                })
+                .collect()
+        };
+        let sections = vec![arc(0.0), arc(1.5), arc(3.0)];
+        let guides = vec![
+            straight(Vec3::new(2.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 3.0), 5),
+            straight(Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.0, 2.0, 3.0), 5),
+        ];
+        let mut sheet = Body::lofted_sheet_with_guides(&sections, &guides, 2e-3).unwrap();
+        assert!(sheet.validate().is_ok(), "gordon sheet invalid");
+        let rep = sheet.simplify(2e-3);
+        assert_eq!(
+            rep.surfaces_recovered, 1,
+            "the cylinder must recover from the Gordon loft"
+        );
+
+        // Guides that MISS the sections decline.
+        let bad_guides = vec![
+            straight(Vec3::new(2.5, 0.0, 0.0), Vec3::new(2.5, 0.0, 3.0), 5),
+            straight(Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.0, 2.0, 3.0), 5),
+        ];
+        assert!(
+            Body::lofted_sheet_with_guides(&sections, &bad_guides, 2e-3).is_err(),
+            "disjoint guides must decline"
         );
     }
 
