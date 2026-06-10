@@ -4765,7 +4765,7 @@ radial-3 edges; mass == mesh == 8; winding number 1.0 in both cells (outer bound
 sheet that misses the solid declines.
 
 CI: fmt; clippy -D warnings; workspace 123 + 77 + 232 (+1) green; fuzz_boolean soak (the
-winding fix touches the shared cellular walk): 10 minutes, clean (count below).
+winding fix touches the shared cellular walk): 10 minutes, 822 runs, clean.
 
 LADDER: Rung 3 sheet-sheet booleans, Rung 4 wire imprinting, Rung 5 full SGC with simplify;
 partial-penetration knives (wall boundary ending interior) decline honestly today.
