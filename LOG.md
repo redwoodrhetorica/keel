@@ -4380,3 +4380,25 @@ side faces, radius 0.5 to 1e-9 (the construction/recognition cross-check again).
 CI: fmt, clippy -D warnings, workspace 123 + 77 + 219 (+1) green. No fuzz: additive blend.rs.
 
 COUNTER: 129 -> 130/144 (item 50). Remaining: 29, 51, 55, 56, 57, 60, 67.
+
+## Addendum 144 (2026-06-10, attended): G2 BLEND SECTIONS (item 60; 130 -> 131/144)
+
+fillet_edge_g2(edge, d, fullness) (branch g2-blend): TRUE curvature continuity to planar
+supports. The cross-section is a QUINTIC Bezier whose first three and last three control points
+are COLLINEAR along the in-plane tangent directions: a Bezier's endpoint curvature is
+proportional to |(P1-P0) x (P2-P1)|, so collinearity makes the section curvature ZERO at both
+springs -- matching the flat supports exactly. (The circular fillet is only G1: its curvature
+JUMPS from 0 to 1/r at the spring.) The blend face carries the exact degree-5x1 strip; the cap
+arcs are the same quintic per cap plane; the standard surgery applies (the fifth copy -- the
+parameterized extraction remains queued cleanup).
+
+ORACLE: box edge, d = 0.5, fullness 0.4: valid; volume strictly between the chamfer chord and
+the sharp box; and the strip's PRINCIPAL CURVATURE measured on the attached NURBS surface
+(local_geometry) is < 1e-2 at u = 0.001/0.999 (the springs) and > 0.5 mid-strip -- the G2
+property verified numerically on the actual face geometry, not assumed from construction.
+
+CI: fmt, clippy -D warnings, workspace 123 + 77 + 220 (+1) green. No fuzz: additive blend.rs.
+
+COUNTER: 130 -> 131/144 (item 60). Remaining: 29, 51, 55, 56, 57, 67 -- six items, each a true
+multi-session engine (vertex blends, range/runout surgery, networks/mitring, overflow policies,
+Gordon loft, non-manifold booleans).
