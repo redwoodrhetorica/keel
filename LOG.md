@@ -5282,3 +5282,43 @@ oracle for whichever route lands first.
 
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 244 (+1) green; fuzz_boolean soak
 (seam classification changed): count below.
+
+## Addendum 172 (2026-06-10, attended): NOTCH OVERFLOW HANDLER (dossier 56 sec 2.1) + lune-exact planar massprops
+
+Branch notch-surgery. fillet_edge_notch(e1, e2, r): fillet two collinear convex plane-plane
+edges separated by a planar-walled groove crossing the blend corridor. Per the notch semantics
+the blend cylinder stays UNDEFORMED and the notch element trims to the rounding: the groove
+walls trim to cross-section arcs (split_blend_cap), the groove floor trims to the cylinder
+ruling line, and the blend trim boundary extends across the corridor IN PLACE by plain Euler
+surgery on the existing faces, no separate sheet body, no sewing (the US 8,935,130
+design-around recorded in sec 2.1). The ribbon is built as THREE cylinder faces split at the
+corridor cross arcs so every face is an exact UV iso-rectangle (the roll-on transfer-curve
+precedent): mass and mesh stay exact with the existing rectangle integrators. Scope: convex
+chains, coplanar tops, one shared second support, walls perpendicular to the spine, floor
+strictly between the springs (0 < h < r); tilted walls, deep floors, and multi-face notch
+elements decline.
+
+ORACLE FIRST, and again it paid twice over. The closed form (16 - groove - filletcut +
+0.2 x (0.1 - A_in), A_in the circle band integral 0.3..0.5) at the 1e-9 mass gate exposed:
+
+1. The DOCUMENTED 5.6e-4 chordal residual (Add.169): planar faces bounded by circular arcs
+   chord-sampled their arcs in loop_uv_polyline_planar. RETIRED EXACTLY: each chord now also
+   emits signed LUNE quadrature samples (GL8 x GL8 over the (theta, t) lerp(chord, arc) patch;
+   the Jacobian sign makes convex/concave arcs, full rings, reversed fins, and inner loops all
+   fall out of one formula; ellipse fins included, degree>1 NURBS stay chordal). The fan over
+   the chord polygon plus the lunes integrates arc-bounded planar faces exactly: the notch
+   body hits the closed form to 1e-9 with no differential crutch.
+
+2. A FULL-DOMAIN NURBS sampling defect in tessellate loop_polygon: split survivors of the
+   boolean's degree-1 NURBS seam edges (the Add.171 imprint segments) sampled the PARENT
+   span (split_edge keeps the whole curve on both halves), folding spurious points into the
+   polygon (top faces lost 0.24 area each as ear-clip folds). Degree-1 NURBS is straight:
+   vertices suffice; the sampler now requires degree > 1 (the open-imprint Line3 lesson, now
+   in its third disguise).
+
+Regression test notch_fillet_bridges_the_groove_with_an_undeformed_blend: plain fillet_edge
+declines on both pieces (overflow guard), the handler validates, mass == closed form to 1e-9,
+mesh to 0.02 (chordal), exactly 3 cylinder ribbon faces, 13 faces total, argument-order
+agnostic. CI: fmt; clippy -D warnings; workspace 132 + 77 + 245 (+1) green; fuzz_boolean soak
+(tessellation + massprops changed): count below. Remaining in the leg: planar CAP (sec 2.2),
+then setbacks (dossier 53), Rung 5 + completion gate.
