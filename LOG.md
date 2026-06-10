@@ -4332,3 +4332,29 @@ CI: fmt, clippy -D warnings, workspace 123 + 77 + 217 (+1) green; fuzz_boolean s
 COUNTER: 127 -> 128/144 (item 49). Remaining: 29, 50, 51, 54-57, 60, 67 -- the true deep end
 (face-face, vertex, hold-line, ranges, networks, overflow, G2, Gordon loft, non-manifold
 booleans).
+
+## Addendum 142 (2026-06-10, attended): HOLD-LINE BLENDS (item 54; 128 -> 129/144)
+
+fillet_edge_hold_line(edge, hold_on_first, setback) (branch hold-line-blend): the spring on the
+hold support is PINNED `setback` in from the edge; the RADIUS FLOATS to keep the ball tangent
+to the other support. For a hold line parallel to the edge between planar supports the floating
+radius is CLOSED FORM (centre = hold - n_h r; tangency: r (1 - n_h . n_o) = dist(hold, other
+plane)), so the blend stays an exact cylinder and the standard trim-and-stitch surgery applies
+unchanged. Scope: parallel holds, convex plane-plane edges; curved/non-parallel holds and
+concave edges decline as follow-ups.
+
+ORACLES: perpendicular box edge, hold 0.5 -> r floats to 0.5 = the exact circular fillet
+(volume 7.8927 within mesh tolerance). THE DISCRIMINATOR: a right-triangle prism's 45-degree
+wedge edge, hold d = 1 on the x = 0 wall -> r = d/(1 + sqrt(2)) = sqrt(2) - 1, verified
+INDEPENDENTLY by item-58 blend recognition on the result (radius to 1e-9) -- construction and
+recognition cross-check each other. Valid, material removed.
+
+NOTED TECH DEBT: the trim-and-stitch surgery body now exists four times (fillet_edge,
+fillet_edge_variable, fillet_edge_conic, fillet_edge_hold_line) varying only in section
+geometry and attached curves; a parameterized extraction is queued cleanup (deliberately not
+done mid-stride: each copy is gated by its own oracles).
+
+CI: fmt, clippy -D warnings, workspace 123 + 77 + 218 (+1) green. No fuzz: additive blend.rs
+only.
+
+COUNTER: 128 -> 129/144 (item 54). Remaining: 29, 50, 51, 55, 56, 57, 60, 67.
