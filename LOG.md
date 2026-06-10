@@ -4922,3 +4922,28 @@ the conversion entry points added to the target: 10 minutes, 1,522,752 runs, cle
 LADDER: curved TOPOLOGY assembly (advanced_face on analytic/NURBS surfaces, seams on periodic
 faces, vertex_loop poles, pcurve supply-or-reconstruct), heal-on-import tolerance escalation,
 validation properties, AP242 tessellation import.
+
+## Addendum 159 (2026-06-10, attended): VALIDATION-PROPERTY ROUND TRIP + SHORTEST-ROUND-TRIP REALS
+
+Branch validation-props (dossier 38 sec 9 + dossier 22, CAx-IF GVP practice): the STEP exporter
+now embeds VOLUME / SURFACE AREA / CENTROID as geometric validation properties
+(MEASURE_REPRESENTATION_ITEM with VOLUME_MEASURE / AREA_MEASURE typed values + a centre-point
+representation, bound through PROPERTY_DEFINITION_REPRESENTATION), and the importer RECOMPUTES
+them with mass_properties / surface_area as its ACCEPTANCE ORACLE: a declared-vs-recomputed
+mismatch (1e-3 relative on scalars, unit-scaled, centroid distance-gated) DECLINES the import.
+A translation that builds the wrong geometry now fails loudly instead of passing the
+counts-and-validity checks.
+
+ALSO: export reals switched from {:.9} truncation to SHORTEST ROUND-TRIP decimals ({:?}, which
+always keeps the decimal point the Part 21 real token requires), closing the corpus-audit
+serialization finding for the STEP path: save -> load preserves every f64 bit.
+
+ORACLES: both existing round trips now pass THROUGH the gate (properties embedded, recomputed,
+matched); a tampered volume AND a tampered centroid each decline; foreign files without
+properties are unaffected (the gate only fires when properties are declared). The tamper
+needle is built from the computed value (the first draft assumed "24.0" and the shortest
+round trip of the actual integral differs in the last ulp, a tidy demonstration of why the
+formatting change matters).
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 237 (+1) green. No soak: the gate consumes
+already-parsed values (no new parsing path), no boolean/tessellation change.
