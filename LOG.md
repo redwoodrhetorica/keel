@@ -4606,7 +4606,7 @@ blend-face pcurves -- the documented follow-up shared by every fillet; the hones
 the exact closed-form volume.)
 
 CI: fmt; clippy -D warnings; workspace 123 + 77 + 225 (+1) green; fuzz_boolean soak
-(tessellate_sphere changed): 10 minutes, clean (run count in session notes).
+(tessellate_sphere changed): 10 minutes, 856 runs, clean.
 
 COUNTER: 135 -> 136/144 (item 51, the perpendicular equal-radius rung; setbacks, unequal
 radii, and oblique dihedrals are the dossier-53 ladder). Remaining tractable: 29.
