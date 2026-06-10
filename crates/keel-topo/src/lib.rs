@@ -18,6 +18,7 @@ pub mod cosmetic;
 pub mod entity;
 pub mod euler;
 pub mod foreign;
+pub mod heal;
 pub mod imprint;
 pub mod interrogate;
 pub mod lineage;

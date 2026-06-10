@@ -4128,3 +4128,36 @@ COUNTER: 119 -> 120/144 (item 68). THE REALISTIC TARGET BAND (110-120) IS NOW FU
 Remaining tractable: 10, 29, 31, 48-51, 54-60 (the blend deep end), 67, 130, 132 (+141/143
 pending slice-check). NEXT: 132 defeature (delete_face exists) and 130 gap-tighten are the
 moderate pair; 31 selective booleans; the blend family is the long tail.
+
+## Addendum 135 (2026-06-10, attended): HEALING + DEFEATURING (items 130, 132; 120 -> 122/144)
+
+DOSSIER 13 is the design source: healing = the three-phase skeleton "stitch, then simplify, then
+build geometry" with per-phase reporting; "defeaturing is delete-face plus heal ... the same
+toolkit, so build it once". New crates/keel-topo/src/heal.rs.
+
+130 HEAL / GAP-TIGHTEN: Body::heal(tol) -> HealReport { vertices_merged, edges_glued,
+surfaces_recovered, curves_recovered }. Phase 1 = the stitch-phase vertex-gap + edge-gap closing
+(merge_and_glue_imported, now pub(crate), applied IN PLACE -- the dossier's gap taxonomy);
+phase 2 = M8 simplify (canonical recognition). Phase 3 (geometry rebuild by re-intersection /
+surface extension) is the documented follow-up, exactly the dossier ordering. Test: a box face
+re-coated with its exact item-137 NURBS heals back to analytic, volume preserved.
+
+132 DEFEATURE SMALL HOLES: Body::defeature_small_holes(max_area) removes small holes by EXACT
+SURGERY, no boolean: a small inner ring with FREE edges (a punched sheet) is deleted outright
+(the host plane already covers the hole -- removing the trim extends the face); a WALLED small
+ring (solid through/blind hole) floods its wall faces (terminating at ring-bearing host faces,
+capped at 32; escape -> decline) and deletes them, which frees the opposite ring for the first
+rule. Shell genus is restamped from chi = V - E + F - rings per shell (the Addendum-129
+formula). HONESTY GATES: the surgery runs on a CLONE and commits only if validate() passes and
+(planar solids) mass == mesh; volume bound documented. Oracles: the genus-1 through-notch slab
+defeatures back to the EXACT plain slab (V8 E12 F6, genus 0, volume 2.0 mass == mesh); the
+punched sheet refills to area 16; a hole larger than max_area survives untouched. Blend/boss
+removal stays with the blend-family follow-ups (unblend needs extend-and-heal), stated in the
+module doc.
+
+CI: fmt, clippy -D warnings, workspace 123 geom + 77 math + 210 topo (+4) green. No fuzz:
+additive module; the only boolean.rs change is merge_and_glue_imported visibility.
+
+COUNTER: 120 -> 122/144 (items 130, 132). Remaining tractable: 10, 29, 31, 48-51, 54-60 (the
+blend deep end, ~11 items), 67, (141/143 pending slice-check). Excluded ~15. NEXT: 31 selective
+booleans or 10 body-from-geometry, then the blend family is the last big chunk.
