@@ -5151,4 +5151,4 @@ difference 8, union 24, all to 1e-9 and valid; disjoint union 32 and disjoint in
 declines; crossing sheets decline.
 
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 241 (+1) green; fuzz_boolean soak (the
-pre-pass fix changes coincident boolean internals): 10 minutes, count below.
+pre-pass fix changes coincident boolean internals): 10 minutes, 662 runs, clean.
