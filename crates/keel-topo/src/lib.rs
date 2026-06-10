@@ -13,6 +13,8 @@ pub mod boolean;
 pub mod chamfer;
 pub mod coincident;
 pub mod construct;
+pub mod convert;
+pub mod cosmetic;
 pub mod entity;
 pub mod euler;
 pub mod foreign;

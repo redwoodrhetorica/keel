@@ -39,6 +39,146 @@ impl Body {
     pub fn from_json(s: &str) -> Result<Body, serde_json::Error> {
         serde_json::from_str(s)
     }
+
+    /// Save at a chosen FORMAT VERSION (item 128, read-old-write-target).
+    /// Version 1 is the bare item-126 body document (so older readers
+    /// keep working); version 2 wraps it in a self-describing envelope.
+    /// An unsupported target is an honest error, never a silent fallback.
+    pub fn save_versioned(&self, target_version: u32) -> Result<String, SaveError> {
+        match target_version {
+            1 => self.to_json().map_err(SaveError::Serde),
+            2 => {
+                let doc = VersionedDoc {
+                    keel_save_version: 2,
+                    body: self.clone(),
+                };
+                serde_json::to_string(&doc).map_err(SaveError::Serde)
+            }
+            v => Err(SaveError::UnsupportedVersion(v)),
+        }
+    }
+
+    /// Load any supported save version (item 128): a version-2 envelope,
+    /// or a bare version-1 document (everything item 126 ever wrote).
+    /// A document stamped with a NEWER version than this build supports
+    /// errs honestly instead of misreading it.
+    pub fn load_versioned(s: &str) -> Result<Body, SaveError> {
+        if let Ok(doc) = serde_json::from_str::<VersionedDoc>(s) {
+            if doc.keel_save_version > SAVE_FORMAT_VERSION {
+                return Err(SaveError::UnsupportedVersion(doc.keel_save_version));
+            }
+            return Ok(doc.body);
+        }
+        Body::from_json(s).map_err(SaveError::Serde)
+    }
+}
+
+/// Newest save format this build writes (item 128).
+pub const SAVE_FORMAT_VERSION: u32 = 2;
+
+/// The version-2 save envelope: a version stamp plus the body document.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct VersionedDoc {
+    keel_save_version: u32,
+    body: Body,
+}
+
+/// Versioned save/load errors (item 128).
+#[derive(Debug)]
+pub enum SaveError {
+    Serde(serde_json::Error),
+    UnsupportedVersion(u32),
+}
+
+/// Session precision configuration (item 113): the session-level knobs
+/// that default every tolerance-taking operation run through a
+/// [`Session`]. Per-entity local tolerances (tolerant edges, 110-112)
+/// override these locally; this is the SESSION layer of the precision
+/// stack.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SessionConfig {
+    /// Default linear tolerance for booleans/imprints/knits.
+    pub linear_tolerance: f64,
+    /// Default angular tolerance (radians) for tangency/parallel tests.
+    pub angular_tolerance: f64,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            linear_tolerance: 1e-7,
+            angular_tolerance: 1e-9,
+        }
+    }
+}
+
+/// A modeling session (item 122): the start/stop/configure container
+/// that owns partitions (item 123) and the session precision config
+/// (item 113). Operations run through the session pick up its
+/// configured tolerances; `stop` hands the partitions back for
+/// persistence.
+#[derive(Clone, Debug, Default)]
+pub struct Session {
+    config: SessionConfig,
+    partitions: Vec<crate::partition::Partition>,
+}
+
+impl Session {
+    /// Start a session with the given configuration.
+    pub fn start(config: SessionConfig) -> Self {
+        Self {
+            config,
+            partitions: Vec::new(),
+        }
+    }
+
+    pub fn config(&self) -> &SessionConfig {
+        &self.config
+    }
+
+    /// Reconfigure the running session (item 122 "configure"); rejects
+    /// non-finite or non-positive tolerances.
+    pub fn configure(&mut self, config: SessionConfig) -> Result<(), TopoError> {
+        let ok = config.linear_tolerance.is_finite()
+            && config.linear_tolerance > 0.0
+            && config.angular_tolerance.is_finite()
+            && config.angular_tolerance > 0.0;
+        if !ok {
+            return Err(TopoError::Precondition("configure: bad tolerances"));
+        }
+        self.config = config;
+        Ok(())
+    }
+
+    /// Create a new (empty) partition owned by this session.
+    pub fn new_partition(&mut self) -> usize {
+        self.partitions.push(crate::partition::Partition::new());
+        self.partitions.len() - 1
+    }
+
+    pub fn partition(&self, id: usize) -> Option<&crate::partition::Partition> {
+        self.partitions.get(id)
+    }
+
+    pub fn partition_mut(&mut self, id: usize) -> Option<&mut crate::partition::Partition> {
+        self.partitions.get_mut(id)
+    }
+
+    /// Boolean through the session: the session's configured linear
+    /// tolerance is the boolean tolerance (item 113 in action).
+    pub fn boolean(
+        &self,
+        a: &Body,
+        b: &Body,
+        op: crate::boolean::BoolOp,
+    ) -> Result<crate::boolean::BoolResult, crate::boolean::BoolFault> {
+        crate::boolean::boolean(a, b, op, self.config.linear_tolerance)
+    }
+
+    /// Stop the session, handing back its partitions for persistence.
+    pub fn stop(self) -> Vec<crate::partition::Partition> {
+        self.partitions
+    }
 }
 
 /// Site addressing by VALUE (EntityIds): keys are transient, ids are
@@ -198,6 +338,75 @@ fn apply(b: &mut Body, op: &OpDescriptor) -> Result<(), TopoError> {
 mod tests {
     use super::*;
     use crate::entity::AnyKey;
+
+    #[test]
+    fn session_lifecycle_and_precision() {
+        // Items 122 + 113: start/configure/stop, with the configured
+        // linear tolerance flowing into a session-run boolean.
+        use crate::boolean::BoolOp;
+        let mut s = Session::start(SessionConfig::default());
+        assert_eq!(s.config().linear_tolerance, 1e-7);
+        s.configure(SessionConfig {
+            linear_tolerance: 1e-6,
+            angular_tolerance: 1e-8,
+        })
+        .unwrap();
+        assert!(
+            s.configure(SessionConfig {
+                linear_tolerance: f64::NAN,
+                angular_tolerance: 1e-9,
+            })
+            .is_err(),
+            "non-finite tolerance must be rejected"
+        );
+        let pid = s.new_partition();
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::new(1.0, 0.5, 0.5), 2.0, 2.0, 2.0).unwrap();
+        let res = s.boolean(&a, &b, BoolOp::Union).unwrap();
+        let v = res.body.mass_properties().unwrap().volume;
+        // Transversal corner overlap: 8 + 8 - 1*1.5*1.5 = 13.75.
+        assert!(
+            (v - 13.75).abs() < 1e-6,
+            "session union volume {v} != 13.75"
+        );
+        s.partition_mut(pid).unwrap().add(res.body);
+        let parts = s.stop();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].bodies().len(), 1);
+    }
+
+    #[test]
+    fn versioned_save_reads_old_writes_target() {
+        // Item 128: v1 (bare item-126 doc) and v2 (envelope) both load;
+        // a v1 written today is readable by the OLD reader (from_json);
+        // a FUTURE version errs honestly.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 1.0, 2.0, 3.0).unwrap();
+        let want = b.mass_properties().unwrap().volume;
+
+        let v1 = b.save_versioned(1).unwrap();
+        let old_reader = Body::from_json(&v1).unwrap();
+        assert!((old_reader.mass_properties().unwrap().volume - want).abs() < 1e-12);
+        let from_v1 = Body::load_versioned(&v1).unwrap();
+        assert!((from_v1.mass_properties().unwrap().volume - want).abs() < 1e-12);
+
+        let v2 = b.save_versioned(2).unwrap();
+        let from_v2 = Body::load_versioned(&v2).unwrap();
+        assert!((from_v2.mass_properties().unwrap().volume - want).abs() < 1e-12);
+        assert!(from_v2.validate().is_ok());
+
+        assert!(matches!(
+            b.save_versioned(99),
+            Err(SaveError::UnsupportedVersion(99))
+        ));
+        let future = v2.replacen("\"keel_save_version\":2", "\"keel_save_version\":3", 1);
+        assert!(matches!(
+            Body::load_versioned(&future),
+            Err(SaveError::UnsupportedVersion(3))
+        ));
+    }
 
     /// Drive the cube construction while writing a journal by hand
     /// (the constructor-integrated journaling lands with Task 8's

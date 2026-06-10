@@ -3964,3 +3964,60 @@ clears it); 139 cosmetic threads over the attribute system; 137 convert-to-NURBS
 facet output exists as render_mesh_tol; tick with the documented API + test); then the heavier
 28 sheet-solid booleans / 31 selective booleans / 80 / 138 / 140 / 142, and blend depth 48-51,
 54-60 last.
+
+## Addendum 131 (2026-06-10, attended): PARITY BREADTH WAVE 2 -- items 94, 113, 122, 128, 137,
+139 (108 -> 114/144) + XNURBS PATENT RE-EVALUATION
+
+PATENT RE-EVALUATION (user request): the worry that XNurbs-style functionality is patent-gated
+does not match the record. (1) No Keel document ever fenced it: the D10/dossier-18 fences are
+Siemens convergent/mesh (86-93), Siemens Synchronous Technology variational DIRECT-EDITING
+(US 9,235,659 + family: constraint inference among faces during push/pull, a different
+technology that shares the word "variational"), and Coreform U-splines. (2) Dossier 32 already
+designates the XNurbs-equivalent as Keel's design target on PRE-1995 prior art: Celniker-Gossard
+1991, Welch-Witkin 1992 (sec 3.3: "the closest published analog to the XNURBS core and the
+reference design for Keel's variational surfacer"), Moreton-Sequin, Greiner; OCCT ships LGPL
+energy-minimizing constrained filling (GeomPlate) as living prior art. CONCLUSION: the
+variational surfacer (fairness matrix + constraint rows + sparse solve, dossier 32 sec 4) is
+patent-clear; it is the natural engine for item 68 (n-sided boundary surface) and later 67
+(loft with continuity). Queued.
+
+WAVE 2 SHIPPED (branch parity-breadth-2), six ticks (dossier 25 rows; sec 16/19/22 language):
+- 122 SESSIONS + 113 PRECISION CONTROL (session.rs): Session::start/configure/stop owning
+  partitions (123) and a SessionConfig { linear_tolerance, angular_tolerance } that genuinely
+  DEFAULTS session-run operations (Session::boolean uses it); configure rejects non-finite/
+  non-positive tolerances. Per-entity tolerant edges (110-112) remain the local override layer.
+  DATA POINT recorded: a coincident-overlap union (shared y/z planes) DECLINES at tol 1e-6 while
+  passing at the default 1e-7 -- the coincident pre-pass is tolerance-sensitive; transversal
+  cases pass at both. Known limitation, not pursued (the session test uses a transversal pair).
+- 128 VERSION CONTROL (session.rs): save_versioned(target)/load_versioned with a v2 envelope
+  { keel_save_version, body } over the bare v1 item-126 document. Read-old (v1 bare and v2 both
+  load), write-target (v1 emitted for old readers, verified readable by from_json), and a
+  FUTURE-stamped document errs honestly (UnsupportedVersion) instead of misreading.
+- 137 CONVERT TO NURBS (new keel-geom convert.rs + keel-topo convert.rs): the FORWARD direction
+  of M8 recover. Exact rational forms: plane bilinear; cylinder/cone bands, sphere, torus via
+  revolve_full (NURBS Book ch 8); curves line/circle/ellipse (ellipse = affine map of the
+  rational unit arc, weights unchanged). Body::face_to_nurbs derives bounds from the face
+  (plane: outer-loop frame bbox; cyl/cone: loop height range; sphere/torus: full closed).
+  Round-trip test: barrel -> exact NURBS band -> recover_surface certifies the cylinder again at
+  1e-9. GOTCHA fixed: loop_polygon's closed-circle fallback returns ONE rim's samples for a
+  2-vertex barrel loop, so face_to_nurbs also gathers the raw loop vertices for the height range.
+- 139 COSMETIC THREADS (new cosmetic.rs): CosmeticThread { designation, pitch, depth,
+  right_handed } stored under reserved keel.thread.* attribute keys -- exactly Parasolid's
+  carry-as-attributes model (dossier 25 sec 22), riding items 117-121 for typing/propagation and
+  126 for persistence (round-trip tested). No thread geometry, by design.
+- 94 TESSELLATE TO TOLERANCE (tessellate.rs): pub Body::facets(tol: Option<f64>) -- the body-
+  level facet product over the existing per-face tessellators (None = legacy density; Some =
+  the item-98 adaptive chord refinement). Test: sphere refines (more facets) and the facet
+  volume lands within 1% of 4pi/3 at 2e-4.
+
+CI: fmt, clippy -D warnings, workspace 118 geom + 77 math + 197 topo (+3, +7) green. No fuzz
+soak: additive APIs only (facets wraps tessellate_face_opt; Session::boolean delegates; no
+boolean/tessellation/imprint path modified).
+
+COUNTER: 108 -> 114/144 (items 94, 113, 122, 128, 137, 139). The realistic-target band (110-120)
+is now entered. NEXT (wave 3): 80 (deformation workflow via existing tweak/offset/taper, a
+composition tick), 138 (general topology replace: replace edge curve / vertex point to round out
+replace-surface), 140 (thread-safety contract + concurrent-query test), 142 (NURBS split/edit
+toolkit: split-at-param via knot insertion, the pieces exist), then the real engines: 28
+sheet-solid booleans, 31 selective booleans, 68 n-sided variational fill (now patent-cleared),
+130 healing, 132 defeaturing, blends 48/50/51.
