@@ -496,7 +496,7 @@ impl Body {
     /// A loop's boundary polygon: its fins' start vertices for a straight
     /// polygon (box faces), or the boundary circle sampled into points
     /// for a single closed-circle loop (disc caps, holes).
-    fn loop_polygon(&self, lk: crate::entity::LoopKey) -> Vec<Vec3> {
+    pub(crate) fn loop_polygon(&self, lk: crate::entity::LoopKey) -> Vec<Vec3> {
         use keel_geom::curve::Curve3;
         let mut verts: Vec<Vec3> = Vec::new();
         let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {

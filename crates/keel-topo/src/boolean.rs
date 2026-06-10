@@ -1601,6 +1601,49 @@ pub(crate) fn finalize_imported_assembly(
     // documented simplification; separate solid regions per disconnected wall
     // is a follow-up.)
     for comp in connected_face_components(&dst, &faces) {
+        // The component's own Euler characteristic decides the genus of
+        // its shell pair (kfmrh convention: both shells carry it; counts()
+        // sums shells / 2). A through-hole difference (slab minus an
+        // interior block) yields a genus-1 component whose freshly made
+        // shells would otherwise claim genus 0 and fail the Euler check.
+        // chi = V - E + sum_f(2 - loops(f)) = V - E + F - rings; for a
+        // closed orientable shell genus = (2 - chi) / 2.
+        let comp_genus: u32 = {
+            use std::collections::BTreeSet;
+            let mut vs: BTreeSet<crate::entity::VertexKey> = BTreeSet::new();
+            let mut es: BTreeSet<crate::entity::EdgeKey> = BTreeSet::new();
+            let mut rings = 0i64;
+            for &f in &comp {
+                let loops = dst
+                    .faces
+                    .get(f)
+                    .map(|x| x.loops.clone())
+                    .unwrap_or_default();
+                for lk in loops {
+                    if dst.loops.get(lk).map(|l| l.kind) == Some(crate::entity::LoopKind::Inner) {
+                        rings += 1;
+                    }
+                    let Some(entry) = dst.loops.get(lk).and_then(|l| l.fin) else {
+                        continue;
+                    };
+                    let mut cur = entry;
+                    let cap = dst.fins.len() + 1;
+                    for _ in 0..cap {
+                        let Some(fin) = dst.fins.get(cur) else { break };
+                        es.insert(fin.edge);
+                        if let Some(v) = dst.fin_start_vertex(cur) {
+                            vs.insert(v);
+                        }
+                        cur = fin.next;
+                        if cur == entry {
+                            break;
+                        }
+                    }
+                }
+            }
+            let chi = vs.len() as i64 - es.len() as i64 + comp.len() as i64 - rings;
+            ((2 - chi).max(0) / 2) as u32
+        };
         let v_front: f64 = comp
             .iter()
             .flat_map(|&f| dst.tessellate_face(f))
@@ -1624,6 +1667,7 @@ pub(crate) fn finalize_imported_assembly(
         let back_shell = dst.new_shell(&mut rec, solid, Derivation::Created);
         if let Some(s) = dst.shells.get_mut(back_shell) {
             s.faces = comp.iter().map(|&f| (f, Side::Back)).collect();
+            s.genus = comp_genus;
         }
         if let Some(r) = dst.regions.get_mut(solid) {
             r.shells.push(back_shell);
@@ -1631,6 +1675,7 @@ pub(crate) fn finalize_imported_assembly(
         let front_shell = dst.new_shell(&mut rec, front_region, Derivation::Created);
         if let Some(s) = dst.shells.get_mut(front_shell) {
             s.faces = comp.iter().map(|&f| (f, Side::Front)).collect();
+            s.genus = comp_genus;
         }
         if let Some(r) = dst.regions.get_mut(front_region) {
             r.shells.push(front_shell);
@@ -2010,6 +2055,112 @@ fn seg_curve(
 /// they form one: exactly two degree-1 endpoints, every interior node
 /// degree 2. Returns the ordered points end-to-end. A single segment is
 /// the trivial two-node chain.
+/// Partition a face's seam indices into connected components by
+/// open-endpoint adjacency (within `tol`). Closed seams stand alone.
+/// Component order and each component's member order follow the input
+/// (deterministic). Values are the global seam indices from `members`.
+fn seam_components(members: &[usize], seams: &[SeamCurve], tol: f64) -> Vec<Vec<usize>> {
+    let n = members.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(parent: &mut [usize], i: usize) -> usize {
+        let mut r = i;
+        while parent[r] != r {
+            r = parent[r];
+        }
+        let mut c = i;
+        while parent[c] != c {
+            let nx = parent[c];
+            parent[c] = r;
+            c = nx;
+        }
+        r
+    }
+    let eps: Vec<_> = members
+        .iter()
+        .map(|&i| curve_endpoints(&seams[i].curve))
+        .collect();
+    for i in 0..n {
+        if seams[members[i]].closed {
+            continue;
+        }
+        for j in (i + 1)..n {
+            if seams[members[j]].closed {
+                continue;
+            }
+            let (ai, bi) = eps[i];
+            let (aj, bj) = eps[j];
+            let touch = (ai - aj).norm() <= tol
+                || (ai - bj).norm() <= tol
+                || (bi - aj).norm() <= tol
+                || (bi - bj).norm() <= tol;
+            if touch {
+                let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
+                if ri != rj {
+                    parent[rj] = ri;
+                }
+            }
+        }
+    }
+    let mut comps: Vec<Vec<usize>> = Vec::new();
+    let mut slot_of_root: std::collections::BTreeMap<usize, usize> =
+        std::collections::BTreeMap::new();
+    for (i, &m) in members.iter().enumerate() {
+        let r = find(&mut parent, i);
+        let slot = *slot_of_root.entry(r).or_insert_with(|| {
+            comps.push(Vec::new());
+            comps.len() - 1
+        });
+        comps[slot].push(m);
+    }
+    comps
+}
+
+/// The current face of `body` whose PLANAR region contains `p`:
+/// on-plane within `tol`, and inside by 2D crossing number accumulated
+/// over ALL the face's loops (outer + inner rings, orientation-free).
+/// Used to relocate a seam component after an earlier component's
+/// imprint split its original face. Planar faces only; multi-component
+/// imprints on curved faces stay a fault.
+fn planar_face_containing(body: &Body, p: keel_math::vec::Vec3, tol: f64) -> Option<FaceKey> {
+    for fk in body.face_keys() {
+        let Some(Surface3::Plane(pl)) = body.face_surface3(fk) else {
+            continue;
+        };
+        if (p - pl.frame.origin).dot(pl.frame.z).abs() > tol {
+            continue;
+        }
+        let to2 = |q: keel_math::vec::Vec3| {
+            let w = q - pl.frame.origin;
+            (w.dot(pl.frame.x), w.dot(pl.frame.y))
+        };
+        let (px, py) = to2(p);
+        let mut inside = false;
+        let mut any_loop = false;
+        let Some(f) = body.faces.get(fk) else {
+            continue;
+        };
+        for &lk in &f.loops {
+            let poly = body.loop_polygon(lk);
+            if poly.len() < 3 {
+                continue;
+            }
+            any_loop = true;
+            let m = poly.len();
+            for k in 0..m {
+                let (x1, y1) = to2(poly[k]);
+                let (x2, y2) = to2(poly[(k + 1) % m]);
+                if (y1 > py) != (y2 > py) && px < x1 + (py - y1) * (x2 - x1) / (y2 - y1) {
+                    inside = !inside;
+                }
+            }
+        }
+        if any_loop && inside {
+            return Some(fk);
+        }
+    }
+    None
+}
+
 fn assemble_open_chain(
     segs: &[(keel_math::vec::Vec3, keel_math::vec::Vec3)],
     tol: f64,
@@ -2536,53 +2687,86 @@ fn imprint_operand(
             }
             members = keep;
         }
-        let eps: Vec<(Vec3, Vec3)> = members
-            .iter()
-            .map(|&i| curve_endpoints(&seams[i].curve))
-            .collect();
-        // A single, already-closed curve. A sphere/planar SSI circle is
-        // interior to its face (ring imprint); a cylinder SSI circle
-        // wraps the lateral face and crosses its seam line (crossing
-        // imprint).
-        if members.len() == 1 && seams[members[0]].closed {
-            let curve = &seams[members[0]].curve;
-            let res = if working.closed_curve_crosses_boundary(face, curve, tol) {
-                working.imprint_closed_curve_crossing(face, curve, tol)
-            } else {
-                working.imprint_closed_curve(face, curve, tol)
-            };
-            match res {
-                Ok(rep) => seam_edges.push(rep.edge),
-                Err(e) => faults.push(BoolFault::Topo(e)),
-            }
-            continue;
-        }
-        // Segments forming one closed loop interior to the face: ring.
-        if let Some(nodes) = assemble_closed_loop(&eps, tol)
-            && let Some(ring) = closed_polyline_nurbs(&nodes)
-        {
-            match working.imprint_closed_curve(face, &keel_geom::curve::Curve3::Nurbs(ring), tol) {
-                Ok(rep) => {
-                    // Match the OTHER operand's per-face open-edge seam
-                    // subdivision (file 47): split this closed ring at its
-                    // corners so the seam coedges can pair at stitch time.
-                    let subdiv = subdivide_seam_ring(&mut working, rep.edge, &nodes, tol);
-                    seam_edges.extend(subdiv);
+        // Partition the face's deduped seams into connected components
+        // (open-endpoint adjacency within etol; closed seams stand
+        // alone). A face cut by two parallel tool planes carries two
+        // DISJOINT open chains -- e.g. each wall of a block pushed
+        // through a slab (the interior through-notch) is cut by the
+        // slab's top AND bottom: neither one closed loop nor one open
+        // chain, so the old single-assembly dispatch faulted and the
+        // wall never split. Components imprint sequentially; an earlier
+        // split may strand a later component on a descendant piece of
+        // `face`, so each later component is relocated onto the planar
+        // face that now contains it.
+        let comps = seam_components(&members, seams, etol);
+        let multi = comps.len() > 1;
+        for comp in comps {
+            let target = if multi {
+                let probe = curve_point(&seams[comp[0]].curve, 0.5);
+                match planar_face_containing(&working, probe, etol) {
+                    Some(fk) => fk,
+                    None => {
+                        faults.push(BoolFault::AssemblyFailed(
+                            "unlocated seam component (non-planar multi-cut face)",
+                        ));
+                        continue;
+                    }
                 }
-                Err(e) => faults.push(BoolFault::Topo(e)),
+            } else {
+                face
+            };
+            let eps: Vec<(Vec3, Vec3)> = comp
+                .iter()
+                .map(|&i| curve_endpoints(&seams[i].curve))
+                .collect();
+            // A single, already-closed curve. A sphere/planar SSI circle is
+            // interior to its face (ring imprint); a cylinder SSI circle
+            // wraps the lateral face and crosses its seam line (crossing
+            // imprint).
+            if comp.len() == 1 && seams[comp[0]].closed {
+                let curve = &seams[comp[0]].curve;
+                let res = if working.closed_curve_crosses_boundary(target, curve, tol) {
+                    working.imprint_closed_curve_crossing(target, curve, tol)
+                } else {
+                    working.imprint_closed_curve(target, curve, tol)
+                };
+                match res {
+                    Ok(rep) => seam_edges.push(rep.edge),
+                    Err(e) => faults.push(BoolFault::Topo(e)),
+                }
+                continue;
             }
-            continue;
-        }
-        // An open chain (single segment, or a corner-overlap L): split
-        // the face boundary-to-boundary through any interior corners.
-        if let Some(chain) = assemble_open_chain(&eps, etol) {
-            match working.imprint_open_chain(face, &chain, tol) {
-                Ok(es) => seam_edges.extend(es),
-                Err(e) => faults.push(BoolFault::Topo(e)),
+            // Segments forming one closed loop interior to the face: ring.
+            if let Some(nodes) = assemble_closed_loop(&eps, tol)
+                && let Some(ring) = closed_polyline_nurbs(&nodes)
+            {
+                match working.imprint_closed_curve(
+                    target,
+                    &keel_geom::curve::Curve3::Nurbs(ring),
+                    tol,
+                ) {
+                    Ok(rep) => {
+                        // Match the OTHER operand's per-face open-edge seam
+                        // subdivision (file 47): split this closed ring at its
+                        // corners so the seam coedges can pair at stitch time.
+                        let subdiv = subdivide_seam_ring(&mut working, rep.edge, &nodes, tol);
+                        seam_edges.extend(subdiv);
+                    }
+                    Err(e) => faults.push(BoolFault::Topo(e)),
+                }
+                continue;
             }
-            continue;
+            // An open chain (single segment, or a corner-overlap L): split
+            // the face boundary-to-boundary through any interior corners.
+            if let Some(chain) = assemble_open_chain(&eps, etol) {
+                match working.imprint_open_chain(target, &chain, tol) {
+                    Ok(es) => seam_edges.extend(es),
+                    Err(e) => faults.push(BoolFault::Topo(e)),
+                }
+                continue;
+            }
+            faults.push(BoolFault::AssemblyFailed("unassembled face seams"));
         }
-        faults.push(BoolFault::AssemblyFailed("unassembled face seams"));
     }
     // Tolerant-edge contract (M7b): the imprinted seam edges carry the
     // SSI curve's certified error bound, propagated to their vertices.
@@ -2779,6 +2963,58 @@ mod tests {
         b.cylinder(Frame3::from_z(base, Vec3::new(0., 0., 1.)).unwrap(), r, h)
             .unwrap();
         b
+    }
+
+    #[test]
+    fn through_notch_difference_is_genus_one() {
+        // Interior THROUGH-hole difference: a 2x2x0.5 slab minus a
+        // 0.5x0.5 block piercing it completely. Exercises two fixes:
+        // (1) multi-component imprint -- each tool wall is cut by the
+        // slab's top AND bottom into two DISJOINT segments (neither one
+        // closed loop nor one open chain), imprinted per component with
+        // planar relocation; (2) component-genus stamping in
+        // finalize_imported_assembly -- the result is ONE genus-1 shell
+        // pair (V16 E24 F10 R2: 16-24+10-2 = 0 = 2(1-1)).
+        let a = block(Vec3::new(0., 0., -0.25), Vec3::new(2., 2., 0.5));
+        let b = block(Vec3::new(0.75, 0.75, -0.5), Vec3::new(0.5, 0.5, 1.0));
+        let res = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
+        assert!(
+            res.body.validate().is_ok(),
+            "through-notch slab invalid: {:?}",
+            res.body.validate()
+        );
+        assert!(res.faults.is_empty(), "faults: {:?}", res.faults);
+        let c = res.body.counts();
+        assert_eq!((c.v, c.e, c.f), (16, 24, 10), "through-hole counts");
+        assert_eq!(c.inner_rings, 2, "ring on top and bottom");
+        assert_eq!(c.genus, 1, "a through-hole is genus 1");
+        let v = res.body.mass_properties().unwrap().volume;
+        let mv = res.body.mesh_volume();
+        let want = 2.0 - 0.5 * 0.5 * 0.5;
+        assert!(
+            (v - want).abs() < 1e-9 && (mv - want).abs() < 1e-9,
+            "through-notch volume must be {want} with mass == mesh (got mass {v}, mesh {mv})"
+        );
+    }
+
+    #[test]
+    fn through_notch_intersection_is_core() {
+        // Same operands, Intersection: the tool clipped to the slab's
+        // z-range, an ordinary 0.5 x 0.5 x 0.5 box (genus 0). Checks the
+        // multi-component imprint feeds the other select branches too.
+        let a = block(Vec3::new(0., 0., -0.25), Vec3::new(2., 2., 0.5));
+        let b = block(Vec3::new(0.75, 0.75, -0.5), Vec3::new(0.5, 0.5, 1.0));
+        let res = boolean(&a, &b, BoolOp::Intersection, 1e-7).unwrap();
+        assert!(res.body.validate().is_ok(), "core invalid");
+        assert!(res.faults.is_empty(), "faults: {:?}", res.faults);
+        let c = res.body.counts();
+        assert_eq!((c.v, c.e, c.f), (8, 12, 6), "core is a box");
+        let v = res.body.mass_properties().unwrap().volume;
+        let mv = res.body.mesh_volume();
+        assert!(
+            (v - 0.125).abs() < 1e-9 && (mv - 0.125).abs() < 1e-9,
+            "core volume must be 0.125 with mass == mesh (got mass {v}, mesh {mv})"
+        );
     }
 
     #[test]
