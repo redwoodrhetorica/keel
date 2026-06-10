@@ -420,7 +420,33 @@ impl Body {
         let mut heights = self.cyl_circle_heights(face, origin, ez);
         let v_apex = -cone.radius / slope;
         if heights.len() < 2 {
-            heights.push(v_apex);
+            // No (or one) circle rim: take the band from the RAW
+            // boundary vertex heights (a vertex-bounded cone patch like
+            // the item-48 variable-radius blend face, or a pole-reaching
+            // revolve cone whose pole vertex bounds the seam edge). The
+            // raw edge bounds, NOT loop_polygon, whose closed-circle
+            // fallback would return only rim samples and lose the pole.
+            for lk in self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default()
+            {
+                for e in self.ring_edges(lk) {
+                    if let Some(ed) = self.edges.get(e) {
+                        for v in [ed.bounds.0, ed.bounds.1] {
+                            if let Some(p) = self.vertices.get(v).map(|x| x.point) {
+                                heights.push((p - origin).dot(ez));
+                            }
+                        }
+                    }
+                }
+            }
+            let hl = heights.iter().cloned().fold(f64::INFINITY, f64::min);
+            let hh = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            if heights.len() < 2 || hh - hl <= 1e-12 {
+                heights.push(v_apex);
+            }
         }
         if heights.len() < 2 {
             return Vec::new();
@@ -434,6 +460,26 @@ impl Body {
         // has no closed circle edge -> trim to its boundary's phi span,
         // exactly as the cylinder lateral does.
         let (plo, phi_hi) = self.cyl_angular_span(face, origin, ex, ey, ez);
+        // A cone patch bounded by two ELLIPSE arcs (the variable-radius
+        // blend face, item 48) ends on TILTED cap planes, not constant-
+        // height circles: clamp each ruling to its exact cap-plane
+        // intersections (pt(phi, v) is linear in v, so each cap is a
+        // scalar linear solve) so the band meets the caps watertight.
+        let mut cap_planes: Vec<(Vec3, Vec3)> = Vec::new();
+        for lk in self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default()
+        {
+            for e in self.ring_edges(lk) {
+                if let Some((ck, _)) = self.edges.get(e).and_then(|x| x.curve)
+                    && let Some(keel_geom::curve::Curve3::Ellipse(el)) = self.curves.get(ck)
+                {
+                    cap_planes.push((el.center, el.x_axis.cross(el.y_axis)));
+                }
+            }
+        }
         const NV: usize = 16;
         // Adaptive angular count (item 98) from the cone's LARGEST band
         // radius and the angular span; the slant (NV) stays fixed (linear).
@@ -442,17 +488,37 @@ impl Body {
         let pt = |phi: f64, v: f64| -> Vec3 {
             origin + (ex * phi.cos() + ey * phi.sin()) * r_at(v) + ez * v
         };
+        // Per-ruling height bounds: the legacy constant band, or the
+        // exact cap-plane intersections for the two-ellipse blend patch
+        // (pt(phi, v) is linear in v, so each cap is a linear solve).
+        let ruling_band = |phi: f64| -> (f64, f64) {
+            if cap_planes.len() != 2 {
+                return (hlo, hhi);
+            }
+            let radial = ex * phi.cos() + ey * phi.sin();
+            let mut hs = [0.0f64; 2];
+            for (k, (q, n)) in cap_planes.iter().enumerate() {
+                let base = (origin + radial * cone.radius - *q).dot(*n);
+                let dv = (radial * slope + ez).dot(*n);
+                if dv.abs() < 1e-12 {
+                    return (hlo, hhi);
+                }
+                hs[k] = -base / dv;
+            }
+            (hs[0].min(hs[1]), hs[0].max(hs[1]))
+        };
         let mut tris = Vec::new();
-        for i in 0..NV {
-            let v0 = hlo + (hhi - hlo) * i as f64 / NV as f64;
-            let v1 = hlo + (hhi - hlo) * (i + 1) as f64 / NV as f64;
-            for j in 0..np {
-                let p0 = plo + (phi_hi - plo) * j as f64 / np as f64;
-                let p1 = plo + (phi_hi - plo) * (j + 1) as f64 / np as f64;
-                let a = pt(p0, v0);
-                let b = pt(p0, v1);
-                let c = pt(p1, v1);
-                let d = pt(p1, v0);
+        for j in 0..np {
+            let p0 = plo + (phi_hi - plo) * j as f64 / np as f64;
+            let p1 = plo + (phi_hi - plo) * (j + 1) as f64 / np as f64;
+            let (l0, h0) = ruling_band(p0);
+            let (l1, h1) = ruling_band(p1);
+            for i in 0..NV {
+                let (f0, f1) = (i as f64 / NV as f64, (i + 1) as f64 / NV as f64);
+                let a = pt(p0, l0 + (h0 - l0) * f0);
+                let b = pt(p0, l0 + (h0 - l0) * f1);
+                let c = pt(p1, l1 + (h1 - l1) * f1);
+                let d = pt(p1, l1 + (h1 - l1) * f0);
                 let rad = |q: Vec3| -> Vec3 {
                     let w = q - origin;
                     (w - ez * w.dot(ez)) * sgn
@@ -575,6 +641,41 @@ impl Body {
                     for k in 1..seg {
                         verts.push(c.point(ts + d * (k as f64 / seg as f64)));
                     }
+                }
+            }
+            // Open ELLIPSE arc edges (the variable-radius fillet's cap
+            // sections, item 48): sample the short span so the polygon
+            // follows the conic, not its chord.
+            if let Some(fin) = self.fins.get(cur)
+                && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                && let Some(Curve3::Ellipse(el)) = self.curves.get(ck)
+                && self.edges.get(fin.edge).map(|e| !e.is_closed()) == Some(true)
+                && let (Some(ps), Some(pe)) = (
+                    self.fin_start_vertex(cur)
+                        .and_then(|v| self.vertices.get(v))
+                        .map(|v| v.point),
+                    self.fin_end_vertex(cur)
+                        .and_then(|v| self.vertices.get(v))
+                        .map(|v| v.point),
+                )
+            {
+                let el = *el;
+                let ang = |p: Vec3| {
+                    let w = p - el.center;
+                    (w.dot(el.y_axis) / el.b).atan2(w.dot(el.x_axis) / el.a)
+                };
+                let ts = ang(ps);
+                let mut d = ang(pe) - ts;
+                let pi = core::f64::consts::PI;
+                while d > pi {
+                    d -= core::f64::consts::TAU;
+                }
+                while d <= -pi {
+                    d += core::f64::consts::TAU;
+                }
+                let seg = ((d.abs() * 8.0 / pi).ceil() as usize).max(8);
+                for k in 1..seg {
+                    verts.push(el.point(ts + d * (k as f64 / seg as f64)));
                 }
             }
             let Some(next) = self.fins.get(cur).map(|f| f.next) else {

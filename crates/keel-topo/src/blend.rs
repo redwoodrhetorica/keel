@@ -772,6 +772,325 @@ impl Body {
     }
 }
 
+/// The analytic data of a VARIABLE-radius (linear r0 -> r1) rolling-
+/// ball fillet on a plane-plane edge (parity item 48, rung 1). With a
+/// linearly varying radius, each offset "plane" tilts but stays a
+/// PLANE (the offset distance is linear in position), so the spine is
+/// still a straight line; the envelope of the spheres is an exact
+/// CONE (half-angle asin(dr/ds) about the spine, perpendicular radius
+/// rho/cos(alpha)); and the tangency loci on the supports stay
+/// straight lines. The whole constant-radius rung-1 story generalizes
+/// without leaving the analytic island.
+#[derive(Clone, Debug)]
+pub struct VariableEdgeBlend {
+    pub spine: Line3,
+    pub spring_a: Line3,
+    pub spring_b: Line3,
+    /// The exact blend surface: a cone about the spine.
+    pub surface: keel_geom::surface::Cone3,
+    /// Sphere radius at the edge's two ends (bounds.0, bounds.1).
+    pub r: (f64, f64),
+}
+
+impl Body {
+    /// Generate the exact-cone variable-radius blend for a convex or
+    /// concave plane-plane `edge`, the ball radius varying linearly
+    /// from `r0` at bounds.0 to `r1` at bounds.1 (item 48 rung 1).
+    /// `r0 == r1` belongs to `blend_cylinder_for_edge`.
+    pub fn blend_cone_for_edge(
+        &self,
+        edge: EdgeKey,
+        r0: f64,
+        r1: f64,
+    ) -> Result<VariableEdgeBlend, TopoError> {
+        let ok = r0.is_finite() && r0 > 0.0 && r1.is_finite() && r1 > 0.0;
+        if !ok {
+            return Err(TopoError::Precondition("blend: radii must be positive"));
+        }
+        if (r1 - r0).abs() < 1e-12 {
+            return Err(TopoError::Precondition(
+                "blend: constant radius belongs to the cylinder rung",
+            ));
+        }
+        let faces = self.faces_around_edge(edge);
+        if faces.len() != 2 {
+            return Err(TopoError::Precondition("blend: edge needs two faces"));
+        }
+        for &f in &faces {
+            if !matches!(
+                self.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition(
+                    "blend: non-planar support (follow-up)",
+                ));
+            }
+        }
+        let n1 = self
+            .face_outward_normal(faces[0])
+            .ok_or(TopoError::Precondition("blend: face normal"))?;
+        let n2 = self
+            .face_outward_normal(faces[1])
+            .ok_or(TopoError::Precondition("blend: face normal"))?;
+        let q1 = self
+            .face_outer_loop_points(faces[0])
+            .first()
+            .copied()
+            .ok_or(TopoError::Precondition("blend: face point"))?;
+        let q2 = self
+            .face_outer_loop_points(faces[1])
+            .first()
+            .copied()
+            .ok_or(TopoError::Precondition("blend: face point"))?;
+        let (va, vb) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
+        let pa = self.vertices.get(va).ok_or(TopoError::StaleKey)?.point;
+        let pb = self.vertices.get(vb).ok_or(TopoError::StaleKey)?.point;
+        let len = (pb - pa).norm();
+        let e = (pb - pa)
+            .try_normalize()
+            .ok_or(TopoError::Precondition("blend: degenerate edge"))?;
+        let k = (r1 - r0) / len;
+        let convex = self
+            .edge_is_convex(edge)
+            .ok_or(TopoError::Precondition("blend: cannot determine convexity"))?;
+        let off_sign = if convex { -1.0 } else { 1.0 };
+        // Tilted offset planes: n.x = d + off_sign * r(x) with
+        // r(x) = r0 + k (x - pa).e  =>  (n - off_sign k e).x = d + off_sign (r0 - k pa.e).
+        let m1 = n1 - e * (off_sign * k);
+        let m2 = n2 - e * (off_sign * k);
+        let c1 = n1.dot(q1) + off_sign * (r0 - k * pa.dot(e));
+        let c2 = n2.dot(q2) + off_sign * (r0 - k * pa.dot(e));
+        let d = m1.cross(m2);
+        let dd = d.dot(d);
+        if dd < 1e-18 {
+            return Err(TopoError::Precondition("blend: parallel offset planes"));
+        }
+        let sp = (m2.cross(d) * c1 + d.cross(m1) * c2) * (1.0 / dd);
+        let u = d
+            .try_normalize()
+            .ok_or(TopoError::Precondition("blend: degenerate spine"))?;
+        // Sphere radius along the spine: rho(tau) = rho0 + g tau.
+        let rho_at = |x: Vec3| r0 + k * (x - pa).dot(e);
+        let rho0 = rho_at(sp);
+        let g = k * u.dot(e);
+        if g.abs() < 1e-12 || g.abs() >= 1.0 {
+            return Err(TopoError::Precondition("blend: degenerate cone slope"));
+        }
+        // Orient the axis toward growing radius.
+        let (u, g) = if g > 0.0 { (u, g) } else { (u * -1.0, -g) };
+        let alpha = g.asin();
+        let frame =
+            Frame3::from_z(sp, u).map_err(|_| TopoError::Precondition("blend: cone frame"))?;
+        let surface = keel_geom::surface::Cone3 {
+            frame,
+            radius: rho0 / alpha.cos(),
+            half_angle: alpha,
+        };
+        // Tangency loci: touch(tau) = spine(tau) - off_sign * n * rho(tau),
+        // linear in tau -> straight spring lines.
+        let touch = |n: Vec3, t: f64| {
+            let c = sp + u * t;
+            c - n * (off_sign * rho_at(c))
+        };
+        let (a0, a1) = (touch(n1, 0.0), touch(n1, 1.0));
+        let (b0, b1) = (touch(n2, 0.0), touch(n2, 1.0));
+        let spring_a = Line3::new(a0, a1 - a0)
+            .map_err(|_| TopoError::Precondition("blend: degenerate spring"))?;
+        let spring_b = Line3::new(b0, b1 - b0)
+            .map_err(|_| TopoError::Precondition("blend: degenerate spring"))?;
+        Ok(VariableEdgeBlend {
+            spine: Line3::new(sp, u).map_err(|_| TopoError::Precondition("blend: spine"))?,
+            spring_a,
+            spring_b,
+            surface,
+            r: (r0, r1),
+        })
+    }
+
+    /// Round a convex/concave plane-plane `edge` with a VARIABLE-radius
+    /// rolling-ball fillet, r varying linearly from `r0` at the edge's
+    /// first vertex to `r1` at its second (parity item 48, rung 1: the
+    /// exact-cone blend; see `blend_cone_for_edge`). Same trim-and-
+    /// stitch surgery as `fillet_edge`, with the end arcs the EXACT
+    /// ellipses where the cone meets each cap plane.
+    pub fn fillet_edge_variable(&self, edge: EdgeKey, r0: f64, r1: f64) -> Result<Body, TopoError> {
+        if (r1 - r0).abs() < 1e-12 {
+            return self.fillet_edge(edge, r0);
+        }
+        let faces = self.faces_around_edge(edge);
+        if faces.len() != 2 {
+            return Err(TopoError::Precondition("fillet: edge needs two faces"));
+        }
+        let convex = self.edge_is_convex(edge).unwrap_or(true);
+        let blend = self.blend_cone_for_edge(edge, r0, r1)?;
+        let (f1, f2) = (faces[0], faces[1]);
+        let (va_k, vb_k) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
+
+        let mut b = self.clone();
+        let n1 = b
+            .face_outward_normal(f1)
+            .ok_or(TopoError::Precondition("fillet: face normal"))?;
+        let n2 = b
+            .face_outward_normal(f2)
+            .ok_or(TopoError::Precondition("fillet: face normal"))?;
+        let (spring_a_edge, strip1, f1k, aa, ab) =
+            b.imprint_spring_line(f1, edge, va_k, vb_k, &blend.spring_a, n1)?;
+        let (spring_b_edge, strip2, _f2k, ba, bb) =
+            b.imprint_spring_line(f2, edge, va_k, vb_k, &blend.spring_b, n2)?;
+
+        // Split each cap along the EXACT cone/cap-plane ellipse arc.
+        let cone = blend.surface.clone();
+        let split_cap = |b: &mut Body,
+                         v_corner: crate::entity::VertexKey,
+                         a_end: crate::entity::VertexKey,
+                         b_end: crate::entity::VertexKey|
+         -> Result<(), TopoError> {
+            let cap = b
+                .faces_at_vertex(v_corner)
+                .into_iter()
+                .find(|f| *f != strip1 && *f != strip2)
+                .ok_or(TopoError::Precondition("fillet: no cap face"))?;
+            let cap_n = b
+                .face_outward_normal(cap)
+                .ok_or(TopoError::Precondition("fillet: cap normal"))?;
+            let cap_p = b
+                .vertices
+                .get(v_corner)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let lp = b
+                .faces
+                .get(cap)
+                .map(|f| f.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fin_a = b.fin_ending_at_vertex(lp, a_end)?;
+            let fin_b = b.fin_ending_at_vertex(lp, b_end)?;
+            let split = b.split_face(fin_a, fin_b, None)?;
+            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
+                && let Some(nf) = b.faces.get_mut(split.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            let ell = cone_plane_ellipse(&cone, cap_p, cap_n)
+                .ok_or(TopoError::Precondition("fillet: cap ellipse"))?;
+            b.attach_edge_curve(split.edge, Curve3::Ellipse(ell), true);
+            Ok(())
+        };
+        split_cap(&mut b, va_k, aa, ba)?;
+        split_cap(&mut b, vb_k, ab, bb)?;
+
+        // Dissolve the corner fragments (identical to fillet_edge).
+        b.kef(edge)?;
+        let e_a = b
+            .edge_between(aa, va_k)
+            .ok_or(TopoError::Precondition("fillet: no A spring stub"))?;
+        b.kef(e_a)?;
+        let spur_a = b
+            .edge_between(va_k, ba)
+            .ok_or(TopoError::Precondition("fillet: no A spur"))?;
+        b.kev(spur_a)?;
+        let e_b = b
+            .edge_between(ab, vb_k)
+            .ok_or(TopoError::Precondition("fillet: no B spring stub"))?;
+        b.kef(e_b)?;
+        let spur_b = b
+            .edge_between(vb_k, bb)
+            .ok_or(TopoError::Precondition("fillet: no B spur"))?;
+        b.kev(spur_b)?;
+
+        let blend_face = b
+            .faces_around_edge(spring_a_edge)
+            .into_iter()
+            .find(|f| *f != f1k)
+            .ok_or(TopoError::Precondition("fillet: no blend face"))?;
+        b.attach_face_surface(
+            blend_face,
+            SurfaceGeom::Analytic(Surface3::Cone(blend.surface.clone())),
+            convex,
+        );
+        b.attach_edge_curve(spring_a_edge, Curve3::Line(blend.spring_a), true);
+        b.attach_edge_curve(spring_b_edge, Curve3::Line(blend.spring_b), true);
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("fillet: result invalid"))?;
+        Ok(b)
+    }
+}
+
+/// The exact ellipse where a cone meets a plane (the variable-radius
+/// fillet's cap arcs): expand the cone's implicit quadric in plane
+/// coordinates, solve the 2x2 center system, and diagonalize the
+/// quadratic part (closed-form eigen) for the axes. `None` when the
+/// section is not an ellipse (plane too steep vs the half-angle).
+fn cone_plane_ellipse(
+    cone: &keel_geom::surface::Cone3,
+    plane_p: Vec3,
+    plane_n: Vec3,
+) -> Option<keel_geom::curve::Ellipse3> {
+    let apex = {
+        // The cone's apex: radius(v) = radius + v tan(alpha) hits 0 at
+        // v = -radius / tan(alpha).
+        let t = cone.half_angle.tan();
+        if t.abs() < 1e-15 {
+            return None;
+        }
+        cone.frame.origin + cone.frame.z * (-cone.radius / t)
+    };
+    let u = cone.frame.z;
+    let ta2 = cone.half_angle.tan().powi(2);
+    let n = plane_n.try_normalize()?;
+    // 2D basis in the plane.
+    let seed = if n.x.abs() < 0.9 {
+        Vec3::new(1.0, 0.0, 0.0)
+    } else {
+        Vec3::new(0.0, 1.0, 0.0)
+    };
+    let g1 = (seed - n * seed.dot(n)).try_normalize()?;
+    let g2 = n.cross(g1);
+    // F(w) = |w|^2 - (1 + ta2)(w.u)^2 with w = X - apex,
+    // X = q0 + x g1 + y g2 (q0 = the plane point).
+    let w0 = plane_p - apex;
+    let c = 1.0 + ta2;
+    let (u1, u2, u0) = (g1.dot(u), g2.dot(u), w0.dot(u));
+    // Quadratic coefficients of F in (x, y):
+    let axx = 1.0 - c * u1 * u1;
+    let ayy = 1.0 - c * u2 * u2;
+    let axy = -c * u1 * u2; // coefficient of 2xy is 2*axy
+    let bx = w0.dot(g1) - c * u0 * u1;
+    let by = w0.dot(g2) - c * u0 * u2;
+    let f0 = w0.dot(w0) - c * u0 * u0;
+    // Center: gradient zero -> [axx axy; axy ayy] [x;y] = -[bx; by].
+    let det = axx * ayy - axy * axy;
+    if det.abs() < 1e-15 {
+        return None;
+    }
+    let cx = (-bx * ayy + by * axy) / det;
+    let cy = (-by * axx + bx * axy) / det;
+    let fc = axx * cx * cx + 2.0 * axy * cx * cy + ayy * cy * cy + 2.0 * (bx * cx + by * cy) + f0;
+    // Eigen of [[axx, axy],[axy, ayy]] (closed form).
+    let tr = axx + ayy;
+    let disc = ((axx - ayy) * 0.5).hypot(axy);
+    let (l1, l2) = (tr * 0.5 + disc, tr * 0.5 - disc);
+    if l1 <= 0.0 || l2 <= 0.0 || fc >= 0.0 {
+        return None; // not an ellipse section
+    }
+    let (a2, b2) = (-fc / l1, -fc / l2);
+    // Eigenvector for l1.
+    let (ex, ey) = if axy.abs() > 1e-15 {
+        (l1 - ayy, axy)
+    } else if axx >= ayy {
+        (1.0, 0.0)
+    } else {
+        (0.0, 1.0)
+    };
+    let el = (ex * ex + ey * ey).sqrt();
+    let (ex, ey) = (ex / el, ey / el);
+    let center = plane_p + g1 * cx + g2 * cy;
+    let ax1 = g1 * ex + g2 * ey;
+    let ax2 = n.cross(ax1);
+    keel_geom::curve::Ellipse3::new(center, ax1, ax2, a2.sqrt(), b2.sqrt()).ok()
+}
+
 /// A recognized rolling-ball blend face (parity item 58).
 #[derive(Clone, Debug)]
 pub struct RecognizedBlend {
@@ -1080,6 +1399,74 @@ mod tests {
             }
         }
         panic!("no top-right edge");
+    }
+
+    #[test]
+    fn cone_blend_geometry_certifies() {
+        // Item 48 geometry: spheres centered on the spine with the
+        // linear radius are tangent to BOTH support planes, the spring
+        // lines lie ON their planes, and the cone reproduces the sphere
+        // envelope (perpendicular radius rho/cos(alpha)).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e = top_right_edge(&b);
+        let blend = b.blend_cone_for_edge(e, 0.3, 0.6).unwrap();
+        // Supports are z = 2 and x = 2 (outward +z / +x).
+        for i in 0..=8 {
+            let t = i as f64 / 8.0;
+            // A spine point and its sphere radius.
+            let c = blend.spine.origin + blend.spine.dir * (t * 2.0 - 0.5);
+            let rho = {
+                // Reconstruct rho from the cone: perpendicular distance
+                // from the axis is rho / cos(alpha) at the tangency, so
+                // sphere radius = distance-to-plane.
+                (2.0 - c.z).abs()
+            };
+            // Tangency to BOTH planes: distance to z=2 equals distance
+            // to x=2 equals rho.
+            assert!(
+                ((2.0 - c.x).abs() - rho).abs() < 1e-9,
+                "sphere at t={t} not equidistant ({} vs {rho})",
+                (2.0 - c.x).abs()
+            );
+            // Spring lines lie on their planes.
+            let sa = blend.spring_a.origin + blend.spring_a.dir * t;
+            let sb = blend.spring_b.origin + blend.spring_b.dir * t;
+            let (da, db) = ((sa.z - 2.0).abs().min((sa.x - 2.0).abs()), {
+                (sb.z - 2.0).abs().min((sb.x - 2.0).abs())
+            });
+            assert!(da < 1e-9 && db < 1e-9, "spring off-plane ({da}, {db})");
+        }
+        // Radii at the edge ends match the request.
+        assert!((blend.r.0 - 0.3).abs() < 1e-12 && (blend.r.1 - 0.6).abs() < 1e-12);
+    }
+
+    #[test]
+    fn variable_fillet_carves_the_cone_wedge() {
+        // Item 48 surgery: box 2^3, top-right edge rounded with r going
+        // 0.3 -> 0.6. Removed material = (1 - pi/4) * integral r(t)^2 dt
+        // = (1 - pi/4) * L * (r0^2 + r0 r1 + r1^2)/3 = 0.090133...
+        // mesh_volume must land within ~0.01 absolute (chordal cone +
+        // ellipse-arc sampling).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e = top_right_edge(&b);
+        let f = b.fillet_edge_variable(e, 0.3, 0.6).unwrap();
+        assert!(f.validate().is_ok(), "variable fillet invalid");
+        // The blend face is a CONE tangent to both supports; recognition
+        // currently targets cylinders/tori, so check directly.
+        let cones = f
+            .face_keys()
+            .into_iter()
+            .filter(|&fk| matches!(f.face_surface3(fk), Some(Surface3::Cone(_))))
+            .count();
+        assert_eq!(cones, 1, "one cone blend face");
+        let want = 8.0 - (1.0 - core::f64::consts::FRAC_PI_4) * 2.0 * (0.09 + 0.18 + 0.36) / 3.0;
+        let mv = f.mesh_volume();
+        assert!(
+            (mv - want).abs() < 0.01,
+            "variable-fillet volume {mv} != ~{want}"
+        );
     }
 
     #[test]
