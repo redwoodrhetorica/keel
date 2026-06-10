@@ -1184,6 +1184,179 @@ impl Body {
             .map_err(|_| TopoError::Precondition("conic: result invalid"))?;
         Ok(b)
     }
+
+    /// Blend to a HOLD LINE (parity item 54, the parallel-hold rung):
+    /// the spring on the hold support is PINNED to the line `setback`
+    /// in from the edge; the radius FLOATS to keep the ball tangent to
+    /// the other support. For a hold line parallel to the edge between
+    /// planar supports the floating radius is CLOSED FORM: with the
+    /// ball centre at hold - n_h r, tangency to the other plane gives
+    /// r (1 - n_h . n_o) = dist(hold, other plane), so the blend is
+    /// still an exact cylinder and the standard surgery applies.
+    /// `hold_on_first` picks which adjacent face carries the hold.
+    /// Curved / non-parallel holds and concave edges are follow-ups.
+    pub fn fillet_edge_hold_line(
+        &self,
+        edge: EdgeKey,
+        hold_on_first: bool,
+        setback: f64,
+    ) -> Result<Body, TopoError> {
+        if !(setback.is_finite() && setback > 0.0) {
+            return Err(TopoError::Precondition("hold: bad setback"));
+        }
+        let faces = self.faces_around_edge(edge);
+        if faces.len() != 2 {
+            return Err(TopoError::Precondition("hold: edge needs two faces"));
+        }
+        for &f in &faces {
+            if !matches!(
+                self.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition(
+                    "hold: non-planar support (follow-up)",
+                ));
+            }
+        }
+        let convex = self.edge_is_convex(edge).unwrap_or(true);
+        if !convex {
+            return Err(TopoError::Precondition("hold: concave edge (follow-up)"));
+        }
+        let (fh, fo) = if hold_on_first {
+            (faces[0], faces[1])
+        } else {
+            (faces[1], faces[0])
+        };
+        let nh = self
+            .face_outward_normal(fh)
+            .ok_or(TopoError::Precondition("hold: face normal"))?;
+        let no = self
+            .face_outward_normal(fo)
+            .ok_or(TopoError::Precondition("hold: face normal"))?;
+        let (va_k, vb_k) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
+        let pa = self.vertices.get(va_k).ok_or(TopoError::StaleKey)?.point;
+        let pb = self.vertices.get(vb_k).ok_or(TopoError::StaleKey)?.point;
+        let e = (pb - pa)
+            .try_normalize()
+            .ok_or(TopoError::Precondition("hold: degenerate edge"))?;
+        // Hold line: `setback` in from the edge along the hold face
+        // (away from the other support's outward side).
+        let u_h = {
+            let u = e
+                .cross(nh)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("hold: degenerate setback"))?;
+            if u.dot(no) > 0.0 { u * -1.0 } else { u }
+        };
+        let h0 = pa + u_h * setback;
+        let h1 = pb + u_h * setback;
+        // Floating radius: centre = hold - nh r (into the material);
+        // tangency to the other plane: d_o - centre.no = r.
+        let d_o = no.dot(pa); // the edge lies on the other plane
+        let gap = d_o - no.dot(h0);
+        let denom = 1.0 - nh.dot(no);
+        if denom.abs() < 1e-12 || gap / denom <= 0.0 {
+            return Err(TopoError::Precondition("hold: no tangent ball"));
+        }
+        let r = gap / denom;
+        let c0 = h0 - nh * r;
+        let c1 = h1 - nh * r;
+        let spine = Line3::new(c0, c1 - c0).map_err(|_| TopoError::Precondition("hold: spine"))?;
+        let (sb0, sb1) = (c0 + no * r, c1 + no * r);
+        let spring_h =
+            Line3::new(h0, h1 - h0).map_err(|_| TopoError::Precondition("hold: spring h"))?;
+        let spring_o =
+            Line3::new(sb0, sb1 - sb0).map_err(|_| TopoError::Precondition("hold: spring o"))?;
+        let frame = Frame3::from_z(c0, spine.dir)
+            .map_err(|_| TopoError::Precondition("hold: cylinder frame"))?;
+        let surface = Cylinder3 { frame, radius: r };
+
+        // The standard surgery, hold face first.
+        let mut b = self.clone();
+        let (spring_h_edge, strip1, fhk, aa, ab) =
+            b.imprint_spring_line(fh, edge, va_k, vb_k, &spring_h, nh)?;
+        let (spring_o_edge, strip2, _fok, ba, bb) =
+            b.imprint_spring_line(fo, edge, va_k, vb_k, &spring_o, no)?;
+        let split_cap = |b: &mut Body,
+                         v_corner: crate::entity::VertexKey,
+                         a_end: crate::entity::VertexKey,
+                         b_end: crate::entity::VertexKey|
+         -> Result<(), TopoError> {
+            let cap = b
+                .faces_at_vertex(v_corner)
+                .into_iter()
+                .find(|f| *f != strip1 && *f != strip2)
+                .ok_or(TopoError::Precondition("hold: no cap face"))?;
+            let lp = b
+                .faces
+                .get(cap)
+                .map(|f| f.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fin_a = b.fin_ending_at_vertex(lp, a_end)?;
+            let fin_b = b.fin_ending_at_vertex(lp, b_end)?;
+            let split = b.split_face(fin_a, fin_b, None)?;
+            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
+                && let Some(nf) = b.faces.get_mut(split.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            let pc = b
+                .vertices
+                .get(v_corner)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let centre = c0 + spine.dir * ((pc - c0).dot(spine.dir));
+            let pa_end = b
+                .vertices
+                .get(a_end)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let ex = (pa_end - centre)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("hold: arc axis"))?;
+            let arc = keel_geom::curve::Circle3::new(centre, ex, spine.dir.cross(ex), r)
+                .map_err(|_| TopoError::Precondition("hold: bad arc"))?;
+            b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+            Ok(())
+        };
+        split_cap(&mut b, va_k, aa, ba)?;
+        split_cap(&mut b, vb_k, ab, bb)?;
+
+        b.kef(edge)?;
+        let e_a = b
+            .edge_between(aa, va_k)
+            .ok_or(TopoError::Precondition("hold: no A spring stub"))?;
+        b.kef(e_a)?;
+        let spur_a = b
+            .edge_between(va_k, ba)
+            .ok_or(TopoError::Precondition("hold: no A spur"))?;
+        b.kev(spur_a)?;
+        let e_b = b
+            .edge_between(ab, vb_k)
+            .ok_or(TopoError::Precondition("hold: no B spring stub"))?;
+        b.kef(e_b)?;
+        let spur_b = b
+            .edge_between(vb_k, bb)
+            .ok_or(TopoError::Precondition("hold: no B spur"))?;
+        b.kev(spur_b)?;
+
+        let blend_face = b
+            .faces_around_edge(spring_h_edge)
+            .into_iter()
+            .find(|f| *f != fhk)
+            .ok_or(TopoError::Precondition("hold: no blend face"))?;
+        b.attach_face_surface(
+            blend_face,
+            SurfaceGeom::Analytic(Surface3::Cylinder(surface)),
+            convex,
+        );
+        b.attach_edge_curve(spring_h_edge, Curve3::Line(spring_h), true);
+        b.attach_edge_curve(spring_o_edge, Curve3::Line(spring_o), true);
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("hold: result invalid"))?;
+        Ok(b)
+    }
 }
 
 /// The exact ellipse where a cone meets a plane (the variable-radius
@@ -1568,6 +1741,71 @@ mod tests {
             }
         }
         panic!("no top-right edge");
+    }
+
+    #[test]
+    fn hold_line_blend_floats_the_radius() {
+        // Item 54: perpendicular case first: a hold 0.5 in from the
+        // edge floats r = 0.5, the exact circular fillet (volume
+        // 7.8927). Then the discriminating 45-degree wedge: hold d = 1
+        // on the x = 0 wall of a right-triangle prism floats
+        // r = d / (1 + sqrt(2)) = sqrt(2) - 1, verified independently
+        // by blend RECOGNITION on the result.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e = top_right_edge(&b);
+        let f = b.fillet_edge_hold_line(e, true, 0.5).unwrap();
+        assert!(f.validate().is_ok(), "hold (perpendicular) invalid");
+        let v = f.mesh_volume();
+        let want = 8.0 - (1.0 - core::f64::consts::FRAC_PI_4) * 0.25 * 2.0;
+        assert!(
+            (v - want).abs() < 0.02,
+            "perpendicular hold must be the r = 0.5 fillet ({v} vs {want})"
+        );
+
+        let mut w = Body::new();
+        w.prism(
+            &[
+                Vec3::ZERO,
+                Vec3::new(4.0, 0.0, 0.0),
+                Vec3::new(0.0, 4.0, 0.0),
+            ],
+            Vec3::new(0.0, 0.0, 2.0),
+        )
+        .unwrap();
+        let v0 = w.mass_properties().unwrap().volume;
+        // The vertical edge at (0, 4): between the x = 0 wall and the
+        // hypotenuse (45-degree dihedral).
+        let edge = w
+            .edges
+            .iter()
+            .map(|(k, _)| k)
+            .find(|&k| {
+                let (a, b2) = w.edge(k).unwrap().bounds;
+                let (pa, pb) = (w.vertex(a).unwrap().point, w.vertex(b2).unwrap().point);
+                pa.x.abs() < 1e-9
+                    && (pa.y - 4.0).abs() < 1e-9
+                    && pb.x.abs() < 1e-9
+                    && (pb.y - 4.0).abs() < 1e-9
+            })
+            .expect("wedge edge");
+        // Hold on whichever support is the x = 0 wall.
+        let hold_first = {
+            let fs = w.faces_around_edge(edge);
+            let n = w.face_outward_normal(fs[0]).unwrap();
+            (n.x + 1.0).abs() < 1e-9
+        };
+        let wf = w.fillet_edge_hold_line(edge, hold_first, 1.0).unwrap();
+        assert!(wf.validate().is_ok(), "hold (wedge) invalid");
+        assert!(wf.mesh_volume() < v0, "hold blend must remove material");
+        let found = wf.recognize_blends(1e-6);
+        assert_eq!(found.len(), 1, "one blend on the wedge");
+        let want_r = core::f64::consts::SQRT_2 - 1.0;
+        assert!(
+            (found[0].radius - want_r).abs() < 1e-9,
+            "floated radius {} != sqrt(2)-1 = {want_r}",
+            found[0].radius
+        );
     }
 
     #[test]
