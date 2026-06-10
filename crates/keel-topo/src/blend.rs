@@ -3703,6 +3703,39 @@ mod tests {
     }
 
     #[test]
+    fn partial_band_seams_decline_pending_band_imprint() {
+        // The notch-by-boolean probe exposed another seamless wrong-
+        // positive class: a tool plane crossing a quarter BAND yields
+        // a full SSI circle that is only PARTIALLY on the trimmed
+        // band; the old height-only containment passed it through and
+        // the imprint assembled an invalid-trim body (corridor grid
+        // oracle disagreed with the body's own winding by 18 percent).
+        // Partial band seams now raise the hard UnassemblableSeam
+        // fault: filleted-box minus a groove crossing the blend
+        // DECLINES; the planar control (unfilleted box minus the same
+        // groove) stays exact.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 2.0, 2.0).unwrap();
+        let e = edge_between_faces(&b, Vec3::new(0., 0., 1.), Vec3::new(0., 1., 0.));
+        let f = b.fillet_edge(e, 0.5).unwrap();
+        let mut tool = Body::new();
+        tool.block(Vec3::new(1.9, -0.5, 1.8), 0.2, 3.0, 1.0)
+            .unwrap();
+        let ctrl = crate::boolean::boolean(&b, &tool, crate::boolean::BoolOp::Difference, 1e-7)
+            .unwrap()
+            .body;
+        let v = ctrl.mass_properties().unwrap().volume;
+        assert!((v - 15.92).abs() < 1e-9, "planar control {v}");
+        assert!(
+            matches!(
+                crate::boolean::boolean(&f, &tool, crate::boolean::BoolOp::Difference, 1e-7),
+                Err(crate::boolean::BoolFault::UnassemblableSeam(..))
+            ),
+            "partial band seam must DECLINE"
+        );
+    }
+
+    #[test]
     fn rollon_chain_fillet_equals_the_unsplit_fillet() {
         // Dossier 56 sec 6, the co-analytic planar roll-on: split a
         // 4x2x2 box's top and side faces transversely at x = 2 (so the
