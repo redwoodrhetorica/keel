@@ -4062,3 +4062,36 @@ geometry), 28/29/31 (sheet/general/selective booleans), 48-51 + 54-60 (blend dep
 ~15. NEXT: the engines, biggest leverage first: 28 sheet-solid booleans (the GWN classifier is
 surface-type-agnostic; sheet fragments classify the same way), then 68 variational fill, then
 132 defeature-small-features over delete_face.
+
+## Addendum 133 (2026-06-10, attended): SHEET-SOLID BOOLEANS (item 28, 118 -> 119/144)
+
+THE ENGINE (branch sheet-booleans): boolean_sheet_solid(sheet, solid, op, tol) -- the first
+mixed-dimension boolean. Pipeline: seam_curves (sheet faces x solid faces SSI) -> imprint_operand
+on the sheet (the multi-component + interior-ring machinery from Addenda 129/127 carries it
+unchanged) -> classify_faces fragments by GWN against the solid (the d-booleans-tolerant.md
+classifier is surface-type-agnostic, so sheet fragments classify exactly like solid faces) ->
+keep Inside (Intersection) or Outside (Difference) -> import + merge + glue -> SHEET finalize.
+
+NEW PIECES: merge_and_glue_imported -- the merge-coincident-vertices + glue-dangling-edges half
+of finalize_imported_assembly extracted VERBATIM (behavior-preserving; the solid path calls it
+unchanged) -- and finalize_imported_sheet: one shell per connected component holding BOTH face
+sides in the void, faces front==back==void, no solid region and no closure invariant (free edges
+are the nature of an open sheet; body_class stays Sheet).
+
+HONEST BOUNDARIES: Union of mixed dimension is undefined -> declines; coincident/tangent or
+unclassifiable contact -> declines (the same general-position MVP boundary the solid boolean
+started from); sheet-SHEET booleans are a follow-up (the imprint exists, the kept-side semantics
+need defining); solids CUT BY sheets (knife) likewise.
+
+ORACLES: 4x4 sheet, 2x2x2 block punching the middle: Intersection = the interior 2x2 patch
+(area exactly 4); Difference = a HOLED RING SHEET (one face, one inner ring, signed area exactly
+12) -- the interior-ring imprint earning rent on sheets. Guillotine overlap: Difference 6,
+Intersection 2, both exact. Union declines.
+
+CI: fmt, clippy -D warnings, workspace 119 geom + 77 math + 204 topo (+2) green. fuzz_boolean
+WSL soak (boolean.rs internals changed): 10 minutes, 977 runs, clean.
+
+COUNTER: 118 -> 119/144 (item 28). Remaining tractable: 10, 29, 31, 48-51, 54-60, 67, 68, 130,
+132 (+ 141/143 pending the consumed-slice check). NEXT: 31 selective/local booleans (face-pair
+scoped imprint over the same machinery) or 68 variational n-sided fill (dossier 32 sec 4,
+patent-cleared), then 132 defeature over delete_face, 130 gap-tighten heal.
