@@ -5124,3 +5124,31 @@ build on a single stitcher.
 CI: fmt; clippy -D warnings (the deletion surfaced a stale allow and one orphan, both
 cleaned); workspace 132 + 77 + 240 green; fuzz_boolean soak (assembly path changed): 10
 minutes, 706 runs, clean.
+
+## Addendum 166 (2026-06-10, attended): SHEET-SHEET BOOLEANS (dossier 57 Rung 3) + A LATENT IMPRINT NO-OP FIXED
+
+boolean_sheet_sheet(a, b, op, tol) (branch sheet-sheet; dossier 57 Rung 3, dossier 39 sec
+1.2): the 2D arrangement of two COPLANAR planar sheets. The overlap interior boundary imprints
+onto each operand (the coincident pre-pass machinery), fragments classify by a 2D
+point-in-polygon test against the other sheet, selection follows the dimension table (union =
+all of A + B-outside, one overlap copy; intersection = A-inside; difference = A-outside), and
+the kept fragments IMPORT through the identity path with the SHEET finalize (free edges are
+the nature of a lamina; the first draft knitted planar_sheet copies and learned that knit's
+SOLID finalize rightly rejects open sets at the closure invariant). Crossing (non-coplanar)
+sheets intersect in a WIRE and decline (rung 4/5 ladder).
+
+THE LATENT BUG THE RUNG EXPOSED: imprint_open_curve's contract is a PRE-BOUNDED curve (t in
+[0,1] = the segment), but Line3 NORMALIZES its direction, so every Line3-based open imprint
+spanned exactly ONE UNIT from the start point: longer segments ended in the face interior and
+the imprint declined ("endpoint not on any boundary edge interior"). The coincident PRE-PASS
+(preimprint_coincident_overlaps) has carried this silently since Addendum 56: its non-unit
+overlap cuts were silent no-ops swallowed by best-effort handling, with the downstream
+boundary-coincident-ring filter masking the gap. Both call sites now pass exact degree-1
+NURBS segments. All 240 pre-existing tests stay green with the pre-pass actually imprinting.
+
+ORACLES (dossier 57 Rung 3, exact): two 4x4 coplanar sheets offset by 2: intersection area 8,
+difference 8, union 24, all to 1e-9 and valid; disjoint union 32 and disjoint intersection
+declines; crossing sheets decline.
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 241 (+1) green; fuzz_boolean soak (the
+pre-pass fix changes coincident boolean internals): 10 minutes, 662 runs, clean.
