@@ -4358,3 +4358,25 @@ CI: fmt, clippy -D warnings, workspace 123 + 77 + 218 (+1) green. No fuzz: addit
 only.
 
 COUNTER: 128 -> 129/144 (item 54). Remaining: 29, 50, 51, 55, 56, 57, 60, 67.
+
+## Addendum 143 (2026-06-10, attended): FACE-FACE BLEND (item 50; 129 -> 130/144)
+
+blend_face_face(wall) (branch face-face-blend): the rolling ball between two PARALLEL planar
+faces that share NO edge, consuming the wall face joining them -- the rounded-end slab. The
+radius is FORCED to half the gap (the only ball tangent to both); the blend is the exact
+HALF-CYLINDER along the wall midline, so this rung needs no spine marching (the spine is a line
+by symmetry). Surgery: imprint a spring on each support (reusing imprint_spring_line against
+each support's own wall edge), split each cap along the half-circle arc between the spring ends
+-- recording the SIGNED ARC SWEEP, because a pi arc is direction-ambiguous from its endpoints
+(the Edge::arc_sweep machinery from partial revolve, flipped so the OUTWARD half is taken) --
+then dissolve strips + wall into one face (kef across both wall edges) and kill each cap's
+corner chain (kef stub, kev wall-cap edge, kev stub). General face-face (non-parallel supports,
+free radius, marched spine) stays the follow-up.
+
+ORACLES: slab 4x1x2 rounded at x = 4: volume 8 - r^2 (2 - pi/2) h = 7.7854 within 0.02; valid;
+item-58 RECOGNITION independently finds exactly one blend, the half-cylinder tangent to both
+side faces, radius 0.5 to 1e-9 (the construction/recognition cross-check again).
+
+CI: fmt, clippy -D warnings, workspace 123 + 77 + 219 (+1) green. No fuzz: additive blend.rs.
+
+COUNTER: 129 -> 130/144 (item 50). Remaining: 29, 51, 55, 56, 57, 60, 67.

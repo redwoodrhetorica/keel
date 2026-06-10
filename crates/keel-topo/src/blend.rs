@@ -1357,6 +1357,211 @@ impl Body {
             .map_err(|_| TopoError::Precondition("hold: result invalid"))?;
         Ok(b)
     }
+
+    /// FACE-FACE blend (parity item 50, the parallel-supports rung):
+    /// roll the ball between two PARALLEL planar faces that do not
+    /// share an edge, consuming the `wall` face joining them -- the
+    /// rounded-end slab. The radius is FORCED to half the gap (the
+    /// only ball tangent to both); the blend is the exact half-
+    /// cylinder along the wall midline. General face-face
+    /// (non-parallel supports, free radius, marched spine) is the
+    /// follow-up; this rung's spine is a line by symmetry.
+    pub fn blend_face_face(&self, wall: crate::entity::FaceKey) -> Result<Body, TopoError> {
+        let wall_edges = self.face_edge_set(wall);
+        if wall_edges.len() != 4 {
+            return Err(TopoError::Precondition("faceface: wall needs 4 edges"));
+        }
+        let mut nbrs: Vec<(crate::entity::FaceKey, EdgeKey, Vec3)> = Vec::new();
+        for &e in &wall_edges {
+            let Some(nb) = self.faces_around_edge(e).into_iter().find(|&f| f != wall) else {
+                continue;
+            };
+            let Some(n) = self.face_outward_normal(nb) else {
+                continue;
+            };
+            nbrs.push((nb, e, n));
+        }
+        if nbrs.len() != 4 {
+            return Err(TopoError::Precondition("faceface: wall not interior"));
+        }
+        let mut pair: Option<(usize, usize)> = None;
+        for i in 0..4 {
+            for j in (i + 1)..4 {
+                if nbrs[i].2.dot(nbrs[j].2) < -1.0 + 1e-9 {
+                    pair = Some((i, j));
+                }
+            }
+        }
+        let (i, j) = pair.ok_or(TopoError::Precondition(
+            "faceface: no parallel opposing supports (general case is a follow-up)",
+        ))?;
+        let (f1, e1, n1) = nbrs[i];
+        let (f2, e2, n2) = nbrs[j];
+        let _ = n2;
+        let p1 = self
+            .face_outer_loop_points(f1)
+            .first()
+            .copied()
+            .ok_or(TopoError::Precondition("faceface: support point"))?;
+        let p2 = self
+            .face_outer_loop_points(f2)
+            .first()
+            .copied()
+            .ok_or(TopoError::Precondition("faceface: support point"))?;
+        let gap = (p2 - p1).dot(n1).abs();
+        if gap < 1e-9 {
+            return Err(TopoError::Precondition("faceface: zero gap"));
+        }
+        let r = 0.5 * gap;
+        let n_wall = self
+            .face_outward_normal(wall)
+            .ok_or(TopoError::Precondition("faceface: wall normal"))?;
+        let (va1, vb1) = self.edges.get(e1).ok_or(TopoError::StaleKey)?.bounds;
+        let (va2, vb2) = self.edges.get(e2).ok_or(TopoError::StaleKey)?.bounds;
+        let q1a = self.vertices.get(va1).ok_or(TopoError::StaleKey)?.point;
+        let q1b = self.vertices.get(vb1).ok_or(TopoError::StaleKey)?.point;
+        let q2a = self.vertices.get(va2).ok_or(TopoError::StaleKey)?.point;
+        let spring1 = Line3::new(q1a - n_wall * r, q1b - q1a)
+            .map_err(|_| TopoError::Precondition("faceface: spring 1"))?;
+        let spring2 = Line3::new(q2a - n_wall * r, q1b - q1a)
+            .map_err(|_| TopoError::Precondition("faceface: spring 2"))?;
+        let axis_dir = spring1.dir;
+        let axis_pt = spring1.origin - n1 * r;
+        let frame = Frame3::from_z(axis_pt, axis_dir)
+            .map_err(|_| TopoError::Precondition("faceface: cylinder frame"))?;
+        let surface = Cylinder3 { frame, radius: r };
+
+        let mut b = self.clone();
+        let (spring1_edge, strip1, f1k, aa, ab) =
+            b.imprint_spring_line(f1, e1, va1, vb1, &spring1, n1)?;
+        let (spring2_edge, strip2, _f2k, ba_raw, bb_raw) =
+            b.imprint_spring_line(f2, e2, va2, vb2, &spring2, n2)?;
+        let axis_h = |b: &Body, v: crate::entity::VertexKey| -> f64 {
+            b.vertices
+                .get(v)
+                .map(|x| (x.point - axis_pt).dot(axis_dir))
+                .unwrap_or(0.0)
+        };
+        // Pair the spring ends (and wall corners) per cap by axis height.
+        let h_a = axis_h(&b, aa);
+        let (ba, bb) = if (axis_h(&b, ba_raw) - h_a).abs() <= (axis_h(&b, bb_raw) - h_a).abs() {
+            (ba_raw, bb_raw)
+        } else {
+            (bb_raw, ba_raw)
+        };
+        let corners = [va1, vb1, va2, vb2];
+        let h_b = axis_h(&b, ab);
+        let cap_a: Vec<_> = corners
+            .iter()
+            .copied()
+            .filter(|&v| (axis_h(&b, v) - h_a).abs() < 1e-9)
+            .collect();
+        let cap_b: Vec<_> = corners
+            .iter()
+            .copied()
+            .filter(|&v| (axis_h(&b, v) - h_b).abs() < 1e-9)
+            .collect();
+        if cap_a.len() != 2 || cap_b.len() != 2 {
+            return Err(TopoError::Precondition("faceface: cap corner pairing"));
+        }
+
+        // Split each cap along the half-circle arc between the spring
+        // ends; record the signed sweep so the OUTWARD half is taken (a
+        // pi arc is direction-ambiguous from its endpoints).
+        let split_cap = |b: &mut Body,
+                         s1_end: crate::entity::VertexKey,
+                         s2_end: crate::entity::VertexKey|
+         -> Result<(), TopoError> {
+            let cap = b
+                .faces_at_vertex(s1_end)
+                .into_iter()
+                .find(|f| {
+                    *f != strip1 && *f != strip2 && *f != f1k && {
+                        b.faces_at_vertex(s2_end).contains(f)
+                    }
+                })
+                .ok_or(TopoError::Precondition("faceface: no cap face"))?;
+            let lp = b
+                .faces
+                .get(cap)
+                .map(|f| f.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fin_a = b.fin_ending_at_vertex(lp, s1_end)?;
+            let fin_b = b.fin_ending_at_vertex(lp, s2_end)?;
+            let split = b.split_face(fin_a, fin_b, None)?;
+            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
+                && let Some(nf) = b.faces.get_mut(split.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            let p_end = b
+                .vertices
+                .get(s1_end)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let centre = axis_pt + axis_dir * ((p_end - axis_pt).dot(axis_dir));
+            let ex = (p_end - centre)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("faceface: arc axis"))?;
+            let ey = axis_dir.cross(ex);
+            let arc = keel_geom::curve::Circle3::new(centre, ex, ey, r)
+                .map_err(|_| TopoError::Precondition("faceface: bad arc"))?;
+            b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+            let sweep = if ey.dot(n_wall) >= 0.0 {
+                core::f64::consts::PI
+            } else {
+                -core::f64::consts::PI
+            };
+            let (b0, _) = b.edges.get(split.edge).ok_or(TopoError::StaleKey)?.bounds;
+            let signed = if b0 == s1_end { sweep } else { -sweep };
+            b.set_edge_arc_sweep(split.edge, signed);
+            Ok(())
+        };
+        split_cap(&mut b, aa, ba)?;
+        split_cap(&mut b, ab, bb)?;
+
+        // Dissolve: strips + wall merge into one face, then each cap's
+        // corner chain (stub, wall-cap edge, stub) dies.
+        b.kef(e1)?;
+        b.kef(e2)?;
+        for (s1_end, s2_end, cs) in [(aa, ba, &cap_a), (ab, bb, &cap_b)] {
+            let (c1, c2) = (cs[0], cs[1]);
+            let (k1, k2) = if b.edge_between(s1_end, c1).is_some() {
+                (c1, c2)
+            } else {
+                (c2, c1)
+            };
+            let stub1 = b
+                .edge_between(s1_end, k1)
+                .ok_or(TopoError::Precondition("faceface: no stub 1"))?;
+            b.kef(stub1)?;
+            let wall_cap = b
+                .edge_between(k1, k2)
+                .ok_or(TopoError::Precondition("faceface: no wall-cap edge"))?;
+            b.kev(wall_cap)?;
+            let stub2 = b
+                .edge_between(k2, s2_end)
+                .ok_or(TopoError::Precondition("faceface: no stub 2"))?;
+            b.kev(stub2)?;
+        }
+
+        let blend_face = b
+            .faces_around_edge(spring1_edge)
+            .into_iter()
+            .find(|f| *f != f1k)
+            .ok_or(TopoError::Precondition("faceface: no blend face"))?;
+        b.attach_face_surface(
+            blend_face,
+            SurfaceGeom::Analytic(Surface3::Cylinder(surface)),
+            true,
+        );
+        b.attach_edge_curve(spring1_edge, Curve3::Line(spring1), true);
+        b.attach_edge_curve(spring2_edge, Curve3::Line(spring2), true);
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("faceface: result invalid"))?;
+        Ok(b)
+    }
 }
 
 /// The exact ellipse where a cone meets a plane (the variable-radius
@@ -1741,6 +1946,41 @@ mod tests {
             }
         }
         panic!("no top-right edge");
+    }
+
+    #[test]
+    fn face_face_blend_rounds_the_slab_end() {
+        // Item 50 (parallel-supports rung): slab 4 x 1 x 2, round the
+        // x = 4 end wall between the y = 0 and y = 1 faces. Forced
+        // r = 0.5; removed = (2r*r - pi r^2/2) * h = r^2 (2 - pi/2) h
+        // = 0.2146; volume ~ 7.7854. Recognition finds the half-
+        // cylinder tangent to both side faces at r = 0.5.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 1.0, 2.0).unwrap();
+        let wall = b
+            .face_keys()
+            .into_iter()
+            .find(|&f| {
+                b.face_outward_normal(f)
+                    .map(|n| (n.x - 1.0).abs() < 1e-9)
+                    .unwrap_or(false)
+            })
+            .expect("x = 4 wall");
+        let rounded = b.blend_face_face(wall).unwrap();
+        assert!(rounded.validate().is_ok(), "rounded slab invalid");
+        let v = rounded.mesh_volume();
+        let want = 8.0 - 0.25 * (2.0 - core::f64::consts::FRAC_PI_2) * 2.0;
+        assert!(
+            (v - want).abs() < 0.02,
+            "rounded slab volume {v} != ~{want}"
+        );
+        let found = rounded.recognize_blends(1e-6);
+        assert_eq!(found.len(), 1, "one face-face blend");
+        assert!(
+            (found[0].radius - 0.5).abs() < 1e-9,
+            "forced radius {} != 0.5",
+            found[0].radius
+        );
     }
 
     #[test]
