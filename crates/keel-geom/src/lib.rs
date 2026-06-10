@@ -10,6 +10,7 @@ pub mod basis;
 pub mod curve;
 pub mod extend;
 pub mod fit;
+pub mod foreign;
 pub mod intersect;
 pub mod knots;
 pub mod nurbs_curve;

@@ -94,7 +94,12 @@ fn chord_params(points: &[Vec3]) -> Vec<f64> {
 }
 
 /// End-interpolating least-squares cubic fit with n_ctrl controls.
-fn lsq_fit(points: &[Vec3], params: &[f64], n_ctrl: usize) -> Result<NurbsCurve, GeomError> {
+/// (Also the building block of the foreign-geometry surface fit.)
+pub(crate) fn lsq_fit(
+    points: &[Vec3],
+    params: &[f64],
+    n_ctrl: usize,
+) -> Result<NurbsCurve, GeomError> {
     let p = 3usize.min(n_ctrl - 1);
     // Averaged interior knots from the parameters (NURBS Book 9.68).
     let n_interior = n_ctrl - p - 1;
