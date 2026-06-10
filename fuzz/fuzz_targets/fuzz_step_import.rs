@@ -24,4 +24,8 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(body) = keel_topo::step_import::from_step_string(input, 1e-6) {
         let _ = body.validate();
     }
+    // The geometry conversion layer (milestone 2) is its own attack
+    // surface: knot expansion, control grids, placements.
+    let _ = keel_topo::step_import::surfaces_from_step(input);
+    let _ = keel_topo::step_import::curves_from_step(input);
 });

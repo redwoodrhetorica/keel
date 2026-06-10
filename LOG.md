@@ -4883,3 +4883,42 @@ geometry service, no boolean/tessellation path touched.
 CONSUMERS UNBLOCKED: NURBS delete-face healing, curved tweak re-intersection, and the
 untrimming strategy (the corpus's "chief obstacle to robust booleans on NURBS solids") now
 have their extension primitive.
+
+## Addendum 158 (2026-06-10, attended): STEP IMPORT MILESTONE 2, THE GEOMETRY CONVERSION LAYER
+
+step_import.rs (branch step-import-2; dossier 38 build-plan step 3, "the high-stakes path"):
+the conversion layer from Part 21 geometric entities to Keel geometry, the substrate the
+curved-topology milestone will consume.
+
+- PLACEMENTS: AXIS2_PLACEMENT_3D -> orthonormal Frame3 with the two classic import bugs
+  handled (directions are NOT normalized in files; ref_direction is NOT necessarily orthogonal
+  to the axis -> Gram-Schmidt project; $ defaults to global Z/X; an axis-parallel seed falls
+  back to any perpendicular).
+- ANALYTIC SURFACES: plane / cylindrical / conical / spherical / toroidal -> exact Surface3
+  with millimetre radii and the cone semi-angle in radians (a PLANE_ANGLE_UNIT reader joins the
+  length-unit machinery; degree files chain through CONVERSION_BASED_UNIT).
+- NURBS (the high-stakes conversion): B_SPLINE_SURFACE / _WITH_KNOTS / RATIONAL_B_SPLINE_
+  SURFACE in BOTH the complex/AND form (attributes split across leaves, names absent) and the
+  simple flattened form (name first) via one `unnamed` dispatch; knot vectors EXPANDED from
+  (distinct values x multiplicities) with the count invariant checked; the control grid is
+  row-major BY U (outer list U, inner V, exactly Keel's u-outer/v-inner layout); weights
+  PRE-MULTIPLY into homogeneous 4D (w x, w y, w z, w), never point-plus-weight. Periodic /
+  non-clamped knots DECLINE (unwrap is queued). Curves analogous (LINE / CIRCLE / ELLIPSE with
+  in-plane placement axes / B_SPLINE_CURVE rational and not).
+- PUBLIC API: surfaces_from_step / curves_from_step convert every recognized entity; the
+  fuzz target now exercises both alongside the solid importer, with a rational-surface seed.
+
+ORACLES (exactness): a hand-written COMPLEX-INSTANCE rational quarter-cylinder patch (w =
+sqrt(2)/2 middle row) samples onto x^2 + y^2 = 4 within 1e-12, proving complex reassembly +
+knot expansion + grid order + weight premultiplication in one assert; the five analytics
+convert from a METRE-unit file with a non-normalized axis and non-orthogonal ref_direction to
+orthonormal frames and mm radii to 1e-12; a tilted CIRCLE lands its in-plane axes; a complex
+rational B_SPLINE_CURVE quarter arc stays on its circle to 1e-12; a simple-form degree-1
+curve binds positionally with the name offset.
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 236 (+3) green; fuzz_step_import soak with
+the conversion entry points added to the target: 10 minutes, count below.
+
+LADDER: curved TOPOLOGY assembly (advanced_face on analytic/NURBS surfaces, seams on periodic
+faces, vertex_loop poles, pcurve supply-or-reconstruct), heal-on-import tolerance escalation,
+validation properties, AP242 tessellation import.
