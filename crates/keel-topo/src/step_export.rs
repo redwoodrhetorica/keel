@@ -42,13 +42,17 @@ impl Step {
         id
     }
     fn point(&mut self, p: keel_math::vec::Vec3) -> usize {
+        // {:?} prints the SHORTEST ROUND-TRIP decimal for f64 and always
+        // keeps a decimal point / exponent (a bare integer would be the
+        // wrong Part 21 token kind), so save -> load preserves every bit
+        // (the corpus-audit serialization finding).
         self.add(&format!(
-            "CARTESIAN_POINT('',({:.9},{:.9},{:.9}))",
+            "CARTESIAN_POINT('',({:?},{:?},{:?}))",
             p.x, p.y, p.z
         ))
     }
     fn dir(&mut self, d: keel_math::vec::Vec3) -> usize {
-        self.add(&format!("DIRECTION('',({:.9},{:.9},{:.9}))", d.x, d.y, d.z))
+        self.add(&format!("DIRECTION('',({:?},{:?},{:?}))", d.x, d.y, d.z))
     }
 }
 
@@ -174,6 +178,49 @@ pub fn to_step_string(body: &Body) -> Result<String, StepError> {
     s.add(&format!(
         "ADVANCED_BREP_SHAPE_REPRESENTATION('Keel',(#{brep}),#{ctx})"
     ));
+
+    // Geometric validation properties (CAx-IF GVP practice, dossier 38
+    // sec 9): volume, surface area, and centroid, so a receiver can
+    // recompute and confirm the geometry survived translation. Keel's
+    // importer treats a mismatch as a hard decline.
+    if let Ok(mp) = body.mass_properties() {
+        let area = body.surface_area();
+        let vol_item = s.add(&format!(
+            "MEASURE_REPRESENTATION_ITEM('volume measure',VOLUME_MEASURE({:?}),$)",
+            mp.volume
+        ));
+        let vol_rep = s.add(&format!(
+            "REPRESENTATION('geometric validation property volume',(#{vol_item}),#{ctx})"
+        ));
+        let vol_def = s.add("PROPERTY_DEFINITION('geometric validation property','volume',$)");
+        s.add(&format!(
+            "PROPERTY_DEFINITION_REPRESENTATION(#{vol_def},#{vol_rep})"
+        ));
+        let area_item = s.add(&format!(
+            "MEASURE_REPRESENTATION_ITEM('surface area measure',AREA_MEASURE({:?}),$)",
+            area
+        ));
+        let area_rep = s.add(&format!(
+            "REPRESENTATION('geometric validation property surface area',(#{area_item}),#{ctx})"
+        ));
+        let area_def =
+            s.add("PROPERTY_DEFINITION('geometric validation property','surface area',$)");
+        s.add(&format!(
+            "PROPERTY_DEFINITION_REPRESENTATION(#{area_def},#{area_rep})"
+        ));
+        let c = mp.centroid;
+        let c_pt = s.add(&format!(
+            "CARTESIAN_POINT('centre point',({:?},{:?},{:?}))",
+            c.x, c.y, c.z
+        ));
+        let c_rep = s.add(&format!(
+            "REPRESENTATION('geometric validation property centroid',(#{c_pt}),#{ctx})"
+        ));
+        let c_def = s.add("PROPERTY_DEFINITION('geometric validation property','centroid',$)");
+        s.add(&format!(
+            "PROPERTY_DEFINITION_REPRESENTATION(#{c_def},#{c_rep})"
+        ));
+    }
 
     // Assemble the file.
     let mut file = String::new();

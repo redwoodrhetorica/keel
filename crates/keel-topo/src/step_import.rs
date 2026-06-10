@@ -854,6 +854,58 @@ pub fn surfaces_from_step(text: &str) -> Result<Vec<ImportedSurface>, StepImport
     Ok(out)
 }
 
+/// Validation properties stored in the file (CAx-IF GVP, dossier 38
+/// sec 9), converted to Keel units. Tolerant scan: any
+/// VOLUME_MEASURE / AREA_MEASURE typed value anywhere in a
+/// measure item (simple or complex form), and a CARTESIAN_POINT item
+/// of a representation named "...centroid...".
+struct ValidationProps {
+    volume: Option<f64>,
+    area: Option<f64>,
+    centroid: Option<Vec3>,
+}
+
+fn validation_props(f: &StepFile, scale: f64) -> ValidationProps {
+    let mut out = ValidationProps {
+        volume: None,
+        area: None,
+        centroid: None,
+    };
+    for recs in f.ents.values() {
+        for r in recs {
+            for a in &r.args {
+                if let Val::Typed(t, args) = a {
+                    let v = args.first().and_then(Val::as_real);
+                    if t.eq_ignore_ascii_case("VOLUME_MEASURE") {
+                        out.volume = v.map(|x| x * scale.powi(3)).or(out.volume);
+                    } else if t.eq_ignore_ascii_case("AREA_MEASURE") {
+                        out.area = v.map(|x| x * scale.powi(2)).or(out.area);
+                    }
+                }
+            }
+        }
+    }
+    for (_, r) in f.find_all("REPRESENTATION") {
+        let Some(Val::Str(name)) = r.args.first() else {
+            continue;
+        };
+        if !name.to_ascii_lowercase().contains("centroid") {
+            continue;
+        }
+        if let Some(pid) = r
+            .args
+            .get(1)
+            .and_then(Val::as_list)
+            .and_then(|l| l.first())
+            .and_then(Val::as_ref_id)
+            && let Ok(p) = f.point3(pid, scale)
+        {
+            out.centroid = Some(p);
+        }
+    }
+    out
+}
+
 /// Convert every recognized CURVE entity in a Part 21 file.
 pub fn curves_from_step(text: &str) -> Result<Vec<Curve3>, StepImportError> {
     let f = parse(text)?;
@@ -1016,7 +1068,42 @@ pub fn from_step_string(text: &str, tol: f64) -> Result<Body, StepImportError> {
         }
         polys.push(pts);
     }
-    Body::from_polygon_faces(&polys, tol).map_err(|e| StepImportError::Assemble(format!("{e:?}")))
+    let body = Body::from_polygon_faces(&polys, tol)
+        .map_err(|e| StepImportError::Assemble(format!("{e:?}")))?;
+    // Validation-property acceptance gate (dossier 38 sec 9): when the
+    // file declares volume / area / centroid, recompute and compare; a
+    // mismatch means the import built the WRONG geometry and DECLINES.
+    let props = validation_props(&f, scale);
+    if props.volume.is_some() || props.area.is_some() || props.centroid.is_some() {
+        let mp = body
+            .mass_properties()
+            .map_err(|e| StepImportError::Assemble(format!("mass properties: {e:?}")))?;
+        if let Some(v) = props.volume
+            && (mp.volume - v).abs() > 1e-3 * v.abs().max(1.0)
+        {
+            return Err(StepImportError::Assemble(format!(
+                "validation volume mismatch: file {v}, recomputed {}",
+                mp.volume
+            )));
+        }
+        if let Some(a) = props.area {
+            let got = body.surface_area();
+            if (got - a).abs() > 1e-3 * a.abs().max(1.0) {
+                return Err(StepImportError::Assemble(format!(
+                    "validation area mismatch: file {a}, recomputed {got}"
+                )));
+            }
+        }
+        if let Some(c) = props.centroid
+            && (mp.centroid - c).norm() > (1e-6 * c.norm()).max(1e-3)
+        {
+            return Err(StepImportError::Assemble(format!(
+                "validation centroid mismatch: file {c:?}, recomputed {:?}",
+                mp.centroid
+            )));
+        }
+    }
+    Ok(body)
 }
 
 #[cfg(test)]
@@ -1112,6 +1199,35 @@ mod tests {
         assert!(matches!(
             from_step_string(&text, 1e-3),
             Err(StepImportError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn tampered_validation_volume_declines() {
+        // The export now embeds CAx-IF validation properties; the
+        // importer recomputes them as its acceptance oracle. A tampered
+        // volume must DECLINE the import (the round-trip tests prove
+        // the untampered path passes the same gate).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 3.0, 4.0).unwrap();
+        let text = to_step_string(&b).unwrap();
+        let mp = b.mass_properties().unwrap();
+        let needle = format!("VOLUME_MEASURE({:?})", mp.volume);
+        assert!(text.contains(needle.as_str()), "props embedded");
+        let bad = text.replace(needle.as_str(), "VOLUME_MEASURE(25.0)");
+        assert!(matches!(
+            from_step_string(&bad, 1e-6),
+            Err(StepImportError::Assemble(_))
+        ));
+        // A tampered centroid also declines.
+        let needle = format!(
+            "({:?},{:?},{:?})",
+            mp.centroid.x, mp.centroid.y, mp.centroid.z
+        );
+        let bad = text.replace(needle.as_str(), "(9.0,9.0,9.0)");
+        assert!(matches!(
+            from_step_string(&bad, 1e-6),
+            Err(StepImportError::Assemble(_))
         ));
     }
 
