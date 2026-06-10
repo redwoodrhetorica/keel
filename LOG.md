@@ -4215,3 +4215,59 @@ CI: fmt, clippy -D warnings, workspace 123 + 77 + 213 (+2) green. No fuzz: addit
 COUNTER: 123 -> 125/144 (items 58, 59). Remaining tractable: 29, 31, 48-51, 54-57, 60, 67.
 NEXT: 31 selective booleans, then the remaining blend depth (48 variable radius is the
 spine-with-varying-r generalization; 54-57 are policy layers on the same engine).
+
+## Addendum 138 (2026-06-10, attended): SELECTIVE FACE-PAIR BOOLEANS (item 31; 125 -> 126/144)
+
+boolean_selective(a, b, op, pairs, tol) (branch selective-booleans): the boolean restricted to
+the intersection seams of caller-chosen (target-face, tool-face) pairs. REFACTOR: the post-seam
+tail of boolean() -- imprint both operands, classify, select, stitch, degeneracy +
+self-consistency gates -- extracted VERBATIM into assemble_boolean and shared by both entries,
+so the selective path runs every honesty gate unchanged: an INSUFFICIENT selection (seams that
+cannot bound a closed result) DECLINES through the standard gates instead of emitting a wrong
+body. The coincident-overlap pre-pass is skipped on the selective path (it re-clones operands
+and would remap the caller's face keys); coincident contacts decline as usual.
+
+ORACLES: corner-overlap blocks: selecting exactly the seam-bearing pairs reproduces the full
+union volume to 1e-9; dropping every pair touching one target face declines. fuzz_boolean WSL
+soak (mandatory, boolean.rs refactored): 10 minutes, 978 runs, clean. CI: fmt, clippy -D
+warnings, workspace 123 + 77 + 214 (+1) green.
+
+COUNTER: 125 -> 126/144 (item 31).
+
+## Addendum 139 (2026-06-10, attended): SESSION-END RESUME ANCHOR (counter 126/144)
+
+WHERE WE ARE. A +23 session (103 -> 126), all merged to master, all green: workspace 123 geom +
+77 math + 214 topo, clippy -D warnings, fmt, four clean fuzz_boolean soaks at every boolean
+change (1260, 1724, 977, 978 runs). NOT pushed (push only if asked; master is well ahead of
+origin). The roadmap's realistic band (110-120) is EXCEEDED.
+
+SHIPPED THIS SESSION (per-item detail in Addenda 128-138): foreign geometry 114-116 (evaluator
+-> certified fit-to-NURBS; the Surface3::Foreign variant rejected per Addendum 127 stands);
+INTERIOR THROUGH-HOLE booleans (multi-component imprint + component genus stamping -- the first
+genus-RAISING boolean); breadth waves 7/9/10/15/62/74 + 94/113/122/128/137/139 +
+80/138/140/142; SHEET-SOLID booleans (28) with the sheet finalize; n-sided Coons boundary fill
+(68) + filled_sheet; healing (130) + defeaturing small holes (132, exact clone-gated surgery);
+blend RECOGNITION + UNBLEND (58/59, the exact fillet inverse, box round-trips); SELECTIVE
+booleans (31). Plus the XNurbs PATENT RE-EVALUATION (Addendum 131): variational surfacing is
+patent-clear (Welch-Witkin 1992 baseline; the dossier-18 "variational" fences cover Siemens
+DIRECT EDITING, a different technology); and the ANTI-DOUBLE-COUNT LEDGER (Addendum 130).
+
+THE REMAINING LIST IS NOW ALL DEEP-END ENGINES, each a multi-session milestone, none a
+single-session tick: 29 (general/non-manifold-body booleans, dossier 02 territory); 48
+variable-radius blends (varying-r spine, canal surfaces); 49/60 conic + G2 sections; 50
+face-face blends; 51 vertex/setback blends; 54 hold-line; 55 range-controlled; 56 networks +
+mitring; 57 overflow handling (dossier 41); 67 loft with guides + continuity (Gordon, dossier
+26). Out-of-scope stays ~15 (34, 46, 61, 79, 81, 86-93 patent-fenced convergent, 134-135).
+126 done + 15 excluded = 141 of 144 accounted; the 3-item gap vs the checklist is the
+slice-tick history recorded in Addendum 130 (the ledger is the LOG, kept honest there).
+
+NEXT SESSION (pick one): (1) blend depth, starting 48 variable-radius (re-read dossiers 40/41
+first; the spine machinery generalizes) or 57 overflow (dossier 41 catalogues the failure
+modes); (2) 67 Gordon loft with guides (dossier 26 secs 2-3); (3) 29 general-body booleans
+(dossier 02; the sheet finalize + GWN classifier are the foundations). Also live: curved
+through-holes ("unlocated seam component" relocation on curved faces), sheet-sheet booleans,
+the central-split corner-exact n-sided fill, variational fairing on the fill skeleton, toroidal
+unblend, and the completion gate (10h all-sector fuzz soak + three-bucket billion-boolean
+oracle) before any 1.0 claim. Standing rules unchanged: dossier re-read + citation per item;
+data-first; verify the SUCCESS branch; branch-per-milestone; exact CI triplet + fuzz_boolean
+soak when boolean internals change; LOG addendum then merge; NO EM-DASHES; push only if asked.
