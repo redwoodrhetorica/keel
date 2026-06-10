@@ -3270,9 +3270,14 @@ impl Body {
             ));
         }
         let mv = work.mesh_volume();
-        match work.mass_properties() {
-            Ok(m) => {
-                // Strong gate: the all-analytic mass == mesh identity.
+        let all_planar = work
+            .face_keys()
+            .iter()
+            .all(|&f| matches!(work.face_surface3(f), Some(Surface3::Plane(_))));
+        match (all_planar, work.mass_properties()) {
+            (true, Ok(m)) => {
+                // Strong gate: the all-planar mass == mesh identity
+                // (polygonal tessellation is exact).
                 if !m.volume.is_finite()
                     || (m.volume - mv).abs() > tol.max(1e-6) * (1.0 + m.volume.abs())
                 {
@@ -3281,17 +3286,22 @@ impl Body {
                     ));
                 }
             }
-            Err(_) => {
-                // OTHER blend faces still on the body block the
-                // analytic integral (the documented blend-pcurve
-                // follow-up). Fallback oracle: this unblend must change
-                // the mesh volume by EXACTLY the removed fillet's
-                // analytic wedge, r^2 (cot(theta/2) - (pi - theta)/2)
-                // per unit length at interior dihedral theta; the
-                // untouched faces' tessellation error CANCELS in the
-                // difference, leaving only the removed band's own
-                // chordal error (a couple of percent at default
-                // density).
+            (true, Err(_)) => {
+                return Err(TopoError::Precondition("unblend: massprops failed"));
+            }
+            (false, _) => {
+                // The candidate still carries CURVED faces (other
+                // blends), where the mesh is chordal and cannot equal
+                // the analytic mass exactly (the projected-bounds
+                // integral now SUCCEEDS there, so the dispatch is by
+                // face type, not by massprops failure). The gate is
+                // the EXACT WEDGE ORACLE: this unblend must change the
+                // mesh volume by exactly the removed fillet's analytic
+                // wedge, r^2 (cot(theta/2) - (pi - theta)/2) per unit
+                // length at interior dihedral theta; the untouched
+                // faces' tessellation error CANCELS in the difference,
+                // leaving only the removed band's own chordal error
+                // (a couple of percent at default density).
                 let Some(len) = edge_len else {
                     return Err(TopoError::Precondition(
                         "unblend: no straight sharp edge for the wedge oracle",
@@ -4243,6 +4253,81 @@ mod tests {
         );
         assert!((blend.spring_plane.center.z - 2.0).abs() < 1e-9);
         assert!((blend.spring_cyl.radius - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn blend_faces_integrate_analytically_via_projected_bounds() {
+        // The doc-promised blend-pcurve milestone: curved blend faces
+        // whose boundaries are ISO-RECTANGULAR now integrate exactly
+        // via projected UV bounds (no pcurves needed).
+        // 1. Plain fillet: analytic mass == the closed form to 1e-9.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e = edge_between_faces(&b, Vec3::new(0., 0., 1.), Vec3::new(1., 0., 0.));
+        let f = b.fillet_edge(e, 0.5).unwrap();
+        let pi = core::f64::consts::PI;
+        let exact = 8.0 - (0.25 - pi * 0.25 / 4.0) * 2.0;
+        let mass = f.mass_properties().unwrap().volume;
+        assert!(
+            (mass - exact).abs() < 1e-9,
+            "fillet mass {mass} != exact {exact}"
+        );
+        assert!((f.mesh_volume() - exact).abs() < 0.02, "chordal sanity");
+
+        // 2. Cap-rim torus ring (full-circle periodic span): analytic
+        // mass == the Pappus-exact volume to 1e-9. Removed ring =
+        // 2 pi xbar A over the corner region (square minus quarter
+        // disc) of the rim section.
+        use keel_geom::surface::Frame3;
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut base = Body::new();
+        base.cylinder(frame, 1.0, 2.0).unwrap();
+        let rim = base
+            .edges
+            .iter()
+            .map(|(k, _)| k)
+            .find(|&e| {
+                let fs = base.faces_around_edge(e);
+                fs.len() == 2
+                    && fs.iter().any(|&f| {
+                        matches!(
+                            base.face_surface_geom(f),
+                            Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                        )
+                    })
+                    && fs
+                        .iter()
+                        .any(|&f| matches!(base.face_outward_normal(f), Some(n) if n.z > 0.9))
+            })
+            .expect("no top rim edge");
+        let filleted = base.fillet_cap_rim(rim, 0.3).unwrap();
+        let (rr, rb) = (1.0f64, 0.3f64);
+        let a_sq = rb * rb;
+        let x_sq = rr - rb * 0.5;
+        let a_q = pi * rb * rb / 4.0;
+        let x_q = (rr - rb) + 4.0 * rb / (3.0 * pi);
+        let a = a_sq - a_q;
+        let xbar = (a_sq * x_sq - a_q * x_q) / a;
+        let removed = core::f64::consts::TAU * xbar * a;
+        let exact = pi * rr * rr * 2.0 - removed;
+        let mass = filleted.mass_properties().unwrap().volume;
+        assert!(
+            (mass - exact).abs() < 1e-9,
+            "rim mass {mass} != Pappus {exact}"
+        );
+
+        // 3. The sphere octant is NOT iso-rectangular in UV: that body
+        // keeps declining analytic mass properties honestly.
+        let mut c = Body::new();
+        c.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let corner = c
+            .vertices
+            .iter()
+            .find(|(_, v)| (v.point - Vec3::new(2., 2., 2.)).norm() < 1e-9)
+            .map(|(k, _)| k)
+            .expect("corner vertex");
+        let oct = c.fillet_corner_octant(corner, 0.5).unwrap();
+        assert!(oct.mass_properties().is_err(), "octant declines");
     }
 
     #[test]
