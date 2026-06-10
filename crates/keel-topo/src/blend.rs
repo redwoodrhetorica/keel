@@ -772,6 +772,292 @@ impl Body {
     }
 }
 
+/// A recognized rolling-ball blend face (parity item 58).
+#[derive(Clone, Debug)]
+pub struct RecognizedBlend {
+    pub face: crate::entity::FaceKey,
+    pub radius: f64,
+    /// The two support faces the blend is tangent to.
+    pub supports: (crate::entity::FaceKey, crate::entity::FaceKey),
+    /// The spring edges shared with the supports.
+    pub spring_edges: (EdgeKey, EdgeKey),
+}
+
+impl Body {
+    /// Blend recognition (item 58; dossier 28 sec 6.3 records the
+    /// support data the inverse needs): cylindrical (edge-fillet) or
+    /// toroidal (cap-rim) faces TANGENT to exactly two distinct
+    /// neighbor faces along shared edges. Tangency is normals-parallel
+    /// at the shared-edge midpoint within `angular_tol`. The radius is
+    /// the cylinder radius / torus minor radius.
+    pub fn recognize_blends(&self, angular_tol: f64) -> Vec<RecognizedBlend> {
+        let mut out = Vec::new();
+        for face in self.face_keys() {
+            let radius = match self.face_surface3(face) {
+                Some(Surface3::Cylinder(c)) => c.radius,
+                Some(Surface3::Torus(t)) => t.minor,
+                _ => continue,
+            };
+            let mut tangents: Vec<(crate::entity::FaceKey, EdgeKey)> = Vec::new();
+            for e in self.face_edge_set(face) {
+                let partners: Vec<crate::entity::FaceKey> = self
+                    .faces_around_edge(e)
+                    .into_iter()
+                    .filter(|&f| f != face)
+                    .collect();
+                let [p] = partners[..] else { continue };
+                let Some(mid) = self.edge_midpoint_point(e) else {
+                    continue;
+                };
+                let (Some(na), Some(nb)) =
+                    (self.face_normal_at(face, mid), self.face_normal_at(p, mid))
+                else {
+                    continue;
+                };
+                if na.cross(nb).norm() <= angular_tol {
+                    tangents.push((p, e));
+                }
+            }
+            if tangents.len() == 2 && tangents[0].0 != tangents[1].0 {
+                out.push(RecognizedBlend {
+                    face,
+                    radius,
+                    supports: (tangents[0].0, tangents[1].0),
+                    spring_edges: (tangents[0].1, tangents[1].1),
+                });
+            }
+        }
+        out
+    }
+
+    /// Unblend (item 59): remove a recognized PLANE-PLANE edge fillet,
+    /// restoring the sharp edge at the support planes' intersection --
+    /// the exact inverse of `fillet_edge`. Surgery runs on a clone and
+    /// commits only if the result validates with mass == mesh;
+    /// otherwise DECLINES and the body is untouched. Toroidal and
+    /// curved-support unblends are follow-ups.
+    pub fn unblend(&mut self, blend: crate::entity::FaceKey, tol: f64) -> Result<(), TopoError> {
+        let rec_list = self.recognize_blends(1e-6);
+        let Some(info) = rec_list.iter().find(|r| r.face == blend) else {
+            return Err(TopoError::Precondition("unblend: face is not a blend"));
+        };
+        let (sa, sb) = info.supports;
+        let (Some(Surface3::Plane(pa)), Some(Surface3::Plane(pb))) =
+            (self.face_surface3(sa), self.face_surface3(sb))
+        else {
+            return Err(TopoError::Precondition(
+                "unblend: only plane-plane fillets (MVP)",
+            ));
+        };
+        // The sharp line L = plane intersection.
+        let (n1, d1) = (pa.frame.z, pa.frame.z.dot(pa.frame.origin));
+        let (n2, d2) = (pb.frame.z, pb.frame.z.dot(pb.frame.origin));
+        let dir = n1.cross(n2);
+        let dd = dir.dot(dir);
+        if dd < 1e-18 {
+            return Err(TopoError::Precondition("unblend: parallel supports"));
+        }
+        let p_on_l = (n2.cross(dir) * d1 + dir.cross(n1) * d2) * (1.0 / dd);
+
+        let mut work = self.clone();
+        let mut rec = work.begin_op();
+        let (e1, e2) = info.spring_edges;
+        // The blend face's other edges are the end arcs; their partner
+        // faces are the caps whose planes cut L at the sharp vertices.
+        let arcs: Vec<EdgeKey> = work
+            .face_edge_set(blend)
+            .into_iter()
+            .filter(|&e| e != e1 && e != e2)
+            .collect();
+        if arcs.len() != 2 {
+            return Err(TopoError::Precondition("unblend: need two end arcs"));
+        }
+        // Per arc: the sharp vertex = L cut by the cap plane; move both
+        // arc endpoints there and merge them.
+        for &arc in &arcs {
+            let cap = work
+                .faces_around_edge(arc)
+                .into_iter()
+                .find(|&f| f != blend)
+                .ok_or(TopoError::Precondition("unblend: arc without cap"))?;
+            let Some(Surface3::Plane(pc)) = work.face_surface3(cap) else {
+                return Err(TopoError::Precondition("unblend: non-planar cap (MVP)"));
+            };
+            let nc = pc.frame.z;
+            let dc = nc.dot(pc.frame.origin);
+            let denom = dir.dot(nc);
+            if denom.abs() < 1e-12 {
+                return Err(TopoError::Precondition("unblend: cap parallel to edge"));
+            }
+            let t = (dc - p_on_l.dot(nc)) / denom;
+            let sharp = p_on_l + dir * t;
+            let (va, vb) = work
+                .edges
+                .get(arc)
+                .map(|e| e.bounds)
+                .ok_or(TopoError::StaleKey)?;
+            if let Some(v) = work.vertices.get_mut(va) {
+                v.point = sharp;
+            }
+            if let Some(v) = work.vertices.get_mut(vb) {
+                v.point = sharp;
+            }
+            // Splice the arc's fins out of their loop rings and drop it.
+            let fins: Vec<_> = work
+                .edges
+                .get(arc)
+                .map(|e| e.radial.clone())
+                .unwrap_or_default();
+            for fk in fins {
+                let (prev, next, owner) = match work.fins.get(fk) {
+                    Some(f) => (f.prev, f.next, f.owner),
+                    None => continue,
+                };
+                if let Some(pf) = work.fins.get_mut(prev) {
+                    pf.next = next;
+                }
+                if let Some(nf) = work.fins.get_mut(next) {
+                    nf.prev = prev;
+                }
+                if let Some(l) = work.loops.get_mut(owner)
+                    && l.fin == Some(fk)
+                {
+                    l.fin = Some(next);
+                }
+                if let Some(id) = work.fins.get(fk).map(|f| f.id) {
+                    work.unregister(&mut rec, id);
+                }
+                work.fins.remove(fk);
+            }
+            if let Some(id) = work.edges.get(arc).map(|e| e.id) {
+                work.unregister(&mut rec, id);
+            }
+            work.edges.remove(arc);
+            // Merge vb into va: repoint every edge bound.
+            if va != vb {
+                let eks: Vec<EdgeKey> = work.edges.iter().map(|(k, _)| k).collect();
+                for ek in eks {
+                    if let Some(e) = work.edges.get_mut(ek) {
+                        if e.bounds.0 == vb {
+                            e.bounds.0 = va;
+                        }
+                        if e.bounds.1 == vb {
+                            e.bounds.1 = va;
+                        }
+                    }
+                }
+                if let Some(id) = work.vertices.get(vb).map(|v| v.id) {
+                    work.unregister(&mut rec, id);
+                }
+                work.vertices.remove(vb);
+            }
+        }
+        let _ = rec.finish();
+        // Fix surviving vertices' fin pointers (their fins may have died).
+        let vkeys: Vec<_> = work.vertices.iter().map(|(k, _)| k).collect();
+        for v in vkeys {
+            let cur = work.vertices.get(v).and_then(|x| x.fin);
+            let stale = cur.map(|f| !work.fins.contains(f)).unwrap_or(false);
+            if stale {
+                let repl = work
+                    .fins
+                    .iter()
+                    .map(|(k, _)| k)
+                    .find(|&fk| work.fin_start_vertex(fk) == Some(v));
+                if let Some(x) = work.vertices.get_mut(v) {
+                    x.fin = repl;
+                }
+            }
+        }
+        // Capture support A's surface BEFORE the merge, then kill e1:
+        // the blend face merges with support A (kef keeps one of them).
+        let a_surface = work.faces.get(sa).and_then(|f| f.surface);
+        work.kef(e1)
+            .map_err(|_| TopoError::Precondition("unblend: kef failed"))?;
+        let survivor = if work.faces.contains(sa) { sa } else { blend };
+        if let Some((sk, sense)) = a_surface
+            && let Some(f) = work.faces.get_mut(survivor)
+        {
+            f.surface = Some((sk, sense));
+        }
+        // The sharp edge: e2 now joins the merged support-A face and
+        // support B; carry the intersection line.
+        let (b0, b1) = work
+            .edges
+            .get(e2)
+            .map(|e| e.bounds)
+            .ok_or(TopoError::StaleKey)?;
+        let (p0, p1) = (
+            work.vertices.get(b0).map(|v| v.point),
+            work.vertices.get(b1).map(|v| v.point),
+        );
+        if let (Some(p0), Some(p1)) = (p0, p1)
+            && let Ok(line) = keel_geom::curve::Line3::new(p0, p1 - p0)
+        {
+            work.attach_edge_curve(e2, Curve3::Line(line), true);
+        }
+        // Honesty gates.
+        if work.validate().is_err() {
+            return Err(TopoError::Precondition(
+                "unblend: result invalid (declined)",
+            ));
+        }
+        let v = work
+            .mass_properties()
+            .map(|m| m.volume)
+            .map_err(|_| TopoError::Precondition("unblend: massprops failed"))?;
+        let mv = work.mesh_volume();
+        if !v.is_finite() || (v - mv).abs() > tol.max(1e-6) * (1.0 + v.abs()) {
+            return Err(TopoError::Precondition(
+                "unblend: result inconsistent (declined)",
+            ));
+        }
+        *self = work;
+        Ok(())
+    }
+
+    /// All edges bounding a face (every loop's fin walk).
+    fn face_edge_set(&self, face: crate::entity::FaceKey) -> Vec<EdgeKey> {
+        let mut out = Vec::new();
+        for lk in self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default()
+        {
+            for e in self.ring_edges(lk) {
+                if !out.contains(&e) {
+                    out.push(e);
+                }
+            }
+        }
+        out
+    }
+
+    /// A point in the middle of an edge (curve midpoint when present,
+    /// else the chord midpoint).
+    fn edge_midpoint_point(&self, e: EdgeKey) -> Option<Vec3> {
+        let ed = self.edges.get(e)?;
+        let p0 = self.vertices.get(ed.bounds.0)?.point;
+        let p1 = self.vertices.get(ed.bounds.1)?.point;
+        Some((p0 + p1) * 0.5)
+    }
+
+    /// The face's outward normal at (the projection of) `p`.
+    fn face_normal_at(&self, face: crate::entity::FaceKey, p: Vec3) -> Option<Vec3> {
+        let s = self.face_surface3(face)?;
+        let pr = s.project(p).ok()?;
+        let lg = s.local_geometry(pr.u, pr.v).ok()?;
+        let sense = self
+            .faces
+            .get(face)
+            .and_then(|f| f.surface)
+            .map(|(_, s)| s)
+            .unwrap_or(true);
+        Some(if sense { lg.normal } else { lg.normal * -1.0 })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -794,6 +1080,54 @@ mod tests {
             }
         }
         panic!("no top-right edge");
+    }
+
+    #[test]
+    fn recognize_and_unblend_round_trips_the_fillet() {
+        // Items 58 + 59: box -> fillet_edge(0.5) -> recognize exactly
+        // one blend (the cylinder, radius 0.5, two planar supports) ->
+        // unblend -> the EXACT original box (V8 E12 F6, volume 8,
+        // mass == mesh).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e = top_right_edge(&b);
+        let mut filleted = b.fillet_edge(e, 0.5).unwrap();
+
+        let found = filleted.recognize_blends(1e-6);
+        assert_eq!(found.len(), 1, "exactly one blend face");
+        assert!((found[0].radius - 0.5).abs() < 1e-12, "blend radius");
+        let blend = found[0].face;
+
+        filleted.unblend(blend, 1e-6).unwrap();
+        assert!(filleted.validate().is_ok(), "unblended box invalid");
+        let c = filleted.counts();
+        assert_eq!((c.v, c.e, c.f), (8, 12, 6), "back to the sharp box");
+        let v = filleted.mass_properties().unwrap().volume;
+        let mv = filleted.mesh_volume();
+        assert!(
+            (v - 8.0).abs() < 1e-9 && (mv - 8.0).abs() < 1e-9,
+            "unblend must restore volume 8 mass == mesh (got {v}, {mv})"
+        );
+        // Idempotence of recognition: nothing left to find.
+        assert!(filleted.recognize_blends(1e-6).is_empty());
+    }
+
+    #[test]
+    fn recognition_rejects_non_tangent_cylinders() {
+        // A plain cylinder primitive's barrel meets its caps at 90
+        // degrees: NOT a blend (planar faces are never candidates, so
+        // chamfers are excluded by construction).
+        let mut cyl = Body::new();
+        cyl.cylinder(
+            Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+            1.0,
+            2.0,
+        )
+        .unwrap();
+        assert!(
+            cyl.recognize_blends(1e-6).is_empty(),
+            "perpendicular barrel must not read as a blend"
+        );
     }
 
     #[test]

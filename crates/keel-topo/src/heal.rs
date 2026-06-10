@@ -163,7 +163,7 @@ impl Body {
     }
 
     /// The ring's edge set (fin walk).
-    fn ring_edges(&self, lk: LoopKey) -> Vec<crate::entity::EdgeKey> {
+    pub(crate) fn ring_edges(&self, lk: LoopKey) -> Vec<crate::entity::EdgeKey> {
         let mut out = Vec::new();
         let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
             return out;
