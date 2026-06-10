@@ -4402,3 +4402,28 @@ CI: fmt, clippy -D warnings, workspace 123 + 77 + 220 (+1) green. No fuzz: addit
 COUNTER: 130 -> 131/144 (item 60). Remaining: 29, 51, 55, 56, 57, 67 -- six items, each a true
 multi-session engine (vertex blends, range/runout surgery, networks/mitring, overflow policies,
 Gordon loft, non-manifold booleans).
+
+## Addendum 145 (2026-06-10, attended): GORDON LOFT WITH GUIDES (item 67; 131 -> 132/144)
+
+gordon_surface(sections, guides, tol) (keel-geom fill.rs) + Body::lofted_sheet_with_guides
+(branch gordon-loft): loft through sections WITH guide curves, per dossier 26 sec 2 -- the
+Gordon surface as the BOOLEAN SUM of the section loft, the guide loft, and minus the tensor
+interpolant of their node grid. THE REDUCTION: rather than wrestling three NURBS fits into
+compatible knot vectors, the Boolean sum is built TRANSFINITELY -- an EVALUATOR (piecewise-
+linear blends between adjacent sections/guides, piecewise-bilinear node tensor) that satisfies
+the Gordon interpolation identity by construction -- and fed to the EXISTING certified
+foreign-surface fit (Addendum 128 machinery). One NURBS out, honest tol_achieved against the
+transfinite truth, the sheet via nurbs_sheet_body, DECLINE over tol. Guides must MEET every
+section near the grid nodes (validated, slack 10 tol) or the construction declines.
+
+ORACLE: three quarter-circle sections (48-segment polylines) stacked in z with the two end
+RULINGS as guides: the section blend is an extrusion, so the Gordon surface IS the quarter
+cylinder -- the sheet certifies at 2e-3, validates, and SIMPLIFY RECOVERS THE NATIVE ANALYTIC
+CYLINDER (67 -> 116 -> M8 chaining). Disjoint guides decline. (A 16-segment polyline failed the
+2e-3 certificate first -- the chordal input WAS the truth and the certificate said so; the
+denser polyline is the fix, not a looser gate.)
+
+CI: fmt, clippy -D warnings, workspace 123 + 77 + 221 (+1) green. No fuzz: additive constructor.
+
+COUNTER: 131 -> 132/144 (item 67). Remaining: 29, 51, 55, 56, 57 -- vertex blends, range/runout,
+networks/mitring, overflow policies, non-manifold booleans: the five true multi-session engines.
