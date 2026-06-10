@@ -4021,3 +4021,44 @@ replace-surface), 140 (thread-safety contract + concurrent-query test), 142 (NUR
 toolkit: split-at-param via knot insertion, the pieces exist), then the real engines: 28
 sheet-solid booleans, 31 selective booleans, 68 n-sided variational fill (now patent-cleared),
 130 healing, 132 defeaturing, blends 48/50/51.
+
+## Addendum 132 (2026-06-10, attended): PARITY BREADTH WAVE 3 -- items 80, 138, 140, 142 (114 ->
+118/144)
+
+WAVE 3 SHIPPED (branch parity-breadth-3), four ticks (dossier 25 rows, sec 22 language for
+138/142; anti-double-count rule honored, all four never previously cited):
+- 142 NURBS SPLIT/EDIT TOOLKIT: NurbsCurve::split already existed; the missing surface half is
+  now NurbsSurface::split_u / split_v (knot insertion to full multiplicity, then a net
+  partition -- exactly the curve algorithm lifted to rows/columns). Proptest over random rational
+  surfaces: the half containing the sample reproduces the surface to 1e-9. With create/evaluate/
+  insert_knot/to_bezier/split on both curves and surfaces, the toolkit row is genuinely covered.
+- 138 GENERAL TOPOLOGY REPLACE (new replace.rs): replace_face_surface_checked +
+  replace_edge_curve_checked -- representation-level geometry swaps under existing topology,
+  GUARDED: every face-boundary sample must lie on the new surface within tol (analytic project /
+  project_point_surface_fast), edge-curve endpoints must land on the edge's vertices (either
+  orientation -> sense; closed edges need a closed curve through the seam vertex). A replace can
+  re-represent (the item-137 exact NURBS) but never silently relocate. Tests: box face ->
+  bilinear NURBS -> valid, volume unchanged, simplify recovers the plane (137+138+M8 closure);
+  a shifted plane and an offset curve are REFUSED. The reintersecting replace-and-move form
+  remains the tweak family (35-39), as the dossier distinguishes.
+- 80 DEFORMATION WORKFLOW: the capability-map row is the deform-via-tweak/offset/taper WORKFLOW
+  over items 35-39/78 (all long since shipped); ticked with the composed end-to-end test:
+  offset top (+1, vol 12) -> move top (+1, vol 16) -> taper +x side inward (wedge 4, vol 12
+  exact), valid and mass == mesh at every step. Sign convention recorded: positive taper angle
+  leans the face OUTWARD (the test wanted inward, hence -atan(0.25)).
+- 140 THREAD SAFETY (the safety half): Body is Send + Sync by construction (owned arenas/maps,
+  no interior mutability) -- statically asserted -- and a thread::scope test runs
+  mass_properties / mesh_volume / facets / surface_area concurrently on one &Body with exact
+  results. Mutation is exclusive (&mut) by the borrow checker. SMP-PARALLEL algorithms are the
+  opportunistic half and stay a follow-up, exactly as the roadmap lists 140.
+
+CI: fmt, clippy -D warnings, workspace 119 geom + 77 math + 202 topo (+1, +5) green. No fuzz
+soak: additive only (new split/replace APIs + tests; no boolean/tessellation/imprint change).
+
+COUNTER: 114 -> 118/144 (items 80, 138, 140, 142). Remaining tractable: 10 (body from supplied
+geometry), 28/29/31 (sheet/general/selective booleans), 48-51 + 54-60 (blend depth), 67/68
+(loft guides / n-sided variational fill, patent-cleared per Addendum 131), 130 (healing), 132
+(defeaturing), 141/143 (verify not consumed by the unnamed slice ticks first). Excluded stays
+~15. NEXT: the engines, biggest leverage first: 28 sheet-solid booleans (the GWN classifier is
+surface-type-agnostic; sheet fragments classify the same way), then 68 variational fill, then
+132 defeature-small-features over delete_face.

@@ -334,6 +334,84 @@ impl NurbsSurface {
         })
     }
 
+    /// Split at `u` into two independent clamped surfaces covering
+    /// [u0, u] and [u, u1] in the u direction (parity item 142, the
+    /// surface half of the NURBS split/edit toolkit; the curve half is
+    /// `NurbsCurve::split`). Geometry is exactly preserved: knot
+    /// insertion to full multiplicity, then a net partition.
+    pub fn split_u(&self, u: f64) -> Result<(Self, Self), GeomError> {
+        let p = self.kv_u.degree();
+        let (a, b) = self.kv_u.domain();
+        if !(u > a && u < b) {
+            return Err(GeomError::OutOfDomain);
+        }
+        let mut cur = self.clone();
+        while cur.kv_u.multiplicity(u) < p {
+            cur = cur.insert_knot_u(u)?;
+        }
+        let span = cur.kv_u.find_span(u);
+        let knots = cur.kv_u.knots();
+        let i0 = span - p; // control ROW lying on the surface at u
+        let mut left_knots = knots[..=span].to_vec();
+        left_knots.push(u);
+        let mut right_knots = vec![u; p + 1];
+        right_knots.extend_from_slice(&knots[span + 1..]);
+        let (ctrl, nv) = (&cur.ctrl, cur.nv);
+        let row_block = |r0: usize, r1: usize| -> Vec<Vec4> {
+            (r0..=r1)
+                .flat_map(|i| (0..nv).map(move |j| ctrl[i * nv + j]))
+                .collect()
+        };
+        let left = Self::from_homogeneous(
+            KnotVector::new(p, left_knots)?,
+            cur.kv_v.clone(),
+            row_block(0, i0),
+        )?;
+        let right = Self::from_homogeneous(
+            KnotVector::new(p, right_knots)?,
+            cur.kv_v.clone(),
+            row_block(i0, cur.nu - 1),
+        )?;
+        Ok((left, right))
+    }
+
+    /// Split at `v` in the v direction (see `split_u`).
+    pub fn split_v(&self, v: f64) -> Result<(Self, Self), GeomError> {
+        let q = self.kv_v.degree();
+        let (a, b) = self.kv_v.domain();
+        if !(v > a && v < b) {
+            return Err(GeomError::OutOfDomain);
+        }
+        let mut cur = self.clone();
+        while cur.kv_v.multiplicity(v) < q {
+            cur = cur.insert_knot_v(v)?;
+        }
+        let span = cur.kv_v.find_span(v);
+        let knots = cur.kv_v.knots();
+        let j0 = span - q; // control COLUMN lying on the surface at v
+        let mut left_knots = knots[..=span].to_vec();
+        left_knots.push(v);
+        let mut right_knots = vec![v; q + 1];
+        right_knots.extend_from_slice(&knots[span + 1..]);
+        let (ctrl, nu, nv) = (&cur.ctrl, cur.nu, cur.nv);
+        let col_block = |c0: usize, c1: usize| -> Vec<Vec4> {
+            (0..nu)
+                .flat_map(|i| (c0..=c1).map(move |j| ctrl[i * nv + j]))
+                .collect()
+        };
+        let left = Self::from_homogeneous(
+            cur.kv_u.clone(),
+            KnotVector::new(q, left_knots)?,
+            col_block(0, j0),
+        )?;
+        let right = Self::from_homogeneous(
+            cur.kv_u.clone(),
+            KnotVector::new(q, right_knots)?,
+            col_block(j0, cur.nv - 1),
+        )?;
+        Ok((left, right))
+    }
+
     /// Decompose into rational Bezier patches by saturating every
     /// interior knot to full multiplicity in both directions.
     pub fn to_bezier_patches(&self) -> Result<Vec<BezierPatch>, GeomError> {
@@ -1037,6 +1115,23 @@ mod tests {
             prop_assert!(enc[0].contains(exact.x), "x {} not in {:?}", exact.x, enc[0]);
             prop_assert!(enc[1].contains(exact.y), "y {} not in {:?}", exact.y, enc[1]);
             prop_assert!(enc[2].contains(exact.z), "z {} not in {:?}", exact.z, enc[2]);
+        }
+
+        // Splitting is representation-only: the half containing the
+        // sample reproduces the surface (parity item 142).
+        #[test]
+        fn split_preserves_geometry((s, u, v) in arb_surface_uv()) {
+            let ((u0, u1), (v0, v1)) = s.domain();
+            let um = 0.5 * u0 + 0.5 * u1;
+            let vm = 0.5 * v0 + 0.5 * v1;
+            let p0 = s.point(u, v);
+            let scale = 1.0 + p0.norm();
+            let (lu, ru) = s.split_u(um).unwrap();
+            let got_u = if u <= um { lu.point(u, v) } else { ru.point(u, v) };
+            prop_assert!((got_u - p0).norm() < 1e-9 * scale);
+            let (lv, rv) = s.split_v(vm).unwrap();
+            let got_v = if v <= vm { lv.point(u, v) } else { rv.point(u, v) };
+            prop_assert!((got_v - p0).norm() < 1e-9 * scale);
         }
 
         // Insertion is representation-only: geometry unchanged.
