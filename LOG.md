@@ -3808,3 +3808,60 @@ control 128 (thin over the partition pmarks already built -- watch for double-co
 rules unchanged: re-read the relevant dossier first + cite it; data-first diagnose before fixing;
 verify the SUCCESS branch explicitly (never read "X or decline" as "X"); branch-per-milestone, run
 the exact CI triplet + a fuzz_boolean soak before merge, then a LOG addendum; NO EM-DASHES.
+
+## Addendum 128 (2026-06-10, attended): PHASE 9 FOREIGN GEOMETRY 114-116 (counter 103/144)
+
+WHAT SHIPPED (branch phase9-foreign): foreign geometry the NON-invasive way, exactly per the
+Addendum 127 corrected architecture. The host implements an evaluator (ForeignSurface{domain,
+eval(u,v)}, ForeignCurve{domain, eval(t)} in crates/keel-geom/src/foreign.rs); the kernel SAMPLES
++ FITS it to a certified NURBS and stores a standard SurfaceGeom::Nurbs / Curve3::Nurbs. The
+evaluator is the procedural truth, the NURBS is the cache (founding doctrine). No new geometry
+variant, body/partition serde (126/127) untouched, every existing NURBS path (tessellate_nurbs,
+recover/simplify, booleans after recovery) works unchanged.
+
+DOSSIERS (cited per standing rule): research/kernel/25-parasolid-capability-map.md sec 17 +
+checklist 114-116 (PK foreign-geometry evaluator-callback family; "can later be converted to
+native NURBS where needed" is literally this design). research/kernel/08-kernel-engineering.md
+sec 3.4 + recommendation 9 (evaluator traits decouple representation from the topology engine;
+callback geometry "limits which exact algorithms can run on it", hence cache + certify, never
+direct). Fit method: NURBS Book 9.4.2 two-stage surface approximation.
+
+MECHANICS. fit_foreign_surface: uniform parameter grid affinely mapped to [0,1]^2, two-stage
+tensor-product LSQ reusing fit::lsq_fit (made pub(crate); all row fits share params + control
+count so the derived knot vectors agree and the columns assemble into one net), control count
+escalating 4->8->16->32, certification against FRESH evaluator samples on a 2x-denser offset
+grid, inflated by the same SAFETY=2.0 as fit_cubic. End-pinned LSQ means the four corners (and
+curve endpoints) interpolate exactly. fit_foreign_curve: same, one direction. Topology:
+Body::foreign_sheet builds the planar_sheet-shaped lamina (one double-sided face, four free
+edges) whose edges carry the EXACT boundary iso-curves of the fitted patch
+(NurbsSurface::boundary_curves, senses set per ring direction), so face and edge geometry are
+consistent by construction; DECLINES (honesty gate) when the certificate misses tol or the
+boundary is degenerate (pole patches excluded, MVP). Body::attach_foreign_edge_curve covers the
+curve half (endpoint match in either orientation sets the sense; misses decline).
+
+ITEM MAPPING, stated honestly. 114 = the traits + certified constructors (surfaces AND curves).
+115 = the foreign-derived body is first-class: validates, tessellates (tessellate_nurbs grids the
+full domain, which IS the sheet's face), and after native conversion feeds the modeling stack;
+test chain: foreign plane under a non-affine parameterization -> simplify recovers the native
+Plane -> thicken to a 2.0-volume slab (mass == mesh, 1e-9) -> corner-overlap boolean Difference
+to 1.875 (mass == mesh, 1e-9). Direct booleans on a still-NURBS open sheet are NOT claimed.
+116 = foreign -> NURBS (the fit) plus NURBS -> native (the existing simplify/recover certified
+gate): a foreign quarter-cylinder evaluator recovers Surface3::Cylinder at 1e-4; a foreign
+segment edge recovers to a Line. SUCCESS branches verified explicitly: the wavy sin/cos patch
+CERTIFIES at 1e-4 and fresh-parameter spot checks stay inside the certificate; the C0 crease
+evaluator REFUSES at 1e-9 at both the fit level and the constructor level (decline tests).
+
+DISCOVERY (pre-existing, follow-up candidate): block-minus-block INTERIOR THROUGH-NOTCH declines
+(AssemblyFailed "mass != mesh") even on pristine primitive blocks; a control test reproduced it
+with no foreign geometry involved, so it is not this milestone's bug. The drilled-block cylinder
+case passes. Honest decline, not a wrong body; the likely gap is the planar-face interior-ring
+imprint path. Not pursued this session.
+
+CI: fmt, clippy -D warnings, workspace 114 geom + 77 math + 182 topo all green (+6 geom, +5
+topo; note Addendum 127's "108 math + 77 geom" had the two labels swapped). fuzz_boolean WSL
+soak: 10 minutes, 1260 runs, clean. CodeGraph synced.
+
+COUNTER: 100 -> 103/144 (items 114, 115, 116). NEXT (menu unchanged from Addendum 127, minus
+foreign): deepen the MVPs (curved/multi-face shell + sheet ops, oblique-cut blend classes) or
+version control 128 (thin over partition pmarks, watch double-counting); plus the new
+through-notch imprint follow-up above.
