@@ -5102,3 +5102,25 @@ all revolve bodies unchanged (their valid pcurves pass the guard).
 
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 240 (+1) green; fuzz_boolean soak
 (mass_properties is load-bearing in the boolean gates): 10 minutes, 733 runs, clean.
+
+## Addendum 165 (2026-06-10, attended): THE POLYGON SOUP IS RETIRED (dossier 47 Rung 0)
+
+Branch soup-retirement: build_result_solid + kept_to_polys + ResultPoly (+ the now-orphaned
+face_ring_points and newell helper, ~290 lines) are DELETED; stitch_by_import is the ONLY
+assembly. The decisive experiment: an env-gated census showed the fallback fired exactly FOUR
+times across the whole suite, every one inside a test whose contract is DECLINE or whose
+passing path never consumed the soup body (near-coincident touch, too-thick hollow, the
+crossing-cylinder gate, a selective-boolean probe); replacing the fallback with an honest Err
+left ALL 240 keel-topo tests green. The L-union itself has assembled through the identity
+stitch since the boundary-coincident-ring filter (Add. 103) and the #16 keystone; the "soup
+still needed for partial coincidence" note in the code was STALE. A stitch failure now
+DECLINES the boolean, full stop: correct-or-decline with no second assembly path for the
+closure invariant to miss.
+
+This was the HARD DEPENDENCY for the dossier-57 ladder ("the soup cannot hold a radial-3 cycle
+or a kept wire/lamina; on the soup path item 29 genuinely would be a rebuild"): Rungs 3-5 now
+build on a single stitcher.
+
+CI: fmt; clippy -D warnings (the deletion surfaced a stale allow and one orphan, both
+cleaned); workspace 132 + 77 + 240 green; fuzz_boolean soak (assembly path changed): 10
+minutes, count below.
