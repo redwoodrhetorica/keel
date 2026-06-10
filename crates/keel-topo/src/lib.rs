@@ -33,6 +33,7 @@ pub mod sheet;
 pub mod shell;
 pub mod simplify;
 pub mod step_export;
+pub mod step_import;
 pub mod tessellate;
 pub mod transform;
 pub mod tweak;

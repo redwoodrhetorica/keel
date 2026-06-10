@@ -97,3 +97,9 @@ name = "fuzz_recover"
 path = "fuzz_targets/fuzz_recover.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_step_import"
+path = "fuzz_targets/fuzz_step_import.rs"
+test = false
+doc = false
