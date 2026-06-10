@@ -1028,10 +1028,244 @@ fn analytic_analytic(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, 
         (Sphere(_), Sphere(_)) => sphere_sphere(a, b, tol),
         (Plane(_), Cylinder(_)) => plane_cylinder(a, b, tol),
         (Cylinder(_), Plane(_)) => plane_cylinder(b, a, tol),
+        (Cylinder(_), Cylinder(_)) => cylinder_cylinder(a, b, tol),
         // Other analytic pairs route to tier 2 (one side implicitized)
         // in Task 4; until then, unsupported.
         _ => Err(GeomError::Degenerate),
     }
+}
+
+/// Cylinder x cylinder (the QI-class quadric pair, corpus-audit
+/// opportunity A). Three rungs:
+/// 1. PARALLEL axes: the cross-section circle pair gives 0/1/2 exact
+///    ruling LINES (or Coincident for the shared axis + radius).
+/// 2. EQUAL radii with INTERSECTING axes: the bicylinder degenerates
+///    into TWO EXACT ELLIPSES in the planes through the crossing point
+///    M with normals az - bz and az + bz (on either plane
+///    ((P-M).az)^2 = ((P-M).bz)^2, so distance-to-axis equality is
+///    automatic); each is the existing exact plane-cylinder section.
+/// 3. GENERAL: parameterize by the angle on cylinder A. Each ruling of
+///    A meets cylinder B where a QUADRATIC in the ruling parameter v
+///    holds, so the curve is the closed-form two-branch field
+///    v(theta) = (-q1 +- sqrt(D))/(2 q2): a certified-EVALUATOR
+///    reduction (the foreign-fit pipeline), never a marching engine.
+///    D's sign pattern fixes the topology: D >= 0 everywhere = two
+///    closed wrap curves (one per branch); each D >= 0 interval
+///    otherwise = one closed bite curve (branch + out, branch - back,
+///    joining smoothly at the D = 0 ends). Certified NURBS fit per
+///    curve; certificate misses DECLINE.
+fn cylinder_cylinder(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, GeomError> {
+    let (Surface3::Cylinder(ca), Surface3::Cylinder(cb)) = (a, b) else {
+        unreachable!("cylinder_cylinder on non-cylinders")
+    };
+    let (az, bz) = (ca.frame.z, cb.frame.z);
+    let qb = |u: Vec3| -> Vec3 { u - bz * u.dot(bz) };
+
+    if az.cross(bz).norm() <= COINCIDENCE_ANG {
+        // Rung 1: parallel axes. Work in the shared cross-section.
+        let w = cb.frame.origin - ca.frame.origin;
+        let d = w - az * w.dot(az);
+        let dist = d.norm();
+        if dist <= tol && (ca.radius - cb.radius).abs() <= tol {
+            return Ok(SsiResult::Coincident);
+        }
+        if dist > ca.radius + cb.radius + tol || dist + tol < (ca.radius - cb.radius).abs() {
+            return Ok(SsiResult::Empty);
+        }
+        let u = d.try_normalize().ok_or(GeomError::Degenerate)?; // concentric unequal handled above
+        let x = (dist * dist + ca.radius * ca.radius - cb.radius * cb.radius) / (2.0 * dist);
+        let y2 = ca.radius * ca.radius - x * x;
+        let foot = ca.frame.origin + u * x;
+        if y2 <= tol * tol {
+            // Tangent ruling.
+            return Ok(SsiResult::Curves(vec![SsiCurve {
+                curve: Curve3::Line(Line3::new(foot, az)?),
+                closed: false,
+                tangential: true,
+                tol_achieved: 0.0,
+            }]));
+        }
+        let v = az.cross(u);
+        let y = y2.sqrt();
+        let mut curves = Vec::new();
+        for s in [y, -y] {
+            curves.push(SsiCurve {
+                curve: Curve3::Line(Line3::new(foot + v * s, az)?),
+                closed: false,
+                tangential: false,
+                tol_achieved: 0.0,
+            });
+        }
+        return Ok(SsiResult::Curves(curves));
+    }
+
+    // Axes' closest points (skew-line formula).
+    let w0 = ca.frame.origin - cb.frame.origin;
+    let (aa, ab, bb) = (az.dot(az), az.dot(bz), bz.dot(bz));
+    let det = aa * bb - ab * ab;
+    let sa = (ab * w0.dot(bz) - bb * w0.dot(az)) / det;
+    let sb = (aa * w0.dot(bz) - ab * w0.dot(az)) / det;
+    let pa = ca.frame.origin + az * sa;
+    let pb = cb.frame.origin + bz * sb;
+
+    if (pa - pb).norm() <= tol && (ca.radius - cb.radius).abs() <= tol {
+        // Rung 2: the exact two-ellipse degeneration.
+        let m = (pa + pb) * 0.5;
+        let mut curves = Vec::new();
+        for n in [az - bz, az + bz] {
+            let Ok(frame) = crate::surface::Frame3::from_z(m, n) else {
+                continue;
+            };
+            let plane = Surface3::Plane(crate::surface::Plane3::new(frame));
+            if let SsiResult::Curves(cs) = plane_cylinder(&plane, a, tol)? {
+                curves.extend(cs);
+            }
+        }
+        if curves.len() == 2 {
+            return Ok(SsiResult::Curves(curves));
+        }
+        return Err(GeomError::Degenerate);
+    }
+
+    // Rung 3: the closed-form branch field on cylinder A.
+    let q2 = qb(az).dot(qb(az));
+    if q2 <= 1e-18 {
+        return Err(GeomError::Degenerate);
+    }
+    let coeffs = |theta: f64| -> (f64, f64) {
+        let c = ca.frame.origin + (ca.frame.x * theta.cos() + ca.frame.y * theta.sin()) * ca.radius;
+        let w = qb(c - cb.frame.origin);
+        let q1 = 2.0 * w.dot(qb(az));
+        let q0 = w.dot(w) - cb.radius * cb.radius;
+        (q1, q0)
+    };
+    let disc = |theta: f64| -> f64 {
+        let (q1, q0) = coeffs(theta);
+        q1 * q1 - 4.0 * q2 * q0
+    };
+    let tau = core::f64::consts::TAU;
+    const N: usize = 1024;
+    let dvals: Vec<f64> = (0..N).map(|i| disc(tau * i as f64 / N as f64)).collect();
+    let eval_branch = |theta: f64, sign: f64| -> Vec3 {
+        let (q1, q0) = coeffs(theta);
+        let d = (q1 * q1 - 4.0 * q2 * q0).max(0.0);
+        let v = (-q1 + sign * d.sqrt()) / (2.0 * q2);
+        ca.frame.origin + (ca.frame.x * theta.cos() + ca.frame.y * theta.sin()) * ca.radius + az * v
+    };
+
+    // Certified cubic LSQ fit of one closed branch, escalating the
+    // control count further than the generic foreign-fit ladder (an
+    // SSI seam wants tight certificates; the curve is a smooth quartic
+    // so each doubling divides the error by ~16). Certificate = max
+    // deviation against FRESH evaluator samples x the same SAFETY = 2
+    // as the foreign pipeline; misses DECLINE.
+    let fit_curve = |eval: &dyn Fn(f64) -> Vec3, t0: f64, t1: f64| -> Result<SsiCurve, GeomError> {
+        for &n_ctrl in &[16usize, 32, 64, 128, 256] {
+            let m = 2 * n_ctrl + 1;
+            let params: Vec<f64> = (0..m).map(|i| i as f64 / (m - 1) as f64).collect();
+            let pts: Vec<Vec3> = params.iter().map(|&s| eval(t0 + s * (t1 - t0))).collect();
+            if pts.iter().any(|p| !p.is_finite()) {
+                return Err(GeomError::NonFinitePoint);
+            }
+            let Ok(curve) = crate::fit::lsq_fit(&pts, &params, n_ctrl) else {
+                continue;
+            };
+            let (a0, a1) = curve.domain();
+            let k = 2 * m + 1;
+            let mut dev = 0.0f64;
+            for i in 0..=k {
+                let s = i as f64 / k as f64;
+                let p_true = eval(t0 + s * (t1 - t0));
+                let p_fit = curve.point(a0 + s * (a1 - a0));
+                dev = dev.max((p_true - p_fit).norm());
+            }
+            let achieved = dev * 2.0;
+            if achieved <= tol {
+                return Ok(SsiCurve {
+                    curve: Curve3::Nurbs(curve),
+                    closed: true,
+                    tangential: false,
+                    tol_achieved: achieved,
+                });
+            }
+        }
+        // Certificate misses the requested tolerance: DECLINE.
+        Err(GeomError::Degenerate)
+    };
+
+    if dvals.iter().all(|&d| d > 0.0) {
+        // Full wrap: one closed curve per branch.
+        let mut curves = Vec::new();
+        for sign in [1.0, -1.0] {
+            curves.push(fit_curve(&|t| eval_branch(t, sign), 0.0, tau)?);
+        }
+        return Ok(SsiResult::Curves(curves));
+    }
+    if dvals.iter().all(|&d| d <= 0.0) {
+        return Ok(SsiResult::Empty);
+    }
+    // Bite components: maximal runs with D > 0, walked CYCLICALLY from
+    // a non-positive sample so a run wrapping 0/2pi stays one run.
+    // Angles are unwrapped (may exceed 2pi); disc is periodic.
+    let bisect = |mut lo: f64, mut hi: f64| -> f64 {
+        // disc(lo) and disc(hi) straddle zero.
+        for _ in 0..80 {
+            let mid = 0.5 * (lo + hi);
+            if (disc(lo) > 0.0) == (disc(mid) > 0.0) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        0.5 * (lo + hi)
+    };
+    let start = dvals.iter().position(|&d| d <= 0.0).unwrap_or(0);
+    let theta_at = |k: usize| tau * (start + k) as f64 / N as f64;
+    let mut curves = Vec::new();
+    let mut k = 1usize;
+    while k < N {
+        if dvals[(start + k) % N] <= 0.0 {
+            k += 1;
+            continue;
+        }
+        let first = k;
+        let mut last = k;
+        while last + 1 < N && dvals[(start + last + 1) % N] > 0.0 {
+            last += 1;
+        }
+        let th_lo = bisect(theta_at(first - 1), theta_at(first));
+        let th_hi = bisect(theta_at(last + 1), theta_at(last));
+        let span = th_hi - th_lo;
+        if span > 1e-6 {
+            // Closed bite: + branch out, - branch back. The CHEBYSHEV
+            // substitution theta = mid + half cos(phi) regularizes the
+            // sqrt turnarounds at the D = 0 ends (v ~ sqrt(th_hi -
+            // theta) has unbounded theta-speed there but is LINEAR in
+            // phi), so the closed loop is smooth in phi and the cubic
+            // fit certifies tightly.
+            let mid = 0.5 * (th_lo + th_hi);
+            let half = 0.5 * span;
+            curves.push(fit_curve(
+                &|phi: f64| {
+                    let theta = mid + half * phi.cos();
+                    let sign = if phi <= core::f64::consts::PI {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    eval_branch(theta, sign)
+                },
+                0.0,
+                tau,
+            )?);
+        }
+        k = last + 1;
+    }
+    if curves.is_empty() {
+        // Only sub-resolution grazes: a tangential touch, declined.
+        return Ok(SsiResult::Empty);
+    }
+    Ok(SsiResult::Curves(curves))
 }
 
 fn plane_of(s: &Surface3) -> (&crate::surface::Frame3,) {
@@ -1551,5 +1785,102 @@ mod tests {
         };
         assert_eq!(cs.len(), 1);
         assert!(cs[0].tangential);
+    }
+
+    fn cyl_at(origin: Vec3, axis: Vec3, r: f64) -> Surface3 {
+        Surface3::Cylinder(Cylinder3::new(Frame3::from_z(origin, axis).unwrap(), r).unwrap())
+    }
+
+    #[test]
+    fn cylinder_cylinder_equal_radii_exact_ellipses() {
+        // Rung 2: equal radii, perpendicular intersecting axes: the
+        // bicylinder degenerates to TWO EXACT ELLIPSES (tier-1 1e-9).
+        let a = cyl_at(Vec3::ZERO, Vec3::new(0., 0., 1.), 1.5);
+        let b = cyl_at(Vec3::ZERO, Vec3::new(1., 0., 0.), 1.5);
+        let r =
+            intersect_surfaces(&SurfaceRef::Analytic(&a), &SurfaceRef::Analytic(&b), TOL).unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("{r:?}")
+        };
+        assert_eq!(cs.len(), 2, "two mitre ellipses");
+        for c in &cs {
+            assert!(matches!(c.curve, Curve3::Ellipse(_)), "{:?}", c.curve);
+            assert!(c.tol_achieved == 0.0, "exact rung");
+            check_curve_on_both(&a, &b, &c.curve, 24);
+        }
+    }
+
+    #[test]
+    fn cylinder_cylinder_certified_branches() {
+        let tol = 1e-5;
+        // Full wrap (small vertical cylinder passes through a large
+        // horizontal one): one closed certified curve per sqrt branch.
+        let a = cyl_at(Vec3::ZERO, Vec3::new(0., 0., 1.), 1.0);
+        let b = cyl_at(Vec3::ZERO, Vec3::new(1., 0., 0.), 2.0);
+        let r =
+            intersect_surfaces(&SurfaceRef::Analytic(&a), &SurfaceRef::Analytic(&b), tol).unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("{r:?}")
+        };
+        assert_eq!(cs.len(), 2, "two wrap curves");
+        for c in &cs {
+            assert!(c.closed && c.tol_achieved <= tol, "cert {}", c.tol_achieved);
+            check_curve_on_both_tol(&a, &b, &c.curve, 48, tol);
+        }
+        // Two bites (thin horizontal cylinder pierces a fat vertical
+        // one): entry and exit tunnels.
+        let a = cyl_at(Vec3::ZERO, Vec3::new(0., 0., 1.), 2.0);
+        let b = cyl_at(Vec3::ZERO, Vec3::new(1., 0., 0.), 1.0);
+        let r =
+            intersect_surfaces(&SurfaceRef::Analytic(&a), &SurfaceRef::Analytic(&b), tol).unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("{r:?}")
+        };
+        assert_eq!(cs.len(), 2, "entry and exit bites");
+        for c in &cs {
+            assert!(c.closed && c.tol_achieved <= tol, "cert {}", c.tol_achieved);
+            check_curve_on_both_tol(&a, &b, &c.curve, 48, tol);
+        }
+        // One-sided bite: the thin cylinder offset to graze one side.
+        let b = cyl_at(Vec3::new(0., 1.5, 0.), Vec3::new(1., 0., 0.), 1.0);
+        let r =
+            intersect_surfaces(&SurfaceRef::Analytic(&a), &SurfaceRef::Analytic(&b), tol).unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("{r:?}")
+        };
+        assert_eq!(cs.len(), 1, "one bite");
+        check_curve_on_both_tol(&a, &b, &cs[0].curve, 48, tol);
+        // Disjoint skew: empty.
+        let far = cyl_at(Vec3::new(0., 10.0, 0.), Vec3::new(1., 0., 0.), 1.0);
+        let r = intersect_surfaces(&SurfaceRef::Analytic(&a), &SurfaceRef::Analytic(&far), tol)
+            .unwrap();
+        assert!(matches!(r, SsiResult::Empty), "{r:?}");
+    }
+
+    #[test]
+    fn cylinder_cylinder_parallel_rulings() {
+        let tol = 1e-9;
+        // Crossing parallel pair: two exact ruling lines.
+        let a = cyl_at(Vec3::ZERO, Vec3::new(0., 0., 1.), 2.0);
+        let b = cyl_at(Vec3::new(3.0, 0., 0.), Vec3::new(0., 0., 1.), 1.5);
+        let r =
+            intersect_surfaces(&SurfaceRef::Analytic(&a), &SurfaceRef::Analytic(&b), tol).unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("{r:?}")
+        };
+        assert_eq!(cs.len(), 2, "two ruling lines");
+        for c in &cs {
+            assert!(matches!(c.curve, Curve3::Line(_)));
+            check_curve_on_both(&a, &b, &c.curve, 6);
+        }
+        // Separated parallel: empty. Shared axis + radius: coincident.
+        let far = cyl_at(Vec3::new(10.0, 0., 0.), Vec3::new(0., 0., 1.), 1.0);
+        let r = intersect_surfaces(&SurfaceRef::Analytic(&a), &SurfaceRef::Analytic(&far), tol)
+            .unwrap();
+        assert!(matches!(r, SsiResult::Empty));
+        let same = cyl_at(Vec3::new(0., 0., 5.0), Vec3::new(0., 0., 1.), 2.0);
+        let r = intersect_surfaces(&SurfaceRef::Analytic(&a), &SurfaceRef::Analytic(&same), tol)
+            .unwrap();
+        assert!(matches!(r, SsiResult::Coincident));
     }
 }

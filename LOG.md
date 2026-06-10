@@ -4769,3 +4769,48 @@ winding fix touches the shared cellular walk): 10 minutes, 822 runs, clean.
 
 LADDER: Rung 3 sheet-sheet booleans, Rung 4 wire imprinting, Rung 5 full SGC with simplify;
 partial-penetration knives (wall boundary ending interior) decline honestly today.
+
+## Addendum 155 (2026-06-10, attended): CYLINDER-CYLINDER SSI + A WRONG-POSITIVE RETIRED
+
+CYLINDER-CYLINDER SSI (branch cyl-cyl-ssi; corpus-audit opportunity A, dossier 11 QI-class +
+the analytic-rung lesson): analytic_analytic gains the quadric pair via THREE RUNGS, never a
+marching engine. Rung 1 PARALLEL AXES: the cross-section circle pair gives 0/1/2 exact ruling
+LINES (tangent ruling flagged) or Coincident. Rung 2 EQUAL RADII + INTERSECTING AXES: the
+bicylinder factors into TWO EXACT ELLIPSES in the planes through the crossing point with
+normals az - bz and az + bz (on either plane ((P-M).az)^2 = ((P-M).bz)^2 makes the two
+distance-to-axis conditions identical), each delivered by the existing exact plane-cylinder
+section: tier-1 exact, tol_achieved 0. Rung 3 GENERAL: each ruling of cylinder A meets B where
+a QUADRATIC in the ruling parameter holds, so the curve is the closed-form two-branch field
+v(theta) = (-q1 +- sqrt D)/(2 q2); D's sign pattern fixes the topology (all-positive = two
+closed wrap curves, one per branch; each positive interval otherwise = one closed BITE, branch
++ out and - back, meeting smoothly at the D = 0 ends, endpoints refined by bisection walked
+cyclically from a non-positive sample so wrap-around runs stay whole). Each curve is a
+certified cubic LSQ fit with an extended escalation (16..256 controls; fresh-sample max
+deviation x SAFETY 2); certificate misses DECLINE. KEY NUMERICS CATCH: the bite parameterized
+by theta has sqrt-type UNBOUNDED SPEED at the D = 0 turnarounds (the first fit read 0.33
+deviation); the CHEBYSHEV substitution theta = mid + half cos(phi) makes the closed loop
+analytic in phi and the fit certifies at ~1e-6.
+
+THE WRONG-POSITIVE THE PROBE EXPOSED (pre-existing on master, found by the milestone's
+Steinmetz probe): crossing-cylinder BOOLEANS never declined; the unsupported SSI pair
+produced an IntersectionFailed fault that did NOT block assembly, so the pipeline built a
+SEAMLESS Euler-valid body (12.546 against the exact Steinmetz 16/3) gated only by
+tessellated-volume positivity. FIX: a new HARD fault BoolFault::UnassemblableSeam (a face pair
+that GENUINELY CROSSES, curves on the trimmed faces, but whose seams the imprint cannot yet
+assemble) raised for cylinder-cylinder curve pairs and EARLY-RETURNED by boolean_with and
+boolean_selective like Tangent. Regression test: Steinmetz intersection/union/difference all
+DECLINE; disjoint cylinder bodies do not trip the gate. DECLINE-never-WRONG now actually holds
+for this class; making these ASSEMBLE (the crossing-seam imprint: two closed seams crossing
+each other and the periodic seam on one lateral face) is the named follow-up, with the
+certified curves ready.
+
+ORACLES: equal-radius perpendicular pair = two exact ellipses on both implicit surfaces at
+1e-9; full-wrap pair (r 1 through R 2) = two closed certified curves at 1e-5 (achieved 1.3e-6);
+two-bite pair (r 1 piercing R 2) = entry + exit loops; offset one-bite; disjoint Empty;
+parallel rulings exact; shared cylinder Coincident.
+
+CI: fmt; clippy -D warnings; workspace 126 + 77 + 233 (+3, +2) green; DUAL soak (seam handling
+changed): fuzz_boolean 822 runs + fuzz_cyl_boolean 890 runs, 10 minutes each, both clean.
+
+CONSUMERS UNBLOCKED: the unequal-radius mitre (dossier 55, queued) now has its junction curve
+in closed form; cylinder-cylinder boolean assembly has certified seams waiting.
