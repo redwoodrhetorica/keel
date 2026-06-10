@@ -5205,3 +5205,25 @@ CI: fmt; clippy -D warnings; workspace 132 + 77 + 242 (+1) green; fuzz_boolean s
 LADDER NEXT: planar notch bridge (in-place trim-loop extension, the US 8,935,130 design-
 around), then planar cap (extend two planes), then the bucket-b evaluators (creeping cliff,
 smooth merge).
+
+## Addendum 169 (2026-06-10, attended): WIRE-SOLID BOOLEANS (dossier 57 Rung 4)
+
+boolean_wire_solid(wire, solid, op, tol) (branch wire-imprint; the NOODLES dimension-by-
+dimension lowest rung): trim a WIRE body against a SOLID. Intersection keeps the inside
+portions, Difference the outside; Union of mixed dimension declines (the kept embedded wire is
+the rung-5 non-regularized ladder). MVP scope: straight wire edges against planar solids: each
+segment splits at its boundary crossings (segment-plane intersections, containment by 2D
+winding in the face plane), sub-segments classify by the winding number at their midpoints,
+kept pieces rebuild as one wire body; curved wires/solids decline honestly.
+
+ORACLE (dossier 57 Rung 4, exact): a segment crossing the [0,2]^3 cube keeps EXACTLY its
+inside length 2 (intersection) and the two outside tails totalling 2 as separate wire edges
+(difference); union declines; a disjoint wire's intersection declines empty.
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 243 (+1) green. No soak: additive entry
+point, no existing boolean path touched.
+
+With Rung 4 landed the dossier-57 ladder stands: Rung 0 soup retirement DONE (Add. 165),
+Rung 1 cellular union DONE (Add. 151), Rung 2 sheet-as-knife DONE (Add. 154), Rung 3
+sheet-sheet DONE (Add. 166), Rung 4 wire imprint DONE (this); Rung 5 (full SGC with the
+Rossignac Merge simplify) is the remaining tail, with the completion gate after it.

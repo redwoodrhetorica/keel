@@ -1270,6 +1270,125 @@ pub fn boolean_sheet_solid(
     finalize_imported_sheet(dst, rec, faces, inf, tol.max(1e-7))
 }
 
+/// Wire-solid boolean (dossier 57 Rung 4, the NOODLES dimension-by-
+/// dimension lowest rung): trim a WIRE body against a SOLID.
+/// Intersection keeps the wire portions INSIDE the solid, Difference
+/// the portions OUTSIDE; Union of mixed dimension stays undefined and
+/// declines (a kept embedded wire is the rung-5 non-regularized
+/// ladder). Straight wire edges against planar solids (MVP): each
+/// segment splits at its boundary crossings (segment-plane
+/// intersections, point-in-face tested), sub-segments classify by the
+/// winding number at their midpoints, and the kept pieces rebuild as
+/// one wire body.
+pub fn boolean_wire_solid(
+    wire: &Body,
+    solid: &Body,
+    op: BoolOp,
+    tol: f64,
+) -> Result<Body, BoolFault> {
+    use crate::query::BodyClass;
+    let _ = tol;
+    if wire.body_class() != BodyClass::Wire {
+        return Err(BoolFault::AssemblyFailed(
+            "boolean_wire_solid: target must be a wire body",
+        ));
+    }
+    if solid.body_class() != BodyClass::Solid {
+        return Err(BoolFault::AssemblyFailed(
+            "boolean_wire_solid: tool must be a solid body",
+        ));
+    }
+    let want_inside = match op {
+        BoolOp::Intersection => true,
+        BoolOp::Difference => false,
+        BoolOp::Union => {
+            return Err(BoolFault::AssemblyFailed(
+                "boolean_wire_solid: union of mixed dimension is undefined (rung 5)",
+            ));
+        }
+    };
+    let mut kept: Vec<(keel_math::vec::Vec3, keel_math::vec::Vec3)> = Vec::new();
+    for (_, e) in wire.edges.iter() {
+        // Straight segments only (MVP); curved wire edges decline.
+        if let Some((ck, _)) = e.curve
+            && !matches!(wire.curves.get(ck), Some(keel_geom::curve::Curve3::Line(_)))
+        {
+            return Err(BoolFault::AssemblyFailed(
+                "boolean_wire_solid: curved wire edge (follow-up)",
+            ));
+        }
+        let (a, b) = e.bounds;
+        let (Some(pa), Some(pb)) = (
+            wire.vertices.get(a).map(|v| v.point),
+            wire.vertices.get(b).map(|v| v.point),
+        ) else {
+            continue;
+        };
+        let d = pb - pa;
+        // Crossing parameters: the segment against every solid face
+        // (plane intersection + point-in-face containment).
+        let mut ts = vec![0.0f64, 1.0];
+        for f in solid.face_keys() {
+            let Some(Surface3::Plane(pl)) = solid.face_surface3(f) else {
+                return Err(BoolFault::AssemblyFailed(
+                    "boolean_wire_solid: curved solid face (follow-up)",
+                ));
+            };
+            let (n, o) = (pl.frame.z, pl.frame.origin);
+            let denom = d.dot(n);
+            if denom.abs() < 1e-12 {
+                continue;
+            }
+            let t = (o - pa).dot(n) / denom;
+            if t <= 1e-9 || t >= 1.0 - 1e-9 {
+                continue;
+            }
+            let p = pa + d * t;
+            // Containment in the face: 2D winding in the face plane.
+            let ring = solid.face_outer_loop_points(f);
+            if ring.len() < 3 {
+                continue;
+            }
+            let bx = (ring[1] - ring[0])
+                .try_normalize()
+                .unwrap_or(keel_math::vec::Vec3::new(1.0, 0.0, 0.0));
+            let by = n.cross(bx);
+            let to2d = |q: keel_math::vec::Vec3| ((q - ring[0]).dot(bx), (q - ring[0]).dot(by));
+            let poly: Vec<(f64, f64)> = ring.iter().map(|&q| to2d(q)).collect();
+            if winding_nonzero(&poly, to2d(p)) {
+                ts.push(t);
+            }
+        }
+        ts.sort_by(f64::total_cmp);
+        for w in ts.windows(2) {
+            let (t0, t1) = (w[0], w[1]);
+            if t1 - t0 <= 1e-9 {
+                continue;
+            }
+            let mid = pa + d * (0.5 * (t0 + t1));
+            let inside = solid.generalized_winding_number(mid) > 0.5;
+            if inside == want_inside {
+                kept.push((pa + d * t0, pa + d * t1));
+            }
+        }
+    }
+    if kept.is_empty() {
+        return Err(BoolFault::AssemblyFailed(
+            "boolean_wire_solid: empty result",
+        ));
+    }
+    let mut out = Body::new();
+    for (p0, p1) in kept {
+        out.wire(p0, p1).map_err(BoolFault::Topo)?;
+    }
+    if out.validate().is_err() {
+        return Err(BoolFault::AssemblyFailed(
+            "boolean_wire_solid: result invalid",
+        ));
+    }
+    Ok(out)
+}
+
 /// Sheet-sheet boolean (dossier 57 Rung 3, dossier 39 sec 1.2): the 2D
 /// arrangement of two COPLANAR planar sheets. The overlap's interior
 /// boundary imprints onto each sheet (the same machinery as the
@@ -4310,6 +4429,38 @@ mod tests {
             boolean(&a, &far, BoolOp::Intersection, 1e-5),
             Err(BoolFault::UnassemblableSeam(..))
         ));
+    }
+
+    #[test]
+    fn wire_solid_booleans_trim_by_containment() {
+        // Dossier 57 Rung 4 oracle: a segment crossing a cube keeps
+        // exactly its inside length (intersection) and the two outside
+        // tails (difference); union of mixed dimension declines.
+        let mut cube = Body::new();
+        cube.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let mut w = Body::new();
+        w.wire(Vec3::new(-1.0, 1.0, 1.0), Vec3::new(3.0, 1.0, 1.0))
+            .unwrap();
+        let len = |b: &Body| -> f64 {
+            b.edges
+                .iter()
+                .map(|(_, e)| {
+                    let (a, c) = e.bounds;
+                    (b.vertices.get(c).unwrap().point - b.vertices.get(a).unwrap().point).norm()
+                })
+                .sum()
+        };
+        let i = boolean_wire_solid(&w, &cube, BoolOp::Intersection, 1e-7).unwrap();
+        assert!(i.validate().is_ok());
+        assert!((len(&i) - 2.0).abs() < 1e-9, "inside length {}", len(&i));
+        let d = boolean_wire_solid(&w, &cube, BoolOp::Difference, 1e-7).unwrap();
+        assert!((len(&d) - 2.0).abs() < 1e-9, "outside length {}", len(&d));
+        assert_eq!(d.edges.iter().count(), 2, "two outside tails");
+        assert!(boolean_wire_solid(&w, &cube, BoolOp::Union, 1e-7).is_err());
+        let mut far = Body::new();
+        far.wire(Vec3::new(10., 10., 10.), Vec3::new(11., 10., 10.))
+            .unwrap();
+        assert!(boolean_wire_solid(&far, &cube, BoolOp::Intersection, 1e-7).is_err());
     }
 
     #[test]
