@@ -4694,3 +4694,47 @@ three-bucket billion-boolean oracle, see MEMORY).
 RESUME RECIPE: read this addendum, then Addendum 151/150 for the latest machinery; the ledger
 is Addendum 130; CI = exact triplet + fuzz_boolean WSL soak when boolean/tessellation internals
 change; constructors must emit mass == mesh bodies; LOG addendum then merge; NO EM-DASHES.
+
+## Addendum 153 (2026-06-10, attended): STEP IMPORT, PLANAR MILESTONE (keel-io plan step 1)
+
+Context: the corpus re-read (all 78 research files, 8-reader audit) named STEP IMPORT the largest
+unimplemented opportunity on the shippable path (dossier 38 is an implementation-grade spec; the
+completeness audit flagged the parsing/mapping layer as owned by no one). The user directive:
+proceed with the recommendation (import -> watertightness-indifferent GWN -> cellular rungs),
+then the rest of the audit findings. This addendum is step 1.
+
+step_import.rs (branch step-import; dossier 38 secs 1, 4, 6, 8, 12): a pure-Rust ISO 10303-21
+tokenizer + TWO-PASS resolver (forward references are legal and pervasive; pass one tables every
+#N = record(s) including COMPLEX/AND instances reassembled into one logical entity; pass two
+resolves while mapping). The parser accepts the full Part 21 value grammar (strings with ''
+escapes, .ENUM. tokens, typed parameters like LENGTH_MEASURE(25.4), nested lists with a bounded
+depth, /* */ comments, $ unset and * derived) and is panic-free against hostile files. The
+planar AP203/AP214/AP242 mapping drives off ENTITY NAMES (the Part 42 core is shared across the
+three APs, dossier 38 sec 2): MANIFOLD_SOLID_BREP -> CLOSED_SHELL -> ADVANCED_FACE(PLANE) ->
+FACE_(OUTER_)BOUND -> EDGE_LOOP -> ORIENTED_EDGE -> EDGE_CURVE -> VERTEX_POINT, with the
+orientation algebra (ORIENTED_EDGE.orientation picks the traversal-start vertex;
+FACE_BOUND.orientation .F. reverses the loop; closed shells orient outward) delivering each
+face's outer loop CCW about the outward normal. UNITS convert to millimetres from SI prefixes
+and CONVERSION_BASED_UNIT chains (inch = 25.4 via LENGTH_MEASURE_WITH_UNIT).
+
+ASSEMBLY REUSES THE KERNEL: from_polygon_faces (item 10) = planar_sheet per face + knit, which
+IS the dossier's heal-on-import step 2 (vertex merge within tolerance, shared-edge glue,
+closed-set promotion to a solid) with the mass == mesh gates intact. No new stitching code.
+
+ORACLES: round-trip export -> import of a 2x3x4 block (counts 8/12/6, volume exactly 24,
+mass == mesh) and of a BOOLEAN RESULT with oblique faces (box minus tilted prism; identical
+exact volume back, proving the orientation algebra off-axis); a hand-written foreign cube in
+unprefixed METRES with one CW-stored bound flagged .F., reversed oriented edges, forward
+references, and a comment (imports to the exact 1e9 mm^3); an INCH cube via
+CONVERSION_BASED_UNIT (25.4^3); curved and holed faces DECLINE loudly (planar milestone,
+correct-or-decline). New fuzz_step_import target (raw bytes + DATA-framed) with a seed
+tetrahedron corpus: 10 minutes, 3,160,100 runs, ZERO findings (the parser is allocation-bounded
+and panic-free as dossier 38 sec 12 demands).
+
+CI: fmt; clippy -D warnings; workspace 123 + 77 + 231 (+5) green. No boolean/tessellation
+internals changed (purely additive module); the parser got its own dedicated soak above.
+
+LADDER (dossier 38 build plan): analytic surfaces + seams/poles (milestone 2), NURBS homogeneous
+4D conversion, pcurve supply-or-reconstruct, stitch-then-heal tolerance escalation, validation-
+property round-trip oracle, AP242 tessellation import. NOT a parity counter tick (the 144-item
+counter is closed at its ceiling); this is the post-parity opportunity program.
