@@ -782,12 +782,13 @@ impl Body {
                 match self.projected_rect_bounds(fk, surf) {
                     Some(b) => b,
                     None => {
-                        // Non-iso-rectangle CYLINDER trims (the mitre's
-                        // ellipse seams, the oblique-end cap) integrate
+                        // Non-iso-rectangle CYLINDER and SPHERE trims
+                        // (the mitre's ellipse seams, the oblique-end
+                        // cap, the corner sphere triangle) integrate
                         // via the Green-slab boundary path; other
                         // surfaces keep declining.
-                        if matches!(surf, Surface3::Cylinder(_)) {
-                            return self.integrate_cylinder_face_green(fk, surf, sense_sign, m);
+                        if matches!(surf, Surface3::Cylinder(_) | Surface3::Sphere(_)) {
+                            return self.integrate_face_green(fk, surf, sense_sign, m);
                         }
                         return Err(TopoError::Precondition("curved face without pcurve bounds"));
                     }
@@ -820,46 +821,63 @@ impl Body {
         Ok(())
     }
 
-    /// GREEN-SLAB integrator for a cylinder face whose UV trim is NOT
-    /// an iso-rectangle (the mitre's ellipse seams, the oblique-end
-    /// cap). The region integral folds onto the boundary,
-    /// `int_R F du dv = -loop_int G du` with `G(u, v) = int_{v0}^{v}
+    /// GREEN-SLAB integrator for a cylinder or sphere face whose UV
+    /// trim is NOT an iso-rectangle (the mitre's ellipse seams, the
+    /// oblique-end cap, the corner sphere triangle). The region
+    /// integral folds onto the boundary,
+    /// `int_R F du dv = -loop_int G du` with `G(u, v) = int_{vb}^{v}
     /// F(u, s) ds`, and each boundary Gauss node carries an inner
     /// v-slab of quadrature samples, so the ordinary Moments::add
     /// machinery integrates any trim whose fins are evaluable with
-    /// derivatives: lines and degree-1 NURBS are rulings and
+    /// derivatives: lines and degree-1 NURBS are cylinder rulings and
     /// contribute zero through u' = 0; circles and ellipses carry the
     /// flux. The integrand is u-periodic, so fins need only LOCAL
     /// angle continuity (no global seam unwrap), and weights are
     /// normalized by the sign of the enclosed UV area to match the
     /// positively-covered rectangle convention of the iso path.
-    /// Curved NURBS fins decline.
-    fn integrate_cylinder_face_green(
+    ///
+    /// The slab base `vb` matters exactly when the boundary WINDS in
+    /// u (a sphere trim enclosing a pole): then `loop_int g(u) du`
+    /// of the base shift does not vanish, and the base must sit at
+    /// the enclosed pole. Total winding 0 (cylinder trims, sphere
+    /// bands) takes the boundary minimum; winding +-1 anchors at the
+    /// NORTH pole of the surface frame (the corner-patch constructors
+    /// put the patch's interior pole at frame +z; a trim enclosing
+    /// only the south pole is out of contract); |winding| > 1 and
+    /// curved NURBS fins decline.
+    fn integrate_face_green(
         &self,
         fk: FaceKey,
         surf: &Surface3,
         sense_sign: f64,
         m: &mut Moments,
     ) -> Result<(), TopoError> {
-        let Surface3::Cylinder(cyl) = surf else {
-            return Err(TopoError::Precondition("green-slab: not a cylinder"));
+        let (frame, is_sphere) = match surf {
+            Surface3::Cylinder(c) => (&c.frame, false),
+            Surface3::Sphere(s) => (&s.frame, true),
+            _ => return Err(TopoError::Precondition("green-slab: unsupported surface")),
         };
-        let (o, ex, ey, ez, r) = (
-            cyl.frame.origin,
-            cyl.frame.x,
-            cyl.frame.y,
-            cyl.frame.z,
-            cyl.radius,
-        );
+        let (o, ex, ey, ez) = (frame.origin, frame.x, frame.y, frame.z);
         enum FinCurve {
             Seg(Vec3, Vec3),
             Circ(keel_geom::curve::Circle3, f64, f64),
             Ell(keel_geom::curve::Ellipse3, f64, f64),
         }
+        // UV mapping: u = azimuth about ez; v = axial height
+        // (cylinder) or latitude (sphere), matching local_geometry.
+        let vmap = |w: Vec3| -> f64 {
+            if is_sphere {
+                let nrm = (w - ez * w.dot(ez)).norm();
+                w.dot(ez).atan2(nrm)
+            } else {
+                w.dot(ez)
+            }
+        };
         let tau = core::f64::consts::TAU;
         let face = self.faces.get(fk).ok_or(TopoError::StaleKey)?;
         let mut fins_c: Vec<FinCurve> = Vec::new();
-        let mut v_base = f64::INFINITY;
+        let mut v_min = f64::INFINITY;
+        let mut v_max = f64::NEG_INFINITY;
         for &lk in &face.loops {
             let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
                 continue;
@@ -879,7 +897,11 @@ impl Body {
                     .get(b1)
                     .map(|x| x.point)
                     .ok_or(TopoError::StaleKey)?;
-                v_base = v_base.min((p0 - o).dot(ez)).min((p1 - o).dot(ez));
+                for p in [p0, p1] {
+                    let v = vmap(p - o);
+                    v_min = v_min.min(v);
+                    v_max = v_max.max(v);
+                }
                 // Fin-ordered parameter range for an angle-parameterized
                 // conic: edge-direction sweep (bounds.0 -> bounds.1,
                 // honoring an explicit arc_sweep), flipped when the fin
@@ -938,6 +960,13 @@ impl Body {
                         ));
                     }
                     _ => {
+                        // Straight fins lie on a cylinder only (as
+                        // rulings); a sphere boundary must be circles.
+                        if is_sphere {
+                            return Err(TopoError::Precondition(
+                                "green-slab: non-circular sphere boundary fin",
+                            ));
+                        }
                         let (ps, pe) = if fin.forward { (p0, p1) } else { (p1, p0) };
                         fins_c.push(FinCurve::Seg(ps, pe));
                     }
@@ -948,12 +977,16 @@ impl Body {
                 }
             }
         }
-        if !v_base.is_finite() {
+        if !v_min.is_finite() {
             return Err(TopoError::Precondition("green-slab: empty boundary"));
         }
-        let mut acc: Vec<(f64, f64, f64)> = Vec::new();
-        let mut area = 0.0;
-        let mut emit = |p: Vec3, dp: Vec3, wt: f64| {
+        // PASS 1: boundary Gauss nodes (u, v_t, du-weight) and the net
+        // u-winding. The per-point u' = dp.theta_hat / rho uses the
+        // point's own equatorial radius rho, which is the cylinder
+        // radius on a cylinder and R cos(lat) on a sphere.
+        let mut nodes: Vec<(f64, f64, f64)> = Vec::new();
+        let mut net_du = 0.0;
+        let mut node = |p: Vec3, dp: Vec3, wt: f64| {
             let w = p - o;
             let (x, y) = (w.dot(ex), w.dot(ey));
             let nrm = (x * x + y * y).sqrt();
@@ -962,23 +995,16 @@ impl Body {
             }
             let (cu, su) = (x / nrm, y / nrm);
             let theta_hat = ey * cu - ex * su;
-            let up = dp.dot(theta_hat) / r;
-            let u = su.atan2(cu);
-            let v_t = w.dot(ez);
-            let wu = wt * up;
-            area -= wu * (v_t - v_base);
-            let half = 0.5 * (v_t - v_base);
-            for (xk, wk) in GL8_X.iter().zip(GL8_W) {
-                let s = v_base + half * (xk + 1.0);
-                acc.push((u, s, -wu * wk * half));
-            }
+            let wu = wt * dp.dot(theta_hat) / nrm;
+            net_du += wu;
+            nodes.push((su.atan2(cu), vmap(w), wu));
         };
         for fc in &fins_c {
             match fc {
                 FinCurve::Seg(a, b2) => {
                     for (xj, wj) in GL8_X.iter().zip(GL8_W) {
                         let t = 0.5 * (xj + 1.0);
-                        emit(*a + (*b2 - *a) * t, *b2 - *a, wj * 0.5);
+                        node(*a + (*b2 - *a) * t, *b2 - *a, wj * 0.5);
                     }
                 }
                 FinCurve::Circ(c, t0, t1) => {
@@ -991,7 +1017,7 @@ impl Body {
                         for (xj, wj) in GL8_X.iter().zip(GL8_W) {
                             let t = 0.5 * (a0 + a1) + 0.5 * (a1 - a0) * xj;
                             let dp = (c.y_axis * t.cos() - c.x_axis * t.sin()) * c.radius;
-                            emit(c.point(t), dp, wj * 0.5 * (a1 - a0));
+                            node(c.point(t), dp, wj * 0.5 * (a1 - a0));
                         }
                     }
                 }
@@ -1005,9 +1031,46 @@ impl Body {
                         for (xj, wj) in GL8_X.iter().zip(GL8_W) {
                             let t = 0.5 * (a0 + a1) + 0.5 * (a1 - a0) * xj;
                             let dp = el.y_axis * (el.b * t.cos()) - el.x_axis * (el.a * t.sin());
-                            emit(el.point(t), dp, wj * 0.5 * (a1 - a0));
+                            node(el.point(t), dp, wj * 0.5 * (a1 - a0));
                         }
                     }
+                }
+            }
+        }
+        // PASS 2: choose the slab base by the total winding, then turn
+        // each boundary node into an inner v-slab of samples.
+        let winding = (net_du / tau).round();
+        let v_base = if winding.abs() < 0.5 {
+            v_min
+        } else if is_sphere && (winding.abs() - 1.0).abs() < 0.25 {
+            let pole = core::f64::consts::FRAC_PI_2;
+            if v_max > pole - 1e-6 {
+                return Err(TopoError::Precondition(
+                    "green-slab: boundary touches the anchor pole",
+                ));
+            }
+            pole
+        } else {
+            return Err(TopoError::Precondition(
+                "green-slab: unsupported boundary winding",
+            ));
+        };
+        let mut area = 0.0;
+        let mut acc: Vec<(f64, f64, f64)> = Vec::new();
+        for &(u, v_t, wu) in &nodes {
+            area -= wu * (v_t - v_base);
+            // Composite GL8 down the slab: the sphere integrand is
+            // trigonometric in latitude, so one panel per quarter-pi
+            // keeps the inner quadrature at machine precision.
+            let span = v_t - v_base;
+            let panels = (span.abs() / core::f64::consts::FRAC_PI_4).ceil().max(1.0) as usize;
+            for ip in 0..panels {
+                let s0 = v_base + span * ip as f64 / panels as f64;
+                let s1 = v_base + span * (ip + 1) as f64 / panels as f64;
+                let half = 0.5 * (s1 - s0);
+                for (xk, wk) in GL8_X.iter().zip(GL8_W) {
+                    let s = 0.5 * (s0 + s1) + half * xk;
+                    acc.push((u, s, -wu * wk * half));
                 }
             }
         }
