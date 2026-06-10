@@ -37,6 +37,11 @@ pub enum BoolFault {
     Tangent(u64, u64),
     /// SSI failed on a pair (e.g. unsupported surface combination).
     IntersectionFailed(u64, u64),
+    /// A face pair GENUINELY CROSSES (SSI curves exist) but the imprint
+    /// cannot yet assemble those seams (e.g. the cylinder-cylinder
+    /// crossing pair). A HARD decline: proceeding seamless produced an
+    /// Euler-valid but geometrically WRONG body.
+    UnassemblableSeam(u64, u64),
     /// A topology operation failed during imprint/stitch.
     Topo(TopoError),
     /// The result could not be assembled into a valid body.
@@ -2398,7 +2403,7 @@ pub fn boolean_with(
     // them honestly. (Full Requicha on-on tables -> a follow-up.)
     if let Some(f) = faults
         .iter()
-        .find(|f| matches!(f, BoolFault::Tangent(..)))
+        .find(|f| matches!(f, BoolFault::Tangent(..) | BoolFault::UnassemblableSeam(..)))
         .cloned()
     {
         return Err(f);
@@ -2433,7 +2438,7 @@ pub fn boolean_selective(
     }
     if let Some(f) = faults
         .iter()
-        .find(|f| matches!(f, BoolFault::Tangent(..)))
+        .find(|f| matches!(f, BoolFault::Tangent(..) | BoolFault::UnassemblableSeam(..)))
         .cloned()
     {
         return Err(f);
@@ -3473,7 +3478,26 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 },
             };
             let id_b = b.faces.get(fb).map(|f| f.id.0).unwrap_or(0);
+            // Cylinder-cylinder SSI curves exist (the certified
+            // evaluator rung), but the IMPRINT cannot yet assemble two
+            // closed seams crossing each other and the periodic seam on
+            // one lateral face: proceeding produced an Euler-valid but
+            // geometrically WRONG body (the Steinmetz probe read 12.5
+            // against the exact 16/3). DECLINE-never-WRONG: these
+            // configurations keep declining at the boolean layer until
+            // the crossing-seam imprint lands; the geometry rung serves
+            // direct SSI consumers and the unequal-radius mitre.
+            let both_cyl = matches!(ref_a, SurfaceRef::Analytic(Surface3::Cylinder(_)))
+                && matches!(ref_b, SurfaceRef::Analytic(Surface3::Cylinder(_)));
             match intersect_surfaces(&ref_a, &ref_b, tol) {
+                Ok(SsiResult::Curves(cs)) if both_cyl => {
+                    if cs
+                        .iter()
+                        .any(|c| a.curve_on_cylinder_face(fa, &c.curve, tol))
+                    {
+                        faults.push(BoolFault::UnassemblableSeam(id_a, id_b));
+                    }
+                }
                 Ok(SsiResult::Curves(cs)) => {
                     for c in cs {
                         if c.tangential {
@@ -4387,6 +4411,56 @@ mod tests {
         let reg = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
         let solids_reg = reg.body.regions.iter().filter(|(_, r)| r.solid).count();
         assert_eq!(solids_reg, 1, "regularized union stays one cell");
+    }
+
+    #[test]
+    fn crossing_cylinders_decline_pending_seam_assembly() {
+        // The Steinmetz configuration (two perpendicular cylinders
+        // crossing) now has CERTIFIED SSI curves (the cylinder-cylinder
+        // evaluator rung), but the imprint cannot yet assemble two
+        // closed seams crossing each other and the periodic seam on one
+        // lateral face. Proceeding SEAMLESS used to return an Euler-
+        // valid body with volume 12.5 against the exact 16/3: a wrong
+        // positive that predates the rung. DECLINE-never-WRONG: the
+        // pair is a hard UnassemblableSeam fault until the crossing-
+        // seam imprint lands.
+        let mut a = Body::new();
+        a.cylinder(
+            Frame3::from_z(Vec3::new(0., 0., -3.), Vec3::new(0., 0., 1.)).unwrap(),
+            1.0,
+            6.0,
+        )
+        .unwrap();
+        let mut b = Body::new();
+        b.cylinder(
+            Frame3::from_z(Vec3::new(-3., 0., 0.), Vec3::new(1., 0., 0.)).unwrap(),
+            1.0,
+            6.0,
+        )
+        .unwrap();
+        for op in [BoolOp::Intersection, BoolOp::Union, BoolOp::Difference] {
+            assert!(
+                matches!(
+                    boolean(&a, &b, op, 1e-5),
+                    Err(BoolFault::UnassemblableSeam(..))
+                ),
+                "crossing cylinders must DECLINE ({op:?})"
+            );
+        }
+        // Disjoint cylinder bodies do NOT trip the gate (their SSI is
+        // empty on the trimmed faces; whatever the empty-intersection
+        // outcome, it is not an UnassemblableSeam).
+        let mut far = Body::new();
+        far.cylinder(
+            Frame3::from_z(Vec3::new(20., 0., 0.), Vec3::new(0., 0., 1.)).unwrap(),
+            1.0,
+            2.0,
+        )
+        .unwrap();
+        assert!(!matches!(
+            boolean(&a, &far, BoolOp::Intersection, 1e-5),
+            Err(BoolFault::UnassemblableSeam(..))
+        ));
     }
 
     #[test]
