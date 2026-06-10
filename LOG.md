@@ -4652,7 +4652,7 @@ number 1.0 at points in BOTH cells; the regularized default still yields one sol
 heal, sheet, and every boolean test unaffected).
 
 CI: fmt; clippy -D warnings; workspace 123 + 77 + 226 (+1) green; fuzz_boolean soak (boolean
-internals changed): 10 minutes, clean (count below).
+internals changed): 10 minutes, 829 runs, clean.
 
 COUNTER: 136 -> 137/144 (item 29, the Rung-1 milestone; the dossier-57 ladder: Rung 2 sheet-as
 -interior-partition, Rung 3 sheet-sheet, Rung 4 wire imprinting, Rung 5 full SGC cellular with
