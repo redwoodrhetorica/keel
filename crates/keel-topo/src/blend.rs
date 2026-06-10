@@ -1734,6 +1734,246 @@ impl Body {
             .map_err(|_| TopoError::Precondition("faceface: result invalid"))?;
         Ok(b)
     }
+
+    /// CLIFF-overflow blend (parity item 57; dossier 56 secs 1 and 7):
+    /// when the requested radius is too wide for one support, the blend
+    /// becomes HALF-TANGENT -- a radius-`r` cylinder tangent to the
+    /// other support only, passing THROUGH the narrow support's far
+    /// boundary edge `b` (Parasolid: "tangent to only one of the faces
+    /// ... and runs along an edge in the other face"). The narrow
+    /// support is consumed entirely; `b` stays SHARP, promoted to a
+    /// shared edge between its outer neighbor and the blend. Exact:
+    /// the center line sits on the tangent support's offset plane at
+    /// distance `r` from `b` (closed-form quadratic). MVP: convex
+    /// plane-plane edges, the narrow support a 4-sided face whose far
+    /// edge is `b`, full-span cliff. Creeping cliffs and the smooth /
+    /// notch / cap handlers are the dossier-56 follow-ups.
+    pub fn fillet_edge_cliff(&self, edge: EdgeKey, radius: f64) -> Result<Body, TopoError> {
+        if !(radius.is_finite() && radius > 0.0) {
+            return Err(TopoError::Precondition("cliff: bad radius"));
+        }
+        let faces = self.faces_around_edge(edge);
+        if faces.len() != 2 {
+            return Err(TopoError::Precondition("cliff: edge needs two faces"));
+        }
+        for &f in &faces {
+            if !matches!(
+                self.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition(
+                    "cliff: non-planar support (follow-up)",
+                ));
+            }
+        }
+        let convex = self.edge_is_convex(edge).unwrap_or(true);
+        if !convex {
+            return Err(TopoError::Precondition("cliff: concave edge (follow-up)"));
+        }
+        let (va_k, vb_k) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
+        let pa = self.vertices.get(va_k).ok_or(TopoError::StaleKey)?.point;
+        let pb = self.vertices.get(vb_k).ok_or(TopoError::StaleKey)?.point;
+        let e = (pb - pa)
+            .try_normalize()
+            .ok_or(TopoError::Precondition("cliff: degenerate edge"))?;
+        // Which support is the NARROW (cliff) side: its extent
+        // perpendicular to the edge is below the setback radius.
+        let width_of = |f: crate::entity::FaceKey, n: Vec3| -> f64 {
+            let u = e.cross(n);
+            self.face_outer_loop_points(f)
+                .iter()
+                .map(|&p| (p - pa).dot(u).abs())
+                .fold(0.0f64, f64::max)
+        };
+        let n0 = self
+            .face_outward_normal(faces[0])
+            .ok_or(TopoError::Precondition("cliff: face normal"))?;
+        let n1 = self
+            .face_outward_normal(faces[1])
+            .ok_or(TopoError::Precondition("cliff: face normal"))?;
+        let (w0, w1) = (width_of(faces[0], n0), width_of(faces[1], n1));
+        let (f_t, n_t, f_c, n_c, w_c) = if w0 < radius && w1 >= radius {
+            (faces[1], n1, faces[0], n0, w0)
+        } else if w1 < radius && w0 >= radius {
+            (faces[0], n0, faces[1], n1, w1)
+        } else if w0 >= radius && w1 >= radius {
+            return Err(TopoError::Precondition(
+                "cliff: no overflow at this radius (use fillet_edge)",
+            ));
+        } else {
+            return Err(TopoError::Precondition(
+                "cliff: both supports overflow (notch territory, follow-up)",
+            ));
+        };
+        // The cliff edge b: the narrow face's far boundary edge.
+        let b_edge = self
+            .face_edge_set(f_c)
+            .into_iter()
+            .find(|&be| {
+                if be == edge {
+                    return false;
+                }
+                let Some(ed) = self.edges.get(be) else {
+                    return false;
+                };
+                ed.bounds.0 != va_k
+                    && ed.bounds.0 != vb_k
+                    && ed.bounds.1 != va_k
+                    && ed.bounds.1 != vb_k
+            })
+            .ok_or(TopoError::Precondition(
+                "cliff: no far edge on the narrow face",
+            ))?;
+        let (qb0, _qb1) = self.edges.get(b_edge).ok_or(TopoError::StaleKey)?.bounds;
+        let b0 = self.vertices.get(qb0).ok_or(TopoError::StaleKey)?.point;
+        // Center line C = pa + s u_c + t w with (C - pa).n_t = -r and
+        // |C - B|^2 = r^2 in the section (B = pa + u_c w_c on b's line).
+        let u_c = {
+            let u = e
+                .cross(n_c)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("cliff: degenerate frame"))?;
+            if (b0 - pa).dot(u) < 0.0 { u * -1.0 } else { u }
+        };
+        let w_dir = u_c.cross(e);
+        let (a_lin, b_lin) = (u_c.dot(n_t), w_dir.dot(n_t));
+        let (s_sol, t_sol) = if b_lin.abs() > 1e-9 {
+            let k0 = -radius / b_lin;
+            let k1 = -a_lin / b_lin;
+            let qa = 1.0 + k1 * k1;
+            let qb = -2.0 * w_c + 2.0 * k0 * k1;
+            let qc = w_c * w_c + k0 * k0 - radius * radius;
+            let disc = qb * qb - 4.0 * qa * qc;
+            if disc < 0.0 {
+                return Err(TopoError::Precondition("cliff: no tangent cylinder"));
+            }
+            let s1 = (-qb + disc.sqrt()) / (2.0 * qa);
+            let s2 = (-qb - disc.sqrt()) / (2.0 * qa);
+            let s = if (0.0..=w_c + radius).contains(&s1) {
+                s1
+            } else {
+                s2
+            };
+            (s, k0 + k1 * s)
+        } else if a_lin.abs() > 1e-9 {
+            let s = -radius / a_lin;
+            let t2 = radius * radius - (s - w_c) * (s - w_c);
+            if t2 < 0.0 {
+                return Err(TopoError::Precondition("cliff: no tangent cylinder"));
+            }
+            let sign = if w_dir.dot(n_c) > 0.0 { -1.0 } else { 1.0 };
+            (s, sign * t2.sqrt())
+        } else {
+            return Err(TopoError::Precondition("cliff: degenerate supports"));
+        };
+        let c0 = pa + u_c * s_sol + w_dir * t_sol;
+        let spring_pt = c0 + n_t * radius;
+        let spring_t =
+            Line3::new(spring_pt, e).map_err(|_| TopoError::Precondition("cliff: spring"))?;
+        let frame =
+            Frame3::from_z(c0, e).map_err(|_| TopoError::Precondition("cliff: cylinder frame"))?;
+        let surface = Cylinder3 { frame, radius };
+
+        let mut b = self.clone();
+        let (spring_edge, _strip_t, ftk, aa, ab) =
+            b.imprint_spring_line(f_t, edge, va_k, vb_k, &spring_t, n_t)?;
+        // Per cap: split from the spring end to the EXISTING b corner
+        // along the cliff arc (short span: tangent foot to b is < pi).
+        let split_cap = |b: &mut Body,
+                         v_corner: crate::entity::VertexKey,
+                         s_end: crate::entity::VertexKey|
+         -> Result<(), TopoError> {
+            let pc = b
+                .vertices
+                .get(v_corner)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let (x0, x1) = b.edges.get(b_edge).ok_or(TopoError::StaleKey)?.bounds;
+            let (p0, p1) = (
+                b.vertices.get(x0).ok_or(TopoError::StaleKey)?.point,
+                b.vertices.get(x1).ok_or(TopoError::StaleKey)?.point,
+            );
+            let b_corner = if ((p0 - pc).dot(e)).abs() <= ((p1 - pc).dot(e)).abs() {
+                x0
+            } else {
+                x1
+            };
+            let cap = b
+                .faces_at_vertex(v_corner)
+                .into_iter()
+                .find(|f| *f != f_c && *f != ftk && b.faces_at_vertex(b_corner).contains(f))
+                .ok_or(TopoError::Precondition("cliff: no cap face"))?;
+            let lp = b
+                .faces
+                .get(cap)
+                .map(|f| f.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fin_a = b.fin_ending_at_vertex(lp, s_end)?;
+            let fin_b = b.fin_ending_at_vertex(lp, b_corner)?;
+            let split = b.split_face(fin_a, fin_b, None)?;
+            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
+                && let Some(nf) = b.faces.get_mut(split.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            let centre = c0 + e * ((pc - c0).dot(e));
+            let s_pt = b
+                .vertices
+                .get(s_end)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let ex = (s_pt - centre)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("cliff: arc axis"))?;
+            let arc = keel_geom::curve::Circle3::new(centre, ex, e.cross(ex), radius)
+                .map_err(|_| TopoError::Precondition("cliff: bad arc"))?;
+            b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+            Ok(())
+        };
+        split_cap(&mut b, va_k, aa)?;
+        split_cap(&mut b, vb_k, ab)?;
+
+        // Dissolve: merge the tangent strip with the WHOLE narrow face
+        // (consumed), then per cap kill the corner chain.
+        b.kef(edge)?;
+        for (s_end, vk) in [(aa, va_k), (ab, vb_k)] {
+            let stub = b
+                .edge_between(s_end, vk)
+                .ok_or(TopoError::Precondition("cliff: no spring stub"))?;
+            b.kef(stub)?;
+            // The e-corner now hangs as a spur on the narrow face's
+            // cap-side edge.
+            let spur = {
+                let mut found = None;
+                let eks: Vec<EdgeKey> = b.edges.iter().map(|(k, _)| k).collect();
+                for ek in eks {
+                    let Some(ed) = b.edges.get(ek) else { continue };
+                    if ed.bounds.0 == vk || ed.bounds.1 == vk {
+                        found = Some(ek);
+                        break;
+                    }
+                }
+                found.ok_or(TopoError::Precondition("cliff: no corner spur"))?
+            };
+            b.kev(spur)?;
+        }
+
+        let blend_face = b
+            .faces_around_edge(spring_edge)
+            .into_iter()
+            .find(|f| *f != ftk)
+            .ok_or(TopoError::Precondition("cliff: no blend face"))?;
+        b.attach_face_surface(
+            blend_face,
+            SurfaceGeom::Analytic(Surface3::Cylinder(surface)),
+            true,
+        );
+        b.attach_edge_curve(spring_edge, Curve3::Line(spring_t), true);
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("cliff: result invalid"))?;
+        Ok(b)
+    }
 }
 
 /// The exact ellipse where a cone meets a plane (the variable-radius
@@ -2160,6 +2400,78 @@ mod tests {
             kmax(0.5) > 0.5,
             "mid-strip curvature must be real ({})",
             kmax(0.5)
+        );
+    }
+
+    #[test]
+    fn cliff_overflow_clips_at_the_far_edge() {
+        // Item 57 (dossier 56 sec 7): box 4 x 1 x 2, fillet the edge
+        // between the wall (y = 0) and the 1-wide top with r = 1.25 >
+        // width. fillet_edge declines (the overflow guard); the cliff
+        // handler builds the half-tangent cylinder through the far
+        // edge b, consuming the top. Exact integral oracle; below the
+        // trigger radius the ordinary fillet still applies
+        // (differential sweep).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 1.0, 2.0).unwrap();
+        let e = {
+            let ekeys: Vec<EdgeKey> = b.edges.iter().map(|(k, _)| k).collect();
+            ekeys
+                .into_iter()
+                .find(|&k| {
+                    let fs = b.faces_around_edge(k);
+                    fs.len() == 2 && {
+                        let (Some(na), Some(nb)) =
+                            (b.face_outward_normal(fs[0]), b.face_outward_normal(fs[1]))
+                        else {
+                            return false;
+                        };
+                        (na.z > 0.9 || nb.z > 0.9) && (na.y < -0.9 || nb.y < -0.9)
+                    }
+                })
+                .expect("wall-top edge")
+        };
+        // Below the trigger: ordinary fillet works, cliff refuses.
+        let small = b.fillet_edge(e, 0.8).unwrap();
+        let v_small = small.mesh_volume();
+        let want_small = 8.0 - (1.0 - core::f64::consts::FRAC_PI_4) * 0.64 * 4.0;
+        assert!(
+            (v_small - want_small).abs() < 0.02,
+            "sub-trigger fillet {v_small} != {want_small}"
+        );
+        assert!(
+            b.fillet_edge_cliff(e, 0.8).is_err(),
+            "cliff must refuse below the trigger"
+        );
+        // Above the trigger: ordinary fillet declines, the cliff handles.
+        assert!(
+            b.fillet_edge(e, 1.25).is_err(),
+            "ordinary fillet must decline past the trigger"
+        );
+        let cliff = b.fillet_edge_cliff(e, 1.25).unwrap();
+        assert!(cliff.validate().is_ok(), "cliff body invalid");
+        // Exact oracle: removed = L (H W - Iseg), H = sqrt(2 r W - W^2),
+        // Iseg the circle-segment integral from 0 to W about y = r.
+        let (r, w, l) = (1.25f64, 1.0f64, 4.0f64);
+        let h = (2.0 * r * w - w * w).sqrt();
+        let anti = |u: f64| 0.5 * (u * (r * r - u * u).sqrt() + r * r * (u / r).asin());
+        let iseg = anti(w - r) - anti(-r);
+        let want = 8.0 - l * (h * w - iseg);
+        let v = cliff.mesh_volume();
+        assert!((v - want).abs() < 0.02, "cliff volume {v} != exact {want}");
+        // Half-tangent signature: the cliff blend is tangent to ONE
+        // support only, so full blend recognition finds nothing.
+        assert!(
+            cliff.recognize_blends(1e-6).is_empty(),
+            "a half-tangent cliff must not read as a full blend"
+        );
+        // The narrow top is consumed: no +z-normal face remains.
+        assert!(
+            cliff.face_keys().into_iter().all(|f| cliff
+                .face_outward_normal(f)
+                .map(|n| n.z < 0.9)
+                .unwrap_or(true)),
+            "the narrow top face must be consumed"
         );
     }
 

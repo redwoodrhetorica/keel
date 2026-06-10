@@ -4465,3 +4465,40 @@ STANDING RULES unchanged: read this LOG first (this addendum is the anchor); dos
 citation per item; data-first diagnosis; verify the SUCCESS branch explicitly; branch-per-
 milestone; exact CI triplet + fuzz_boolean soak when boolean/tessellation internals change; LOG
 addendum then merge; anti-double-count rule (Addendum 130); NO EM-DASHES; push only if asked.
+
+## Addendum 147 (2026-06-10, attended): RESEARCH ROUND LANDED + CLIFF OVERFLOW (item 57; 132 ->
+133/144)
+
+RESEARCH: dossiers 53-57 merged from worktree-nurbs-research (commit bb57472): vertex/setback
+blends, partial-span blends/runouts, blend networks/mitring, overflow handling, non-manifold
+general booleans. Every dossier names a narrowest-honest-slice first milestone with an exact
+oracle, and the attack order falls out: cliff overflow (verbatim surgery reuse) -> partial-span
+(square stop + exact cone runout) -> degree-2 mitre (exact bisector trim) -> sphere-octant
+corner -> general-boolean Rung 1 (interface-keeping selection layer; contingent on retiring the
+polygon-soup fallback per dossier 47).
+
+CLIFF SHIPPED (branch cliff-overflow; dossier 56 secs 1 + 7, the "Pareto-dominant first
+conquest"): fillet_edge_cliff(edge, r) -- when r exceeds one support's width the blend is
+HALF-TANGENT (Parasolid: "tangent to only one of the faces ... and runs along an edge in the
+other face"): a radius-r cylinder tangent to the wide support only, passing THROUGH the narrow
+support's far edge b, found in closed form (center on the offset plane at distance r from b's
+line; the perpendicular case degenerates to s = r, t = sqrt(2rW - W^2)). The narrow support is
+CONSUMED; b stays SHARP, promoted to a blend/neighbor shared edge with zero new edges along it.
+Surgery = the standard trim-and-stitch with the narrow-side spring imprint REPLACED by whole-
+face consumption (kef across e absorbs the narrow face; cap corner chains die by kef stub + kev
+spur; the cap arcs run spring-end to the EXISTING b corners).
+
+ORACLES: box 4x1x2, wall-top edge, r = 1.25 > W = 1: exact integral oracle (removed = L (HW -
+Iseg), the circle-segment antiderivative evaluated in-test) within 0.02; DIFFERENTIAL SWEEP:
+below the trigger (r = 0.8) the ordinary fillet applies and the cliff REFUSES, above it the
+ordinary fillet DECLINES and the cliff handles -- the dossier-41/56 sweep contract. Half-tangent
+signature verified: full-blend recognition finds NOTHING (tangent to one support only); the
+narrow top face is gone. Valid throughout.
+
+HONEST SCOPE: the cliff is the most common overflow per dossier 56 and turns Keel's decline
+into a handle for it; the smooth/roll-on, notch, cap handlers and the four-predicate
+classification ladder remain the dossier-56 follow-ups, as do creeping/partial cliffs.
+
+CI: fmt, clippy -D warnings, workspace 123 + 77 + 222 (+1) green. No fuzz: additive blend.rs.
+
+COUNTER: 132 -> 133/144 (item 57). Remaining: 29, 51, 55, 56.
