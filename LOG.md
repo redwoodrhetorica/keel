@@ -4738,3 +4738,34 @@ LADDER (dossier 38 build plan): analytic surfaces + seams/poles (milestone 2), N
 4D conversion, pcurve supply-or-reconstruct, stitch-then-heal tolerance escalation, validation-
 property round-trip oracle, AP242 tessellation import. NOT a parity counter tick (the 144-item
 counter is closed at its ceiling); this is the post-parity opportunity program.
+
+## Addendum 154 (2026-06-10, attended): SHEET-AS-KNIFE CELLULAR PARTITION (dossier 57 Rung 2)
+
+partition_by_sheet(solid, sheet, tol) (branch cellular-rung2): the non-regularized sheet-as-
+interior-partition of dossier 57 Rung 2. The wall = the sheet trimmed to the solid by the
+ITEM-28 sheet-solid INTERSECTION (zero new trim code); the solid imprints along the same seam
+curves; every solid fragment plus the trimmed wall stitches through the identity import path
+with the wall in the WALLS channel; the Rung-1 cellular finalize (Weiler sector walk) extracts
+the cells. Gates: two-or-more solid cells (a knife that fails to split DECLINES), mass == mesh
+== the input volume (the outer boundary is untouched material), validate.
+
+THE BUG THE ORACLE CAUGHT (and the diagnosis pattern): the first run produced ONE +8 material
+cell and TWO negative exterior cells ("exterior cell not unique" decline). Spoke-table
+instrumentation at the radial-3 ring edges showed the WALL's sector spoke pointing OUT of the
+material (theta pi/2 instead of 3pi/2): interior-on-the-left (w = n x d_fin) assumes loops are
+CCW about the stored front normal, which SOLID faces guarantee by construction but SHEET-built
+faces do not (a lamina has no material side to orient by). FIX: per-face TRUE LOOP WINDING
+(Newell normal of the outer loop dotted with the front normal) flips the spoke when the loop is
+CW, making the sector walk winding-agnostic. The fix hardens Rung 1 as well: any future operand
+with unconventional winding walks correctly.
+
+ORACLE (dossier 57 Rung 2, fully analytic): cube [0,2]^3, 4x4 rectangular sheet at z = 1 ->
+valid; TWO solid cells; ONE double-sided interior wall of area exactly 4; the wall ring is four
+radial-3 edges; mass == mesh == 8; winding number 1.0 in both cells (outer boundary only); a
+sheet that misses the solid declines.
+
+CI: fmt; clippy -D warnings; workspace 123 + 77 + 232 (+1) green; fuzz_boolean soak (the
+winding fix touches the shared cellular walk): 10 minutes, 822 runs, clean.
+
+LADDER: Rung 3 sheet-sheet booleans, Rung 4 wire imprinting, Rung 5 full SGC with simplify;
+partial-penetration knives (wall boundary ending interior) decline honestly today.

@@ -1543,6 +1543,84 @@ pub fn boolean_sheet_solid(
     finalize_imported_sheet(dst, rec, faces, inf, tol.max(1e-7))
 }
 
+/// Partition a SOLID by a SHEET into a cellular solid (item 29 Rung 2,
+/// dossier 57: "sheet-as-knife"): the part of the sheet INSIDE the
+/// solid becomes a DOUBLE-SIDED interior wall splitting the region it
+/// crosses into two solid cells; the outer boundary is unchanged. The
+/// wall is the sheet-solid INTERSECTION (the item-28 trim), the solid
+/// is imprinted along the same seams, and the cellular finalize (the
+/// Weiler sector walk of Rung 1) extracts the regions. The sheet must
+/// cut clean through (a wall whose boundary ends in the interior would
+/// leave one cell, declined by the two-solid-cells gate below).
+pub fn partition_by_sheet(solid: &Body, sheet: &Body, tol: f64) -> Result<Body, BoolFault> {
+    use crate::query::BodyClass;
+    if solid.body_class() != BodyClass::Solid {
+        return Err(BoolFault::AssemblyFailed(
+            "partition_by_sheet: target must be a solid body",
+        ));
+    }
+    // The interior wall: the sheet trimmed to the solid (item 28).
+    let wall = boolean_sheet_solid(sheet, solid, BoolOp::Intersection, tol)?;
+    // Imprint the solid along the shared seams.
+    let (seams, mut faults) = seam_curves(solid, sheet, tol);
+    if seams.is_empty() {
+        return Err(BoolFault::AssemblyFailed(
+            "partition_by_sheet: sheet does not cross the solid boundary",
+        ));
+    }
+    let ia = imprint_operand(solid, &seams, |s| s.face_a, tol, &mut faults);
+    if let Some(f) = faults.into_iter().next() {
+        return Err(f);
+    }
+    // Keep EVERY solid fragment (nothing is removed) plus every wall
+    // face as a double-sided interior cell boundary.
+    let kept: Vec<KeptFace> = ia
+        .body
+        .face_keys()
+        .into_iter()
+        .map(|f| KeptFace {
+            operand: Operand::A,
+            face: f,
+            reversed: false,
+        })
+        .collect();
+    let walls: Vec<KeptFace> = wall
+        .face_keys()
+        .into_iter()
+        .map(|f| KeptFace {
+            operand: Operand::B,
+            face: f,
+            reversed: false,
+        })
+        .collect();
+    let ib = ImprintedOperand {
+        body: wall,
+        seam_edges: Vec::new(),
+    };
+    let body = stitch_by_import(&ia, &ib, &kept, &walls, tol)?;
+    // Honesty gates: the outer boundary is the input's material
+    // unchanged, so mass == mesh == the input volume; and the knife
+    // must actually have split the material (two or more solid cells).
+    let solid_cells = body.regions.iter().filter(|(_, r)| r.solid).count();
+    if solid_cells < 2 {
+        return Err(BoolFault::AssemblyFailed(
+            "partition_by_sheet: wall did not split the region (declined)",
+        ));
+    }
+    let Ok(m) = body.mass_properties() else {
+        return Err(BoolFault::AssemblyFailed(
+            "partition_by_sheet: mass properties failed",
+        ));
+    };
+    let mv = body.mesh_volume();
+    if !(m.volume.is_finite() && (m.volume - mv).abs() <= 1e-3 * (1.0 + m.volume.abs())) {
+        return Err(BoolFault::AssemblyFailed(
+            "partition_by_sheet: self-inconsistent result (mass != mesh)",
+        ));
+    }
+    Ok(body)
+}
+
 /// Sheet-result finalize (item 28): merge + glue, then one shell per
 /// connected component holding BOTH face sides in the void (a sheet
 /// borders the ambient void on both sides). No solid region, no
@@ -1905,6 +1983,25 @@ fn finalize_cellular(
             .and_then(|x| dst.loops.get(x.owner))
             .map(|l| l.face)
     };
+    // True loop winding vs the stored front normal, per face: solid
+    // faces are CCW about the outward normal by construction, but a
+    // SHEET-built wall face has no enforced winding, so interior-on-
+    // the-left needs the Newell sign to make the sector spokes point
+    // into the face.
+    let mut winding: BTreeMap<FaceKey, f64> = BTreeMap::new();
+    for &fk in &all {
+        let pts = dst.face_outer_loop_points(fk);
+        let mut nw = keel_math::vec::Vec3::ZERO;
+        for i in 0..pts.len() {
+            let (p, q) = (pts[i], pts[(i + 1) % pts.len()]);
+            nw = nw + p.cross(q);
+        }
+        let s = match dst.face_outward_normal(fk) {
+            Some(n) if nw.dot(n) < 0.0 => -1.0,
+            _ => 1.0,
+        };
+        winding.insert(fk, s);
+    }
     let tau = core::f64::consts::TAU;
     for (ek, e) in dst.edges.iter() {
         let fins = e.radial.clone();
@@ -1963,7 +2060,7 @@ fn finalize_cellular(
             };
             let forward = dst.fins.get(fk).map(|x| x.forward) == Some(true);
             let d = if forward { t } else { t * -1.0 };
-            let w = n.cross(d);
+            let w = n.cross(d) * winding.get(&f).copied().unwrap_or(1.0);
             let (bx, by) = match basis {
                 Some(b) => b,
                 None => {
@@ -4290,6 +4387,66 @@ mod tests {
         let reg = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
         let solids_reg = reg.body.regions.iter().filter(|(_, r)| r.solid).count();
         assert_eq!(solids_reg, 1, "regularized union stays one cell");
+    }
+
+    #[test]
+    fn sheet_as_knife_partitions_cube_into_two_cells() {
+        // Item 29 Rung 2 (dossier 57): a 4x4 planar sheet at z = 1 cuts
+        // the [0,2]^3 cube into TWO solid cells separated by the
+        // trimmed 2x2 interior wall. The outer boundary is unchanged:
+        // mass == mesh == 8; the wall is double-sided with area 4 and
+        // four radial-3 boundary edges; the winding classifier (outer
+        // boundary only) sees both cells as inside.
+        let mut cube = Body::new();
+        cube.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let sheet = Body::rectangular_sheet(
+            Vec3::new(-1.0, -1.0, 1.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            4.0,
+            4.0,
+        )
+        .unwrap();
+        let body = partition_by_sheet(&cube, &sheet, 1e-7).unwrap();
+        assert!(body.validate().is_ok(), "partitioned cube invalid");
+        let solids = body.regions.iter().filter(|(_, r)| r.solid).count();
+        assert_eq!(solids, 2, "two solid cells");
+        let wall_faces: Vec<_> = body
+            .face_keys()
+            .into_iter()
+            .filter(|&f| body.is_interior_wall(f))
+            .collect();
+        assert_eq!(wall_faces.len(), 1, "one interior wall face");
+        let area = body.face_area(wall_faces[0]);
+        assert!((area - 4.0).abs() < 1e-9, "wall area {area} != 4");
+        let radial3 = body
+            .edges
+            .iter()
+            .filter(|(_, e)| e.radial.len() == 3)
+            .count();
+        assert_eq!(radial3, 4, "the wall ring is radial-3");
+        let v = body.mass_properties().unwrap().volume;
+        let mv = body.mesh_volume();
+        assert!(
+            (v - 8.0).abs() < 1e-9 && (mv - 8.0).abs() < 1e-9,
+            "outer-boundary mass {v} / mesh {mv} != 8"
+        );
+        let w_lo = body.generalized_winding_number(Vec3::new(1.0, 1.0, 0.5));
+        let w_hi = body.generalized_winding_number(Vec3::new(1.0, 1.0, 1.5));
+        assert!(
+            (w_lo - 1.0).abs() < 1e-3 && (w_hi - 1.0).abs() < 1e-3,
+            "winding {w_lo} / {w_hi}"
+        );
+        // A sheet that misses the solid declines.
+        let far = Body::rectangular_sheet(
+            Vec3::new(10.0, 10.0, 10.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            1.0,
+            1.0,
+        )
+        .unwrap();
+        assert!(partition_by_sheet(&cube, &far, 1e-7).is_err());
     }
 
     #[test]
