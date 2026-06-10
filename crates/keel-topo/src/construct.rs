@@ -89,6 +89,24 @@ impl Body {
         self.prism(profile, dir)
     }
 
+    /// Create a body directly from supplied geometry (item 10): one
+    /// planar polygon per face, each wound CCW about its OUTWARD
+    /// normal. Shared edges are discovered by coincidence and glued
+    /// (the knit machinery); a closed set PROMOTES to a solid, an open
+    /// set stays a sheet assembly. The explicit-topology construction
+    /// path remains the Euler operators (item 136) plus
+    /// attach_face_surface / attach_edge_curve.
+    pub fn from_polygon_faces(
+        faces: &[Vec<Vec3>],
+        tol: f64,
+    ) -> Result<Body, crate::boolean::BoolFault> {
+        let sheets: Result<Vec<Body>, TopoError> =
+            faces.iter().map(|f| Body::planar_sheet(f)).collect();
+        let sheets = sheets.map_err(crate::boolean::BoolFault::Topo)?;
+        let refs: Vec<&Body> = sheets.iter().collect();
+        crate::boolean::knit(&refs, tol)
+    }
+
     /// Helix wire body (item 15): a wire edge carrying a CERTIFIED
     /// NURBS helix (axis through `origin` along `axis`, radius,
     /// `pitch` advance per turn, `turns` total) fit within `tol` by the
@@ -1823,6 +1841,34 @@ mod tests {
         b.wire(Vec3::ZERO, Vec3::new(3.0, 0.0, 0.0)).unwrap();
         assert_eq!(b.body_class(), BodyClass::Wire, "should be a wire body");
         assert!(b.validate().is_ok(), "wire invalid: {:?}", b.validate());
+    }
+
+    #[test]
+    fn from_polygon_faces_builds_a_solid_tetrahedron() {
+        // Item 10: supplied face polygons (outward CCW) -> glued solid.
+        // Tetrahedron (0,0,0),(2,0,0),(0,2,0),(0,0,2): volume 8/6.
+        let a = Vec3::ZERO;
+        let b = Vec3::new(2.0, 0.0, 0.0);
+        let c = Vec3::new(0.0, 2.0, 0.0);
+        let d = Vec3::new(0.0, 0.0, 2.0);
+        let body = Body::from_polygon_faces(
+            &[
+                vec![a, c, b], // bottom, outward -z
+                vec![a, b, d], // y=0 side, outward -y
+                vec![a, d, c], // x=0 side, outward -x
+                vec![b, c, d], // slanted, outward +
+            ],
+            1e-7,
+        )
+        .unwrap();
+        assert!(body.validate().is_ok(), "tetrahedron invalid");
+        let v = body.mass_properties().unwrap().volume;
+        let mv = body.mesh_volume();
+        let want = 8.0 / 6.0;
+        assert!(
+            (v - want).abs() < 1e-9 && (mv - want).abs() < 1e-9,
+            "tetra volume must be {want} mass == mesh (got {v}, {mv})"
+        );
     }
 
     #[test]

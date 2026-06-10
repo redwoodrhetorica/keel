@@ -4161,3 +4161,21 @@ additive module; the only boolean.rs change is merge_and_glue_imported visibilit
 COUNTER: 120 -> 122/144 (items 130, 132). Remaining tractable: 10, 29, 31, 48-51, 54-60 (the
 blend deep end, ~11 items), 67, (141/143 pending slice-check). Excluded ~15. NEXT: 31 selective
 booleans or 10 body-from-geometry, then the blend family is the last big chunk.
+
+## Addendum 136 (2026-06-10, attended): BODY FROM SUPPLIED GEOMETRY (item 10, 122 -> 123/144)
+
+Body::from_polygon_faces(faces, tol) (construct.rs): create a body directly from supplied
+geometry -- one planar polygon per face, outward-CCW; shared edges are discovered by coincidence
+and glued by the knit machinery; a closed set PROMOTES to a solid, an open set stays a sheet
+assembly. The EXPLICIT-topology construction path remains the Euler operators (item 136 of the
+map, long shipped) plus attach_face_surface / attach_edge_curve; this constructor is the
+geometry-first form Parasolid's create-from-topology row describes, on Keel's proven stitch.
+Oracle: a 4-polygon tetrahedron builds to the exact 8/6 volume, mass == mesh, valid.
+
+CI: fmt, clippy -D warnings, workspace 123 + 77 + 211 (+1) green. No fuzz: thin additive wrapper
+over knit.
+
+COUNTER: 122 -> 123/144 (item 10). Remaining tractable: 29, 31, 48-51, 54-60, 67. NEXT: blend
+recognition (58) + unblend (59) -- the inverse pair of the shipped fillet machinery (the
+plane-plane fillet's exact inverse is reconstructable: delete the cylinder face and re-intersect
+the two support planes); dossier 40/28 re-read first.
