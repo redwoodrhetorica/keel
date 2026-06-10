@@ -451,6 +451,77 @@ impl Body {
             .min_by(|x, y| x.1.total_cmp(&y.1))
     }
 
+    /// Radius of the largest inscribed sphere tangent at surface point
+    /// `p` with outward normal `outward`: the DISTANCE TO THE MEDIAL
+    /// AXIS at p (corpus-audit medial MVP; dossiers 10 / 41 / 50). The
+    /// sphere centred at p - n r is empty iff the closest surface
+    /// distance from its centre stays r (the tangent contact itself);
+    /// emptiness is monotone in r, so bisection converges. Resolution
+    /// follows `closest_point` (exact planar, tessellation-resolution
+    /// curved). This is the shared feasibility field: shell t_max, the
+    /// blend overflow ceiling, and defeature safety all query it.
+    pub fn inscribed_radius(&self, p: Vec3, outward: Vec3) -> Option<f64> {
+        let n = outward.try_normalize()?;
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for (_, v) in self.vertices.iter() {
+            for c in [v.point.x, v.point.y, v.point.z] {
+                lo = lo.min(c);
+                hi = hi.max(c);
+            }
+        }
+        if !lo.is_finite() {
+            return None;
+        }
+        let r_max = ((hi - lo) * 3.0_f64.sqrt()).max(1e-9);
+        let empty = |r: f64| -> bool {
+            let c = p - n * r;
+            match self.closest_point(c) {
+                Some((_, d)) => d >= r * (1.0 - 1e-9) - 1e-9,
+                None => false,
+            }
+        };
+        if !empty(r_max * 1e-7) {
+            return Some(0.0);
+        }
+        if empty(r_max) {
+            return Some(r_max);
+        }
+        let (mut a, mut b) = (r_max * 1e-7, r_max);
+        for _ in 0..60 {
+            let mid = 0.5 * (a + b);
+            if empty(mid) {
+                a = mid;
+            } else {
+                b = mid;
+            }
+        }
+        Some(0.5 * (a + b))
+    }
+
+    /// Minimum wall thickness over the body, 2x the smallest inscribed
+    /// radius at each face's interior point (the rolling-ball thickness
+    /// CAE wall checks report; edge-adjacent thinning is the medial
+    /// field's nature and is probed by `inscribed_radius` directly).
+    pub fn min_wall_thickness(&self) -> Option<f64> {
+        let mut best: Option<f64> = None;
+        for f in self.face_keys() {
+            let Some(p) = self.face_interior_point(f) else {
+                continue;
+            };
+            let Some(n) = self.face_outward_normal(f) else {
+                continue;
+            };
+            if let Some(r) = self.inscribed_radius(p, n) {
+                best = Some(match best {
+                    Some(b) => b.min(2.0 * r),
+                    None => 2.0 * r,
+                });
+            }
+        }
+        best
+    }
+
     /// Principal curvatures (k1, k2) of a face's surface at the surface
     /// point nearest `p` (parity item 107, surface analysis). In 1/length
     /// units, exact for analytic surfaces: plane -> (0, 0); cylinder radius
@@ -702,6 +773,47 @@ impl Body {
 mod tests {
     use super::*;
     use keel_geom::surface::Frame3;
+
+    #[test]
+    fn inscribed_radius_is_the_medial_distance() {
+        // 4 x 4 x 1 slab: at the top centre the inscribed sphere fills
+        // the slab (r = 0.5); near a rim the medial distance shrinks to
+        // the rim distance (the field is honest about edges); at a side
+        // centre the vertical clearance governs (0.5).
+        let mut slab = Body::new();
+        slab.block(Vec3::ZERO, 4.0, 4.0, 1.0).unwrap();
+        let r = slab
+            .inscribed_radius(Vec3::new(2.0, 2.0, 1.0), Vec3::new(0., 0., 1.))
+            .unwrap();
+        assert!((r - 0.5).abs() < 1e-6, "slab medial {r}");
+        let r_rim = slab
+            .inscribed_radius(Vec3::new(0.2, 2.0, 1.0), Vec3::new(0., 0., 1.))
+            .unwrap();
+        assert!((r_rim - 0.2).abs() < 1e-6, "rim medial {r_rim}");
+        let r_side = slab
+            .inscribed_radius(Vec3::new(4.0, 2.0, 0.5), Vec3::new(1., 0., 0.))
+            .unwrap();
+        assert!((r_side - 0.5).abs() < 1e-6, "side medial {r_side}");
+        // Hollowed 4^3 box with 1-thick walls: the cavity bounds the
+        // sphere from inside (outer-face centre r = 0.5), and the
+        // cavity wall sees the outer face (also 0.5).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 4.0, 4.0).unwrap();
+        let h = b.hollow(1.0).unwrap();
+        let r_out = h
+            .inscribed_radius(Vec3::new(2.0, 2.0, 4.0), Vec3::new(0., 0., 1.))
+            .unwrap();
+        assert!((r_out - 0.5).abs() < 1e-6, "hollow outer medial {r_out}");
+        let r_cav = h
+            .inscribed_radius(Vec3::new(2.0, 2.0, 3.0), Vec3::new(0., 0., -1.))
+            .unwrap();
+        assert!((r_cav - 0.5).abs() < 1e-6, "cavity medial {r_cav}");
+        // The face-sampled aggregate: bounded by the true wall and
+        // positive (its sample point placement is the face interior
+        // point, documented as sample-dependent).
+        let t = h.min_wall_thickness().unwrap();
+        assert!(t > 0.0 && t <= 1.0 + 1e-6, "hollow wall aggregate {t}");
+    }
 
     fn z_sphere(center: Vec3, r: f64) -> Body {
         let mut b = Body::new();
