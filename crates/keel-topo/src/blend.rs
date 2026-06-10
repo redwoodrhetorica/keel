@@ -3047,6 +3047,52 @@ impl Body {
         out
     }
 
+    /// Suppress ALL recognized blends, LEAVES FIRST (the
+    /// Venkataraman-Sohoni chain ordering, dossiers 03 sec 2.2 / 15 sec
+    /// 1.4): a blend whose face serves as another blend's SUPPORT is a
+    /// junction and must wait until its dependents are gone, or the
+    /// dependent's re-intersection target vanishes. Recognition re-runs
+    /// after every removal (the topology changed). Returns
+    /// `(removed, remaining)`: a nonzero `remaining` means those blends
+    /// DECLINED (an unsupported unblend class), with the body left at
+    /// the last VALID state, never a partial surgery.
+    pub fn unblend_all(&mut self, tol: f64) -> (usize, usize) {
+        use std::collections::BTreeSet;
+        let mut removed = 0usize;
+        let cap = self.recognize_blends(1e-6).len() + 4;
+        let mut declined: BTreeSet<crate::entity::FaceKey> = BTreeSet::new();
+        for _ in 0..cap {
+            let recs = self.recognize_blends(1e-6);
+            // Leaves: blends NOT serving as any other blend's support.
+            let leaves: Vec<crate::entity::FaceKey> = recs
+                .iter()
+                .filter(|r| !declined.contains(&r.face))
+                .filter(|r| {
+                    !recs.iter().any(|o| {
+                        o.face != r.face && (o.supports.0 == r.face || o.supports.1 == r.face)
+                    })
+                })
+                .map(|r| r.face)
+                .collect();
+            let mut progressed = false;
+            for f in leaves {
+                if self.unblend(f, tol).is_ok() {
+                    removed += 1;
+                    progressed = true;
+                    // A removal can unlock previously declined blends.
+                    declined.clear();
+                    break;
+                }
+                declined.insert(f);
+            }
+            if !progressed {
+                break;
+            }
+        }
+        let remaining = self.recognize_blends(1e-6).len();
+        (removed, remaining)
+    }
+
     /// Unblend (item 59): remove a recognized PLANE-PLANE edge fillet,
     /// restoring the sharp edge at the support planes' intersection --
     /// the exact inverse of `fillet_edge`. Surgery runs on a clone and
@@ -3075,6 +3121,8 @@ impl Body {
             return Err(TopoError::Precondition("unblend: parallel supports"));
         }
         let p_on_l = (n2.cross(dir) * d1 + dir.cross(n1) * d2) * (1.0 / dd);
+        let radius = info.radius;
+        let v_before = self.mesh_volume();
 
         let mut work = self.clone();
         let mut rec = work.begin_op();
@@ -3208,26 +3256,65 @@ impl Body {
             work.vertices.get(b0).map(|v| v.point),
             work.vertices.get(b1).map(|v| v.point),
         );
+        let mut edge_len = None;
         if let (Some(p0), Some(p1)) = (p0, p1)
             && let Ok(line) = keel_geom::curve::Line3::new(p0, p1 - p0)
         {
+            edge_len = Some((p1 - p0).norm());
             work.attach_edge_curve(e2, Curve3::Line(line), true);
         }
-        // Honesty gates.
+        // Honesty gates (tiered).
         if work.validate().is_err() {
             return Err(TopoError::Precondition(
                 "unblend: result invalid (declined)",
             ));
         }
-        let v = work
-            .mass_properties()
-            .map(|m| m.volume)
-            .map_err(|_| TopoError::Precondition("unblend: massprops failed"))?;
         let mv = work.mesh_volume();
-        if !v.is_finite() || (v - mv).abs() > tol.max(1e-6) * (1.0 + v.abs()) {
-            return Err(TopoError::Precondition(
-                "unblend: result inconsistent (declined)",
-            ));
+        match work.mass_properties() {
+            Ok(m) => {
+                // Strong gate: the all-analytic mass == mesh identity.
+                if !m.volume.is_finite()
+                    || (m.volume - mv).abs() > tol.max(1e-6) * (1.0 + m.volume.abs())
+                {
+                    return Err(TopoError::Precondition(
+                        "unblend: result inconsistent (declined)",
+                    ));
+                }
+            }
+            Err(_) => {
+                // OTHER blend faces still on the body block the
+                // analytic integral (the documented blend-pcurve
+                // follow-up). Fallback oracle: this unblend must change
+                // the mesh volume by EXACTLY the removed fillet's
+                // analytic wedge, r^2 (cot(theta/2) - (pi - theta)/2)
+                // per unit length at interior dihedral theta; the
+                // untouched faces' tessellation error CANCELS in the
+                // difference, leaving only the removed band's own
+                // chordal error (a couple of percent at default
+                // density).
+                let Some(len) = edge_len else {
+                    return Err(TopoError::Precondition(
+                        "unblend: no straight sharp edge for the wedge oracle",
+                    ));
+                };
+                let theta = core::f64::consts::PI - n1.dot(n2).clamp(-1.0, 1.0).acos();
+                let half = 0.5 * theta;
+                if half.tan().abs() < 1e-12 {
+                    return Err(TopoError::Precondition("unblend: degenerate dihedral"));
+                }
+                let wedge = radius
+                    * radius
+                    * (1.0 / half.tan() - 0.5 * (core::f64::consts::PI - theta))
+                    * len;
+                let delta = mv - v_before;
+                let ok = (delta - wedge).abs() <= 0.02 * wedge.abs().max(1e-12)
+                    || (delta + wedge).abs() <= 0.02 * wedge.abs().max(1e-12);
+                if !ok {
+                    return Err(TopoError::Precondition(
+                        "unblend: wedge oracle mismatch (declined)",
+                    ));
+                }
+            }
         }
         *self = work;
         Ok(())
@@ -3416,6 +3503,61 @@ mod tests {
         assert!(
             (v - want).abs() < 0.02,
             "mitre volume {v} != grid oracle {want} (removed {removed_true})"
+        );
+    }
+
+    fn edge_between_faces(b: &Body, fa: Vec3, fb: Vec3) -> EdgeKey {
+        b.edges
+            .iter()
+            .map(|(k, _)| k)
+            .find(|&k| {
+                let fs = b.faces_around_edge(k);
+                fs.len() == 2 && {
+                    let (Some(na), Some(nb)) =
+                        (b.face_outward_normal(fs[0]), b.face_outward_normal(fs[1]))
+                    else {
+                        return false;
+                    };
+                    (na - fa).norm() < 1e-9 && (nb - fb).norm() < 1e-9
+                        || (na - fb).norm() < 1e-9 && (nb - fa).norm() < 1e-9
+                }
+            })
+            .expect("edge")
+    }
+
+    #[test]
+    fn unblend_all_suppresses_chains_leaves_first_and_preserves_declines() {
+        // Corpus-audit item (dossiers 03 sec 2.2 / 15 sec 1.4): ordered
+        // whole-model blend suppression. Two independent fillets remove
+        // completely, restoring the exact sharp box; the mitred-corner
+        // body's blends are NOT the plane-plane unblend class, so they
+        // DECLINE wholesale with the body untouched.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e1 = edge_between_faces(&b, Vec3::new(0., 0., 1.), Vec3::new(1., 0., 0.));
+        let f1 = b.fillet_edge(e1, 0.3).unwrap();
+        let e2 = edge_between_faces(&f1, Vec3::new(0., 0., 1.), Vec3::new(-1., 0., 0.));
+        let mut f2 = f1.fillet_edge(e2, 0.3).unwrap();
+        assert_eq!(f2.recognize_blends(1e-6).len(), 2, "two blends present");
+        let (removed, remaining) = f2.unblend_all(1e-7);
+        assert_eq!((removed, remaining), (2, 0), "both blends suppressed");
+        assert!(f2.validate().is_ok(), "restored box invalid");
+        let v = f2.mass_properties().unwrap().volume;
+        assert!((v - 8.0).abs() < 1e-9, "restored box volume {v}");
+        assert_eq!(f2.face_keys().len(), 6, "restored box faces");
+
+        let mut m = Body::new();
+        m.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e1 = edge_between_faces(&m, Vec3::new(0., 0., 1.), Vec3::new(1., 0., 0.));
+        let e2 = edge_between_faces(&m, Vec3::new(0., 0., 1.), Vec3::new(0., 1., 0.));
+        let mut mitred = m.mitre_fillet_corner(e1, e2, 0.5).unwrap();
+        let v0 = mitred.mesh_volume();
+        let (removed, remaining) = mitred.unblend_all(1e-7);
+        assert_eq!(removed, 0, "mitre blends are not the unblend class");
+        assert_eq!(remaining, 2, "both still recognized");
+        assert!(
+            (mitred.mesh_volume() - v0).abs() < 1e-9,
+            "declined body must be untouched"
         );
     }
 
