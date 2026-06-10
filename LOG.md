@@ -5356,3 +5356,37 @@ ellipse-bounded chamfer face), mesh to 0.02, 8 faces, chamfer survives trimmed.
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 246 (+1) green; fuzz_boolean soak
 (massprops changed): count below. Dossier 56 sec 2 is now COMPLETE (notch + cap); remaining
 in the leg: setbacks (dossier 53), Rung 5 SGC + completion gate.
+
+## Addendum 174 (2026-06-10, attended): TWO-FACE ROOF CAP (dossier 56 sec 2.2 complete for existing-ridge planar ends)
+
+Branch cap-roof. The two-face cap, "extending at most two of the adjoining faces to meet",
+in its zero-extension form (the faces already meet at a MODEL RIDGE; bucket (a): plane-plane
+intersection is a line, plane-cylinder sections are conics, all exact). fillet_edge end
+handling generalized: ONE cap face at the end vertex keeps the Add.173 paths (perpendicular
+circle / oblique ellipse / parallel decline); TWO cap faces meeting at a ridge incident to
+the end vertex now split the ridge at its FIRST cylinder crossing (smaller quadratic root:
+the corner is outside, so it enters on the material quarter) and trim each cap face to its
+own plane-cylinder conic sub-arc, the two arcs meeting at the crossing vertex. The dissolve
+forks per end: Single = kef(stub) + kev(spur) as before; Roof = kef both cap stubs + kev the
+ridge stub (the old 4-face corner vertex collapses). More than two cap faces (the multi-face
+construct-and-sew cap flagged for US 8,935,130 claim care) and true virtual extension stay
+declined.
+
+Test roof_cap_fillet_closes_the_ribbon_end_on_two_planes: box 4x2x2 with the end corner cut
+by BOTH x+z=5 and x+y=5 (two wedge-prism booleans; body volume 14+1/3 asserted exact first),
+fillet r 0.5: the ribbon closes with two ellipse sub-arcs meeting at x = 3.5 - r/sqrt2.
+Closed-form oracle written FIRST: corner cut = r^3 (1/3 + sqrt2/3 - pi/4); mass to 1e-9
+(the Green-slab integrator handles the two-ellipse-fin ribbon unchanged), mesh to 0.02.
+
+The oracle exposed ONE defect, in tessellate_cylinder's ruling_band: each oblique cap plane
+ASSIGNED its clamp to the nearer band end, so with two distinct planes on one end the last
+visited won and the mesh overhung the binding plane by 0.079. First fix (combine via min/max
+against the vertex band) regressed the MITRE, whose ellipse legitimately bulges PAST the
+extreme boundary vertices: the correct semantics is REPLACE-not-limit per end, innermost
+among planes only: lo/hi clip accumulators that override the vertex band when present. Both
+the roof and the mitre gates now hold.
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 247 (+1) green; fuzz_boolean soak
+(tessellation changed): count below. Dossier 56 sec 2 (notch + one-face cap + two-face roof
+cap) COMPLETE; #15 overflow handlers close (ov_smooth transition patch = procedural-evaluator
+follow-up per the three-bucket verdict). Next: #16 setbacks (dossier 53).
