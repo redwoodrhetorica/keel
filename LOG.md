@@ -4535,3 +4535,33 @@ CI: fmt, clippy -D warnings, workspace 123 + 77 + 223 (+1) green; soak clean as 
 
 COUNTER: 133 -> 134/144 (item 55). Remaining tractable: 29, 51, 56. Ladder per dossier 54:
 two square stops, curved spines (torus segment + canal runout), partial recognition/unblend.
+
+## Addendum 149 (2026-06-10, attended): MITRED BLEND CORNER (item 56; 134 -> 135/144)
+
+mitre_fillet_corner(e1, e2, r) (branch mitre-blend; dossier 55 milestone 1): two equal-radius
+convex plane-plane edges sharing a corner and one support, their cylinder blends joined along
+the EXACT INTERSECTION ELLIPSE -- for equal radii the two cylinders intersect in the bisector
+plane on E(t) = M + (W - M) cos t + (X - M) sin t (verified on both cylinders for every t),
+with M the spine crossing, X the top-spring crossing, W the side-spring crossing on the shared
+vertical edge. SURGERY: the partial-span SPUR trick (Addendum 148) imprints the two top springs
+meeting at X; the sides imprint boundary-to-boundary (side 2 reusing the W vertex -- splitting
+the shared vertical edge once); far ends take the standard cap treatment (cap = the face at the
+far vertex NOT carrying the sharp edge -- the strip-list exclusion mis-picked under the top
+split's old/new ambiguity); and the old corner vertex RELOCATES onto the ellipse, its two
+corner edges recurved as exact ellipse sub-arcs shared by the two blends (the unblend-style
+vertex-move, no edge created or destroyed at the corner).
+
+TESSELLATION (the third face type to learn it): tessellate_cylinder gained the vertex-height
+fallback and the oblique cap-plane ruling clamps -- the mitre blend face carries ONE circle arc
++ two ellipse sub-arcs, so cyl_circle_heights returned a single height and the face tessellated
+EMPTY (mesh down 0.44). All three curved tessellators (cylinder, cone, and the span machinery)
+now handle vertex-trimmed oblique-bounded patches uniformly.
+
+ORACLES: both blends RECOGNIZED at exactly r = 0.5 (item-58 cross-check); the volume against a
+TERRITORY-SPLIT grid integral -- each point is governed by the bisector side's blend alone
+(the first oracle draft used inside-either-cylinder and was WRONG; the mitre genuinely removes
+more than the union near the seam). Valid; workspace 123 + 77 + 224 green; clippy -D warnings;
+fmt; fuzz_boolean soak (tessellate_cylinder changed): 10 minutes, 785 runs, clean.
+
+COUNTER: 134 -> 135/144 (item 56, the milestone-1 rung; unequal radii via marched SSI, chain
+contraction, and roll-over junctions are the dossier-55 ladder). Remaining: 29, 51.

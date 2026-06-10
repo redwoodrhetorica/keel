@@ -2194,6 +2194,375 @@ impl Body {
     }
 }
 
+impl Body {
+    /// MITRED corner of two equal-radius fillets (parity item 56;
+    /// dossier 55 milestone 1): blend two convex plane-plane edges
+    /// sharing a corner vertex and one support face, joining the two
+    /// cylinder blends along their EXACT intersection ellipse (for
+    /// equal radii the cylinders' intersection in the bisector plane:
+    /// E(theta) = M + (W - M) cos theta + (X - M) sin theta with M the
+    /// spine crossing, X the top-spring crossing, W the side-spring
+    /// crossing on the shared vertical edge -- on BOTH cylinders for
+    /// every theta). Surgery: the partial-span SPUR trick imprints the
+    /// crossing top springs; the sides imprint boundary-to-boundary
+    /// (side 2 reusing the W vertex); far ends get the standard cap
+    /// treatment; and the old corner vertex RELOCATES onto the ellipse,
+    /// its two corner edges becoming exact ellipse sub-arcs shared by
+    /// the blends. Unequal radii (marched SSI), chains longer than two,
+    /// and roll-over junctions are the dossier-55 ladder.
+    pub fn mitre_fillet_corner(
+        &self,
+        e1: EdgeKey,
+        e2: EdgeKey,
+        radius: f64,
+    ) -> Result<Body, TopoError> {
+        if !(radius.is_finite() && radius > 0.0) || e1 == e2 {
+            return Err(TopoError::Precondition("mitre: bad input"));
+        }
+        let fs1 = self.faces_around_edge(e1);
+        let fs2 = self.faces_around_edge(e2);
+        if fs1.len() != 2 || fs2.len() != 2 {
+            return Err(TopoError::Precondition("mitre: edges need two faces"));
+        }
+        let f_top = *fs1
+            .iter()
+            .find(|f| fs2.contains(f))
+            .ok_or(TopoError::Precondition("mitre: no shared support"))?;
+        let s1 = *fs1
+            .iter()
+            .find(|&&f| f != f_top)
+            .ok_or(TopoError::Precondition("mitre: side 1"))?;
+        let s2 = *fs2
+            .iter()
+            .find(|&&f| f != f_top)
+            .ok_or(TopoError::Precondition("mitre: side 2"))?;
+        for &f in &[f_top, s1, s2] {
+            if !matches!(
+                self.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition(
+                    "mitre: non-planar support (follow-up)",
+                ));
+            }
+        }
+        // Shared corner vertex and far ends.
+        let (a0, a1) = self.edges.get(e1).ok_or(TopoError::StaleKey)?.bounds;
+        let (b0, b1) = self.edges.get(e2).ok_or(TopoError::StaleKey)?.bounds;
+        let (corner, far1) = if b0 == a0 || b1 == a0 {
+            (a0, a1)
+        } else if b0 == a1 || b1 == a1 {
+            (a1, a0)
+        } else {
+            return Err(TopoError::Precondition("mitre: edges share no vertex"));
+        };
+        let far2 = if b0 == corner { b1 } else { b0 };
+        // Blend geometry per edge (exact cylinders).
+        let blend1 = self.blend_cylinder_for_edge(e1, radius)?;
+        let blend2 = self.blend_cylinder_for_edge(e2, radius)?;
+        let n_top = self
+            .face_outward_normal(f_top)
+            .ok_or(TopoError::Precondition("mitre: top normal"))?;
+        // Which spring of each blend lies on the TOP plane.
+        let on_top = |l: &Line3| -> bool {
+            let p_top = self
+                .face_outer_loop_points(f_top)
+                .first()
+                .copied()
+                .unwrap_or(l.origin);
+            ((l.origin - p_top).dot(n_top)).abs() < 1e-9
+        };
+        let (sp1_top, sp1_side) = if on_top(&blend1.spring_a) {
+            (blend1.spring_a, blend1.spring_b)
+        } else {
+            (blend1.spring_b, blend1.spring_a)
+        };
+        let (sp2_top, sp2_side) = if on_top(&blend2.spring_a) {
+            (blend2.spring_a, blend2.spring_b)
+        } else {
+            (blend2.spring_b, blend2.spring_a)
+        };
+        // X: the top springs' crossing (solve in the top plane).
+        let x_pt = {
+            let d = sp1_top.origin - sp2_top.origin;
+            let (u, v) = (sp1_top.dir, sp2_top.dir);
+            let (uu, uv, vv) = (u.dot(u), u.dot(v), v.dot(v));
+            let det = uu * vv - uv * uv;
+            if det.abs() < 1e-12 {
+                return Err(TopoError::Precondition("mitre: parallel top springs"));
+            }
+            let s = (uv * d.dot(v) - vv * d.dot(u)) / det;
+            sp1_top.origin + u * s
+        };
+        // M: the spine crossing (closest-point midpoint, must meet).
+        let m_pt = {
+            let d = blend1.spine.origin - blend2.spine.origin;
+            let (u, v) = (blend1.spine.dir, blend2.spine.dir);
+            let (uu, uv, vv) = (u.dot(u), u.dot(v), v.dot(v));
+            let det = uu * vv - uv * uv;
+            if det.abs() < 1e-12 {
+                return Err(TopoError::Precondition("mitre: parallel spines"));
+            }
+            let s = (uv * d.dot(v) - vv * d.dot(u)) / det;
+            let t = (uu * d.dot(v) - uv * d.dot(u)) / det;
+            let (p, q) = (blend1.spine.origin + u * s, blend2.spine.origin + v * t);
+            if (p - q).norm() > 1e-9 {
+                return Err(TopoError::Precondition(
+                    "mitre: spines do not meet (unequal radii?)",
+                ));
+            }
+            p
+        };
+        // The shared vertical edge V at the corner (bounds s1 and s2).
+        let _v_edge = self
+            .face_edge_set(s1)
+            .into_iter()
+            .find(|&ek| {
+                ek != e1
+                    && self.faces_around_edge(ek).contains(&s2)
+                    && self
+                        .edges
+                        .get(ek)
+                        .map(|x| x.bounds.0 == corner || x.bounds.1 == corner)
+                        == Some(true)
+            })
+            .ok_or(TopoError::Precondition("mitre: no shared vertical edge"))?;
+        let _corner_pt = self.vertices.get(corner).ok_or(TopoError::StaleKey)?.point;
+
+        let mut b = self.clone();
+        // Side 1: the standard boundary-to-boundary imprint (its corner
+        // boundary IS the vertical edge; the crossing there is W).
+        let n_s1 = b
+            .face_outward_normal(s1)
+            .ok_or(TopoError::Precondition("mitre: side normal"))?;
+        let n_s2 = b
+            .face_outward_normal(s2)
+            .ok_or(TopoError::Precondition("mitre: side normal"))?;
+        let (spr1s_edge, strip1, s1k, a1far, w_v) =
+            b.imprint_spring_line(s1, e1, far1, corner, &sp1_side, n_s1)?;
+        let w_pt = b.vertices.get(w_v).ok_or(TopoError::StaleKey)?.point;
+        // Side 2: manual (reuse the W vertex on the now-split V).
+        let (spr2s_edge, strip2, s2k, a2far) = {
+            let e_far = b
+                .boundary_edge_at_vertex_excluding(s2, far2, e2)
+                .ok_or(TopoError::Precondition("mitre: no far cap edge"))?;
+            let m = n_s2.cross(sp2_side.dir);
+            let far_pt = b
+                .line_crosses_edge(e_far, sp2_side.origin, m)
+                .ok_or(TopoError::Precondition("mitre: spring misses far cap"))?;
+            let sv = b.split_edge(e_far, far_pt)?;
+            let lp = b
+                .faces
+                .get(s2)
+                .map(|f| f.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fa = b.fin_ending_at_vertex(lp, sv.vertex)?;
+            let fb = b.fin_ending_at_vertex(lp, w_v)?;
+            let split = b.split_face(fa, fb, None)?;
+            if let Some(surf) = b.faces.get(s2).and_then(|f| f.surface)
+                && let Some(nf) = b.faces.get_mut(split.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            b.attach_edge_curve(split.edge, Curve3::Line(sp2_side), true);
+            let (strip, kept) = if b.face_has_edge(split.face_new, e2) {
+                (split.face_new, split.face_old)
+            } else {
+                (split.face_old, split.face_new)
+            };
+            (split.edge, strip, kept, sv.vertex)
+        };
+        // Top: split the two far boundaries, spur corner -> X, then the
+        // two crossing spring imprints.
+        let (t1far_v, t2far_v) = {
+            let ef1 = b
+                .boundary_edge_at_vertex_excluding(f_top, far1, e1)
+                .ok_or(TopoError::Precondition("mitre: top far edge 1"))?;
+            let m1 = n_top.cross(sp1_top.dir);
+            let p1 = b
+                .line_crosses_edge(ef1, sp1_top.origin, m1)
+                .ok_or(TopoError::Precondition("mitre: top spring 1 misses"))?;
+            let sv1 = b.split_edge(ef1, p1)?;
+            let ef2 = b
+                .boundary_edge_at_vertex_excluding(f_top, far2, e2)
+                .ok_or(TopoError::Precondition("mitre: top far edge 2"))?;
+            let m2 = n_top.cross(sp2_top.dir);
+            let p2 = b
+                .line_crosses_edge(ef2, sp2_top.origin, m2)
+                .ok_or(TopoError::Precondition("mitre: top spring 2 misses"))?;
+            let sv2 = b.split_edge(ef2, p2)?;
+            (sv1.vertex, sv2.vertex)
+        };
+        let lp_top = b
+            .faces
+            .get(f_top)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let fin_c = b.fin_ending_at_vertex(lp_top, corner)?;
+        let spur = b.mev(crate::euler::MevSite::AfterFin(fin_c), x_pt)?;
+        let x_v = spur.vertex;
+        let fin_x = b.fin_ending_at_vertex(lp_top, x_v)?;
+        let fin_t1 = b.fin_ending_at_vertex(lp_top, t1far_v)?;
+        let split_t1 = b.split_face(fin_x, fin_t1, None)?;
+        if let Some(surf) = b.faces.get(f_top).and_then(|f| f.surface)
+            && let Some(nf) = b.faces.get_mut(split_t1.face_new)
+        {
+            nf.surface = Some(surf);
+        }
+        b.attach_edge_curve(split_t1.edge, Curve3::Line(sp1_top), true);
+        // The piece containing far2's split vertex hosts the second cut.
+        let host2 = if b.faces_at_vertex(t2far_v).contains(&split_t1.face_new) {
+            split_t1.face_new
+        } else {
+            split_t1.face_old
+        };
+        let lp_h2 = b
+            .faces
+            .get(host2)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let fin_x2 = b.fin_ending_at_vertex(lp_h2, x_v)?;
+        let fin_t2 = b.fin_ending_at_vertex(lp_h2, t2far_v)?;
+        let split_t2 = b.split_face(fin_x2, fin_t2, None)?;
+        if let Some(surf) = b.faces.get(host2).and_then(|f| f.surface)
+            && let Some(nf) = b.faces.get_mut(split_t2.face_new)
+        {
+            nf.surface = Some(surf);
+        }
+        b.attach_edge_curve(split_t2.edge, Curve3::Line(sp2_top), true);
+
+        // Far-end caps (the standard fillet end treatment).
+        let split_cap = |b: &mut Body,
+                         v_far: crate::entity::VertexKey,
+                         spine: &Line3,
+                         t_end: crate::entity::VertexKey,
+                         s_end: crate::entity::VertexKey,
+                         sharp: EdgeKey|
+         -> Result<(), TopoError> {
+            // The cap is the face at the far vertex NOT carrying the
+            // sharp edge (both trim pieces do).
+            let cap = b
+                .faces_at_vertex(v_far)
+                .into_iter()
+                .find(|&f| !b.face_has_edge(f, sharp))
+                .ok_or(TopoError::Precondition("mitre: no far cap"))?;
+            let lp = b
+                .faces
+                .get(cap)
+                .map(|f| f.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fa = b.fin_ending_at_vertex(lp, t_end)?;
+            let fb = b.fin_ending_at_vertex(lp, s_end)?;
+            let split = b.split_face(fa, fb, None)?;
+            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
+                && let Some(nf) = b.faces.get_mut(split.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            let pc = b
+                .vertices
+                .get(v_far)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let centre = spine.origin + spine.dir * ((pc - spine.origin).dot(spine.dir));
+            let p_t = b
+                .vertices
+                .get(t_end)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let ex = (p_t - centre)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("mitre: arc axis"))?;
+            let arc = keel_geom::curve::Circle3::new(centre, ex, spine.dir.cross(ex), radius)
+                .map_err(|_| TopoError::Precondition("mitre: bad arc"))?;
+            b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+            Ok(())
+        };
+        split_cap(&mut b, far1, &blend1.spine, t1far_v, a1far, e1)?;
+        split_cap(&mut b, far2, &blend2.spine, t2far_v, a2far, e2)?;
+        let _ = (strip1, strip2, split_t1, split_t2);
+
+        // Dissolve: merge each top trim with its side strip across the
+        // sharp edge, then the far corner chains.
+        b.kef(e1)?;
+        b.kef(e2)?;
+        for (t_end, v_far, s_end) in [(t1far_v, far1, a1far), (t2far_v, far2, a2far)] {
+            let stub = b
+                .edge_between(t_end, v_far)
+                .ok_or(TopoError::Precondition("mitre: no far stub"))?;
+            b.kef(stub)?;
+            let spur_e = b
+                .edge_between(v_far, s_end)
+                .ok_or(TopoError::Precondition("mitre: no far spur"))?;
+            b.kev(spur_e)?;
+        }
+
+        // The corner: relocate the old vertex onto the mitre ellipse and
+        // recurve its two edges (the top spur and the vertical stub) as
+        // exact ellipse sub-arcs shared by the two blends.
+        let a_vec = w_pt - m_pt;
+        let b_vec = x_pt - m_pt;
+        if a_vec.dot(b_vec).abs() > 1e-9 * a_vec.norm() * b_vec.norm() {
+            return Err(TopoError::Precondition(
+                "mitre: non-perpendicular configuration (follow-up)",
+            ));
+        }
+        let mid = m_pt
+            + a_vec * core::f64::consts::FRAC_1_SQRT_2
+            + b_vec * core::f64::consts::FRAC_1_SQRT_2;
+        if let Some(v) = b.vertices.get_mut(corner) {
+            v.point = mid;
+        }
+        let ellipse = keel_geom::curve::Ellipse3::new(
+            m_pt,
+            a_vec
+                .try_normalize()
+                .ok_or(TopoError::Precondition("mitre: ellipse axis"))?,
+            b_vec
+                .try_normalize()
+                .ok_or(TopoError::Precondition("mitre: ellipse axis"))?,
+            a_vec.norm(),
+            b_vec.norm(),
+        )
+        .map_err(|_| TopoError::Precondition("mitre: bad ellipse"))?;
+        let spur_edge = b
+            .edge_between(corner, x_v)
+            .ok_or(TopoError::Precondition("mitre: no corner spur"))?;
+        b.attach_edge_curve(spur_edge, Curve3::Ellipse(ellipse), true);
+        let v_stub = b
+            .edge_between(corner, w_v)
+            .ok_or(TopoError::Precondition("mitre: no corner stub"))?;
+        b.attach_edge_curve(v_stub, Curve3::Ellipse(ellipse), true);
+
+        // Attach the blend cylinders (each face = its trim + strip,
+        // reachable from its spring-side edge).
+        let blend1_face = b
+            .faces_around_edge(spr1s_edge)
+            .into_iter()
+            .find(|f| *f != s1k)
+            .ok_or(TopoError::Precondition("mitre: no blend 1 face"))?;
+        let blend2_face = b
+            .faces_around_edge(spr2s_edge)
+            .into_iter()
+            .find(|f| *f != s2k)
+            .ok_or(TopoError::Precondition("mitre: no blend 2 face"))?;
+        b.attach_face_surface(
+            blend1_face,
+            SurfaceGeom::Analytic(Surface3::Cylinder(blend1.surface.clone())),
+            true,
+        );
+        b.attach_face_surface(
+            blend2_face,
+            SurfaceGeom::Analytic(Surface3::Cylinder(blend2.surface.clone())),
+            true,
+        );
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("mitre: result invalid"))?;
+        Ok(b)
+    }
+}
+
 /// The exact ellipse where a cone meets a plane (the variable-radius
 /// fillet's cap arcs): expand the cone's implicit quadric in plane
 /// coordinates, solve the 2x2 center system, and diagonalize the
@@ -2618,6 +2987,83 @@ mod tests {
             kmax(0.5) > 0.5,
             "mid-strip curvature must be real ({})",
             kmax(0.5)
+        );
+    }
+
+    #[test]
+    fn mitre_joins_two_fillets_on_the_exact_ellipse() {
+        // Item 56 (dossier 55 milestone 1): box [0,2]^3, blend the two
+        // top edges at the (2,2,2) corner with r = 0.5, mitred. The two
+        // cylinder blends meet along their exact intersection ellipse;
+        // recognition finds BOTH blends at r = 0.5; the removed volume
+        // = two straight wedges + the corner (grid oracle: kept iff
+        // inside either cylinder or off-quadrant).
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let find_edge = |fa: Vec3, fb: Vec3| -> EdgeKey {
+            b.edges
+                .iter()
+                .map(|(k, _)| k)
+                .find(|&k| {
+                    let fs = b.faces_around_edge(k);
+                    fs.len() == 2 && {
+                        let (Some(na), Some(nb)) =
+                            (b.face_outward_normal(fs[0]), b.face_outward_normal(fs[1]))
+                        else {
+                            return false;
+                        };
+                        (na - fa).norm() < 1e-9 && (nb - fb).norm() < 1e-9
+                            || (na - fb).norm() < 1e-9 && (nb - fa).norm() < 1e-9
+                    }
+                })
+                .expect("edge")
+        };
+        let e1 = find_edge(Vec3::new(0., 0., 1.), Vec3::new(1., 0., 0.)); // top ^ x=2
+        let e2 = find_edge(Vec3::new(0., 0., 1.), Vec3::new(0., 1., 0.)); // top ^ y=2
+        let m = b.mitre_fillet_corner(e1, e2, 0.5).unwrap();
+        assert!(m.validate().is_ok(), "mitred body invalid");
+        let found = m.recognize_blends(1e-6);
+        assert_eq!(found.len(), 2, "two blends at the mitre");
+        for f in &found {
+            assert!((f.radius - 0.5).abs() < 1e-9, "radius {}", f.radius);
+        }
+        // Grid oracle for the removed volume: a point in either edge's
+        // spine quadrant is removed iff outside BOTH cylinders.
+        let removed_true = {
+            let r = 0.5f64;
+            let n = 140usize;
+            let d = 2.0 / n as f64;
+            let mut count = 0usize;
+            for i in 0..n {
+                let x = (i as f64 + 0.5) * d;
+                for j in 0..n {
+                    let y = (j as f64 + 0.5) * d;
+                    for k in 0..n {
+                        let z = (k as f64 + 0.5) * d;
+                        // The MITRE splits territory at the bisector
+                        // x = y: each point is governed by ONE blend.
+                        let in_q1 = x >= 1.5 && z >= 1.5;
+                        let in_q2 = y >= 1.5 && z >= 1.5;
+                        let d1 = ((x - 1.5f64).powi(2) + (z - 1.5).powi(2)).sqrt();
+                        let d2 = ((y - 1.5f64).powi(2) + (z - 1.5).powi(2)).sqrt();
+                        let removed = if x >= y {
+                            in_q1 && d1 > r
+                        } else {
+                            in_q2 && d2 > r
+                        };
+                        if removed {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            count as f64 * d * d * d
+        };
+        let v = m.mesh_volume();
+        let want = 8.0 - removed_true;
+        assert!(
+            (v - want).abs() < 0.02,
+            "mitre volume {v} != grid oracle {want} (removed {removed_true})"
         );
     }
 
