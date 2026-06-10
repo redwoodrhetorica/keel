@@ -2784,6 +2784,28 @@ fn imprint_operand(
     }
 }
 
+impl Body {
+    /// Imprint one body onto another (item 74): split this body's faces
+    /// along its intersection seams with `tool`, returning the imprinted
+    /// copy. Topology gains the seam edges; the GEOMETRY is untouched
+    /// (volume identical, mass == mesh preserved). The body-level form
+    /// of the imprint-only boolean option (item 32), riding the same
+    /// seam_curves + imprint_operand pipeline. Errs on any imprint fault
+    /// (coincident/tangent contacts decline as in booleans; a fault is
+    /// never silently dropped).
+    pub fn imprint_body(&self, tool: &Body, tol: f64) -> Result<Body, BoolFault> {
+        let (seams, mut faults) = seam_curves(self, tool, tol);
+        let ia = imprint_operand(self, &seams, |s| s.face_a, tol, &mut faults);
+        if let Some(f) = faults.into_iter().next() {
+            return Err(f);
+        }
+        if ia.body.validate().is_err() {
+            return Err(BoolFault::AssemblyFailed("imprinted body invalid"));
+        }
+        Ok(ia.body)
+    }
+}
+
 /// Two-body imprint (M3 pipeline steps 1-3, per-operand form): localize
 /// and intersect, then imprint the seams onto independent clones of
 /// each operand. Each returned body is itself a valid solid (the imprint
@@ -2963,6 +2985,29 @@ mod tests {
         b.cylinder(Frame3::from_z(base, Vec3::new(0., 0., 1.)).unwrap(), r, h)
             .unwrap();
         b
+    }
+
+    #[test]
+    fn imprint_body_splits_topology_not_geometry() {
+        // Item 74: imprinting a corner-overlapping tool splits faces and
+        // adds seam edges but leaves the geometry bit-identical: volume
+        // unchanged, mass == mesh, valid.
+        let a = block(Vec3::ZERO, Vec3::new(4., 4., 4.));
+        let b = block(Vec3::new(2., 2., 2.), Vec3::new(4., 4., 4.));
+        let imp = a.imprint_body(&b, 1e-7).unwrap();
+        assert!(imp.validate().is_ok(), "imprinted body invalid");
+        let c0 = a.counts();
+        let c1 = imp.counts();
+        assert!(
+            c1.f > c0.f && c1.e > c0.e,
+            "imprint must split faces/add edges (got {c0:?} -> {c1:?})"
+        );
+        let v = imp.mass_properties().unwrap().volume;
+        let mv = imp.mesh_volume();
+        assert!(
+            (v - 64.0).abs() < 1e-9 && (mv - 64.0).abs() < 1e-9,
+            "imprint must not change geometry (got mass {v}, mesh {mv})"
+        );
     }
 
     #[test]
