@@ -5227,3 +5227,29 @@ With Rung 4 landed the dossier-57 ladder stands: Rung 0 soup retirement DONE (Ad
 Rung 1 cellular union DONE (Add. 151), Rung 2 sheet-as-knife DONE (Add. 154), Rung 3
 sheet-sheet DONE (Add. 166), Rung 4 wire imprint DONE (this); Rung 5 (full SGC with the
 Rossignac Merge simplify) is the remaining tail, with the completion gate after it.
+
+## Addendum 170 (2026-06-10, attended): BACKLOG-LEG ANCHOR (Addenda 164-169)
+
+STATE: master = the merge of wire-imprint (613aedb), all green (132 + 77 + 243; fmt; clippy
+-D warnings), clean soaks at every gated milestone, NOT pushed.
+
+THIS LEG (the queued-depth + dossier-57 ladder, in order): 164 analytic massprops on blend
+faces (projected iso-rectangle bounds; stale-pcurve guard; the cap-rim torus had silently
+wrong analytic mass); 165 the POLYGON SOUP RETIRED (census-proven dead, ~300 lines deleted,
+stitch-or-decline); 166 sheet-sheet booleans (Rung 3) + the Line3-normalization open-imprint
+no-op fixed at every call site; 167 the surgery cap-skeleton extraction (split_blend_cap,
+seven adopters); 168 the co-analytic planar roll-on (fillet_edge_chain, dossier 56 ladder
+step 1) + the planar arc-sampling massprops fix (open arcs were sampled as FULL circles,
+invisible until an arc-bounded cap carried x-flux); 169 wire-solid booleans (Rung 4).
+Dossier-57 ladder: Rungs 0-4 ALL DONE; Rung 5 (SGC Merge simplify) remains.
+
+REMAINING (task list + designs annotated per task): #15 remainder = planar NOTCH bridge
+(dossier 56 sec 2.1 in-place trim-loop extension, the US 8,935,130 design-around) and planar
+CAP (sec 2.2 extend-two-faces); #16 setback vertex blends (dossier 53 Q2/Q3, Charrot-Gregory
+via the foreign-fit pipeline); #18 Rung 5 SGC simplify + the COMPLETION GATE (10h all-sector
+soak + billion-boolean three-bucket oracle + the tolerance-growth bucket of the Add. 162
+spec). Each needs its dossier re-read per standing rule.
+
+PATTERN OF THE LEG: every differential/exactness oracle exposed a real pre-existing defect
+(stale pcurves, sparse-ring gaps, the unit-segment imprint no-op, the full-circle planar arc
+sampling). Write the oracle FIRST; the corpus's exactness culture is the kernel's best fuzzer.
