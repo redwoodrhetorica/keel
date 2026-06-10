@@ -370,6 +370,179 @@ impl Body {
         Ok(poly)
     }
 
+    /// UV bounds of a curved face whose boundary is ISO-RECTANGULAR:
+    /// every boundary edge projects to an iso-u or iso-v line of the
+    /// surface (a fillet band, a torus rim ring, an octant cylinder
+    /// band). Periodic coordinates are spanned by the LARGEST-GAP
+    /// complement over all boundary samples (full ring when no gap),
+    /// and iso checks run in the span frame so seam-crossing bands
+    /// resolve. `None` when any edge is not iso-parameter (the sphere
+    /// octant, the mitre's ellipse-bounded band): those decline.
+    fn projected_rect_bounds(
+        &self,
+        fk: FaceKey,
+        surf: &Surface3,
+    ) -> Option<((f64, f64), (f64, f64))> {
+        let tau = core::f64::consts::TAU;
+        let (u_per, v_per) = match surf {
+            Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) => (true, false),
+            Surface3::Torus(_) => (true, true),
+            _ => (false, false),
+        };
+        let face = self.faces.get(fk)?;
+        let mut edges_uv: Vec<Vec<(f64, f64)>> = Vec::new();
+        for &lk in &face.loops {
+            // Vertex loops (a pole) bound no edges and constrain no UV
+            // direction; skip them.
+            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            loop {
+                // Sample the edge's TRUE extent: open circle/ellipse
+                // arcs by endpoint angles + arc_sweep (the generic
+                // fin sampler sweeps the FULL periodic curve for
+                // those, which would balloon the angular span).
+                let fin = self.fins.get(cur)?;
+                let edge = self.edges.get(fin.edge)?;
+                let (a, b) = edge.bounds;
+                let pa = self.vertices.get(a)?.point;
+                let pb = self.vertices.get(b)?.point;
+                let curve = edge.curve.and_then(|(ck, _)| self.curves.get(ck));
+                // Closed rings sample DENSELY (64): the full-ring
+                // detection reads the largest sample gap, so sparse
+                // ring samples would fake a boundary gap.
+                let pts: Vec<Vec3> = match curve {
+                    Some(Curve3::Circle(ci)) => {
+                        let ang = |p: Vec3| {
+                            let d = p - ci.center;
+                            d.dot(ci.y_axis).atan2(d.dot(ci.x_axis))
+                        };
+                        if a == b {
+                            (0..64).map(|k| ci.point(tau * k as f64 / 64.0)).collect()
+                        } else {
+                            let sweep = edge.arc_sweep.unwrap_or_else(|| {
+                                let mut d = ang(pb) - ang(pa);
+                                let pi = core::f64::consts::PI;
+                                while d <= -pi {
+                                    d += tau;
+                                }
+                                while d > pi {
+                                    d -= tau;
+                                }
+                                d
+                            });
+                            let t0 = ang(pa);
+                            (0..=8)
+                                .map(|k| ci.point(t0 + sweep * k as f64 / 8.0))
+                                .collect()
+                        }
+                    }
+                    Some(Curve3::Ellipse(el)) => {
+                        let ang = |p: Vec3| {
+                            let d = p - el.center;
+                            (d.dot(el.y_axis) / el.b).atan2(d.dot(el.x_axis) / el.a)
+                        };
+                        if a == b {
+                            (0..64).map(|k| el.point(tau * k as f64 / 64.0)).collect()
+                        } else {
+                            let mut sweep = ang(pb) - ang(pa);
+                            let pi = core::f64::consts::PI;
+                            while sweep <= -pi {
+                                sweep += tau;
+                            }
+                            while sweep > pi {
+                                sweep -= tau;
+                            }
+                            let t0 = ang(pa);
+                            (0..=8)
+                                .map(|k| el.point(t0 + sweep * k as f64 / 8.0))
+                                .collect()
+                        }
+                    }
+                    Some(Curve3::Nurbs(_)) => self.fin_curve_samples(cur, 9)?,
+                    _ => (0..=4).map(|t| pa + (pb - pa) * (t as f64 / 4.0)).collect(),
+                };
+                let mut uvs = Vec::with_capacity(pts.len());
+                for p in pts {
+                    let pr = surf.project(p).ok()?;
+                    uvs.push((pr.u, pr.v));
+                }
+                edges_uv.push(uvs);
+                cur = self.fins.get(cur)?.next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        if edges_uv.is_empty() {
+            return None;
+        }
+        let span_of = |idx: usize, periodic: bool| -> Option<(f64, f64)> {
+            let mut vals: Vec<f64> = edges_uv
+                .iter()
+                .flatten()
+                .map(|uv| if idx == 0 { uv.0 } else { uv.1 })
+                .collect();
+            if !periodic {
+                let lo = vals.iter().copied().fold(f64::INFINITY, f64::min);
+                let hi = vals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                return (lo.is_finite() && hi > lo).then_some((lo, hi));
+            }
+            for v in vals.iter_mut() {
+                *v = v.rem_euclid(tau);
+            }
+            vals.sort_by(f64::total_cmp);
+            let n = vals.len();
+            let mut best_gap = tau - (vals[n - 1] - vals[0]);
+            let mut lo = vals[0];
+            for i in 1..n {
+                let g = vals[i] - vals[i - 1];
+                if g > best_gap {
+                    best_gap = g;
+                    lo = vals[i];
+                }
+            }
+            // Full ring iff the largest gap is explained by the ring
+            // sampling density (64 per closed edge): a genuine
+            // boundary gap is wider.
+            if best_gap <= 1.6 * tau / 64.0 {
+                return Some((0.0, tau));
+            }
+            Some((lo, lo + (tau - best_gap)))
+        };
+        let (u0, u1) = span_of(0, u_per)?;
+        let (v0, v1) = span_of(1, v_per)?;
+        let remap = |x: f64, lo: f64, periodic: bool| {
+            if periodic {
+                lo + (x - lo).rem_euclid(tau)
+            } else {
+                x
+            }
+        };
+        // Wrap-tolerant remap: a sample exactly at the span END maps to
+        // lo + ~tau, not lo; accept both frames in the iso test.
+        const ISO_TOL: f64 = 1e-6;
+        for uvs in &edges_uv {
+            let us: Vec<f64> = uvs.iter().map(|&(u, _)| remap(u, u0, u_per)).collect();
+            let vs: Vec<f64> = uvs.iter().map(|&(_, v)| remap(v, v0, v_per)).collect();
+            let near = |a: f64, b: f64, periodic: bool| {
+                let d = (a - b).abs();
+                if periodic {
+                    d.min((d - tau).abs()) <= ISO_TOL
+                } else {
+                    d <= ISO_TOL
+                }
+            };
+            let const_u = us.iter().all(|&u| near(u, us[0], u_per));
+            let const_v = vs.iter().all(|&v| near(v, vs[0], v_per));
+            if !(const_u || const_v) {
+                return None;
+            }
+        }
+        Some(((u0, u1), (v0, v1)))
+    }
+
     /// Curved face: composite GL over the parameter rectangle. The
     /// parameter rectangle [u0,u1]x[v0,v1] is integrated in the natural
     /// (increasing) direction, so the natural normal is du x dv and the
@@ -396,10 +569,18 @@ impl Body {
                 }
             }
         } else {
-            // Bounds from the pcurve polylines.
+            // Bounds from the pcurve polylines, GUARDED for staleness:
+            // surgery can rebind a face to a new surface (the cap-rim
+            // kef merge leaves cylinder-space pcurves on the torus
+            // ring), so a pcurve only counts if its endpoints EVALUATE
+            // onto the fin's 3D endpoints through THIS surface. Faces
+            // whose pcurves fail the guard (or have none) fall to the
+            // projected ISO-RECTANGLE bounds below (the corpus-audit
+            // blend-pcurve milestone).
             let face = self.faces.get(fk).ok_or(TopoError::StaleKey)?;
             let mut lo = (f64::INFINITY, f64::INFINITY);
             let mut hi = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+            let mut stale = false;
             for &lk in &face.loops {
                 let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
                     continue;
@@ -409,8 +590,28 @@ impl Body {
                     if let Some((ck, _)) = fin.pcurve
                         && let Some(Curve3::Nurbs(n)) = self.curves.get(ck)
                     {
+                        // Staleness guard: the pcurve endpoint must
+                        // evaluate (through THIS surface) onto one of
+                        // the fin's 3D endpoints.
+                        let va = self
+                            .fin_start_vertex(cur)
+                            .and_then(|v| self.vertices.get(v))
+                            .map(|x| x.point);
+                        let vb = self
+                            .fin_end_vertex(cur)
+                            .and_then(|v| self.vertices.get(v))
+                            .map(|x| x.point);
                         for t in [0.0, 1.0] {
                             let p = n.point(t);
+                            // A pole-adjacent evaluation failure is
+                            // INCONCLUSIVE, not stale.
+                            if let Ok(lg) = surf.local_geometry(p.x, p.y) {
+                                let on_a = va.map(|q| (lg.point - q).norm() < 1e-6);
+                                let on_b = vb.map(|q| (lg.point - q).norm() < 1e-6);
+                                if on_a != Some(true) && on_b != Some(true) {
+                                    stale = true;
+                                }
+                            }
                             lo = (lo.0.min(p.x), lo.1.min(p.y));
                             hi = (hi.0.max(p.x), hi.1.max(p.y));
                         }
@@ -421,10 +622,25 @@ impl Body {
                     }
                 }
             }
-            if !(lo.0.is_finite() && hi.0.is_finite()) {
-                return Err(TopoError::Precondition("curved face without pcurve bounds"));
+            if stale || !(lo.0.is_finite() && hi.0.is_finite()) {
+                // Stale or missing pcurves: the PROJECTED-BOUNDS rung
+                // (corpus-audit blend-pcurve milestone). When every
+                // boundary edge is an ISO-PARAMETER line of the
+                // surface, the face IS its UV rectangle and the
+                // rectangle integral is exact; bounds come from
+                // projecting boundary samples, with periodic
+                // directions resolved by the largest-gap span (the
+                // cyl_angular_span idea). Non-rectangular curved faces
+                // keep declining.
+                match self.projected_rect_bounds(fk, surf) {
+                    Some(b) => b,
+                    None => {
+                        return Err(TopoError::Precondition("curved face without pcurve bounds"));
+                    }
+                }
+            } else {
+                ((lo.0, hi.0), (lo.1, hi.1))
             }
-            ((lo.0, hi.0), (lo.1, hi.1))
         };
         let panels = 16usize;
         for iu in 0..panels {

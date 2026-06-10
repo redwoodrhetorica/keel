@@ -5067,3 +5067,38 @@ cascade over lineage + topology hash; soup retirement; the completion gate.
 RESUME RECIPE unchanged (Add. 152): read this anchor, the exact CI triplet, fuzz when
 boolean/tessellation/parser internals change, mass == mesh constructors, branch-per-milestone,
 LOG addendum then merge, NO EM-DASHES, push only on request.
+
+## Addendum 164 (2026-06-10, attended): ANALYTIC MASS PROPERTIES ON BLEND FACES
+
+Branch blend-pcurves (the queued-depth blend-pcurve milestone, resolved WITHOUT pcurve
+authoring): integrate_curved_face gains a PROJECTED ISO-RECTANGLE rung. When every boundary
+edge of a curved face projects onto its own surface as an iso-u or iso-v line, the face IS its
+UV rectangle and the existing rectangle quadrature is exact; bounds come from projecting
+boundary samples (open circle/ellipse arcs sampled by ENDPOINT ANGLES + arc_sweep, never the
+generic full-periodic sweep; closed rings sampled densely at 64), with periodic directions
+resolved by the LARGEST-GAP complement (full ring iff the gap is explained by the sampling
+density). Non-rectangular curved faces (the sphere octant, the mitre ellipse band) keep
+declining honestly.
+
+TWO REAL BUGS THE ORACLES EXPOSED:
+1. STALE PCURVES: the cap-rim kef merge leaves CYLINDER-SPACE pcurves on the TORUS ring, and
+   the pcurve-bounds path read tube-angle bounds of (0, 1.7) instead of the quarter; the rim
+   body's analytic mass had silently never been right (only mesh was tested). The pcurve path
+   now carries a STALENESS GUARD: a pcurve endpoint must EVALUATE through the face's own
+   surface onto one of the fin's 3D endpoints (pole-adjacent evaluation failures are
+   inconclusive, not stale); stale or missing pcurves fall to the projected rung.
+2. SPARSE-RING GAPS: 8 ring samples fake a pi/4 boundary gap; the full-ring detection now
+   scales with density (closed edges sample 64, threshold 1.6 tau/64).
+Also: vertex (pole) loops constrain no UV direction and are skipped; and unblend's commit gate
+dispatches by FACE TYPE now (all-planar = strict mass == mesh; any curved face = the exact
+wedge oracle), since the analytic integral SUCCEEDING on curved candidates must not be
+compared against chordal mesh.
+
+ORACLES: plain fillet body analytic mass == the closed form to 1e-9 (the doc-promised
+milestone); the cap-rim torus body == the PAPPUS-exact volume to 1e-9 (corner region square
+minus quarter disc, 2 pi xbar A; the formula independently lands on the old mesh estimate
+6.1700); the sphere-octant body still declines analytic massprops (non-rectangular, honest);
+all revolve bodies unchanged (their valid pcurves pass the guard).
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 240 (+1) green; fuzz_boolean soak
+(mass_properties is load-bearing in the boolean gates): 10 minutes, count below.
