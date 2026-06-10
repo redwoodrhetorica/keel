@@ -4814,3 +4814,37 @@ changed): fuzz_boolean 822 runs + fuzz_cyl_boolean 890 runs, 10 minutes each, bo
 
 CONSUMERS UNBLOCKED: the unequal-radius mitre (dossier 55, queued) now has its junction curve
 in closed form; cylinder-cylinder boolean assembly has certified seams waiting.
+
+## Addendum 156 (2026-06-10, attended): METROLOGY-GRADE FITTING (opportunity B)
+
+keel-geom metrology.rs (branch metrology-fits; corpus-audit opportunity B, dossiers 23 + 17):
+point-set fitting with an EXPLICIT OBJECTIVE parameter, never a silent least-squares default
+(the Shakarji taxonomy: GD&T prescribes which functional each datum / form evaluation uses,
+and the answers genuinely differ). FitObjective = LeastSquares | MinZone | MinCircumscribed |
+MaxInscribed; every fit reports BOTH residuals (rms and the Chebyshev zone), the same
+philosophy as the canonical-recovery certifier whose dense max-deviation IS a Chebyshev
+residual.
+
+IMPLEMENTED EXACTLY: LS plane = centroid + smallest covariance eigenvector (the recover.rs
+Jacobi solver, now shared); LS circle/sphere = Kasa/Coope linearization + Gauss-Newton on the
+geometric residual (solve3/solve4 shared); MIN-ZONE PLANE exact by contact-characterization
+candidate enumeration (3-1 contacts = point-triple normals, 2-2 contacts = chord-pair cross
+normals, plus the LS seed) under a documented size cap (CMM-probe sets, not meshes; beyond the
+cap DECLINE, never silently degrade); MIN-CIRCUMSCRIBED circle = move-to-front Welzl
+(deterministic, NO RNG, per the kernel determinism posture); MAX-INSCRIBED circle = exact
+Voronoi-vertex (triple circumcenter) + pair-midpoint enumeration with a convex-hull membership
+gate; MIN-ZONE ANNULUS exact (3-1 circumcenters + 2-2 bisector crossings). Sphere gauges and
+the min-zone sphere are the queued ladder and DECLINE.
+
+ORACLES: alternating +-e probe sets where every objective has a closed-form answer: LS plane
+normal to 1e-6 with zone exactly 2e; min-zone plane and annulus exactly 2e (and never wider
+than LS); MCC encloses a deliberate outward outlier with minimal radius; MIC stops exactly at
+an inward outlier; LS sphere centre/radius/zone on a perturbed sphere grid.
+
+CI: fmt; clippy -D warnings; workspace 131 + 77 + 233 (+5) green. No fuzz soak: additive
+pure-geometry module, no boolean/tessellation path touched (the Addendum 74/75-class
+justification).
+
+CONSUMERS: GD&T datum simulation (dossier 17) and inspection-grade profile evaluation get
+their fitting engine; the connection B insight stands (one engine, objective-parameterized,
+shared with recovery).

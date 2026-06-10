@@ -22,7 +22,7 @@ use keel_math::vec::Vec3;
 /// cyclic Jacobi rotation. Used to recover a surface-of-revolution axis
 /// from the point covariance (the axis is the symmetry direction).
 #[allow(clippy::needless_range_loop)]
-fn smallest_eigenvector_sym3(mut a: [[f64; 3]; 3]) -> Vec3 {
+pub(crate) fn smallest_eigenvector_sym3(mut a: [[f64; 3]; 3]) -> Vec3 {
     let mut v = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     for _ in 0..50 {
         // Largest off-diagonal.
@@ -72,7 +72,7 @@ fn smallest_eigenvector_sym3(mut a: [[f64; 3]; 3]) -> Vec3 {
 
 /// Solve a 3x3 system by padding into the 4x4 solver (identity 4th
 /// row/col), returning the leading 3 unknowns.
-fn solve3(a: [[f64; 3]; 3], b: [f64; 3]) -> Option<Vec3> {
+pub(crate) fn solve3(a: [[f64; 3]; 3], b: [f64; 3]) -> Option<Vec3> {
     let mut a4 = [[0.0f64; 4]; 4];
     let mut b4 = [0.0f64; 4];
     for r in 0..3 {
@@ -86,7 +86,7 @@ fn solve3(a: [[f64; 3]; 3], b: [f64; 3]) -> Option<Vec3> {
 
 /// Solve a 4x4 linear system by Gaussian elimination with partial
 /// pivoting. Returns None if singular.
-fn solve4(mut a: [[f64; 4]; 4], mut b: [f64; 4]) -> Option<[f64; 4]> {
+pub(crate) fn solve4(mut a: [[f64; 4]; 4], mut b: [f64; 4]) -> Option<[f64; 4]> {
     for col in 0..4 {
         // Pivot.
         let mut piv = col;
