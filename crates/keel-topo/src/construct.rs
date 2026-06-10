@@ -107,6 +107,30 @@ impl Body {
         if !dir.is_finite() || dir.norm() == 0.0 || profile.iter().any(|p| !p.is_finite()) {
             return Err(TopoError::Precondition("prism: bad direction or points"));
         }
+        // Auto-orient the base to be counterclockwise about `dir`. A base
+        // wound CW about dir would make the constructed face senses disagree
+        // with the tessellation winding -- a body with mass_properties > 0 yet
+        // mesh_volume / generalized-winding-number inverted (the inconsistency
+        // that broke intersection with an oriented half-slab). Absorb the
+        // winding here rather than emit an inconsistent body: reverse the
+        // profile when its Newell normal opposes `dir`.
+        let mut newell = Vec3::ZERO;
+        for i in 0..n {
+            let (a, b) = (profile[i], profile[(i + 1) % n]);
+            newell = newell
+                + Vec3::new(
+                    (a.y - b.y) * (a.z + b.z),
+                    (a.z - b.z) * (a.x + b.x),
+                    (a.x - b.x) * (a.y + b.y),
+                );
+        }
+        let reversed: Vec<Vec3>;
+        let profile: &[Vec3] = if newell.dot(dir) < 0.0 {
+            reversed = profile.iter().rev().copied().collect();
+            &reversed
+        } else {
+            profile
+        };
         let mut reports = Vec::new();
         let r = self.infinite_region();
         let seed = self.mvfs(r, profile[0])?;
