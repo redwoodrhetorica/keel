@@ -5465,3 +5465,43 @@ ladder's oracle level for this rung; the exactness burden sits on the evaluator 
 the per-quad certification. CI: fmt; clippy -D warnings; workspace 133 + 77 + 249 (+2)
 green; fuzz_boolean soak: count below. Remaining on the dossier-53 ladder: curved supports
 (M4), n > 3 (M5), mixed convexity (M6): queued, not blocking #18.
+
+## Addendum 177 (2026-06-10, attended): RUNG 5 SGC MERGE + the three-bucket completion-gate instrument
+
+Branch sgc-simplify. Part (A) of #18, the Rossignac-O''Connor Merge operator (dossier 57,
+"combine a k-cell with two incident (k+1)-cells when they share the same classification and
+the k-cell bounds nothing else"), in its 2-cell instance: NEW crates/keel-topo/src/merge.rs
+(named for Rossignac''s operator; distinct from simplify.rs, the M8 canonical-recovery HEAL
+pass). Body::dissolve_interior_wall: a wall whose two sides bound two distinct SOLID regions
+detaches its fins from every rim''s radial cycle (radial-3 junctions return to manifold
+pairs), re-anchors vertex fin-references onto surviving fins, fuses the two host shells
+(genus adds), repoints the dead region''s shells and faces, and unregisters the wall complex
+plus the dead region. Body::merge_cells loops it. Honest declines: dangling rims,
+ring-carrying walls, single-shell walls (the genuine mixed-dimension tail).
+
+DIFFERENTIAL ORACLE, first try: cellular union of two abutting cubes + Merge == the
+regularized union EXACTLY (one region, equal face counts, zero walls, zero radial-3 rims,
+mass == mesh == 2 at 1e-9, equal to the regularized mass at 1e-12, idempotent); and Merge
+undoes partition_by_sheet (knife wall dissolves, cube back to one cell at mass == mesh == 8,
+imprint scars legitimately remain).
+
+Part (B), the completion-gate INSTRUMENT: crates/keel-topo/tests/three_bucket.rs, the
+three-bucket boolean oracle per the standing completion plan: random axis-aligned box pairs
+against EXACT interval references; PASS = strict mass == mesh == reference, DECLINE = Err or
+faulted (counted, never penalized), WRONG must be ZERO. Deterministic LCG, scaled by
+KEEL_ORACLE_N, ignored-by-default (a gate instrument, not a fast-suite test; ~150 ms/trial
+debug). FIRST SMOKE, N = 2000: PASS 817 / DECLINE 1183 / WRONG 0. The decline mass is
+dominated by disjoint and degenerate-contact configurations (honest declines per
+DECLINE-never-WRONG); driving the decline rate down is quality work the gate makes visible,
+not a gate failure.
+
+THE COMPLETION-GATE PROCEDURE (documented for the scheduled run, out of single-session scope):
+1. All-sectors fuzz soak, ~10 h: for each target in fuzz/fuzz_targets (fifteen: boolean,
+   cyl_boolean, nurbs_boolean, imprint, topo_ops, winding, pmc, ssi, step_import, recover,
+   nurbs_curve, nurbs_surface, bernstein_roots, interval, solve_cubic):
+   CARGO_TARGET_DIR=~/keel-fuzz-target cargo +nightly fuzz run <target> -- -max_total_time=2400
+2. The scaled three-bucket run (release, millions of trials):
+   KEEL_ORACLE_N=1000000 cargo test --release -p keel-topo --test three_bucket -- --ignored --nocapture
+   Gate: WRONG == 0. Record PASS/DECLINE counts in the LOG.
+CI: fmt; clippy -D warnings; workspace 133 + 77 + 251 green (+2 Merge tests; the oracle
+ignored by default); fuzz_boolean soak: count below.
