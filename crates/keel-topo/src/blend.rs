@@ -1974,6 +1974,224 @@ impl Body {
             .map_err(|_| TopoError::Precondition("cliff: result invalid"))?;
         Ok(b)
     }
+
+    /// PARTIAL-SPAN blend (parity item 55; dossier 54 Q3/Q4/Q5): round
+    /// only the interior interval `[t0, t1]` of a plane-plane edge
+    /// (parameters along the edge, both strictly interior). The blend
+    /// tapers linearly from `radius` at `t0` to ZERO at `t1` (the
+    /// feathered runout: an EXACT CONE with apex at the vanishing
+    /// vertex, dossier 54 Q5); the `t0` end is a SQUARE STOP closed by
+    /// a planar transverse cross face. The sharp edge RESUMES on both
+    /// sides. End surgery = the dossier's cap-into-supports: split the
+    /// edge at the stations, spur the spring landings into the face
+    /// interiors, imprint the converging spring lines, dissolve the
+    /// interior sharp interval, close the stop with the cross arc --
+    /// the face between the arc and the corner IS the planar stop
+    /// face, kept. Constant-radius bodies with a taper-start join, two
+    /// square stops, and curved spines are the dossier-54 ladder.
+    pub fn fillet_edge_partial(
+        &self,
+        edge: EdgeKey,
+        t0: f64,
+        t1: f64,
+        radius: f64,
+    ) -> Result<Body, TopoError> {
+        let ok = radius.is_finite()
+            && radius > 0.0
+            && t0.is_finite()
+            && t1.is_finite()
+            && t0 > 0.0
+            && t1 < 1.0
+            && t0 < t1;
+        if !ok {
+            return Err(TopoError::Precondition(
+                "partial: need 0 < t0 < t1 < 1 and radius > 0",
+            ));
+        }
+        let faces = self.faces_around_edge(edge);
+        if faces.len() != 2 {
+            return Err(TopoError::Precondition("partial: edge needs two faces"));
+        }
+        for &f in &faces {
+            if !matches!(
+                self.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition(
+                    "partial: non-planar support (follow-up)",
+                ));
+            }
+        }
+        let convex = self.edge_is_convex(edge).unwrap_or(true);
+        if !convex {
+            return Err(TopoError::Precondition("partial: concave edge (follow-up)"));
+        }
+        let (f1, f2) = (faces[0], faces[1]);
+        let n1 = self
+            .face_outward_normal(f1)
+            .ok_or(TopoError::Precondition("partial: face normal"))?;
+        let n2 = self
+            .face_outward_normal(f2)
+            .ok_or(TopoError::Precondition("partial: face normal"))?;
+        let (va_k, vb_k) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
+        let pa = self.vertices.get(va_k).ok_or(TopoError::StaleKey)?.point;
+        let pb = self.vertices.get(vb_k).ok_or(TopoError::StaleKey)?.point;
+        let _ = va_k;
+        let e = (pb - pa)
+            .try_normalize()
+            .ok_or(TopoError::Precondition("partial: degenerate edge"))?;
+        let p_at = |t: f64| pa + (pb - pa) * t;
+        let (q0_pt, q1_pt) = (p_at(t0), p_at(t1));
+        // Section center at t0: inside the material, distance r from
+        // both support planes, in the section plane (3x3 solve via the
+        // scalar triple product).
+        let c0 = {
+            let det = n1.dot(n2.cross(e));
+            if det.abs() < 1e-12 {
+                return Err(TopoError::Precondition("partial: parallel supports"));
+            }
+            let rhs = n2.cross(e) * (-radius) + e.cross(n1) * (-radius);
+            q0_pt + rhs * (1.0 / det)
+        };
+        // The runout cone: apex at the vanishing vertex q1.
+        let d_spine = (c0 - q1_pt).norm();
+        if d_spine <= radius {
+            return Err(TopoError::Precondition("partial: runout too steep"));
+        }
+        let axis = (c0 - q1_pt) * (1.0 / d_spine);
+        let alpha = (radius / d_spine).asin();
+        let frame =
+            Frame3::from_z(c0, axis).map_err(|_| TopoError::Precondition("partial: cone frame"))?;
+        let cone = keel_geom::surface::Cone3 {
+            frame,
+            radius: radius / alpha.cos(),
+            half_angle: alpha,
+        };
+        let p1_pt = c0 + n1 * radius;
+        let p2_pt = c0 + n2 * radius;
+
+        let mut b = self.clone();
+        let s0 = b.split_edge(edge, q0_pt)?;
+        let q0 = s0.vertex;
+        let right_piece = if b
+            .edges
+            .get(s0.edge_a)
+            .map(|x| x.bounds.0 == vb_k || x.bounds.1 == vb_k)
+            == Some(true)
+        {
+            s0.edge_a
+        } else {
+            s0.edge_b
+        };
+        let s1 = b.split_edge(right_piece, q1_pt)?;
+        let q1 = s1.vertex;
+        let e_mid = b
+            .edge_between(q0, q1)
+            .ok_or(TopoError::Precondition("partial: no interior interval"))?;
+
+        // Per support: spur the landing into the interior, imprint the
+        // converging spring line.
+        let mut spring_edges = Vec::new();
+        let mut keeps = Vec::new();
+        for (f, p_pt) in [(f1, p1_pt), (f2, p2_pt)] {
+            let lp = b
+                .faces
+                .get(f)
+                .map(|x| x.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fin_q0 = b.fin_ending_at_vertex(lp, q0)?;
+            let spur = b.mev(crate::euler::MevSite::AfterFin(fin_q0), p_pt)?;
+            let p_v = spur.vertex;
+            let fin_p = b.fin_ending_at_vertex(lp, p_v)?;
+            let fin_q1 = b.fin_ending_at_vertex(lp, q1)?;
+            let split = b.split_face(fin_p, fin_q1, None)?;
+            if let Some(surf) = b.faces.get(f).and_then(|x| x.surface)
+                && let Some(nf) = b.faces.get_mut(split.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            let q1p = b
+                .vertices
+                .get(q1)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            if let Ok(line) = Line3::new(p_pt, q1p - p_pt) {
+                b.attach_edge_curve(split.edge, Curve3::Line(line), true);
+            }
+            let around = b.faces_around_edge(e_mid);
+            let keep = if around.contains(&split.face_new) {
+                split.face_old
+            } else {
+                split.face_new
+            };
+            spring_edges.push(split.edge);
+            keeps.push(keep);
+        }
+        // Merge the two trim slivers across the interior sharp interval.
+        b.kef(e_mid)?;
+        // Close the stop: the cross arc splits the merged sliver into
+        // the BLEND (apex side) and the planar STOP face.
+        let t_face = b
+            .faces_around_edge(spring_edges[0])
+            .into_iter()
+            .find(|f| !keeps.contains(f))
+            .ok_or(TopoError::Precondition("partial: no merged sliver"))?;
+        let lp_t = b
+            .faces
+            .get(t_face)
+            .map(|x| x.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        let vertex_near =
+            |b: &Body, ek: EdgeKey, p: Vec3| -> Result<crate::entity::VertexKey, TopoError> {
+                let (x0, x1) = b.edges.get(ek).ok_or(TopoError::StaleKey)?.bounds;
+                let d0 = b
+                    .vertices
+                    .get(x0)
+                    .map(|v| (v.point - p).norm())
+                    .unwrap_or(f64::INFINITY);
+                let d1 = b
+                    .vertices
+                    .get(x1)
+                    .map(|v| (v.point - p).norm())
+                    .unwrap_or(f64::INFINITY);
+                Ok(if d0 <= d1 { x0 } else { x1 })
+            };
+        let p1_v = vertex_near(&b, spring_edges[0], p1_pt)?;
+        let p2_v = vertex_near(&b, spring_edges[1], p2_pt)?;
+        let fin_p1 = b.fin_ending_at_vertex(lp_t, p1_v)?;
+        let fin_p2 = b.fin_ending_at_vertex(lp_t, p2_v)?;
+        let stop_split = b.split_face(fin_p1, fin_p2, None)?;
+        let ex = (p1_pt - c0) * (1.0 / radius);
+        if let Ok(arc) = keel_geom::curve::Circle3::new(c0, ex, e.cross(ex), radius) {
+            b.attach_edge_curve(stop_split.edge, Curve3::Circle(arc), true);
+        }
+        let blend_face = b
+            .faces_around_edge(spring_edges[0])
+            .into_iter()
+            .find(|f| !keeps.contains(f))
+            .ok_or(TopoError::Precondition("partial: no blend face"))?;
+        let stop_face = if stop_split.face_new == blend_face {
+            stop_split.face_old
+        } else {
+            stop_split.face_new
+        };
+        b.attach_face_surface(
+            blend_face,
+            SurfaceGeom::Analytic(Surface3::Cone(cone)),
+            true,
+        );
+        let stop_frame =
+            Frame3::from_z(q0_pt, e).map_err(|_| TopoError::Precondition("partial: stop frame"))?;
+        b.attach_face_surface(
+            stop_face,
+            SurfaceGeom::Analytic(Surface3::Plane(keel_geom::surface::Plane3::new(stop_frame))),
+            true,
+        );
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("partial: result invalid"))?;
+        Ok(b)
+    }
 }
 
 /// The exact ellipse where a cone meets a plane (the variable-radius
@@ -2401,6 +2619,121 @@ mod tests {
             "mid-strip curvature must be real ({})",
             kmax(0.5)
         );
+    }
+
+    #[test]
+    fn partial_span_blend_resumes_the_sharp_edge() {
+        // Item 55 (dossier 54 first milestone, cone-span variant): box
+        // 4 x 2 x 2, round only [t0, t1] = [0.25, 0.75] of a top edge,
+        // tapering r = 0.5 -> 0 (feathered runout, exact cone) with a
+        // planar square stop at t0. Exact oracle: removed = (1 - pi/4)
+        // * span * r^2 / 3 (the linear-taper wedge integral). The sharp
+        // edge resumes on both sides and the apex vertex joins both
+        // springs and the resumed edge.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 2.0, 2.0).unwrap();
+        let e = top_right_edge(&b);
+        let f = b.fillet_edge_partial(e, 0.25, 0.75, 0.5).unwrap();
+        assert!(f.validate().is_ok(), "partial blend invalid");
+        // Faces: 6 box + cone blend + planar stop = 8.
+        assert_eq!(f.face_keys().len(), 8, "blend + stop faces");
+        let cones = f
+            .face_keys()
+            .into_iter()
+            .filter(|&fk| matches!(f.face_surface3(fk), Some(Surface3::Cone(_))))
+            .count();
+        assert_eq!(cones, 1, "one exact cone runout");
+        let v = f.mesh_volume();
+        // Independent oracle: the removed region is exactly the set of
+        // points OUTSIDE the envelope cone within the corner quadrant
+        // and the span (the tangency means the cone hugs the supports,
+        // so no extra bounds are needed). Brute grid over the wedge
+        // bbox; the dossier's (1 - pi/4) integral is the UNTILTED
+        // idealization and differs by the spine-tilt correction.
+        let removed_true = {
+            // p is removed iff it lies in the corner quadrant of its
+            // station's SPINE point and outside EVERY rolling ball
+            // (min over the spine of dist - rho > 0; closed-form
+            // critical point since rho is linear).
+            let (c0, q1) = (Vec3::new(3.5, 0.5, 1.5), Vec3::new(4.0, 1.5, 2.0));
+            let d_len = (q1 - c0).norm();
+            let u = (q1 - c0) * (1.0 / d_len);
+            let r0 = 0.5f64;
+            let rho_slope = -r0 / d_len;
+            let outside_all = |p: Vec3| -> bool {
+                let w = p - c0;
+                let b1 = w.dot(u);
+                let q = |tau: f64| (w - u * tau).norm() - (r0 + rho_slope * tau);
+                let mut best = q(0.0).min(q(d_len));
+                // Critical points: d/dtau sqrt(|w|^2 - 2 b1 tau + tau^2)
+                // = rho_slope -> (tau - b1)^2 = rho_slope^2 (|w|^2 - 2 b1
+                // tau + tau^2): a quadratic in tau.
+                let s2 = rho_slope * rho_slope;
+                let qa = 1.0 - s2;
+                let qb = -2.0 * b1 * (1.0 - s2);
+                let qc = b1 * b1 - s2 * w.dot(w);
+                let disc = qb * qb - 4.0 * qa * qc;
+                if disc >= 0.0 && qa.abs() > 1e-12 {
+                    for s in [1.0, -1.0] {
+                        let tau = (-qb + s * disc.sqrt()) / (2.0 * qa);
+                        if (0.0..=d_len).contains(&tau) {
+                            best = best.min(q(tau));
+                        }
+                    }
+                }
+                best > 0.0
+            };
+            let n = 120usize;
+            let (dx, dy, dz) = (0.5 / n as f64, 1.0 / n as f64, 0.5 / n as f64);
+            let mut count = 0usize;
+            for j in 0..n {
+                let y = 0.5 + (j as f64 + 0.5) * dy;
+                let sp = c0 + u * ((y - c0.y) / u.y);
+                for i in 0..n {
+                    let x = 3.5 + (i as f64 + 0.5) * dx;
+                    if x < sp.x {
+                        continue;
+                    }
+                    for k in 0..n {
+                        let z = 1.5 + (k as f64 + 0.5) * dz;
+                        if z < sp.z {
+                            continue;
+                        }
+                        if outside_all(Vec3::new(x, y, z)) {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            count as f64 * dx * dy * dz
+        };
+        let want = 16.0 - removed_true;
+        assert!(
+            (v - want).abs() < 0.01,
+            "partial-blend volume {v} != grid oracle {want} (removed {removed_true})"
+        );
+        // The sharp edge resumes: there are still two collinear sharp
+        // edge fragments along the original edge line (z = 2, x = 2 in
+        // this block's frame), totalling half the edge length... their
+        // existence is the check: two edges whose midpoints lie ON the
+        // original sharp line.
+        let on_sharp = f
+            .edges
+            .iter()
+            .filter(|(k, _)| {
+                let Some(ed) = f.edge(*k) else { return false };
+                let (p0, p1) = (
+                    f.vertex(ed.bounds.0).map(|v| v.point),
+                    f.vertex(ed.bounds.1).map(|v| v.point),
+                );
+                let (Some(p0), Some(p1)) = (p0, p1) else {
+                    return false;
+                };
+                let m = (p0 + p1) * 0.5;
+                (m.z - 2.0).abs() < 1e-9 && (m.x - 2.0).abs() < 1e-9
+            })
+            .count();
+        assert_eq!(on_sharp, 2, "the sharp edge must resume on both sides");
     }
 
     #[test]
