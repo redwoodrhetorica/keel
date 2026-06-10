@@ -48,6 +48,14 @@ pub enum BoolFault {
     AssemblyFailed(&'static str),
 }
 
+/// How much of an SSI curve lies on a trimmed face's extent.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CurveFaceOverlap {
+    All,
+    None,
+    Partial,
+}
+
 /// One intersection curve localized to the face pair that produced it.
 #[derive(Clone, Debug)]
 pub struct SeamCurve {
@@ -112,36 +120,96 @@ impl Body {
         heights
     }
 
-    /// True unless `face` is a cylindrical lateral face and the closed
-    /// `curve`'s axial height falls OUTSIDE the face's actual height band
-    /// (the surface-surface SSI uses the unbounded cylinder, so it can
-    /// produce a circle outside the trimmed lateral). Non-cylinder faces
-    /// and non-planar curves are unconstrained here.
+    /// True iff the curve lies ENTIRELY on the face's trimmed extent
+    /// (see `curve_cylinder_face_overlap`).
     pub(crate) fn curve_on_cylinder_face(
         &self,
         face: FaceKey,
         curve: &keel_geom::curve::Curve3,
         tol: f64,
     ) -> bool {
+        matches!(
+            self.curve_cylinder_face_overlap(face, curve, tol),
+            CurveFaceOverlap::All
+        )
+    }
+
+    /// How much of an SSI curve lies on a CYLINDER face's trimmed
+    /// extent: `All` (a usable seam), `None` (skip), or `Partial` (the
+    /// seam crosses the face boundary; the imprint cannot yet assemble
+    /// such a trim and the boolean must DECLINE: the notch probe showed
+    /// a full SSI circle imprinted onto a quarter BAND assembling an
+    /// invalid-trim body behind the weak curved gate, the same
+    /// wrong-positive class as the crossing-cylinder pair). Checks BOTH
+    /// the axial band and the ANGULAR span (the original height-only
+    /// test passed full circles onto quarter bands).
+    pub(crate) fn curve_cylinder_face_overlap(
+        &self,
+        face: FaceKey,
+        curve: &keel_geom::curve::Curve3,
+        tol: f64,
+    ) -> CurveFaceOverlap {
         use keel_geom::curve::Curve3;
         let Some(Surface3::Cylinder(c)) = self.face_surface3(face) else {
-            return true;
+            return CurveFaceOverlap::All;
         };
         let (origin, ez) = (c.frame.origin, c.frame.z);
-        let curve_h = match curve {
-            Curve3::Circle(ci) => (ci.center - origin).dot(ez),
-            Curve3::Ellipse(e) => (e.center - origin).dot(ez),
-            _ => return true,
-        };
-        // Band from the face's circle/arc edges.
+        let (ex, ey) = (c.frame.x, c.frame.y);
+        // Axial band from the face's circle/arc edges.
         let heights = self.cyl_circle_heights(face, origin, ez);
         if heights.len() < 2 {
-            return true; // cannot determine a band; do not reject
+            return CurveFaceOverlap::All; // cannot determine; keep prior behavior
         }
         let hlo = heights.iter().cloned().fold(f64::INFINITY, f64::min);
         let hhi = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let t = tol.max(1e-7);
-        curve_h >= hlo - t && curve_h <= hhi + t
+        // Angular span of the trimmed face (full lateral -> [0, tau]).
+        let (a0, a1) = self.cyl_angular_span(face, origin, ex, ey, ez);
+        let tau = core::f64::consts::TAU;
+        let full_ring = (a1 - a0) >= tau - 1e-9;
+        let ang_tol = 1e-6;
+        // Sample the curve and classify each point.
+        let samples: Vec<keel_math::vec::Vec3> = match curve {
+            Curve3::Circle(ci) => (0..32).map(|k| ci.point(tau * k as f64 / 32.0)).collect(),
+            Curve3::Ellipse(e) => (0..32).map(|k| e.point(tau * k as f64 / 32.0)).collect(),
+            Curve3::Line(l) => {
+                // A ruling: constant angle; clip to the axial band.
+                let h0 = (l.origin - origin).dot(ez);
+                (0..5)
+                    .map(|k| {
+                        let h = hlo + (hhi - hlo) * k as f64 / 4.0;
+                        l.point(h - h0)
+                    })
+                    .collect()
+            }
+            Curve3::Nurbs(n) => {
+                let (t0, t1) = n.domain();
+                (0..=16)
+                    .map(|k| n.point(t0 + (t1 - t0) * k as f64 / 16.0))
+                    .collect()
+            }
+        };
+        let mut on = 0usize;
+        for p in &samples {
+            let d = *p - origin;
+            let h = d.dot(ez);
+            let h_ok = h >= hlo - t && h <= hhi + t;
+            let ang_ok = full_ring || {
+                let ang = d.dot(ey).atan2(d.dot(ex));
+                let rel = (ang - a0).rem_euclid(tau);
+                rel <= (a1 - a0) + ang_tol || rel >= tau - ang_tol
+            };
+            if h_ok && ang_ok {
+                on += 1;
+            }
+        }
+        if on == samples.len() {
+            CurveFaceOverlap::All
+        } else if on == 0 {
+            CurveFaceOverlap::None
+        } else {
+            CurveFaceOverlap::Partial
+        }
     }
 
     /// Raise a seam edge's tolerance (and its bound vertices') to at
@@ -3511,13 +3579,23 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                             continue;
                         }
                         // Surface-surface SSI uses the UNBOUNDED surfaces;
-                        // reject a closed curve that does not lie on both
-                        // faces' trimmed extents (an infinite cylinder
-                        // meets a plane outside the actual cylinder face).
-                        if !a.curve_on_cylinder_face(fa, &c.curve, tol)
-                            || !b.curve_on_cylinder_face(fb, &c.curve, tol)
-                        {
-                            continue;
+                        // a curve OFF both faces' trimmed extents is no
+                        // seam (skip), and a curve PARTIALLY on a
+                        // trimmed extent crosses the face boundary: the
+                        // imprint cannot yet assemble that trim, so the
+                        // boolean DECLINES (the notch probe's quarter-
+                        // band wrong-positive class).
+                        let ova = a.curve_cylinder_face_overlap(fa, &c.curve, tol);
+                        let ovb = b.curve_cylinder_face_overlap(fb, &c.curve, tol);
+                        match (ova, ovb) {
+                            (CurveFaceOverlap::All, CurveFaceOverlap::All) => {}
+                            (CurveFaceOverlap::None, _) | (_, CurveFaceOverlap::None) => {
+                                continue;
+                            }
+                            _ => {
+                                faults.push(BoolFault::UnassemblableSeam(id_a, id_b));
+                                continue;
+                            }
                         }
                         seams.push(SeamCurve {
                             face_a: fa,

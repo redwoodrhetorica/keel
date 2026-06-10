@@ -5253,3 +5253,32 @@ spec). Each needs its dossier re-read per standing rule.
 PATTERN OF THE LEG: every differential/exactness oracle exposed a real pre-existing defect
 (stale pcurves, sparse-ring gaps, the unit-segment imprint no-op, the full-circle planar arc
 sampling). Write the oracle FIRST; the corpus's exactness culture is the kernel's best fuzzer.
+
+## Addendum 171 (2026-06-10, attended): PARTIAL BAND SEAMS HARD-DECLINE (another wrong-positive retired)
+
+Branch notch-cap, found while probing the NOTCH handler: the dossier-56 notch semantics ("the
+blend is undeformed; the notch element trims to the rounding") is literally fillet-then-
+subtract-the-element, so the probe ran boolean(filleted box, groove tool, Difference). It
+PROCEEDED and validated, but the corridor grid oracle disagreed with the body's own winding by
+18 percent and the mesh sat 0.13 below the closed form: a SEAMLESS WRONG-POSITIVE. Root cause:
+curve_on_cylinder_face checked only the AXIAL band, so the tool planes' full SSI circles
+passed containment on the QUARTER band (their heights are interior) and the closed-circle
+imprint machinery (built for the drill's full lateral) mis-trimmed the band behind the weak
+curved gate (tessellated-volume positivity).
+
+FIX: curve_cylinder_face_overlap classifies a seam curve against BOTH the axial band and the
+ANGULAR span (cyl_angular_span) by sampling: All = usable seam (unchanged paths: drill, lens),
+None = skip (as before), PARTIAL = the seam crosses the trimmed face boundary, which the
+imprint cannot yet assemble: seam_curves raises the hard UnassemblableSeam fault and the
+boolean DECLINES. Regression test: filleted box minus a groove crossing the blend DECLINES
+while the planar control (unfilleted box minus the same groove) stays exact at 15.92.
+
+CONSEQUENCE FOR THE NOTCH HANDLER (#15): the composition route (fillet then subtract) is
+blocked on the PARTIAL-ARC BAND IMPRINT (the same named follow-up as the crossing-cylinder
+seams, with the certified curves already available); the in-place Euler surgery route stays
+open with its full configuration design recorded in the task. The groove-notch closed form
+(16 - filletcut - 0.08 + 0.2 x (0.1 - A_in), A_in the circle band integral) is the ready
+oracle for whichever route lands first.
+
+CI: fmt; clippy -D warnings; workspace 132 + 77 + 244 (+1) green; fuzz_boolean soak
+(seam classification changed): count below.
