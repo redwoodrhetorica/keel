@@ -4271,3 +4271,38 @@ unblend, and the completion gate (10h all-sector fuzz soak + three-bucket billio
 oracle) before any 1.0 claim. Standing rules unchanged: dossier re-read + citation per item;
 data-first; verify the SUCCESS branch; branch-per-milestone; exact CI triplet + fuzz_boolean
 soak when boolean internals change; LOG addendum then merge; NO EM-DASHES; push only if asked.
+
+## Addendum 140 (2026-06-10, attended): VARIABLE-RADIUS BLEND, EXACT CONE RUNG (item 48; 126 ->
+127/144)
+
+THE SURPRISE (branch variable-radius-blend; dossiers 40/28 re-read): item 48 has an EXACT
+ANALYTIC rung. With the ball radius varying LINEARLY along a plane-plane edge, each offset
+"plane" tilts but remains a PLANE (the offset distance is linear in position: (n - k e).x = c),
+so the spine is still a straight line; the envelope of the spheres is an exact CONE (half-angle
+asin(dr/ds_spine), perpendicular radius rho/cos(alpha), apex where rho extrapolates to 0); and
+the tangency loci on both supports stay STRAIGHT LINES (touch = spine - sign*n*rho(tau), linear
+in tau). The whole rung-1 story generalizes without leaving the analytic island -- no NURBS
+canal needed for the linear law.
+
+PIECES: blend_cone_for_edge (geometry, hand-verified in-test: spheres equidistant to both
+planes along the spine, springs on-plane, radii exact at the ends); fillet_edge_variable (the
+proven trim-and-stitch surgery with the end arcs the EXACT ELLIPSES of cone x cap-plane --
+closed-form conic: quadric expanded in plane coordinates, 2x2 center solve, closed-form eigen
+for the axes); loop_polygon gained an open-ELLIPSE-arc sampling branch; tessellate_cone clamps
+each ruling to its exact cap-plane intersections for two-ellipse patches (pt(phi, v) is linear
+in v, so each cap is a scalar solve -- the band meets the caps watertight).
+
+REGRESSION CAUGHT BY THE SUITE: the first no-rim height fallback used loop_polygon, whose
+closed-circle degenerate path returns ONLY rim samples -- a revolve cone's POLE vanished and the
+barrel/bicone volumes halved. Fixed: raw edge-bound vertex heights (the pole bounds the seam
+edge). The revolve suite is exactly why constructor regressions stay cheap.
+
+ORACLES: r 0.3 -> 0.6 on a box edge: valid; ONE cone blend face; mesh_volume within 0.01 of
+8 - (1 - pi/4) L (r0^2 + r0 r1 + r1^2)/3 (the exact removed-wedge integral); cone face area
+1.4165 vs ~1.43 analytic. CI: fmt, clippy -D warnings, workspace 123 + 77 + 216 (+2) green;
+fuzz_boolean soak (tessellation feeds the GWN classifier): 10 minutes, 746 runs, clean.
+
+COUNTER: 126 -> 127/144 (item 48, the linear-law rung; general radius laws = the NURBS canal
+follow-up). Remaining: 29, 49-51, 54-57, 60, 67 -- all multi-session engines. The conic-section
+rung (49) now looks closest: the same surgery with a rational-quadratic strip between the same
+spring lines.
