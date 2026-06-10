@@ -4306,3 +4306,29 @@ COUNTER: 126 -> 127/144 (item 48, the linear-law rung; general radius laws = the
 follow-up). Remaining: 29, 49-51, 54-57, 60, 67 -- all multi-session engines. The conic-section
 rung (49) now looks closest: the same surgery with a rational-quadratic strip between the same
 spring lines.
+
+## Addendum 141 (2026-06-10, attended): CONIC BLEND SECTIONS (item 49; 127 -> 128/144)
+
+fillet_edge_conic(edge, d, w) (branch conic-blend): the chamfer-to-circle CONTINUUM on the
+proven trim-and-stitch surgery. Springs set back `d` along each support from the edge (the
+setback-orientation sign was caught by the existing spring-misses-cap guard: convex moves AWAY
+from the other support's outward side); the cross-section is a rational quadratic with the
+SHOULDER ON THE OLD SHARP EDGE and weight w. The blend face carries the exact degree-2x1
+rational strip (NurbsSurface, 3x2 net, weights [1,w,1] per column); the cap arcs are the same
+conic per cap plane (NurbsCurve, attached exactly). loop_polygon gained an open-NURBS-arc
+sampling branch (oriented to the fin), so NURBS-bounded planar caps stop chording -- a general
+improvement beyond this item.
+
+ORACLE (the continuum, all on one box edge, d = 0.5): w = sqrt(2)/2 reproduces the EXACT
+circular fillet volume 7.8927 within 0.02 (on perpendicular supports the rational quadratic
+with the sqrt(2)/2 shoulder weight IS the circle -- the established nine-point machinery's own
+constant); w = 0.02 approaches the chamfer chord 7.75 within 0.02; w = 25 hugs the corner
+(> 7.95); fullness verified MONOTONE in w. All three bodies validate. G2 / curvature-continuous
+sections (item 60) are NOT claimed: w controls fullness, not curvature matching.
+
+CI: fmt, clippy -D warnings, workspace 123 + 77 + 217 (+1) green; fuzz_boolean soak
+(loop_polygon feeds the winding oracle): 10 minutes, 803 runs, clean.
+
+COUNTER: 127 -> 128/144 (item 49). Remaining: 29, 50, 51, 54-57, 60, 67 -- the true deep end
+(face-face, vertex, hold-line, ranges, networks, overflow, G2, Gordon loft, non-manifold
+booleans).
