@@ -4917,7 +4917,7 @@ rational B_SPLINE_CURVE quarter arc stays on its circle to 1e-12; a simple-form 
 curve binds positionally with the name offset.
 
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 236 (+3) green; fuzz_step_import soak with
-the conversion entry points added to the target: 10 minutes, count below.
+the conversion entry points added to the target: 10 minutes, 1,522,752 runs, clean.
 
 LADDER: curved TOPOLOGY assembly (advanced_face on analytic/NURBS surfaces, seams on periodic
 faces, vertex_loop poles, pcurve supply-or-reconstruct), heal-on-import tolerance escalation,
