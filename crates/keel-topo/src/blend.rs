@@ -1016,6 +1016,178 @@ impl Body {
         Ok(b)
     }
 
+    /// Blend a plane-plane `edge` with a G2 (curvature-continuous)
+    /// cross-section (parity item 60): springs set back `d` along each
+    /// support; the section is a QUINTIC Bezier whose first three and
+    /// last three control points are COLLINEAR along the in-plane
+    /// tangent directions, so the section's curvature is ZERO at both
+    /// springs -- matching the planar supports' zero normal curvature
+    /// exactly (true G2, unlike the G1 circular fillet whose curvature
+    /// jumps from 0 to 1/r at the spring). `fullness` in (0, 0.5]
+    /// scales the collinear leg length as a fraction of `d`. The blend
+    /// face carries the exact degree-5x1 strip; cap arcs are the same
+    /// quintic per cap plane.
+    pub fn fillet_edge_g2(&self, edge: EdgeKey, d: f64, fullness: f64) -> Result<Body, TopoError> {
+        let ok =
+            d.is_finite() && d > 0.0 && fullness.is_finite() && fullness > 0.0 && fullness <= 0.5;
+        if !ok {
+            return Err(TopoError::Precondition("g2: bad setback/fullness"));
+        }
+        let faces = self.faces_around_edge(edge);
+        if faces.len() != 2 {
+            return Err(TopoError::Precondition("g2: edge needs two faces"));
+        }
+        for &f in &faces {
+            if !matches!(
+                self.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition(
+                    "g2: non-planar support (follow-up)",
+                ));
+            }
+        }
+        let convex = self.edge_is_convex(edge).unwrap_or(true);
+        let (f1, f2) = (faces[0], faces[1]);
+        let n1 = self
+            .face_outward_normal(f1)
+            .ok_or(TopoError::Precondition("g2: face normal"))?;
+        let n2 = self
+            .face_outward_normal(f2)
+            .ok_or(TopoError::Precondition("g2: face normal"))?;
+        let (va_k, vb_k) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
+        let pa = self.vertices.get(va_k).ok_or(TopoError::StaleKey)?.point;
+        let pb = self.vertices.get(vb_k).ok_or(TopoError::StaleKey)?.point;
+        let e = (pb - pa)
+            .try_normalize()
+            .ok_or(TopoError::Precondition("g2: degenerate edge"))?;
+        let away = |np: Vec3, nq: Vec3| -> Result<Vec3, TopoError> {
+            let u = e
+                .cross(np)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("g2: degenerate setback"))?;
+            let s = if convex { 1.0 } else { -1.0 };
+            Ok(if u.dot(nq) * s > 0.0 { u * -1.0 } else { u })
+        };
+        let u_a = away(n1, n2)?;
+        let u_b = away(n2, n1)?;
+        let lam = fullness * d;
+        // Quintic section control rows at each end of the edge: the
+        // first/last three collinear -> zero curvature at the springs.
+        let section = |base: Vec3| -> [Vec3; 6] {
+            let sa = base + u_a * d;
+            let sb = base + u_b * d;
+            [
+                sa,
+                sa - u_a * lam,
+                sa - u_a * (2.0 * lam),
+                sb - u_b * (2.0 * lam),
+                sb - u_b * lam,
+                sb,
+            ]
+        };
+        let (sec0, sec1) = (section(pa), section(pb));
+        let (sa0, sa1) = (sec0[0], sec1[0]);
+        let (sb0, sb1) = (sec0[5], sec1[5]);
+        let spring_a =
+            Line3::new(sa0, sa1 - sa0).map_err(|_| TopoError::Precondition("g2: spring a"))?;
+        let spring_b =
+            Line3::new(sb0, sb1 - sb0).map_err(|_| TopoError::Precondition("g2: spring b"))?;
+        let mut net = Vec::with_capacity(12);
+        for k in 0..6 {
+            net.push(sec0[k]);
+            net.push(sec1[k]);
+        }
+        let strip = keel_geom::nurbs_surface::NurbsSurface::new(
+            5,
+            1,
+            vec![0.0; 6].into_iter().chain(vec![1.0; 6]).collect(),
+            vec![0.0, 0.0, 1.0, 1.0],
+            net,
+            None,
+        )
+        .map_err(|_| TopoError::Precondition("g2: bad strip"))?;
+
+        let mut b = self.clone();
+        let (spring_a_edge, strip1, f1k, aa, ab) =
+            b.imprint_spring_line(f1, edge, va_k, vb_k, &spring_a, n1)?;
+        let (spring_b_edge, strip2, _f2k, ba, bb) =
+            b.imprint_spring_line(f2, edge, va_k, vb_k, &spring_b, n2)?;
+
+        let split_cap = |b: &mut Body,
+                         v_corner: crate::entity::VertexKey,
+                         a_end: crate::entity::VertexKey,
+                         b_end: crate::entity::VertexKey|
+         -> Result<(), TopoError> {
+            let cap = b
+                .faces_at_vertex(v_corner)
+                .into_iter()
+                .find(|f| *f != strip1 && *f != strip2)
+                .ok_or(TopoError::Precondition("g2: no cap face"))?;
+            let lp = b
+                .faces
+                .get(cap)
+                .map(|f| f.loops[0])
+                .ok_or(TopoError::StaleKey)?;
+            let fin_a = b.fin_ending_at_vertex(lp, a_end)?;
+            let fin_b = b.fin_ending_at_vertex(lp, b_end)?;
+            let split = b.split_face(fin_a, fin_b, None)?;
+            if let Some(surf) = b.faces.get(cap).and_then(|f| f.surface)
+                && let Some(nf) = b.faces.get_mut(split.face_new)
+            {
+                nf.surface = Some(surf);
+            }
+            let corner = b
+                .vertices
+                .get(v_corner)
+                .map(|x| x.point)
+                .ok_or(TopoError::StaleKey)?;
+            let sec = section(corner);
+            let arc = keel_geom::nurbs_curve::NurbsCurve::new(
+                5,
+                vec![0.0; 6].into_iter().chain(vec![1.0; 6]).collect(),
+                sec.to_vec(),
+                None,
+            )
+            .map_err(|_| TopoError::Precondition("g2: bad cap arc"))?;
+            b.attach_edge_curve(split.edge, Curve3::Nurbs(arc), true);
+            Ok(())
+        };
+        split_cap(&mut b, va_k, aa, ba)?;
+        split_cap(&mut b, vb_k, ab, bb)?;
+
+        b.kef(edge)?;
+        let e_a = b
+            .edge_between(aa, va_k)
+            .ok_or(TopoError::Precondition("g2: no A spring stub"))?;
+        b.kef(e_a)?;
+        let spur_a = b
+            .edge_between(va_k, ba)
+            .ok_or(TopoError::Precondition("g2: no A spur"))?;
+        b.kev(spur_a)?;
+        let e_b = b
+            .edge_between(ab, vb_k)
+            .ok_or(TopoError::Precondition("g2: no B spring stub"))?;
+        b.kef(e_b)?;
+        let spur_b = b
+            .edge_between(vb_k, bb)
+            .ok_or(TopoError::Precondition("g2: no B spur"))?;
+        b.kev(spur_b)?;
+
+        let blend_face = b
+            .faces_around_edge(spring_a_edge)
+            .into_iter()
+            .find(|f| *f != f1k)
+            .ok_or(TopoError::Precondition("g2: no blend face"))?;
+        b.attach_face_surface(blend_face, SurfaceGeom::Nurbs(strip), convex);
+        b.attach_edge_curve(spring_a_edge, Curve3::Line(spring_a), true);
+        b.attach_edge_curve(spring_b_edge, Curve3::Line(spring_b), true);
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("g2: result invalid"))?;
+        Ok(b)
+    }
+
     /// Blend a plane-plane `edge` with a CONIC cross-section (parity
     /// item 49): springs set back `d` along each support from the
     /// edge, the section a rational quadratic with the shoulder ON the
@@ -1946,6 +2118,49 @@ mod tests {
             }
         }
         panic!("no top-right edge");
+    }
+
+    #[test]
+    fn g2_blend_has_zero_spring_curvature() {
+        // Item 60: the quintic section's curvature is ~0 AT the springs
+        // (matching the flat supports: true G2) and nonzero mid-strip;
+        // the G1 circular fillet by contrast jumps to 1/r = 2 at its
+        // spring. Volume sits between the chamfer chord and the sharp
+        // box.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e = top_right_edge(&b);
+        let g2 = b.fillet_edge_g2(e, 0.5, 0.4).unwrap();
+        assert!(g2.validate().is_ok(), "g2 blend invalid");
+        let v = g2.mesh_volume();
+        assert!(
+            v > 7.74 && v < 8.0,
+            "g2 volume {v} must sit between chamfer and sharp"
+        );
+        // The strip's principal curvature near the springs vs mid.
+        let strip_face = g2
+            .face_keys()
+            .into_iter()
+            .find(|&f| matches!(g2.face_surface_geom(f), Some(SurfaceGeom::Nurbs(_))))
+            .expect("g2 strip face");
+        let Some(SurfaceGeom::Nurbs(strip)) = g2.face_surface_geom(strip_face) else {
+            unreachable!()
+        };
+        let kmax = |u: f64| -> f64 {
+            let lg = strip.local_geometry(u, 0.5).unwrap();
+            lg.k1.abs().max(lg.k2.abs())
+        };
+        assert!(
+            kmax(0.001) < 1e-2 && kmax(0.999) < 1e-2,
+            "spring curvature must vanish ({}, {})",
+            kmax(0.001),
+            kmax(0.999)
+        );
+        assert!(
+            kmax(0.5) > 0.5,
+            "mid-strip curvature must be real ({})",
+            kmax(0.5)
+        );
     }
 
     #[test]
