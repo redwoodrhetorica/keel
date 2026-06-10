@@ -279,9 +279,9 @@ mod tests {
             "slab must be 2x2x0.5 = 2.0 with mass == mesh (got mass {v}, mesh {mv})"
         );
         // Corner-overlap difference (a proven transversal config; the
-        // interior through-notch is a known boolean DECLINE for blocks
-        // and is unrelated to foreign geometry). Removes 0.5^3 / 4 of
-        // the protruding cutter: 0.5 x 0.5 x 0.5 inside the slab.
+        // interior through-notch has its own regression in boolean.rs).
+        // Removes the 0.5 x 0.5 x 0.5 part of the protruding cutter
+        // that lies inside the slab.
         let mut drill = Body::new();
         drill
             .block(Vec3::new(1.5, 1.5, -0.5), 1.0, 1.0, 1.0)

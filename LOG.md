@@ -3865,3 +3865,53 @@ COUNTER: 100 -> 103/144 (items 114, 115, 116). NEXT (menu unchanged from Addendu
 foreign): deepen the MVPs (curved/multi-face shell + sheet ops, oblique-cut blend classes) or
 version control 128 (thin over partition pmarks, watch double-counting); plus the new
 through-notch imprint follow-up above.
+
+## Addendum 129 (2026-06-10, attended): INTERIOR THROUGH-HOLE BOOLEANS (no counter tick; boolean
+deepening, the Addendum 128 follow-up landed immediately)
+
+WHAT SHIPPED (branch boolean-through-notch): the interior through-notch decline found during the
+foreign-geometry session is FIXED. A 2x2x0.5 slab minus a 0.5x0.5 block piercing it completely now
+assembles to a valid GENUS-1 body (V16 E24 F10, 2 inner rings), volume exactly 1.875 with
+mass == mesh to 1e-9; the same operands' Intersection yields the exact 0.125 core box. This is the
+kernel's first genus-RAISING boolean.
+
+DIAGNOSIS (data-first, staged pipeline introspection; dossier check first ruled OUT file 39, this
+is transversal, and confirmed placement in d-booleans-tolerant.md's stage-2 "imprint locally along
+intersection curves"): the control case faulted 4x "unassembled face seams" on operand B. Each
+tool wall is cut by the slab's top AND bottom planes into two DISJOINT parallel segments: neither
+one closed loop nor one connected open chain, the only two shapes imprint_operand's dispatch could
+assemble, so the walls never split; the unsplit whole wall then classified InsideOther from an
+interior sample, was kept whole, and stitch correctly declined on the #21 shell-closure invariant.
+After fixing that, a SECOND gap surfaced: the stitched result failed Euler-Poincare (lhs 2, rhs 4)
+because finalize_imported_assembly built brand-new shells with genus 0 while the through-hole
+component is genus 1. The validator was RIGHT both times; both declines were honest (three-bucket
+doctrine: DECLINE, never WRONG).
+
+FIX 1, multi-component imprint (boolean.rs imprint_operand): after canonical dedup, partition the
+face's seams into connected components by open-endpoint adjacency (seam_components, union-find,
+deterministic order; closed seams stand alone) and run the EXISTING three-way dispatch per
+component. An earlier component's split can strand a later one on a descendant piece of the
+original face, so each later component relocates onto the planar face that now contains its probe
+point (planar_face_containing: on-plane within etol + 2D crossing number accumulated over ALL the
+face's loops, orientation-free, rings included; loop_polygon made pub(crate) in tessellate.rs).
+Single-component faces take exactly the old path (zero behavior change). Curved multi-component
+faces (a cylinder pierced clean through carries two closed SSI circles on one lateral face) still
+DECLINE via the new "unlocated seam component" fault: honest, recorded as the curved follow-up.
+
+FIX 2, component genus stamping (finalize_imported_assembly): each connected face component's
+shell pair now carries the genus implied by the component's own Euler characteristic, chi = V - E
++ sum_f(2 - loops(f)) = V - E + F - rings over the component's entities, genus = (2 - chi)/2,
+clamped at 0. Matches the kfmrh convention (both shells of the pair carry it; counts() sums
+shells / 2): the through-notch result is 16 - 24 + 10 - 2 = 0 -> genus 1; a plain box component
+stays 8 - 12 + 6 - 0 = 2 -> genus 0.
+
+TESTS: through_notch_difference_is_genus_one (counts, rings, genus, mass==mesh==1.875) and
+through_notch_intersection_is_core (exact 0.125 box) in boolean.rs; the foreign.rs participation
+test keeps its corner-overlap config with the stale "known DECLINE" comment corrected.
+
+CI: fmt, clippy -D warnings, workspace 114 geom + 77 math + 184 topo (+2) all green. fuzz_boolean
+WSL soak (mandatory, boolean internals changed): 15 minutes, 1724 runs, clean.
+
+COUNTER unchanged at 103/144 (this is correctness deepening, the kind Addendum 127 rated above
+thin ticks). NEXT: curved through-holes (relocation on curved faces, e.g. cylinder-through-block
+both-caps-out), or version control 128, or deepen shell/sheet MVPs.
