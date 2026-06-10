@@ -5200,7 +5200,7 @@ kept supports keep their artificial split (more faces than the plain body); vali
 setup itself exercises the regularized union + the collinear-chain detection.
 
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 242 (+1) green; fuzz_boolean soak
-(mass_properties planar path changed, load-bearing in the boolean gates): count below.
+(mass_properties planar path changed, load-bearing in the boolean gates): 10 minutes, 662 runs, clean.
 
 LADDER NEXT: planar notch bridge (in-place trim-loop extension, the US 8,935,130 design-
 around), then planar cap (extend two planes), then the bucket-b evaluators (creeping cliff,
