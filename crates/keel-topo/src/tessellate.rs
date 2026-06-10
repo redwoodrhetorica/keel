@@ -36,6 +36,18 @@ impl Body {
         self.tessellate_face_opt(face, None)
     }
 
+    /// Tessellate the whole body to outward-oriented triangles (parity
+    /// item 94): every face's facets at the default density, or refined
+    /// to chord tolerance `tol` on curved faces (the item-98 adaptive
+    /// machinery). The public body-level facet output; `render_mesh` /
+    /// `render_mesh_tol` add edge/silhouette lines on top of this.
+    pub fn facets(&self, tol: Option<f64>) -> Vec<[Vec3; 3]> {
+        self.face_keys()
+            .into_iter()
+            .flat_map(|f| self.tessellate_face_opt(f, tol))
+            .collect()
+    }
+
     /// Like `tessellate_face`, but tessellate curved analytic faces to a
     /// chord tolerance `tol` (parity item 98). The default-density path
     /// (`tessellate_face`) is unchanged, so the winding/volume oracle is
@@ -776,4 +788,38 @@ fn earclip_2d(p: &[[f64; 2]]) -> Vec<[usize; 3]> {
         tris.push([idx[0], idx[1], idx[2]]);
     }
     tris
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Body;
+    use keel_geom::surface::Frame3;
+    use keel_math::vec::Vec3;
+
+    #[test]
+    fn facets_refine_to_tolerance() {
+        // Item 94: body-level facet output; a tighter chord tolerance
+        // yields more triangles and a closer volume on a sphere.
+        let mut b = Body::new();
+        b.sphere(
+            Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+            1.0,
+        )
+        .unwrap();
+        let coarse = b.facets(None);
+        let fine = b.facets(Some(2e-4));
+        assert!(!coarse.is_empty(), "default facets");
+        assert!(
+            fine.len() > coarse.len(),
+            "tolerance must refine ({} vs {})",
+            fine.len(),
+            coarse.len()
+        );
+        let vol: f64 = fine.iter().map(|t| t[0].dot(t[1].cross(t[2])) / 6.0).sum();
+        let want = 4.0 / 3.0 * core::f64::consts::PI;
+        assert!(
+            (vol - want).abs() < 0.01 * want,
+            "fine facet volume {vol} != ~{want}"
+        );
+    }
 }
