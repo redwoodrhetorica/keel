@@ -4575,7 +4575,7 @@ impl Body {
     }
 
     /// All edges bounding a face (every loop's fin walk).
-    fn face_edge_set(&self, face: crate::entity::FaceKey) -> Vec<EdgeKey> {
+    pub(crate) fn face_edge_set(&self, face: crate::entity::FaceKey) -> Vec<EdgeKey> {
         let mut out = Vec::new();
         for lk in self
             .faces

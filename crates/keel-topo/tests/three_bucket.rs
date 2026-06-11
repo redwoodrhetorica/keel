@@ -18,7 +18,7 @@
 
 use keel_math::vec::Vec3;
 use keel_topo::Body;
-use keel_topo::boolean::{BoolOp, boolean};
+use keel_topo::boolean::{BoolOp, boolean, boolean_tolerant};
 
 /// Deterministic 64-bit LCG (no rand dependency; reproducible runs).
 struct Lcg(u64);
@@ -44,6 +44,7 @@ fn three_bucket_boolean_oracle() {
         .unwrap_or(2000);
     let mut rng = Lcg(0x9E37_79B9_7F4A_7C15);
     let (mut pass, mut decline, mut wrong) = (0usize, 0usize, 0usize);
+    let (mut t_pass, mut t_decline, mut t_wrong) = (0usize, 0usize, 0usize);
     let mut first_wrong = String::new();
     for trial in 0..n {
         let mut v = [0.0f64; 12];
@@ -54,8 +55,33 @@ fn three_bucket_boolean_oracle() {
         let ext = |x: f64| 0.5 + 5.0 * x;
         let a0 = [org(v[0]), org(v[1]), org(v[2])];
         let ad = [ext(v[3]), ext(v[4]), ext(v[5])];
-        let b0 = [org(v[6]), org(v[7]), org(v[8])];
+        let mut b0 = [org(v[6]), org(v[7]), org(v[8])];
         let bd = [ext(v[9]), ext(v[10]), ext(v[11])];
+        // Every fourth trial is a CONTACT configuration: B abuts A's
+        // +face on one axis with a sub-fuzz delta (0 = exact touch,
+        // positive = gap, negative = penetration); the cross axes are
+        // forced to overlap so the mating faces genuinely share area.
+        // Random floats never touch, so without this lane the tolerant
+        // tier's whole class would be unmeasured.
+        let contact = trial % 4 == 3;
+        let mut delta = 0.0f64;
+        let axis = trial % 3;
+        if contact {
+            delta = match (trial / 4) % 5 {
+                0 => 0.0,
+                1 => 1e-9,
+                2 => -1e-9,
+                3 => 1e-7,
+                _ => -1e-7,
+            };
+            for j in 0..3 {
+                if j == axis {
+                    b0[j] = a0[j] + ad[j] + delta;
+                } else {
+                    b0[j] = a0[j] + 0.5 * v[6 + j] * ad[j];
+                }
+            }
+        }
         let mut a = Body::new();
         a.block(Vec3::new(a0[0], a0[1], a0[2]), ad[0], ad[1], ad[2])
             .unwrap();
@@ -67,43 +93,141 @@ fn three_bucket_boolean_oracle() {
             1 => BoolOp::Intersection,
             _ => BoolOp::Difference,
         };
-        // Exact interval reference.
-        let overlap: f64 = (0..3)
-            .map(|i| (0f64).max((a0[i] + ad[i]).min(b0[i] + bd[i]) - a0[i].max(b0[i])))
-            .product();
         let va: f64 = ad.iter().product();
-        let vb: f64 = bd.iter().product();
-        let reference = match op {
-            BoolOp::Union => va + vb - overlap,
-            BoolOp::Intersection => overlap,
-            BoolOp::Difference => va - overlap,
+        let interval_ref = |b0: &[f64; 3], bd: &[f64; 3]| -> f64 {
+            let overlap: f64 = (0..3)
+                .map(|i| (0f64).max((a0[i] + ad[i]).min(b0[i] + bd[i]) - a0[i].max(b0[i])))
+                .product();
+            let vb: f64 = bd.iter().product();
+            match op {
+                BoolOp::Union => va + vb - overlap,
+                BoolOp::Intersection => overlap,
+                BoolOp::Difference => va - overlap,
+            }
         };
-        match boolean(&a, &b, op, 1e-7) {
+        let reference = interval_ref(&b0, &bd);
+        let judge = |result: Result<&keel_topo::boolean::BoolResult, ()>,
+                     reference: f64|
+         -> (bool, Option<String>) {
+            // A Coincident fault is an informational note ("handled a
+            // coincident contact"), not a partial failure: such
+            // results are judged on their volumes like any other.
+            let informational = |res: &keel_topo::boolean::BoolResult| {
+                res.faults
+                    .iter()
+                    .all(|f| matches!(f, keel_topo::boolean::BoolFault::Coincident(..)))
+            };
+            match result {
+                Err(()) => (false, None),
+                Ok(res) if !informational(res) => (false, None),
+                Ok(res) => {
+                    // Mass is the exact sense-integrated gate (1e-9);
+                    // mesh is the independent dropped-face net, given
+                    // sliver headroom (ear-clip float noise on
+                    // tolerance-scale sliver faces reaches ~1e-8
+                    // relative; a genuinely dropped face is feature-
+                    // scale, many orders above 1e-7).
+                    let tol = 1e-9 * (1.0 + reference);
+                    let mesh_tol = 1e-7 * (1.0 + reference);
+                    let mass = res.body.mass_properties().map(|m| m.volume);
+                    let mesh = res.body.mesh_volume();
+                    let ok = match mass {
+                        Ok(m) => {
+                            (m - reference).abs() <= tol && (mesh - reference).abs() <= mesh_tol
+                        }
+                        Err(_) => reference <= 1e-9 && mesh.abs() <= 1e-9,
+                    };
+                    if ok {
+                        (true, None)
+                    } else {
+                        (
+                            false,
+                            Some(format!(
+                                "{op:?}: ref {reference}, mass {mass:?}, mesh {mesh}"
+                            )),
+                        )
+                    }
+                }
+            }
+        };
+        // STRICT lane: judged against the literal configuration; a
+        // CONTACT within the op tolerance may legitimately resolve as
+        // the coincidence-snapped configuration instead (the boolean's
+        // own tolerance contract; the Fang-Bruderlin tie), so both
+        // references are accepted there.
+        let snapped_reference = if contact && delta.abs() <= 1e-7 {
+            let mut b0s = b0;
+            let mut bds = bd;
+            b0s[axis] = a0[axis] + ad[axis];
+            bds[axis] = bd[axis] + delta;
+            Some(interval_ref(&b0s, &bds))
+        } else {
+            None
+        };
+        let strict = boolean(&a, &b, op, 1e-7);
+        match &strict {
             Err(_) => decline += 1,
-            Ok(res) if !res.faults.is_empty() => decline += 1,
             Ok(res) => {
-                let tol = 1e-9 * (1.0 + reference);
-                let mass = res.body.mass_properties().map(|m| m.volume);
-                let mesh = res.body.mesh_volume();
-                let ok = match mass {
-                    Ok(m) => (m - reference).abs() <= tol && (mesh - reference).abs() <= tol,
-                    // An empty result is only right when the reference
-                    // is empty (a vanishing intersection/difference).
-                    Err(_) => reference <= 1e-9 && mesh.abs() <= 1e-9,
-                };
-                if ok {
-                    pass += 1;
-                } else {
-                    wrong += 1;
-                    if first_wrong.is_empty() {
-                        first_wrong = format!(
-                            "trial {trial} {op:?}: ref {reference}, mass {mass:?}, mesh {mesh}, a {a0:?}+{ad:?}, b {b0:?}+{bd:?}"
-                        );
+                let lit = judge(Ok(res), reference);
+                let alt = snapped_reference.map(|r| judge(Ok(res), r));
+                match (lit, alt) {
+                    ((true, _), _) | (_, Some((true, _))) => pass += 1,
+                    ((false, None), _) => decline += 1,
+                    ((false, Some(msg)), _) => {
+                        wrong += 1;
+                        if first_wrong.is_empty() {
+                            first_wrong = format!("strict trial {trial} {msg}");
+                        }
+                    }
+                }
+            }
+        }
+        // TOLERANT lane on contact trials: judged against the SNAPPED
+        // configuration (face-snap semantics: B's mating face moves
+        // onto A's plane, its far side stays, so B's axis extent
+        // becomes bd + delta), and salvage must be reported iff the
+        // configuration needed it.
+        if contact {
+            let fuzz = 1e-6;
+            let mut b0s = b0;
+            let mut bds = bd;
+            b0s[axis] = a0[axis] + ad[axis];
+            bds[axis] = bd[axis] + delta;
+            let ref_snapped = interval_ref(&b0s, &bds);
+            match boolean_tolerant(&a, &b, op, 1e-7, fuzz) {
+                Err(e) => {
+                    t_decline += 1;
+                    if std::env::var("KEEL_ORACLE_DEBUG").is_ok() && t_decline <= 12 {
+                        eprintln!("t-decline {trial} {op:?} delta {delta}: {e:?}");
+                    }
+                }
+                Ok((res, conf)) => {
+                    let salvage_ok = conf.salvaged == (delta != 0.0);
+                    match judge(Ok(&res), ref_snapped) {
+                        (true, _) if salvage_ok => t_pass += 1,
+                        (true, _) => {
+                            t_wrong += 1;
+                            if first_wrong.is_empty() {
+                                first_wrong = format!(
+                                    "tolerant trial {trial}: salvage flag wrong (delta {delta}, salvaged {})",
+                                    conf.salvaged
+                                );
+                            }
+                        }
+                        (false, None) => t_decline += 1,
+                        (false, Some(msg)) => {
+                            t_wrong += 1;
+                            if first_wrong.is_empty() {
+                                first_wrong = format!("tolerant trial {trial} {msg}");
+                            }
+                        }
                     }
                 }
             }
         }
     }
-    eprintln!("three-bucket oracle: N {n}: PASS {pass} / DECLINE {decline} / WRONG {wrong}");
-    assert_eq!(wrong, 0, "WRONG must be zero: {first_wrong}");
+    eprintln!(
+        "three-bucket oracle: N {n}: strict PASS {pass} / DECLINE {decline} / WRONG {wrong}; tolerant PASS {t_pass} / DECLINE {t_decline} / WRONG {t_wrong}"
+    );
+    assert_eq!(wrong + t_wrong, 0, "WRONG must be zero: {first_wrong}");
 }
