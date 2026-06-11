@@ -75,7 +75,7 @@ fn trial_bodies(trial: usize) -> (Body, Body, BoolOp, f64, usize) {
 #[test]
 fn tolerant_contact_tail_regression() {
     for trial in [
-        179usize, 203, 443, 851, 955, 999, 1115, 1367, 1371, 1559, 1563, 1895,
+        179usize, 203, 443, 851, 955, 999, 1115, 1367, 1371, 1559, 1563, 1895, 4743, 5547, 9839,
     ] {
         let (a, b, op, delta, axis) = trial_bodies(trial);
         let r = boolean_tolerant(&a, &b, op, 1e-7, 1e-6);
