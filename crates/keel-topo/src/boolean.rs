@@ -1887,6 +1887,7 @@ pub(crate) fn finalize_imported_assembly(
     // partition. (Disconnected solid bodies sharing one solid region is a
     // documented simplification; separate solid regions per disconnected wall
     // is a follow-up.)
+    let mut exterior_seen = false;
     for comp in connected_face_components(&dst, &faces) {
         // The component's own Euler characteristic decides the genus of
         // its shell pair (kfmrh convention: both shells carry it; counts()
@@ -1937,6 +1938,22 @@ pub(crate) fn finalize_imported_assembly(
             .map(|t| t[0].dot(t[1].cross(t[2])))
             .sum::<f64>()
             / 6.0;
+        // Each DISCONNECTED exterior component is its own solid cell
+        // (the first takes the caller's region; Euler-Poincare counts
+        // closed shells as regions - 1, so sharing one region across
+        // components mis-counts). Cavity components keep the first
+        // solid region as their material side (matching the enclosing
+        // component when there is one exterior component; with several
+        // exterior components the cavity-to-component matching is a
+        // documented simplification).
+        let comp_solid = if v_front >= 0.0 && exterior_seen {
+            dst.new_region(&mut rec, true, Derivation::Created)
+        } else {
+            solid
+        };
+        if v_front >= 0.0 {
+            exterior_seen = true;
+        }
         let front_region = if v_front >= 0.0 {
             inf
         } else {
@@ -1947,16 +1964,16 @@ pub(crate) fn finalize_imported_assembly(
         // front side -> exterior/void.
         for &f in &comp {
             if let Some(face) = dst.faces.get_mut(f) {
-                face.back_region = solid;
+                face.back_region = comp_solid;
                 face.front_region = front_region;
             }
         }
-        let back_shell = dst.new_shell(&mut rec, solid, Derivation::Created);
+        let back_shell = dst.new_shell(&mut rec, comp_solid, Derivation::Created);
         if let Some(s) = dst.shells.get_mut(back_shell) {
             s.faces = comp.iter().map(|&f| (f, Side::Back)).collect();
             s.genus = comp_genus;
         }
-        if let Some(r) = dst.regions.get_mut(solid) {
+        if let Some(r) = dst.regions.get_mut(comp_solid) {
             r.shells.push(back_shell);
         }
         let front_shell = dst.new_shell(&mut rec, front_region, Derivation::Created);
@@ -2430,6 +2447,17 @@ pub fn boolean_with(
     tol: f64,
     opts: BooleanOptions,
 ) -> Result<BoolResult, BoolFault> {
+    // FRONT-DOOR intake check (dossier 29 Part 6): an INSIDE-OUT
+    // operand (negative signed volume; e.g. an over-thick hollow's
+    // collapsed inner shell) declines loudly here. Classification
+    // would read its inverted winding as legitimate and select a
+    // self-consistent but WRONG result. Sheets and wires (volume
+    // ~ 0) pass; orientation REPAIR with a report is the follow-up.
+    if a.mesh_volume() < -1e-9 || b.mesh_volume() < -1e-9 {
+        return Err(BoolFault::AssemblyFailed(
+            "operand is inside-out (negative volume)",
+        ));
+    }
     // Pre-pass (research file 39 §1): where two coplanar faces partially
     // overlap, imprint the overlap-boundary cuts onto the operands so each
     // resulting fragment is uniformly inside/outside/on the other body --
@@ -2455,6 +2483,65 @@ pub fn boolean_with(
         .cloned()
     {
         return Err(f);
+    }
+    // NO BOUNDARY INTERACTION (dossier 29, graceful degradation rung
+    // 1): with no seams and no coincidence the operands are disjoint
+    // or nested, decided by one unambiguous winding probe per side.
+    // These are CLEAN answers (empty body / operand clone), not an
+    // error class; only the two cases that genuinely assemble (the
+    // disconnected union, the cavity difference) fall through. The
+    // shortcut requires POSITIVELY ORIENTED operands: an inside-out
+    // operand (dossier 29 Part 6; e.g. an over-thick hollow's
+    // collapsed inner shell) reads as "nested" to the winding probe,
+    // so it flows to the assembly whose mass==mesh gates decline it.
+    if seams.is_empty() && pre.is_none() && a.mesh_volume() > 0.0 && b.mesh_volume() > 0.0 {
+        let probe = |of: &Body, against: &Body| -> Option<bool> {
+            for (_, v) in of.vertices.iter() {
+                let w = against.generalized_winding_number(v.point);
+                if (w - 0.5).abs() > 0.25 {
+                    return Some(w > 0.5);
+                }
+            }
+            None
+        };
+        let (Some(a_in_b), Some(b_in_a)) = (probe(a, b), probe(b, a)) else {
+            return Err(BoolFault::AssemblyFailed(
+                "no seams and no unambiguous containment probe",
+            ));
+        };
+        let done = |body: Body| {
+            // Coplanar-but-empty-overlap pairs flag Coincident even
+            // though nothing interacts (the pre-pass found no overlap,
+            // or it would have re-imprinted): noise here, dropped.
+            Ok(BoolResult {
+                body,
+                faults: faults
+                    .iter()
+                    .filter(|f| !matches!(f, BoolFault::Coincident(..)))
+                    .cloned()
+                    .collect(),
+                op,
+            })
+        };
+        match (op, a_in_b, b_in_a) {
+            (BoolOp::Intersection, false, false) => return done(Body::new()),
+            (BoolOp::Intersection, true, _) => return done(a.clone()),
+            (BoolOp::Intersection, _, true) => return done(b.clone()),
+            (BoolOp::Difference, false, false) => return done(a.clone()),
+            (BoolOp::Difference, true, _) => return done(Body::new()),
+            (BoolOp::Union, true, _) => return done(b.clone()),
+            (BoolOp::Union, _, true) => return done(a.clone()),
+            // The disconnected union and the cavity difference build
+            // real bodies: fall through to the assembly, without the
+            // empty-overlap Coincident noise.
+            (BoolOp::Union, false, false) | (BoolOp::Difference, _, true) => {
+                let faults: Vec<BoolFault> = faults
+                    .into_iter()
+                    .filter(|f| !matches!(f, BoolFault::Coincident(..)))
+                    .collect();
+                return assemble_boolean(a, b, op, tol, &seams, faults, opts);
+            }
+        }
     }
     assemble_boolean(a, b, op, tol, &seams, faults, opts)
 }
@@ -4397,6 +4484,92 @@ mod tests {
         );
         let v = res.body.mass_properties().unwrap().volume;
         assert!((v - 2.0).abs() < 1e-9, "coincident union volume {v} != 2");
+    }
+
+    #[test]
+    fn disjoint_operands_return_clean_answers() {
+        // Dossier 29 (graceful degradation, the leg's first rung):
+        // operands that do not touch are NOT an error class.
+        // Intersection = the clean EMPTY result, difference = A
+        // unchanged, union = the disconnected two-component body.
+        // Exact oracles all three; no faults; the empty result is a
+        // faceless body whose mesh volume is zero.
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::new(3.0, 0.0, 0.0), 1.0, 1.0, 1.0).unwrap();
+        let i = boolean(&a, &b, BoolOp::Intersection, 1e-7).unwrap();
+        assert!(i.faults.is_empty(), "intersection faults {:?}", i.faults);
+        assert_eq!(i.body.face_keys().len(), 0, "empty body has no faces");
+        assert!(i.body.mesh_volume().abs() < 1e-12, "empty volume");
+        assert!(i.body.validate().is_ok(), "empty body invalid");
+        let d = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
+        assert!(d.faults.is_empty(), "difference faults {:?}", d.faults);
+        assert!(d.body.validate().is_ok(), "difference body invalid");
+        let (vd, md) = (
+            d.body.mass_properties().unwrap().volume,
+            d.body.mesh_volume(),
+        );
+        assert!(
+            (vd - 1.0).abs() < 1e-9 && (md - 1.0).abs() < 1e-9,
+            "difference {vd}/{md} != A"
+        );
+        let d2 = boolean(&b, &a, BoolOp::Difference, 1e-7).unwrap();
+        let v2 = d2.body.mass_properties().unwrap().volume;
+        assert!((v2 - 1.0).abs() < 1e-9, "reversed difference {v2} != B");
+        let u = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
+        assert!(u.faults.is_empty(), "union faults {:?}", u.faults);
+        assert!(u.body.validate().is_ok(), "union body invalid");
+        let (vu, mu) = (
+            u.body.mass_properties().unwrap().volume,
+            u.body.mesh_volume(),
+        );
+        assert!(
+            (vu - 2.0).abs() < 1e-9 && (mu - 2.0).abs() < 1e-9,
+            "union {vu}/{mu} != both components"
+        );
+        // Both components really are present, each as its own solid
+        // cell (Euler-Poincare counts closed shells as regions - 1).
+        let w1 = u.body.generalized_winding_number(Vec3::new(0.5, 0.5, 0.5));
+        let w2 = u.body.generalized_winding_number(Vec3::new(3.5, 0.5, 0.5));
+        assert!(
+            (w1 - 1.0).abs() < 1e-3 && (w2 - 1.0).abs() < 1e-3,
+            "components {w1} / {w2}"
+        );
+        let solids = u.body.regions.iter().filter(|(_, r)| r.solid).count();
+        assert_eq!(solids, 2, "one solid cell per disconnected component");
+
+        // NESTED operands (A strictly inside BIG): containment without
+        // contact. Intersection = A, union = BIG, A - BIG = empty,
+        // BIG - A = the cavity body (volume 26, with a void region).
+        let mut big = Body::new();
+        big.block(Vec3::new(-1.0, -1.0, -1.0), 3.0, 3.0, 3.0)
+            .unwrap();
+        let ni = boolean(&a, &big, BoolOp::Intersection, 1e-7).unwrap();
+        let vni = ni.body.mass_properties().unwrap().volume;
+        assert!((vni - 1.0).abs() < 1e-9, "nested intersection {vni} != A");
+        let nu = boolean(&a, &big, BoolOp::Union, 1e-7).unwrap();
+        let vnu = nu.body.mass_properties().unwrap().volume;
+        assert!((vnu - 27.0).abs() < 1e-9, "nested union {vnu} != BIG");
+        let nd = boolean(&a, &big, BoolOp::Difference, 1e-7).unwrap();
+        assert_eq!(nd.body.face_keys().len(), 0, "swallowed difference empty");
+        let nc = boolean(&big, &a, BoolOp::Difference, 1e-7).unwrap();
+        assert!(nc.body.validate().is_ok(), "cavity body invalid");
+        let (vc, mc) = (
+            nc.body.mass_properties().unwrap().volume,
+            nc.body.mesh_volume(),
+        );
+        assert!(
+            (vc - 26.0).abs() < 1e-9 && (mc - 26.0).abs() < 1e-9,
+            "cavity difference {vc}/{mc} != 26"
+        );
+        let voids = nc
+            .body
+            .regions
+            .iter()
+            .filter(|(_, r)| !r.solid && !r.infinite)
+            .count();
+        assert_eq!(voids, 1, "the cavity is a void region");
     }
 
     #[test]

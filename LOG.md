@@ -5530,3 +5530,46 @@ dossier-56 overflow handlers (170-174), the dossier-53 corner ladder M1-M3 (175-
 Rung 5 Merge + the gate instruments (177). The declined tails (dossier-53 M4-M6, the
 mixed-dimension Merge instances, ov_smooth, the multi-face cap, crossing-seam imprint) are
 recorded follow-ups, each behind an honest decline.
+
+## Addendum 179 (2026-06-10, attended): GRACEFUL DEGRADATION rung 1: no-interaction booleans (dossier 29, the new program)
+
+USER MANDATE: graceful degradation IS the product ("the reason Parasolid is king is not their
+number of features, but their ability to take pretty much any geo and return an answer").
+Dossier 29 re-read in full; the doctrine mapped onto Keel: the two hard rules (topology
+non-negotiable, never-panic) and the fault-report return already hold; what is missing is
+everything between strict and DECLINE: the tolerant tier, the cascade, confidence reporting.
+This leg builds them bottom-up. Branch graceful-disjoint, rung 1: the NO-INTERACTION class.
+
+Operands with no seams and no coincidence are disjoint or nested, decided by one unambiguous
+winding probe per side (the 0.25 band rule; ambiguous probes decline). These are CLEAN
+answers, not an error class: disjoint intersection = the EMPTY body; disjoint difference =
+A unchanged; nested intersection/union = the inner/outer clone; swallowed difference =
+empty; the two cases that genuinely assemble (the DISCONNECTED union, the CAVITY difference)
+fall through to the standard pipeline. Coplanar-but-empty-overlap Coincident flags are
+dropped as noise on this path (the pre-pass proved no actual overlap).
+
+The rung exposed and fixed TWO real pre-existing defects:
+1. DISCONNECTED RESULTS shared one solid region (the documented finalize simplification),
+   which violates Euler-Poincare (closed shells count as regions minus one): each exterior
+   component now gets its own solid cell. The disjoint union is Euler-true: two solid
+   regions, mass == mesh == 2 at 1e-9.
+2. INSIDE-OUT OPERANDS were declined only by ACCIDENT (the shared-region Euler mismatch);
+   fix 1 made the wrong body self-consistent (an over-thick hollow returned volume 9 with
+   mass == mesh agreeing). Root cause is garbage-in: dossier 29 Part 6. boolean_with now
+   has a FRONT-DOOR intake check declining negative-signed-volume operands loudly
+   ("operand is inside-out"); sheets and wires (volume ~ 0) pass; orientation REPAIR with
+   a report is the follow-up. hollow's over-thick decline now fires for the right reason.
+
+THE PAYOFF, measured by the gate instrument: the three-bucket oracle went from
+PASS 41192 / DECLINE 58808 / WRONG 0 (N = 100k, Add.178) to
+PASS 10000 / DECLINE 0 / WRONG 0 (N = 10k, this rung). The ENTIRE random-box decline
+population was the no-interaction class; generic-position overlaps already passed. WRONG
+stays zero throughout.
+
+Tests: disjoint_operands_return_clean_answers (disjoint x3 ops + reversed difference +
+component winding probes + per-component solid cells; nested x4 incl. the cavity difference
+with its void region, mass == mesh == 26 at 1e-9). CI: fmt; clippy -D warnings; workspace
+133 + 77 + 252 green; fuzz_boolean soak (boolean internals changed): count below.
+NEXT (the leg continues): M2 = the Tier-2 TOLERANT boolean (dossier 39 touching/on-on class
++ the Add.162 tolerance spec) with OpReport confidence (clean/salvaged + tier + achieved
+tolerance), never silent.
