@@ -325,6 +325,43 @@ impl Body {
         // polluted the span). The span is the complement of the
         // LARGEST angular gap, which is branch-cut-free (a plain
         // min..max breaks when the patch straddles +-pi).
+        // A loop whose UNWRAPPED cumulative angle range covers a full
+        // turn bounds a full revolution even when no single closed
+        // edge survives (a seam imprint splits each rim into arcs):
+        // the sample-gap complement below would otherwise eat one
+        // sampling step out of the ring (the M5 gate caught exactly
+        // this on the drilled-plate lateral: span tau - pi/8, mesh
+        // short by 16 percent).
+        for &lk in &f.loops {
+            let (mut cum, mut prev) = (0.0f64, f64::NAN);
+            let (mut clo, mut chi) = (0.0f64, 0.0f64);
+            for p in self.loop_polygon(lk) {
+                let w = p - origin;
+                let w = w - ez * w.dot(ez);
+                if w.norm() < 1e-9 * (1.0 + (p - origin).norm()) {
+                    continue;
+                }
+                let a = w.dot(ey).atan2(w.dot(ex));
+                if prev.is_nan() {
+                    prev = a;
+                    continue;
+                }
+                let mut d = a - prev;
+                if d > core::f64::consts::PI {
+                    d -= tau;
+                }
+                if d < -core::f64::consts::PI {
+                    d += tau;
+                }
+                cum += d;
+                prev = a;
+                clo = clo.min(cum);
+                chi = chi.max(cum);
+            }
+            if chi - clo >= tau - 1e-6 {
+                return (0.0, tau);
+            }
+        }
         let mut angles: Vec<f64> = Vec::new();
         for &lk in &f.loops {
             for p in self.loop_polygon(lk) {

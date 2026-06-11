@@ -5719,3 +5719,39 @@ fuzz_cyl_boolean soak (boolean + imprint + massprops changed): counts below.
 FOLLOW-UP NOTED: the curved-result self-consistency gate stays weak (positive tessellated
 volume only); extending mass==mesh to curved bodies within a chordal band is the next
 honesty-net upgrade and would have caught defect 1 directly.
+
+## Addendum 183: graceful degradation M5, the curved chordal honesty gate (2026-06-11)
+
+Dossier 29 re-read (Part 4, confidence reporting; Part 6, no silent salvage): the doctrine
+demands that a returned body be SELF-CONSISTENT or declined, never silently wrong. The
+planar mass==mesh post-condition (research file 47) embodied that for planar results;
+curved results passed on POSITIVE TESSELLATED VOLUME alone, the weak gate that let the M4
+drill wrong-positive ship. M5 closes the asymmetry.
+
+THE GATE (assemble_boolean, curved branch): when mass_properties is computable the result
+must satisfy |mass - mesh| <= 2e-2 * (1 + |mass|), the CHORDAL band (the adaptive
+tessellation''s worst legitimate deviation on small arcs). Bodies whose mass legitimately
+declines (NURBS corner patches) keep the positive-volume floor: the gate never punishes an
+honest decline, only a self-inconsistent "success".
+
+THE GATE''S FIRST CATCH, ON ITS FIRST RUN: pin_in_hole''s drilled plate DECLINED under the
+new band. The probe: the holed lateral tessellated an angular span of [0, tau - pi/8],
+a 16 percent mesh deficit (dv -1.756 vs exact -2.094) that had been shipping silently.
+ROOT CAUSE: cyl_angular_span''s three paths all failed on a seam-split full ring: (a) no
+arc_sweep on the rim arcs, (b) no single CLOSED edge survives the seam imprint (each rim
+is two arcs), (c) the sample-gap fallback takes the complement of the LARGEST angular gap,
+and a full ring of finite samples always has a gap of one sampling step (pi/8 here).
+FIX (tessellate.rs): before the gap fallback, walk each loop''s polygon and accumulate the
+UNWRAPPED angle delta; a loop whose cumulative range covers tau - 1e-6 bounds a FULL
+revolution regardless of how its edges were split. Branch-cut-free by construction.
+
+This is the M5 thesis demonstrated in one commit: the honesty net does not just guard
+against hypothetical future bugs, it found a live one in the first body it inspected
+(WRITE THE EXACTNESS ORACLE FIRST, again). The pin test now carries the chordal witness
+assertion (|mesh - mass| of the holed plate inside the band).
+
+CI: fmt; clippy -D warnings; workspace 133 + 77 + 257 green; oracle N=2000 unchanged
+(strict 1892/108/0, tolerant 487/13/0); fuzz_boolean + fuzz_cyl_boolean soak (boolean +
+tessellation internals changed): counts below.
+NEXT (the leg continues): tolerant cylinder prepare (radial-gap pins), the residual
+13-trial tolerant tail, doctrine-wide OpReport.

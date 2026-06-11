@@ -3095,8 +3095,25 @@ fn assemble_boolean(
         .iter()
         .any(|&f| !matches!(body.face_surface3(f), Some(Surface3::Plane(_))));
     let ok = if curved {
+        // CURVED self-consistency (the M5 honesty-net upgrade): the
+        // sense-exact mass and the chordal mesh must agree within a
+        // CHORDAL band (2 percent: the adaptive tessellation's worst
+        // legitimate deviation on small arcs). The drilled-plate
+        // wrong-positive (the lateral spanning the whole drill) sat at
+        // 100-plus percent and shipped under the old positive-volume-
+        // only check; this band converts that whole class from silent
+        // to declined. Bodies whose mass legitimately declines (NURBS
+        // corner patches) keep the positive-volume floor.
         let v = body.tessellated_volume();
-        v.is_finite() && v > 1e-9 * (1.0 + v.abs())
+        match body.mass_properties() {
+            Ok(m) => {
+                m.volume.is_finite()
+                    && m.volume > 0.0
+                    && v.is_finite()
+                    && (m.volume - v).abs() <= 2e-2 * (1.0 + m.volume.abs())
+            }
+            Err(_) => v.is_finite() && v > 1e-9 * (1.0 + v.abs()),
+        }
     } else if let Ok(m) = body.mass_properties() {
         // SELF-CONSISTENCY gate (research file 47): for a well-formed
         // all-planar body the sense-exact mass_properties and the
@@ -5397,6 +5414,16 @@ mod tests {
             .unwrap()
             .body;
         let vh = holed.mass_properties().unwrap().volume;
+        // The M5 chordal self-consistency witness: the drilled body's
+        // chordal mesh must track its exact mass within the curved
+        // gate's band (the seam-split lateral previously tessellated
+        // tau - pi/8 of the ring, a 16 percent mesh deficit that the
+        // old positive-volume-only gate let through).
+        let mesh_h = holed.mesh_volume();
+        assert!(
+            (mesh_h - vh).abs() <= 2e-2 * (1.0 + vh.abs()),
+            "holed plate mesh {mesh_h} vs mass {vh}: outside the chordal band"
+        );
         assert!((vh - (16.0 - pi)).abs() < 1e-9, "holed plate {vh}");
         let pframe = Frame3::from_z(Vec3::new(2.0, 2.0, 0.0), Vec3::new(0.0, 0.0, 1.0)).unwrap();
         let mut pin = Body::new();
