@@ -21,6 +21,10 @@ param(
     [switch]$SkipClone
 )
 $ErrorActionPreference = "Stop"
+# Native tools (cargo, git) write progress to stderr; do not promote
+# that to terminating errors. Requires pwsh 7 (run with pwsh, not
+# Windows PowerShell 5.1).
+$PSNativeCommandUseErrorActionPreference = $false
 
 # Fresh clone of the CURRENT commit (a stale gate dir certifies the wrong
 # code). -SkipClone reuses an existing prepared clone ONLY if its HEAD
@@ -69,20 +73,21 @@ Write-Host "Soak launched (WSL, $wslPath, ~10h sequential). Log: $GateDir\soak_g
 
 # Half 2: the sharded oracle. Shard i covers trials [i*chunk, (i+1)*chunk).
 $chunk = [long][math]::Ceiling($OracleN / $OracleShards)
-$procs = @()
+$shardJobs = @()
 for ($i = 0; $i -lt $OracleShards; $i++) {
     $s = $i * $chunk
     $n = [math]::Min($chunk, $OracleN - $s)
     if ($n -le 0) { break }
     $log = Join-Path $GateDir "oracle_shard_$i.log"
-    $procs += Start-Process -FilePath $exe.FullName `
-        -ArgumentList "--ignored", "--nocapture" `
-        -Environment @{ KEEL_ORACLE_START = "$s"; KEEL_ORACLE_N = "$n" } `
-        -RedirectStandardError $log -RedirectStandardOutput "$log.out" `
-        -NoNewWindow -PassThru
+    $shardJobs += Start-Job -ScriptBlock {
+        param($exe, $s, $n, $log)
+        $env:KEEL_ORACLE_START = "$s"
+        $env:KEEL_ORACLE_N = "$n"
+        & $exe --ignored --nocapture 2>&1 | Out-File $log -Encoding utf8
+    } -ArgumentList $exe.FullName, $s, $n, $log
 }
-Write-Host "Oracle: $($procs.Count) shards x $chunk trials. Waiting..."
-$procs | Wait-Process
+Write-Host "Oracle: $($shardJobs.Count) shards x $chunk trials. Waiting..."
+$shardJobs | Wait-Job | Out-Null
 # Aggregate the shard buckets.
 $tot = @{ pass = 0L; dec = 0L; wrong = 0L; tpass = 0L; tdec = 0L; twrong = 0L }
 Get-ChildItem "$GateDir\oracle_shard_*.log" | ForEach-Object {
