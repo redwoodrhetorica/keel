@@ -5922,3 +5922,6 @@ pinned in tail_repro.rs (strict_mesh_wrong_regression, mass==mesh within 1e-7).
 
 CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 + 2 green; fuzz_boolean +
 fuzz_cyl_boolean merge soak (tessellation changed): counts below.
+
+SOAK COUNTS (the M9 merge gate, 2026-06-11): fuzz_boolean 1813 runs / 604 s clean;
+fuzz_cyl_boolean 588 runs / 601 s clean.
