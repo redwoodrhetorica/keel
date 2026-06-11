@@ -4053,8 +4053,12 @@ impl Body {
             let fin = self
                 .loop_fin_ending_at_point(face, tip, etol)
                 .ok_or(TopoError::Precondition("spur start vertex lost"))?;
-            let m = self.mev(MevSite::AfterFin(fin), c)?;
+            let m = {
+                let _prof = crate::profile::Scope::new(&crate::profile::IMPRINT_MEV_NS);
+                self.mev(MevSite::AfterFin(fin), c)?
+            };
             if let Some(curve) = seg_curve(tip, c) {
+                let _prof = crate::profile::Scope::new(&crate::profile::IMPRINT_SEAMGEO_NS);
                 self.attach_seam_geometry(m.edge, face, &curve, tol);
             }
             edges.push(m.edge);
@@ -4067,7 +4071,10 @@ impl Body {
         let fb = self
             .loop_fin_ending_at_point(face, chain[last], etol)
             .ok_or(TopoError::Precondition("split end vertex lost"))?;
-        let out = self.split_face(fa, fb, None)?;
+        let out = {
+            let _prof = crate::profile::Scope::new(&crate::profile::IMPRINT_SPLITF_NS);
+            self.split_face(fa, fb, None)?
+        };
         if let Some(surf) = self.faces.get(face).and_then(|f| f.surface)
             && let Some(nf) = self.faces.get_mut(out.face_new)
         {
@@ -4093,6 +4100,46 @@ impl Body {
         let ckey = self.add_curve(curve.clone());
         if let Some(e) = self.edges.get_mut(edge) {
             e.curve = Some((ckey, true));
+        }
+        // EXACT pcurve fast path (OPT-M3): a straight degree-1 seam
+        // segment on a PLANAR carrier projects to the straight UV
+        // segment through its two projected endpoints, exactly. The
+        // general 64-sample fit below was half the cost of every
+        // box-boolean imprint for a result the projection gives in
+        // closed form (and exactly, where the fit is approximate).
+        if let Some(Surface3::Plane(pl)) = self.face_surface3(face)
+            && let keel_geom::curve::Curve3::Nurbs(n) = curve
+            && n.degree() == 1
+        {
+            let (p0, p1) = (curve.point(0.0), curve.point(1.0));
+            let mid = curve.point(0.5);
+            let chord = (p0 + p1) * 0.5;
+            if (mid - chord).norm() <= 1e-12 * (1.0 + (p1 - p0).norm()) {
+                let o = pl.frame.origin;
+                let uv = |p: keel_math::vec::Vec3| {
+                    let w = p - o;
+                    keel_math::vec::Vec3::new(w.dot(pl.frame.x), w.dot(pl.frame.y), 0.0)
+                };
+                if let Ok(puv) = keel_geom::nurbs_curve::NurbsCurve::new(
+                    1,
+                    vec![0., 0., 1., 1.],
+                    vec![uv(p0), uv(p1)],
+                    None,
+                ) {
+                    let pkey = self.add_curve(keel_geom::curve::Curve3::Nurbs(puv));
+                    let radial = self
+                        .edges
+                        .get(edge)
+                        .map(|e| e.radial.clone())
+                        .unwrap_or_default();
+                    for fk in radial {
+                        if let Some(f) = self.fins.get_mut(fk) {
+                            f.pcurve = Some((pkey, true));
+                        }
+                    }
+                    return;
+                }
+            }
         }
         if let Some(surf) = self.face_surface3(face)
             && let Ok(fit) = keel_geom::fit::pcurve_on_analytic(curve, &surf, 64, tol.max(1e-7))
@@ -4223,6 +4270,7 @@ fn imprint_operand(
     // face boundary within tol is already an edge of this face; the other
     // operand owns the contact, so this face must not re-imprint it. Only
     // the interior portion (the real cut) survives to split the face.
+    let _prof_filter = crate::profile::Scope::new(&crate::profile::IMPRINT_FILTER_NS);
     for (face, members) in groups.values_mut() {
         // EVERY loop's polygon counts as boundary, rings included: a
         // pre-imprinted pocket rim (the enclosed-overlap coincidence)
@@ -4291,11 +4339,13 @@ fn imprint_operand(
         members.retain(|&i| !is_on_boundary_seg(i));
     }
 
+    drop(_prof_filter);
     // Phase 1: pre-split boundary edges at unique OPEN-seam endpoints
     // (corners of open chains). Closed curves are skipped: their two
     // "endpoints" are the same degenerate point, which for a cylinder
     // SSI circle is exactly the seam crossing -- pre-splitting there
     // would defeat the crossing imprint.
+    let _prof_presplit = crate::profile::Scope::new(&crate::profile::IMPRINT_PRESPLIT_NS);
     let mut corners: Vec<Vec3> = Vec::new();
     for s in seams {
         if s.closed {
@@ -4315,6 +4365,8 @@ fn imprint_operand(
     }
 
     // Phase 2: imprint per face.
+    drop(_prof_presplit);
+    let _prof_dispatch = crate::profile::Scope::new(&crate::profile::IMPRINT_DISPATCH_NS);
     for (_, (face, mut members)) in groups {
         // Dedupe geometrically-coincident imprint curves on THIS face, keeping
         // one canonical representative (dossier 47 Q5/centerpiece: "coincident
@@ -4444,6 +4496,8 @@ fn imprint_operand(
             // An open chain (single segment, or a corner-overlap L): split
             // the face boundary-to-boundary through any interior corners.
             if let Some(chain) = assemble_open_chain(&eps, etol) {
+                let _prof = crate::profile::Scope::new(&crate::profile::IMPRINT_OPS_NS);
+                crate::profile::count(&crate::profile::IMPRINT_OPS_CALLS);
                 match working.imprint_open_chain(target, &chain, tol) {
                     Ok(es) => seam_edges.extend(es),
                     Err(e) => faults.push(BoolFault::Topo(e)),
