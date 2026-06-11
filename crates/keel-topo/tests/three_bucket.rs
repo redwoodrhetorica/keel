@@ -15,6 +15,10 @@
 //! completion-gate run is the same binary at millions of trials:
 //!   KEEL_ORACLE_N=1000000 cargo test --release -p keel-topo
 //!     --test three_bucket -- --nocapture
+//! KEEL_ORACLE_START offsets the deterministic trial window (the LCG
+//! is seekable), so the gate shards across processes: shard i runs
+//! START = i*chunk, N = chunk, and the buckets sum exactly to the
+//! single-process run. Every WRONG prints its full trial context.
 
 use keel_math::vec::Vec3;
 use keel_topo::Body;
@@ -42,7 +46,14 @@ fn three_bucket_boolean_oracle() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(2000);
+    let start: usize = std::env::var("KEEL_ORACLE_START")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let mut rng = Lcg(0x9E37_79B9_7F4A_7C15);
+    for _ in 0..start * 12 {
+        rng.f();
+    }
     let (mut pass, mut decline, mut wrong) = (0usize, 0usize, 0usize);
     let (mut t_pass, mut t_decline, mut t_wrong) = (0usize, 0usize, 0usize);
     let mut first_wrong = String::new();
@@ -53,7 +64,7 @@ fn three_bucket_boolean_oracle() {
             .entry(format!("{lane} {op:?} d{delta:+.0e} {outcome}"))
             .or_insert(0) += 1;
     };
-    for trial in 0..n {
+    for trial in start..start + n {
         let mut v = [0.0f64; 12];
         for x in v.iter_mut() {
             *x = rng.f();
@@ -200,6 +211,9 @@ fn three_bucket_boolean_oracle() {
                 }
                 (false, Some(msg)) => {
                     wrong += 1;
+                    eprintln!(
+                        "WRONG strict trial {trial} contact {contact} d{delta:+.0e} ax{axis}: {msg}; a {a0:?}+{ad:?} b {b0:?}+{bd:?}"
+                    );
                     if first_wrong.is_empty() {
                         first_wrong = format!("strict trial {trial} {msg}");
                     }
@@ -234,6 +248,10 @@ fn three_bucket_boolean_oracle() {
                         }
                         (true, _) => {
                             t_wrong += 1;
+                            eprintln!(
+                                "WRONG tolerant trial {trial}: salvage flag (delta {delta}, salvaged {}); a {a0:?}+{ad:?} b {b0:?}+{bd:?}",
+                                conf.salvaged
+                            );
                             if first_wrong.is_empty() {
                                 first_wrong = format!(
                                     "tolerant trial {trial}: salvage flag wrong (delta {delta}, salvaged {})",
@@ -253,6 +271,9 @@ fn three_bucket_boolean_oracle() {
                         }
                         (false, Some(msg)) => {
                             t_wrong += 1;
+                            eprintln!(
+                                "WRONG tolerant trial {trial} {msg}; a {a0:?}+{ad:?} b {b0:?}+{bd:?}"
+                            );
                             if first_wrong.is_empty() {
                                 first_wrong = format!("tolerant trial {trial} {msg}");
                             }
