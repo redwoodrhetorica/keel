@@ -45,6 +45,8 @@ impl Body {
     /// walls (both sides solid) are not part of the OUTER boundary and
     /// are skipped.
     pub fn generalized_winding_number(&self, p: Vec3) -> f64 {
+        let _prof = crate::profile::Scope::new(&crate::profile::GWN_NS);
+        crate::profile::count(&crate::profile::GWN_CALLS);
         let mut total = 0.0f64;
         for face in self.face_keys() {
             if self.is_interior_wall(face) {

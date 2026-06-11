@@ -582,6 +582,8 @@ impl Body {
     /// all-planar bodies; tessellation-approximate for curved faces. A
     /// pcurve-free companion to the analytic mass_properties().volume.
     pub fn mesh_volume(&self) -> f64 {
+        let _prof = crate::profile::Scope::new(&crate::profile::MESHVOL_NS);
+        crate::profile::count(&crate::profile::MESHVOL_CALLS);
         self.all_triangles()
             .iter()
             .map(|t| t[0].dot(t[1].cross(t[2])))
