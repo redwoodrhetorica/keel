@@ -241,7 +241,17 @@ fn three_bucket_boolean_oracle() {
                 }
                 Ok((res, conf)) => {
                     let salvage_ok = conf.salvaged == (delta != 0.0);
-                    match judge(Ok(&res), ref_snapped, 0.0) {
+                    // EPSILON-SOLIDITY for the tolerant lane (the 1M
+                    // gate's 1-in-a-million catch, trial 813159): the
+                    // prepare may legitimately snap ANY near-coincident
+                    // plane pair within fuzz, not just the contact
+                    // axis the snapped reference models (two cross-axis
+                    // planes 9.4e-7 apart by random chance). The
+                    // reported contract bounds the volume deviation by
+                    // achieved_tolerance x total surface area.
+                    let area = |d: &[f64; 3]| 2.0 * (d[0] * d[1] + d[1] * d[2] + d[0] * d[2]);
+                    let t_slack = conf.achieved_tolerance * (area(&ad) + area(&bds));
+                    match judge(Ok(&res), ref_snapped, t_slack) {
                         (true, _) if salvage_ok => {
                             t_pass += 1;
                             tally("tolerant", op, delta, "pass");
