@@ -979,7 +979,30 @@ impl Body {
             let mut poly: Vec<(f64, f64)> = Vec::new();
             let mut cur = entry;
             loop {
-                if let Some(samples) = self.fin_curve_samples(cur, 16) {
+                // STRAIGHT fins contribute exactly their start vertex
+                // (OPT-M3: sampling a line 16x and projecting each
+                // sample dominated this function's residual cost; the
+                // chord polygon is identical without the collinear
+                // interior points). Curved fins keep the samples.
+                let straight = self
+                    .fins
+                    .get(cur)
+                    .and_then(|f| self.edges.get(f.edge))
+                    .map(|e| match e.curve.and_then(|(ck, _)| self.curves.get(ck)) {
+                        None => true,
+                        Some(keel_geom::curve::Curve3::Line(_)) => true,
+                        Some(keel_geom::curve::Curve3::Nurbs(n)) => n.degree() <= 1,
+                        Some(_) => false,
+                    })
+                    .unwrap_or(true);
+                if straight {
+                    if let Some(v) = self.fin_start_vertex(cur)
+                        && let Some(x) = self.vertices.get(v)
+                        && let Ok(pr) = surf.project(x.point)
+                    {
+                        poly.push((pr.u, pr.v));
+                    }
+                } else if let Some(samples) = self.fin_curve_samples(cur, 16) {
                     for p in samples {
                         if let Ok(pr) = surf.project(p) {
                             poly.push((pr.u, pr.v));
@@ -4462,6 +4485,8 @@ fn imprint_operand(
                     faults.push(BoolFault::Topo(e));
                     continue;
                 }
+                let _prof = crate::profile::Scope::new(&crate::profile::IMPRINT_OPS_NS);
+                crate::profile::count(&crate::profile::IMPRINT_OPS_CALLS);
                 let res = if working.closed_curve_crosses_boundary(target, curve, tol) {
                     working.imprint_closed_curve_crossing(target, curve, tol)
                 } else {
@@ -4477,15 +4502,22 @@ fn imprint_operand(
             if let Some(nodes) = assemble_closed_loop(&eps, tol)
                 && let Some(ring) = closed_polyline_nurbs(&nodes)
             {
-                match working.imprint_closed_curve(
-                    target,
-                    &keel_geom::curve::Curve3::Nurbs(ring),
-                    tol,
-                ) {
+                let _prof = crate::profile::Scope::new(&crate::profile::IMPRINT_OPS_NS);
+                crate::profile::count(&crate::profile::IMPRINT_OPS_CALLS);
+                let res = {
+                    let _p2 = crate::profile::Scope::new(&crate::profile::CLOSED_IMPRINT_NS);
+                    working.imprint_closed_curve(
+                        target,
+                        &keel_geom::curve::Curve3::Nurbs(ring),
+                        tol,
+                    )
+                };
+                match res {
                     Ok(rep) => {
                         // Match the OTHER operand's per-face open-edge seam
                         // subdivision (file 47): split this closed ring at its
                         // corners so the seam coedges can pair at stitch time.
+                        let _p3 = crate::profile::Scope::new(&crate::profile::RING_SUBDIV_NS);
                         let subdiv = subdivide_seam_ring(&mut working, rep.edge, &nodes, tol);
                         seam_edges.extend(subdiv);
                     }

@@ -23,6 +23,8 @@ pub(crate) static IMPRINT_PRESPLIT_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static IMPRINT_DISPATCH_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static IMPRINT_OPS_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static IMPRINT_OPS_CALLS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static CLOSED_IMPRINT_NS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static RING_SUBDIV_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static IMPRINT_MEV_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static IMPRINT_SPLITF_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static IMPRINT_SEAMGEO_NS: AtomicU64 = AtomicU64::new(0);
@@ -92,6 +94,8 @@ pub fn report() -> String {
            corner pre-split     {:.1}\n\
            dispatch+imprints    {:.1}\n\
            imprint ops          {:.1} ({} calls)\n\
+             closed imprint     {:.1}\n\
+             ring subdivide     {:.1}\n\
              mev chain          {:.1}\n\
              split_face         {:.1}\n\
              seam geometry      {:.1}\n\
@@ -116,6 +120,8 @@ pub fn report() -> String {
         ms(&IMPRINT_DISPATCH_NS),
         ms(&IMPRINT_OPS_NS),
         n(&IMPRINT_OPS_CALLS),
+        ms(&CLOSED_IMPRINT_NS),
+        ms(&RING_SUBDIV_NS),
         ms(&IMPRINT_MEV_NS),
         ms(&IMPRINT_SPLITF_NS),
         ms(&IMPRINT_SEAMGEO_NS),
@@ -149,6 +155,8 @@ pub fn reset() {
         &IMPRINT_DISPATCH_NS,
         &IMPRINT_OPS_NS,
         &IMPRINT_OPS_CALLS,
+        &CLOSED_IMPRINT_NS,
+        &RING_SUBDIV_NS,
         &IMPRINT_MEV_NS,
         &IMPRINT_SPLITF_NS,
         &IMPRINT_SEAMGEO_NS,
