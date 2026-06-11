@@ -6005,3 +6005,8 @@ BUCKETS: bit-identical through all three slices (N=2000 strict 1911/89/0, tolera
 500/0/0; N=100000 strict 95604/4396/0, tolerant 25000/0/0; WRONG = 0 everywhere).
 Suite 133+77+258+2 green; clippy clean. The pcurve fast paths IMPROVE geometry
 (exact where fitted); the sub-profilers stay in-tree.
+
+SOAK COUNTS (the OPT-M3 merge gate, 2026-06-11): fuzz_boolean 9495 runs / 601 s clean
+(1813 pre-leg: the 100x bounded to 5.2x by fuzz-harness overhead); fuzz_cyl_boolean 644
+runs / 607 s clean and FLAT versus prior soaks: the curved path gained nothing from the
+planar fast paths, which is OPT-M4''s thesis in one number.
