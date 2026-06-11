@@ -6043,3 +6043,33 @@ milliseconds of the Parasolid yardstick across BOTH measured workloads, from 90 
 BUCKETS: bit-identical again (N=2000 1911/89/0 + 500/0/0; N=100000 95604/4396/0 +
 25000/0/0; WRONG = 0). Suite 133+77+258+2 green; clippy clean; pin/drill exactness
 tests green throughout. Soak counts below.
+
+SOAK COUNTS (the OPT-M4 merge gate, 2026-06-11): fuzz_boolean 9039 runs / 601 s clean;
+fuzz_cyl_boolean 77907 runs / 601 s clean: 121x the pre-M4 throughput (644), the exact
+circle pcurves compounding directly into fuzz coverage.
+
+## Addendum 192: THE OPTIMIZATION LEG IS COMPLETE (2026-06-11)
+
+Declared complete by the user with the measured record at: box oracle 90.0 -> 0.9
+ms/trial (100x, under the 1 ms Parasolid sky target); drill difference 270 -> 4.3 ms
+(62x); sphere difference 135 -> 6.3 ms (21x); pin union 4.2 ms; fuzz throughput 5.2x
+(boolean) and 121x (cylinder) in the same ten-minute windows.
+
+THE LEG''S FINDING, on the record: every milestone''s win came from replacing a
+sampled/fitted approximation with an exact closed form (centroids of convex faces,
+affine pcurve projection for segments and polylines, rational-quadratic circles,
+coaxial theta-v lines). The optimization pass was an EXACTNESS AUDIT in disguise: the
+kernel is now both 1-2 orders of magnitude faster and geometrically more exact than
+when the leg opened. The one bucket shift along the way (the tol/2 coincidence-band
+unification) was itself a latent-bug fix worth +474 strict passes at 100k. WRONG = 0
+throughout; buckets bit-identical through every other slice.
+
+REMAINING PERF RESIDUALS (recorded, not blocking): single-probe GWN rebuilds its
+triangle set per call (~40 pct slower than pre-M4 for one-shot probes; the BVH/fast-
+winding option stays in the drawer); classify residuals ~70 ms/200 trials; curved
+booleans at 4-6 ms vs the 1 ms yardstick (within 4-6x; the gap is winding evaluation).
+
+NEXT: the COMPLETION GATE runs tonight from D:\keel-gate on this commit (the 10 h
+all-sectors soak + the 1M-trial sharded oracle, which the leg has reduced from ~26 h
+single-threaded to minutes). Gate pass = zero crashes + WRONG == 0 both lanes =
+the correctness program closes.
