@@ -6010,3 +6010,66 @@ SOAK COUNTS (the OPT-M3 merge gate, 2026-06-11): fuzz_boolean 9495 runs / 601 s 
 (1813 pre-leg: the 100x bounded to 5.2x by fuzz-harness overhead); fuzz_cyl_boolean 644
 runs / 607 s clean and FLAT versus prior soaks: the curved path gained nothing from the
 planar fast paths, which is OPT-M4''s thesis in one number.
+
+## Addendum 191: OPT-M4, the curved wall falls to the same key (2026-06-11)
+
+The curved benchmark (tests/profile_curved.rs, the canonical CAD bodies through timed
+reps + the stage breakdown) opened at: drill difference 270 ms/op, sphere difference
+135 ms/op, pin union 3.2 ms, 44.5k tessellate_face calls, GWN prominent again. Two
+slices:
+
+1. GWN OVER PRECOMPUTED BOUNDARY TRIANGLES: boundary_triangles() collects the outer
+tessellation ONCE per immutable borrow scope; classify_faces and the no-interaction
+probe evaluate every winding query against the slice (gwn_over). Scoped precomputation
+instead of a Body-level cache BY DESIGN: the immutable borrow makes freshness
+structural, so the silent-staleness bug class cannot exist. (Honest note: the
+single-probe public API now rebuilds the set per call, ~40 percent slower there;
+acceptable against removing a correctness risk class.)
+
+2. EXACT ANALYTIC CIRCLE PCURVES (curve_pcurve_on): a circle on its own plane is the
+exact rational-quadratic NURBS circle through the projected center/axes; a coaxial
+circle on a cylinder lateral is the exact degree-1 (theta, v) segment swept one turn.
+The general 64-sample cubic fit these replace ESCALATES against constant curvature at
+1e-7: ~69 ms per closed-curve imprint, 4.55 s of the 4.9 s curved benchmark. This is
+the third time today the profiler has pointed at a fit approximating something a
+projection gives exactly.
+
+MEASURED: drill difference 270 -> 4.3 ms/op (62x); sphere difference 135 -> 6.3 ms/op
+(21x); imprint ops 4546 -> 16 ms; pin union 4.2 ms; curved mass_properties 2.1 ms.
+With the box oracle at 0.9 ms/trial, the kernel now sits within single-digit
+milliseconds of the Parasolid yardstick across BOTH measured workloads, from 90 and
+270 ms this morning.
+
+BUCKETS: bit-identical again (N=2000 1911/89/0 + 500/0/0; N=100000 95604/4396/0 +
+25000/0/0; WRONG = 0). Suite 133+77+258+2 green; clippy clean; pin/drill exactness
+tests green throughout. Soak counts below.
+
+SOAK COUNTS (the OPT-M4 merge gate, 2026-06-11): fuzz_boolean 9039 runs / 601 s clean;
+fuzz_cyl_boolean 77907 runs / 601 s clean: 121x the pre-M4 throughput (644), the exact
+circle pcurves compounding directly into fuzz coverage.
+
+## Addendum 192: THE OPTIMIZATION LEG IS COMPLETE (2026-06-11)
+
+Declared complete by the user with the measured record at: box oracle 90.0 -> 0.9
+ms/trial (100x, under the 1 ms Parasolid sky target); drill difference 270 -> 4.3 ms
+(62x); sphere difference 135 -> 6.3 ms (21x); pin union 4.2 ms; fuzz throughput 5.2x
+(boolean) and 121x (cylinder) in the same ten-minute windows.
+
+THE LEG''S FINDING, on the record: every milestone''s win came from replacing a
+sampled/fitted approximation with an exact closed form (centroids of convex faces,
+affine pcurve projection for segments and polylines, rational-quadratic circles,
+coaxial theta-v lines). The optimization pass was an EXACTNESS AUDIT in disguise: the
+kernel is now both 1-2 orders of magnitude faster and geometrically more exact than
+when the leg opened. The one bucket shift along the way (the tol/2 coincidence-band
+unification) was itself a latent-bug fix worth +474 strict passes at 100k. WRONG = 0
+throughout; buckets bit-identical through every other slice.
+
+REMAINING PERF RESIDUALS (recorded, not blocking): single-probe GWN rebuilds its
+triangle set per call (~40 pct slower than pre-M4 for one-shot probes; the BVH/fast-
+winding option stays in the drawer); classify residuals ~70 ms/200 trials; curved
+booleans at 4-6 ms vs the 1 ms yardstick (within 4-6x; the gap is winding evaluation).
+
+NEXT: the COMPLETION GATE runs tonight from D:\keel-gate on this commit (the 10 h
+all-sectors soak + the 1M-trial sharded oracle, which the leg has reduced from ~26 h
+single-threaded to minutes). Gate pass = zero crashes + WRONG == 0 both lanes =
+the correctness program closes.

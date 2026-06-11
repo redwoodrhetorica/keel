@@ -1234,6 +1234,10 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, tol: f64) -> Vec<(Fac
     // ~ 0 outside; the band around 0.5 means the sample sits on/near
     // other's boundary (coincident -> M6c).
     const COINCIDENCE_BAND: f64 = 0.25;
+    // One outer-boundary tessellation of `other` for EVERY probe this
+    // classification makes (OPT-M4): `other` is immutably borrowed for
+    // the whole call, so the set cannot go stale.
+    let other_tris = other.boundary_triangles();
     let mut out = Vec::new();
     for face in working.face_keys() {
         // Reject degenerate (zero-area) fragments before classifying. A thin
@@ -1262,7 +1266,7 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, tol: f64) -> Vec<(Fac
                 if geo_sense != OnSense::Unknown {
                     FaceClass::OnOther(geo_sense)
                 } else {
-                    let w = other.generalized_winding_number(p);
+                    let w = crate::winding::gwn_over(&other_tris, p);
                     if (w - 0.5).abs() < COINCIDENCE_BAND {
                         // In the band with NO coincident carrier: the
                         // dossier-39 sec 1.4 TWO-SIDED test. A sample
@@ -1273,8 +1277,8 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, tol: f64) -> Vec<(Fac
                         let eps = (tol * 100.0).max(1e-6);
                         match working.face_outward_normal(face) {
                             Some(nv) => {
-                                let wp = other.generalized_winding_number(p + nv * eps);
-                                let wm = other.generalized_winding_number(p - nv * eps);
+                                let wp = crate::winding::gwn_over(&other_tris, p + nv * eps);
+                                let wm = crate::winding::gwn_over(&other_tris, p - nv * eps);
                                 if wp < 0.25 && wm < 0.25 {
                                     FaceClass::OutsideOther
                                 } else if wp > 0.75 && wm > 0.75 {
@@ -2856,12 +2860,13 @@ pub fn boolean_with(
         // noise around one half.
         let probe = |of: &Body, against: &Body| -> Option<bool> {
             let eps = (shortest_edge(of) * 1e-3).clamp(1e-9, 1e-3);
+            let against_tris = against.boundary_triangles();
             for f in of.face_keys() {
                 let (Some(p), Some(n)) = (of.face_interior_point(f), of.face_outward_normal(f))
                 else {
                     continue;
                 };
-                let w = against.generalized_winding_number(p - n * eps);
+                let w = crate::winding::gwn_over(&against_tris, p - n * eps);
                 if (w - 0.5).abs() > 0.25 {
                     return Some(w > 0.5);
                 }

@@ -101,4 +101,9 @@ Get-ChildItem "$GateDir\oracle_shard_*.log" | ForEach-Object {
 "GATE ORACLE TOTAL (N=$OracleN): strict PASS $($tot.pass) / DECLINE $($tot.dec) / WRONG $($tot.wrong); tolerant PASS $($tot.tpass) / DECLINE $($tot.tdec) / WRONG $($tot.twrong)" |
     Tee-Object -FilePath "$GateDir\oracle_gate_total.log"
 Select-String -Path "$GateDir\oracle_shard_*.log" -Pattern "WRONG (strict|tolerant)" | ForEach-Object { $_.Line }
-Write-Host "Soak job state: $((Get-Job $soak.Id).State). Wait with: Receive-Job $($soak.Id) -Wait"
+# The oracle now finishes in minutes; the soak takes ~10 h. The script
+# MUST outlive the soak job (a child job dies with its parent), so wait.
+Write-Host "Oracle done. Waiting for the soak (~10h)..."
+Wait-Job $soak | Out-Null
+Get-Content "$GateDir\soak_gate.log" -Tail 8
+Write-Host "GATE-COMPLETE"

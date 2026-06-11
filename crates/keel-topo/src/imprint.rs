@@ -779,13 +779,66 @@ impl Body {
                 ));
             }
         }
-        // EXACT planar polyline pcurve (OPT-M3): a degree-1 NURBS on a
-        // planar carrier maps control-point-for-control-point under the
-        // affine UV projection, with the SAME knot vector: the polyline
-        // is exact in UV. The general fit below escalates control
-        // points chasing the polyline's C0 corners with a cubic
-        // (~173 ms per closed seam ring at 1e-7) for a strictly worse,
-        // approximate result.
+        // EXACT analytic pcurves (OPT-M3/M4): the general fit below
+        // escalates a cubic against corners (polylines) or constant
+        // curvature (circles) at 1e-7, costing tens of milliseconds
+        // per imprint for results these closed forms give exactly.
+        //
+        // Circle on its own PLANE: the UV image is the circle through
+        // the projected center with the projected in-plane axes; the
+        // exact rational-quadratic NURBS circle represents it at
+        // machine precision (the 12-sample on-surface check above has
+        // already certified coplanarity).
+        if let (Curve3::Circle(ci), keel_geom::surface::Surface3::Plane(pl)) = (curve, surf) {
+            let o = pl.frame.origin;
+            let uv = |p: Vec3| {
+                let w = p - o;
+                Vec3::new(w.dot(pl.frame.x), w.dot(pl.frame.y), 0.0)
+            };
+            let xa = Vec3::new(ci.x_axis.dot(pl.frame.x), ci.x_axis.dot(pl.frame.y), 0.0);
+            let ya = Vec3::new(ci.y_axis.dot(pl.frame.x), ci.y_axis.dot(pl.frame.y), 0.0);
+            if let Ok(puv) = keel_geom::nurbs_curve::NurbsCurve::circular_arc(
+                uv(ci.center),
+                xa,
+                ya,
+                ci.radius,
+                core::f64::consts::TAU,
+            ) {
+                return Ok((puv, sample(0.0)));
+            }
+        }
+        // COAXIAL circle on a CYLINDER lateral: the UV image is the
+        // straight line v = height swept once around theta; exact as a
+        // degree-1 segment (orientation from the circle normal against
+        // the cylinder axis).
+        if let (Curve3::Circle(ci), keel_geom::surface::Surface3::Cylinder(cy)) = (curve, surf) {
+            let z = cy.frame.z;
+            let d = ci.center - cy.frame.origin;
+            let coaxial = ci.x_axis.cross(ci.y_axis).cross(z).norm() < 1e-9
+                && (d - z * d.dot(z)).norm() < 1e-9;
+            if coaxial && let Ok(pr0) = surf.project(sample(0.0)) {
+                let h = pr0.v;
+                let s = if ci.x_axis.cross(ci.y_axis).dot(z) >= 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                };
+                if let Ok(puv) = keel_geom::nurbs_curve::NurbsCurve::new(
+                    1,
+                    vec![0., 0., 1., 1.],
+                    vec![
+                        Vec3::new(pr0.u, h, 0.0),
+                        Vec3::new(pr0.u + s * core::f64::consts::TAU, h, 0.0),
+                    ],
+                    None,
+                ) {
+                    return Ok((puv, sample(0.0)));
+                }
+            }
+        }
+        // Degree-1 polyline on a PLANE (OPT-M3): maps control-point-
+        // for-control-point under the affine UV projection, with the
+        // SAME knot vector: exact.
         if let (Curve3::Nurbs(n), keel_geom::surface::Surface3::Plane(pl)) = (curve, surf)
             && n.degree() == 1
             && !n.is_rational()

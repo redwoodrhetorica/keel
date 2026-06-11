@@ -13,6 +13,18 @@ use keel_math::vec::Vec3;
 /// (Van Oosterom-Strackee). Positive when (a, b, c) winds
 /// counterclockwise as seen from `p` (i.e. the outward face is toward
 /// p's exterior). Zero when p is coplanar within the triangle.
+/// Winding number of `p` over a precomputed outer-boundary triangle
+/// set (see `Body::boundary_triangles`).
+pub(crate) fn gwn_over(tris: &[[Vec3; 3]], p: Vec3) -> f64 {
+    let _prof = crate::profile::Scope::new(&crate::profile::GWN_NS);
+    crate::profile::count(&crate::profile::GWN_CALLS);
+    let mut total = 0.0f64;
+    for tri in tris {
+        total += tri_solid_angle(p, tri[0], tri[1], tri[2]);
+    }
+    total / (4.0 * core::f64::consts::PI)
+}
+
 pub fn tri_solid_angle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
     let (x, y, z) = (a - p, b - p, c - p);
     let (xl, yl, zl) = (x.norm(), y.norm(), z.norm());
@@ -45,18 +57,26 @@ impl Body {
     /// walls (both sides solid) are not part of the OUTER boundary and
     /// are skipped.
     pub fn generalized_winding_number(&self, p: Vec3) -> f64 {
-        let _prof = crate::profile::Scope::new(&crate::profile::GWN_NS);
-        crate::profile::count(&crate::profile::GWN_CALLS);
-        let mut total = 0.0f64;
+        gwn_over(&self.boundary_triangles(), p)
+    }
+
+    /// The OUTER-boundary tessellation (interior partition walls
+    /// skipped): the triangle set every winding evaluation integrates
+    /// over. Hot loops that probe MANY points against one immutably
+    /// borrowed body (classification, containment probes) compute this
+    /// ONCE and call `gwn_over` per probe (OPT-M4: each probe
+    /// re-tessellated the whole body, 44.5k tessellations in the
+    /// curved benchmark; the immutable borrow makes the precomputed
+    /// set fresh by construction, no cache invalidation class).
+    pub(crate) fn boundary_triangles(&self) -> Vec<[Vec3; 3]> {
+        let mut tris = Vec::new();
         for face in self.face_keys() {
             if self.is_interior_wall(face) {
                 continue;
             }
-            for tri in self.tessellate_face(face) {
-                total += tri_solid_angle(p, tri[0], tri[1], tri[2]);
-            }
+            tris.extend(self.tessellate_face(face));
         }
-        total / (4.0 * core::f64::consts::PI)
+        tris
     }
 
     /// Volume enclosed by the boundary tessellation (signed sum of
