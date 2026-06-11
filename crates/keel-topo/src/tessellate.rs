@@ -33,6 +33,7 @@ impl Body {
     /// Outward-oriented triangles covering a face's trimmed region.
     /// Empty for unsupported (non-planar/non-spherical) faces in M6b.
     pub(crate) fn tessellate_face(&self, face: FaceKey) -> Vec<[Vec3; 3]> {
+        crate::profile::count(&crate::profile::TESS_FACE_CALLS);
         self.tessellate_face_opt(face, None)
     }
 
@@ -53,6 +54,7 @@ impl Body {
     /// (`tessellate_face`) is unchanged, so the winding/volume oracle is
     /// untouched.
     pub(crate) fn tessellate_face_tol(&self, face: FaceKey, tol: f64) -> Vec<[Vec3; 3]> {
+        crate::profile::count(&crate::profile::TESS_FACE_CALLS);
         self.tessellate_face_opt(face, Some(tol))
     }
 

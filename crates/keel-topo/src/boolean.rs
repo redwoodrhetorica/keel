@@ -297,7 +297,18 @@ impl Body {
         &self,
         p: keel_math::vec::Vec3,
         n_other: keel_math::vec::Vec3,
+        tol: f64,
     ) -> OnSense {
+        // The carrier-coincidence distance band is HALF the op
+        // tolerance: safely between the contact regimes (a 1e-9 mate
+        // reads coincident with 50x margin; a gap of exactly tol
+        // reads SEPARATE with 2x margin), so the at-tolerance class
+        // is deterministic instead of bistable on probe noise. This
+        // band must stay consistent with coincident_face_pairs'
+        // detection threshold; the old literal 1e-6 here disagreed
+        // with the 1e-7 there, and the mismatch produced the
+        // unmatched-coedge decline flips (OPT-M2 diagnosis).
+        let band = 0.5 * tol;
         for f in self.face_keys() {
             // The candidate's BOUNDED EXTENT must reach p (an inflated
             // AABB guard): without it a distant point lying on the
@@ -379,11 +390,11 @@ impl Body {
             // face that merely contains p).
             let on_surface = match self.face_surface_geom(f) {
                 Some(SurfaceGeom::Analytic(s)) => {
-                    s.project(p).map(|pr| pr.distance < 1e-6).unwrap_or(false)
+                    s.project(p).map(|pr| pr.distance < band).unwrap_or(false)
                 }
                 Some(SurfaceGeom::Nurbs(nb)) => {
                     let pr = keel_geom::project::project_point_surface_fast(&nb, p);
-                    (pr.point - p).norm() < 1e-6
+                    (pr.point - p).norm() < band
                 }
                 None => false,
             };
@@ -934,6 +945,8 @@ impl Body {
     }
 
     pub(crate) fn face_interior_point(&self, face: FaceKey) -> Option<keel_math::vec::Vec3> {
+        let _prof = crate::profile::Scope::new(&crate::profile::INTERIOR_PT_NS);
+        crate::profile::count(&crate::profile::INTERIOR_PT_CALLS);
         // NURBS faces (no analytic Surface3): handled via the NURBS
         // surface directly (M7b).
         if let Some((sk, _)) = self.faces.get(face).and_then(|f| f.surface)
@@ -986,6 +999,44 @@ impl Body {
             }
         }
         let outer = uv_loops.first()?;
+        // CONVEX-CENTROID fast path (OPT-M2): the profile showed this
+        // function at 90 percent of the boolean workload, almost all
+        // of it the 24x24 most-central grid below. For a CONVEX
+        // single-loop face (every box face and most fragments) the
+        // vertex centroid is strictly interior with clearance
+        // proportional to the face, so it serves every consumer the
+        // grid's most-central point served. Concave, degenerate, or
+        // ring-carrying faces fall through to the grid unchanged.
+        if uv_loops.len() == 1 {
+            let m = outer.len();
+            let mut crosses = Vec::with_capacity(m);
+            let mut scale = 0.0f64;
+            for i in 0..m {
+                let a = outer[i];
+                let b2 = outer[(i + 1) % m];
+                let c2 = outer[(i + 2) % m];
+                let cr = (b2.0 - a.0) * (c2.1 - b2.1) - (b2.1 - a.1) * (c2.0 - b2.0);
+                scale = scale.max(cr.abs());
+                crosses.push(cr);
+            }
+            // Collinear runs (straight edges sampled densely) produce
+            // crosses at last-ulp noise around zero; classify against
+            // a scale-relative threshold so only genuinely mixed
+            // turning (a concave corner) rejects the fast path.
+            let eps = 1e-9 * scale;
+            let pos = crosses.iter().any(|&c| c > eps);
+            let neg = crosses.iter().any(|&c| c < -eps);
+            if !(pos && neg) && scale > 0.0 {
+                let n = m as f64;
+                let (cu, cv) = outer
+                    .iter()
+                    .fold((0.0, 0.0), |acc, p| (acc.0 + p.0, acc.1 + p.1));
+                let c = (cu / n, cv / n);
+                if winding_nonzero(outer, c) {
+                    return Some(surf.point(c.0, c.1));
+                }
+            }
+        }
         let (mut umin, mut umax, mut vmin, mut vmax) = (
             f64::INFINITY,
             f64::NEG_INFINITY,
@@ -1182,7 +1233,7 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, tol: f64) -> Vec<(Fac
                 // classified by its numerically noisy winding; the
                 // extent-guarded carrier test decides directly).
                 let geo_sense = match working.face_outward_normal(face) {
-                    Some(n) => other.coincident_sense_at(p, n),
+                    Some(n) => other.coincident_sense_at(p, n, tol),
                     None => OnSense::Unknown,
                 };
                 if geo_sense != OnSense::Unknown {
@@ -2196,6 +2247,7 @@ pub(crate) fn finalize_imported_assembly(
     }
     let _ = rec.finish();
 
+    let _prof = crate::profile::Scope::new(&crate::profile::VALIDATE_NS);
     match dst.validate() {
         Ok(()) => Ok(dst),
         Err(e) => {
@@ -2549,13 +2601,30 @@ fn connected_face_components(dst: &Body, faces: &[FaceKey]) -> Vec<Vec<FaceKey>>
 /// Coplanar, overlapping planar face pairs `(face_in_a, face_in_b, n_a)`
 /// -- the candidates whose overlap boundary must be imprinted before
 /// classification (research file 39 §1). Curved coincidence is a follow-up.
-fn coincident_face_pairs(a: &Body, b: &Body) -> Vec<(FaceKey, FaceKey, keel_math::vec::Vec3)> {
+fn coincident_face_pairs(
+    a: &Body,
+    b: &Body,
+    tol: f64,
+) -> Vec<(FaceKey, FaceKey, keel_math::vec::Vec3)> {
     let is_planar = |body: &Body, f: FaceKey| {
         matches!(
             body.face_surface_geom(f),
             Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
         )
     };
+    // Hoist B's per-face data out of the pair loop (OPT-M2: the
+    // outward normal rides face_interior_point, and recomputing it
+    // per (fa, fb) pair dominated the detection profile).
+    let b_faces: Vec<(FaceKey, keel_math::vec::Vec3, keel_math::vec::Vec3)> = b
+        .face_keys()
+        .into_iter()
+        .filter(|&fb| is_planar(b, fb))
+        .filter_map(|fb| {
+            let nb = b.face_outward_normal(fb)?;
+            let pb = b.face_outer_loop_points(fb).first().copied()?;
+            Some((fb, nb, pb))
+        })
+        .collect();
     let mut pairs = Vec::new();
     for fa in a.face_keys() {
         if !is_planar(a, fa) {
@@ -2569,20 +2638,16 @@ fn coincident_face_pairs(a: &Body, b: &Body) -> Vec<(FaceKey, FaceKey, keel_math
             Some(p) => p,
             None => continue,
         };
-        for fb in b.face_keys() {
-            if !is_planar(b, fb) {
-                continue;
-            }
-            let nb = match b.face_outward_normal(fb) {
-                Some(n) => n,
-                None => continue,
-            };
-            let pb = match b.face_outer_loop_points(fb).first().copied() {
-                Some(p) => p,
-                None => continue,
-            };
-            // Same plane: parallel normals and a-point lying in b's plane.
-            if na.cross(nb).norm() < 1e-7 && (pb - pa).dot(na).abs() < 1e-7 {
+        for &(fb, nb, pb) in &b_faces {
+            // Same plane: parallel normals and a-point within HALF
+            // the op tolerance of b's plane, the SAME band as
+            // coincident_sense_at: detection and classification must
+            // agree on what is coincident, and tol/2 sits safely
+            // between the contact regimes (1e-9 mates in, gaps of
+            // exactly tol out, both with wide margin), so the
+            // at-tolerance class is deterministic instead of
+            // bistable on probe noise.
+            if na.cross(nb).norm() < 1e-7 && (pb - pa).dot(na).abs() < 0.5 * tol {
                 let poly_a = a.face_outer_loop_points(fa);
                 let poly_b = b.face_outer_loop_points(fb);
                 if crate::coincident::coplanar_overlap_exists(&poly_a, &poly_b, na) {
@@ -2600,10 +2665,14 @@ fn coincident_face_pairs(a: &Body, b: &Body) -> Vec<(FaceKey, FaceKey, keel_math
 /// exist. Best-effort: imprint failures are skipped and the final
 /// positive-volume post-condition still guards a bad selection.
 fn preimprint_coincident_overlaps(a: &Body, b: &Body, tol: f64) -> Option<(Body, Body)> {
-    let pairs = coincident_face_pairs(a, b);
+    let pairs = {
+        let _prof = crate::profile::Scope::new(&crate::profile::PREIMPRINT_DETECT_NS);
+        coincident_face_pairs(a, b, tol)
+    };
     if pairs.is_empty() {
         return None;
     }
+    let _prof = crate::profile::Scope::new(&crate::profile::PREIMPRINT_CUT_NS);
     let mut a = a.clone();
     let mut b = b.clone();
     let imprint_cuts = |body: &mut Body,
@@ -2705,22 +2774,31 @@ pub fn boolean_with(
     // would read its inverted winding as legitimate and select a
     // self-consistent but WRONG result. Sheets and wires (volume
     // ~ 0) pass; orientation REPAIR with a report is the follow-up.
-    if a.mesh_volume() < -1e-9 || b.mesh_volume() < -1e-9 {
-        return Err(BoolFault::AssemblyFailed(
-            "operand is inside-out (negative volume)",
-        ));
+    {
+        let _prof = crate::profile::Scope::new(&crate::profile::FRONT_DOOR_NS);
+        if a.mesh_volume() < -1e-9 || b.mesh_volume() < -1e-9 {
+            return Err(BoolFault::AssemblyFailed(
+                "operand is inside-out (negative volume)",
+            ));
+        }
     }
     // Pre-pass (research file 39 §1): where two coplanar faces partially
     // overlap, imprint the overlap-boundary cuts onto the operands so each
     // resulting fragment is uniformly inside/outside/on the other body --
     // the on-on tables in select_faces then classify them correctly. With
     // no coincident faces this is a no-op and the originals flow through.
-    let pre = preimprint_coincident_overlaps(a, b, tol);
+    let pre = {
+        let _prof = crate::profile::Scope::new(&crate::profile::PREIMPRINT_NS);
+        preimprint_coincident_overlaps(a, b, tol)
+    };
     let (a, b): (&Body, &Body) = match &pre {
         Some((pa, pb)) => (pa, pb),
         None => (a, b),
     };
-    let (seams, faults) = seam_curves(a, b, tol);
+    let (seams, faults) = {
+        let _prof = crate::profile::Scope::new(&crate::profile::SEAM_NS);
+        seam_curves(a, b, tol)
+    };
     // Tangential face pairs (touch at a point/curve without crossing) are
     // still declined. COINCIDENT (coplanar overlapping) faces now PROCEED:
     // the winding classifier marks them FaceClass::OnOther and select_faces
@@ -2747,6 +2825,7 @@ pub fn boolean_with(
     // collapsed inner shell) reads as "nested" to the winding probe,
     // so it flows to the assembly whose mass==mesh gates decline it.
     if seams.is_empty() && pre.is_none() && a.mesh_volume() > 0.0 && b.mesh_volume() > 0.0 {
+        let _prof = crate::profile::Scope::new(&crate::profile::SHORTCUT_NS);
         // Probe with GUARANTEED-INTERIOR points (a face interior point
         // nudged inward), never raw vertices: a mated body's vertices
         // can ALL lie on the other's boundary (the pin's only vertices
@@ -3269,10 +3348,21 @@ fn assemble_boolean(
     mut faults: Vec<BoolFault>,
     opts: BooleanOptions,
 ) -> Result<BoolResult, BoolFault> {
-    let ia = imprint_operand(a, seams, |s| s.face_a, tol, &mut faults);
-    let ib = imprint_operand(b, seams, |s| s.face_b, tol, &mut faults);
-    let class_a = classify_faces(&ia.body, b, tol);
-    let class_b = classify_faces(&ib.body, a, tol);
+    let (ia, ib) = {
+        let _prof = crate::profile::Scope::new(&crate::profile::IMPRINT_NS);
+        (
+            imprint_operand(a, seams, |s| s.face_a, tol, &mut faults),
+            imprint_operand(b, seams, |s| s.face_b, tol, &mut faults),
+        )
+    };
+    let (class_a, class_b) = {
+        let _prof = crate::profile::Scope::new(&crate::profile::CLASSIFY_NS);
+        (
+            classify_faces(&ia.body, b, tol),
+            classify_faces(&ib.body, a, tol),
+        )
+    };
+    let _prof_stitch = crate::profile::Scope::new(&crate::profile::STITCH_NS);
     let kept = select_faces(op, &class_a, &class_b);
     if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
         let dump = |tag: &str, body: &Body, cls: &[(FaceKey, FaceClass)]| {

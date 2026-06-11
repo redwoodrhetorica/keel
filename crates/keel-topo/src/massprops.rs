@@ -109,6 +109,8 @@ fn triangle_rule() -> [([f64; 3], f64); 7] {
 impl Body {
     /// Mass properties of the body's solid regions (unit density).
     pub fn mass_properties(&self) -> Result<MassProps, TopoError> {
+        let _prof = crate::profile::Scope::new(&crate::profile::MASS_NS);
+        crate::profile::count(&crate::profile::MASS_CALLS);
         let mut m = Moments::default();
         let faces: Vec<FaceKey> = self
             .entity_ids()

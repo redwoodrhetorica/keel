@@ -5925,3 +5925,48 @@ fuzz_cyl_boolean merge soak (tessellation changed): counts below.
 
 SOAK COUNTS (the M9 merge gate, 2026-06-11): fuzz_boolean 1813 runs / 604 s clean;
 fuzz_cyl_boolean 588 runs / 601 s clean.
+
+## Addendum 189: OPT-M1/M2, the profile and the 8x (2026-06-11)
+
+The optimization leg opens (task 20; the yardstick is PARASOLID, ~1 ms/boolean native,
+per the aim-for-the-sky mandate; OCCT-in-WASM at ~115 ms is merely the incumbent floor).
+
+OPT-M1, THE PROFILE (in-tree instruments: src/profile.rs env-gated stage timers + call
+counters, tests/profile_oracle.rs replaying the oracle mix at N=200, release):
+90.0 ms/trial baseline became measurable as ONE function: face_interior_point cost
+0.83 ms/call (the 24x24 most-central grid runs a containment test and a distance scan
+per cell) and was called ~88x per trial, 14.6 s of the 16.1 s workload = 90 percent,
+hiding inside three stages: coincident_face_pairs (via face_outward_normal, recomputed
+per PAIR in the inner loop), classify_faces, and the no-interaction probe. The named
+pre-profile suspects were all wrong: 25,509 tessellate_face calls cost ~10 ms total and
+2,341 GWN evaluations ~16 ms. PROFILE FIRST.
+
+OPT-M2, THE FIX (two semantics-preserving changes): (1) a CONVEX-CENTROID fast path in
+face_interior_point: a provably convex single-loop face (scale-relative turning test,
+collinear sample runs tolerated) returns its vertex centroid after ONE containment
+check; concave/ring faces keep the grid; the M8 signed-fan tessellation fallback stays
+beneath. (2) coincident_face_pairs hoists B''s normals/points out of the pair loop.
+MEASURED: 80.5 -> 10.0 ms/trial (8x); tail_repro 4.1 s -> 0.5 s.
+
+THE BUCKET RULE EARNED ITS KEEP: the N=2000 buckets moved (1902/98 -> 1896/104), so the
+milestone STOPPED per the standing rule. Trial-by-trial decline diffs against the
+pre-optimization build (tests/scan_declines.rs, both trees) localized every flip, BOTH
+directions, to one class: Union with a gap of EXACTLY op tol (+1e-7), which had always
+been BISTABLE: classification''s carrier-coincidence band was a literal 1e-6 while
+detection''s was a literal 1e-7, so whether a mating face read coincident (drop -> rims
+1e-7 apart cannot stitch -> unmatched-coedge decline) or separate (two-component union
+-> pass) hung on where the probe point landed. FIX: both bands now derive from the op
+tolerance at tol/2, which sits safely between the contact regimes (1e-9 mates coincident
+at 50x margin; at-tol gaps separate at 2x margin; no float knife-edge), and
+coincident_sense_at takes tol explicitly instead of a duplicated literal.
+
+RESULT: better than the pre-optimization baseline on BOTH axes. Speed 90 -> 10.7
+ms/trial with instruments paying for themselves. Oracle N=2000: strict 1911/89/0 (was
+1902/98/0: 9 luck-dependent declines now deterministic passes); N=100000 sharded:
+strict 95604/4396/0 (was 95130/4870/0: +474), tolerant 25000/0/0, WRONG = 0 everywhere.
+Suite 133+77+258+2 green; clippy clean. NEXT (OPT-M3): imprint_operand x2 (1.30 s of
+the remaining 2.1 s), residual face_interior_point volume (10.1k calls), classify.
+
+SOAK COUNTS (the OPT-M2 merge gate, 2026-06-11): fuzz_boolean 2865 runs / 601 s clean
+(was 1813 pre-optimization: the 8x visible in fuzz throughput); fuzz_cyl_boolean 698
+runs / 602 s clean.

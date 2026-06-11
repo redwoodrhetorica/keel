@@ -27,6 +27,7 @@ pub mod merge;
 pub mod ops;
 pub mod partition;
 pub mod pmc;
+pub mod profile;
 pub mod query;
 pub mod replace;
 pub mod session;
