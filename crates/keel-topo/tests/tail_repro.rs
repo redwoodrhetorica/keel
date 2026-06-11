@@ -7,7 +7,7 @@
 
 use keel_math::vec::Vec3;
 use keel_topo::Body;
-use keel_topo::boolean::{BoolOp, boolean_tolerant};
+use keel_topo::boolean::{BoolOp, boolean, boolean_tolerant};
 
 struct Lcg(u64);
 impl Lcg {
@@ -70,6 +70,28 @@ fn trial_bodies(trial: usize) -> (Body, Body, BoolOp, f64, usize) {
         _ => BoolOp::Difference,
     };
     (a, b, op, delta, axis)
+}
+
+#[test]
+fn strict_mesh_wrong_regression() {
+    // Oracle trials 15219/48579/70359/88959 (Addendum 188): unions with
+    // a 1e-7 sub-tolerance penetration. The imprint leaves a concave
+    // fragment with a vertex 1e-7 from a corner; that twin vertex
+    // blocked every candidate ear, the old ear-clipper silently dropped
+    // the remainder, and the mesh overcounted by ~1e-3 relative while
+    // mass stayed exact: the first WRONGs in the program's history (the
+    // N=100000 rehearsal). The signed-fan completion keeps the mesh
+    // inside the judge's band.
+    for trial in [15219usize, 48579, 70359, 88959] {
+        let (a, b, op, delta, axis) = trial_bodies(trial);
+        let res = boolean(&a, &b, op, 1e-7).unwrap();
+        let mass = res.body.mass_properties().unwrap().volume;
+        let mesh = res.body.mesh_volume();
+        assert!(
+            (mesh - mass).abs() <= 1e-7 * (1.0 + mass.abs()),
+            "trial {trial} {op:?} d{delta:+.0e} ax{axis}: mass {mass} mesh {mesh}"
+        );
+    }
 }
 
 #[test]
