@@ -122,6 +122,74 @@ pub(crate) fn overlap_interior_segments(
     segs
 }
 
+/// Connect overlap-cut segments into POLYLINE CHAINS by shared
+/// endpoints (the partial-overlap boundary corners interior to the
+/// subject face). Open chains run boundary-to-boundary through
+/// interior corners; a closed chain (first == last) is a fully
+/// enclosed overlap pocket, which the caller skips (follow-up).
+pub(crate) fn chain_segments(segs: &[(Vec3, Vec3)]) -> Vec<Vec<Vec3>> {
+    let mut used = vec![false; segs.len()];
+    let mut chains: Vec<Vec<Vec3>> = Vec::new();
+    let eps = 1e-9;
+    for i in 0..segs.len() {
+        if used[i] {
+            continue;
+        }
+        used[i] = true;
+        let mut chain = vec![segs[i].0, segs[i].1];
+        // Grow forward from the tail, then backward from the head.
+        while let Some(&tail) = chain.last() {
+            let mut grew = false;
+            for (j, seg) in segs.iter().enumerate() {
+                if used[j] {
+                    continue;
+                }
+                if (seg.0 - tail).norm() < eps {
+                    chain.push(seg.1);
+                    used[j] = true;
+                    grew = true;
+                    break;
+                }
+                if (seg.1 - tail).norm() < eps {
+                    chain.push(seg.0);
+                    used[j] = true;
+                    grew = true;
+                    break;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        loop {
+            let head = chain[0];
+            let mut grew = false;
+            for (j, seg) in segs.iter().enumerate() {
+                if used[j] {
+                    continue;
+                }
+                if (seg.1 - head).norm() < eps {
+                    chain.insert(0, seg.0);
+                    used[j] = true;
+                    grew = true;
+                    break;
+                }
+                if (seg.0 - head).norm() < eps {
+                    chain.insert(0, seg.1);
+                    used[j] = true;
+                    grew = true;
+                    break;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        chains.push(chain);
+    }
+    chains
+}
+
 /// Do two coplanar face polygons overlap on a positive-area region?
 pub(crate) fn coplanar_overlap_exists(face_a: &[Vec3], face_b: &[Vec3], n: Vec3) -> bool {
     if face_a.len() < 3 || face_b.len() < 3 {

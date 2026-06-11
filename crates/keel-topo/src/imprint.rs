@@ -166,6 +166,161 @@ impl Body {
         })
     }
 
+    /// Imprint a CLOSED POLYGON ring lying strictly in `face`'s
+    /// interior (the ENCLOSED-POCKET coincidence: the other operand's
+    /// mating face sits wholly inside this one, so the overlap
+    /// boundary never reaches this face's edges). Generalizes the
+    /// closed-circle imprint: spur from the outer loop to the first
+    /// corner, mev around the polygon, close with mef back to the
+    /// spur vertex (the spur-out fin, so the pocket cycle is the
+    /// forward chain), then kemr the spur bridge: the polygon becomes
+    /// an inner RING of `face` and the pocket a new face on the same
+    /// surface. Polygon edges are straight and carry no curve
+    /// geometry (the planar-coincidence application).
+    pub fn imprint_closed_polyline(
+        &mut self,
+        face: FaceKey,
+        pts: &[keel_math::vec::Vec3],
+    ) -> Result<(), TopoError> {
+        if pts.len() < 3 {
+            return Err(TopoError::Precondition("imprint_ring: too few corners"));
+        }
+        let lp = self
+            .faces
+            .get(face)
+            .and_then(|f| f.loops.first().copied())
+            .ok_or(TopoError::StaleKey)?;
+        let outer_fin = self
+            .loops
+            .get(lp)
+            .and_then(|l| l.fin)
+            .ok_or(TopoError::Precondition("imprint_ring: no outer fin"))?;
+        // Spur to the first corner, then chain the rest. Chain edges
+        // carry their exact Line geometry (the house convention;
+        // curveless edges are invisible to fin_curve_samples and the
+        // UV interior-point machinery).
+        let spur = self.mev(MevSite::AfterFin(outer_fin), pts[0])?;
+        let v0 = spur.vertex;
+        let spur_edge = spur.edge;
+        let mut prev = v0;
+        let mut prev_pt = pts[0];
+        for &p in &pts[1..] {
+            let fin_prev = self.fin_ending_at_vertex(lp, prev)?;
+            let mv = self.mev(MevSite::AfterFin(fin_prev), p)?;
+            if let Ok(l) = keel_geom::curve::Line3::new(prev_pt, p - prev_pt) {
+                self.attach_edge_curve(mv.edge, Curve3::Line(l), true);
+            }
+            prev = mv.vertex;
+            prev_pt = p;
+        }
+        // Close the ring. mef moves fin_a.next ..= fin_b onto the NEW
+        // face, so fin_a = the SPUR-OUT fin (whose next is the first
+        // chain fin) and fin_b = the chain tip's in-fin: the new face
+        // is exactly the forward polygon cycle (the pocket), and the
+        // host keeps the outer boundary, the back chain, and the spur.
+        let fin_b = self.fin_ending_at_vertex(lp, prev)?;
+        let fin_a = {
+            let radial = self
+                .edges
+                .get(spur_edge)
+                .map(|e| e.radial.clone())
+                .unwrap_or_default();
+            radial
+                .into_iter()
+                .find(|&fk| self.fin_end_vertex(fk) == Some(v0))
+                .ok_or(TopoError::Precondition("imprint_ring: no spur fin"))?
+        };
+        let mef = self.mef(fin_a, fin_b, None)?;
+        let pocket = mef.face;
+        if let Ok(l) = keel_geom::curve::Line3::new(pts[0], pts[pts.len() - 1] - pts[0]) {
+            self.attach_edge_curve(mef.edge, Curve3::Line(l), true);
+        }
+        // Kill the spur bridge: the polygon becomes an inner ring.
+        let bridge = {
+            let radial = self
+                .edges
+                .get(spur_edge)
+                .map(|e| e.radial.clone())
+                .unwrap_or_default();
+            radial
+                .into_iter()
+                .find(|&fk| {
+                    self.fins
+                        .get(fk)
+                        .map(|f| self.loops.get(f.owner).map(|l| l.face) == Some(face))
+                        .unwrap_or(false)
+                })
+                .ok_or(TopoError::Precondition("imprint_ring: no bridge fin"))?
+        };
+        self.kemr(bridge)?;
+        if let Some((sk, sense)) = self.faces.get(face).and_then(|f| f.surface)
+            && let Some(pf) = self.faces.get_mut(pocket)
+        {
+            pf.surface = Some((sk, sense));
+        }
+        self.debug_validate();
+        Ok(())
+    }
+
+    /// Imprint an OPEN POLYLINE chain whose two END points lie on the
+    /// face's outer-loop edges and whose interior corners lie in the
+    /// face interior (the partial-overlap coincidence cuts of research
+    /// file 39 sec 1: the overlap boundary enters and leaves the
+    /// subject face through its boundary, cornering in between).
+    /// Surgery: split the boundary at the entry point, spur (mev)
+    /// through the interior corners, and close with a split_face to
+    /// the exit point: the proven spur-chain pattern of the setback
+    /// corner. Chain edges are straight and carry no curve geometry
+    /// (the planar-coincidence application).
+    pub fn imprint_open_polyline(
+        &mut self,
+        face: FaceKey,
+        pts: &[keel_math::vec::Vec3],
+        tol: f64,
+    ) -> Result<(), TopoError> {
+        if pts.len() < 2 {
+            return Err(TopoError::Precondition("imprint_polyline: too short"));
+        }
+        let lp = self
+            .faces
+            .get(face)
+            .and_then(|f| f.loops.first().copied())
+            .ok_or(TopoError::StaleKey)?;
+        let start_edge = self.boundary_edge_containing(lp, pts[0], tol)?;
+        let end_edge = self.boundary_edge_containing(lp, pts[pts.len() - 1], tol)?;
+        if start_edge == end_edge {
+            return Err(TopoError::Precondition(
+                "imprint_polyline: both ends on one edge (unsupported)",
+            ));
+        }
+        let se = self.split_edge(start_edge, pts[0])?;
+        let ee = self.split_edge(end_edge, pts[pts.len() - 1])?;
+        let mut prev = se.vertex;
+        let mut prev_pt = pts[0];
+        for &p in &pts[1..pts.len() - 1] {
+            let fin_prev = self.fin_ending_at_vertex(lp, prev)?;
+            let mv = self.mev(crate::euler::MevSite::AfterFin(fin_prev), p)?;
+            if let Ok(l) = keel_geom::curve::Line3::new(prev_pt, p - prev_pt) {
+                self.attach_edge_curve(mv.edge, Curve3::Line(l), true);
+            }
+            prev = mv.vertex;
+            prev_pt = p;
+        }
+        let fin_a = self.fin_ending_at_vertex(lp, prev)?;
+        let fin_b = self.fin_ending_at_vertex(lp, ee.vertex)?;
+        let split = self.split_face(fin_a, fin_b, None)?;
+        if let Ok(l) = keel_geom::curve::Line3::new(prev_pt, pts[pts.len() - 1] - prev_pt) {
+            self.attach_edge_curve(split.edge, Curve3::Line(l), true);
+        }
+        if let Some((sk, sense)) = self.faces.get(face).and_then(|f| f.surface)
+            && let Some(nf) = self.faces.get_mut(split.face_new)
+        {
+            nf.surface = Some((sk, sense));
+        }
+        self.debug_validate();
+        Ok(())
+    }
+
     /// True iff the closed planar `curve` crosses one of `face`'s
     /// boundary line edges (the periodic-surface case: an SSI circle/
     /// ellipse wrapping a cylinder crosses its vertical seam line). The

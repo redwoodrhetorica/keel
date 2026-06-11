@@ -299,6 +299,33 @@ impl Body {
         n_other: keel_math::vec::Vec3,
     ) -> OnSense {
         for f in self.face_keys() {
+            // The candidate's BOUNDED EXTENT must reach p (an inflated
+            // AABB guard): without it a distant point lying on the
+            // face's infinite carrier would read as coincident, which
+            // matters now that classification consults this test
+            // geometrically, before any winding band.
+            {
+                let pts = self.face_outer_loop_points(f);
+                if pts.is_empty() {
+                    continue;
+                }
+                let pad = 1e-6;
+                let mut lo = pts[0];
+                let mut hi = pts[0];
+                for q in &pts {
+                    lo = keel_math::vec::Vec3::new(lo.x.min(q.x), lo.y.min(q.y), lo.z.min(q.z));
+                    hi = keel_math::vec::Vec3::new(hi.x.max(q.x), hi.y.max(q.y), hi.z.max(q.z));
+                }
+                if p.x < lo.x - pad
+                    || p.x > hi.x + pad
+                    || p.y < lo.y - pad
+                    || p.y > hi.y + pad
+                    || p.z < lo.z - pad
+                    || p.z > hi.z + pad
+                {
+                    continue;
+                }
+            }
             // The face's surface must pass through p AND its normal be
             // parallel to n_other (a coincident carrier, not a transversal
             // face that merely contains p).
@@ -1005,20 +1032,28 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, tol: f64) -> Vec<(Fac
         }
         let class = match working.face_interior_point(face) {
             Some(p) => {
-                let w = other.generalized_winding_number(p);
-                if (w - 0.5).abs() < COINCIDENCE_BAND {
-                    // On the other body's boundary: resolve the
-                    // coincident-pair orientation (file 39 §1.4/§2.1) by
-                    // the sign of the two faces' outward normals.
-                    let sense = match working.face_outward_normal(face) {
-                        Some(n) => other.coincident_sense_at(p, n),
-                        None => OnSense::Unknown,
-                    };
-                    FaceClass::OnOther(sense)
-                } else if w > 0.5 {
-                    FaceClass::InsideOther
+                // GEOMETRIC coincidence FIRST (file 39 §1.4: the
+                // winding number is UNDEFINED on the boundary, so a
+                // sample lying on a coincident carrier must never be
+                // classified by its numerically noisy winding; the
+                // extent-guarded carrier test decides directly).
+                let geo_sense = match working.face_outward_normal(face) {
+                    Some(n) => other.coincident_sense_at(p, n),
+                    None => OnSense::Unknown,
+                };
+                if geo_sense != OnSense::Unknown {
+                    FaceClass::OnOther(geo_sense)
                 } else {
-                    FaceClass::OutsideOther
+                    let w = other.generalized_winding_number(p);
+                    if (w - 0.5).abs() < COINCIDENCE_BAND {
+                        // Near the boundary with no coincident
+                        // carrier found: the on-band fallback.
+                        FaceClass::OnOther(OnSense::Unknown)
+                    } else if w > 0.5 {
+                        FaceClass::InsideOther
+                    } else {
+                        FaceClass::OutsideOther
+                    }
                 }
             }
             None => FaceClass::Unknown,
@@ -2397,15 +2432,53 @@ fn preimprint_coincident_overlaps(a: &Body, b: &Body, tol: f64) -> Option<(Body,
                         subj: &[keel_math::vec::Vec3],
                         other: &[keel_math::vec::Vec3],
                         n: keel_math::vec::Vec3| {
-        for (s, e) in crate::coincident::overlap_interior_segments(subj, other, n) {
-            // PRE-BOUNDED segment per the open-imprint contract (a
-            // Line3 normalizes its direction, so t in [0,1] would not
-            // span the segment; this was a silent no-op for non-unit
-            // cuts).
-            if let Ok(seg) =
-                keel_geom::nurbs_curve::NurbsCurve::new(1, vec![0., 0., 1., 1.], vec![s, e], None)
-            {
-                let _ = body.imprint_open_curve(face, &keel_geom::curve::Curve3::Nurbs(seg), tol);
+        // The cuts CHAIN through corners interior to the subject face
+        // (research file 39 sec 1: the overlap boundary enters and
+        // leaves through the subject's boundary, cornering inside).
+        // Boundary-to-boundary single segments take the open-curve
+        // imprint (pre-bounded per the open-imprint contract: a Line3
+        // normalizes its direction, so t in [0,1] would not span the
+        // segment); multi-segment chains take the spur-chain polyline
+        // imprint. CLOSED chains (a fully enclosed overlap pocket)
+        // are skipped: the gates decline those honestly (follow-up).
+        let segs = crate::coincident::overlap_interior_segments(subj, other, n);
+        for chain in crate::coincident::chain_segments(&segs) {
+            let closed = chain.len() > 2 && (chain[0] - chain[chain.len() - 1]).norm() < 1e-9;
+            if closed {
+                // The ENCLOSED POCKET: the other face sits wholly
+                // inside this one; imprint the polygon as an inner
+                // ring with a pocket face. Orient the chain to wind
+                // WITH the host's outer loop: the ring (the kemr back
+                // cycle) then winds opposite, as an inner ring must,
+                // making the rim's radial pairing deterministic.
+                let mut ring: Vec<keel_math::vec::Vec3> = chain[..chain.len() - 1].to_vec();
+                let signed = |pts: &[keel_math::vec::Vec3]| -> f64 {
+                    let mut s = keel_math::vec::Vec3::ZERO;
+                    for i in 0..pts.len() {
+                        let p = pts[i];
+                        let q = pts[(i + 1) % pts.len()];
+                        s = s + p.cross(q);
+                    }
+                    s.dot(n)
+                };
+                if signed(subj) * signed(&ring) < 0.0 {
+                    ring.reverse();
+                }
+                let _ = body.imprint_closed_polyline(face, &ring);
+                continue;
+            }
+            if chain.len() == 2 {
+                if let Ok(seg) = keel_geom::nurbs_curve::NurbsCurve::new(
+                    1,
+                    vec![0., 0., 1., 1.],
+                    vec![chain[0], chain[1]],
+                    None,
+                ) {
+                    let _ =
+                        body.imprint_open_curve(face, &keel_geom::curve::Curve3::Nurbs(seg), tol);
+                }
+            } else {
+                let _ = body.imprint_open_polyline(face, &chain, tol);
             }
         }
     };
@@ -3550,7 +3623,41 @@ fn imprint_operand(
     // operand owns the contact, so this face must not re-imprint it. Only
     // the interior portion (the real cut) survives to split the face.
     for (face, members) in groups.values_mut() {
-        let bnd = working.face_outer_loop_points(*face);
+        // EVERY loop's polygon counts as boundary, rings included: a
+        // pre-imprinted pocket rim (the enclosed-overlap coincidence)
+        // is an INNER ring, and seams lying on it are already edges of
+        // this face exactly like outer-boundary contact.
+        let mut loops_bnd: Vec<Vec<Vec3>> = Vec::new();
+        for lk in working
+            .faces
+            .get(*face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default()
+        {
+            let Some(entry) = working.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut poly = Vec::new();
+            let mut cur = entry;
+            loop {
+                if let Some(v) = working.fin_start_vertex(cur)
+                    && let Some(x) = working.vertices.get(v)
+                {
+                    poly.push(x.point);
+                }
+                let Some(next) = working.fins.get(cur).map(|f| f.next) else {
+                    break;
+                };
+                cur = next;
+                if cur == entry {
+                    break;
+                }
+            }
+            if poly.len() >= 2 {
+                loops_bnd.push(poly);
+            }
+        }
+        let bnd = loops_bnd.first().cloned().unwrap_or_default();
         if bnd.len() < 3 {
             continue;
         }
@@ -3567,9 +3674,12 @@ fn imprint_operand(
             continue;
         }
         let on_boundary = |p: Vec3| -> bool {
-            let m = bnd.len();
-            (0..m)
-                .map(|i| seg_dist3(p, bnd[i], bnd[(i + 1) % m]))
+            loops_bnd
+                .iter()
+                .flat_map(|poly| {
+                    let m = poly.len();
+                    (0..m).map(move |i| seg_dist3(p, poly[i], poly[(i + 1) % m]))
+                })
                 .fold(f64::INFINITY, f64::min)
                 <= etol
         };
@@ -4875,6 +4985,81 @@ mod tests {
         assert!(!cf.salvaged, "beyond-fuzz contact must not snap");
         let sf = rf.body.regions.iter().filter(|(_, r)| r.solid).count();
         assert_eq!(sf, 2);
+    }
+
+    #[test]
+    fn partial_touch_booleans_are_clean() {
+        // Dossier 29 M3 / dossier 39 sec 1: PARTIAL face-overlap
+        // contact (B abuts A's wall offset by half in both cross
+        // axes, so the overlap-boundary cuts CHAIN through a corner
+        // interior to each wall). The spur-chain polyline imprint
+        // splits both walls into uniform fragments and the Requicha
+        // tables produce exact clean answers: empty intersection,
+        // identity differences, the connected partial-abutment union.
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::new(1.0, 0.5, 0.5), 1.0, 1.0, 1.0).unwrap();
+        let i = boolean(&a, &b, BoolOp::Intersection, 1e-7).unwrap();
+        assert_eq!(
+            i.body.face_keys().len(),
+            0,
+            "partial touch intersects empty"
+        );
+        let d = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
+        let vd = d.body.mass_properties().unwrap().volume;
+        assert!((vd - 1.0).abs() < 1e-9, "A - B {vd} != A");
+        let d2 = boolean(&b, &a, BoolOp::Difference, 1e-7).unwrap();
+        let v2 = d2.body.mass_properties().unwrap().volume;
+        assert!((v2 - 1.0).abs() < 1e-9, "B - A {v2} != B");
+        let u = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
+        assert!(u.body.validate().is_ok(), "partial-abutment union invalid");
+        let (vu, mu) = (
+            u.body.mass_properties().unwrap().volume,
+            u.body.mesh_volume(),
+        );
+        assert!(
+            (vu - 2.0).abs() < 1e-9 && (mu - 2.0).abs() < 1e-9,
+            "partial-abutment union {vu}/{mu} != 2"
+        );
+    }
+
+    #[test]
+    fn enclosed_pocket_touch_booleans_are_clean() {
+        // The ENCLOSED-POCKET coincidence: a small box stands on a big
+        // box's top face, its mating face strictly inside the host
+        // face (the overlap boundary is a closed ring, never reaching
+        // the host's edges). The ring imprint splits the host wall
+        // into annulus + pocket; the Requicha tables then give exact
+        // clean answers for all three ops.
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 3.0, 3.0, 1.0).unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::new(1.0, 1.0, 1.0), 1.0, 1.0, 1.0).unwrap();
+        let i = boolean(&a, &b, BoolOp::Intersection, 1e-7).unwrap();
+        assert_eq!(i.body.face_keys().len(), 0, "pocket touch intersects empty");
+        let d = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
+        let vd = d.body.mass_properties().unwrap().volume;
+        assert!((vd - 9.0).abs() < 1e-9, "A - B {vd} != A");
+        let u = boolean(&a, &b, BoolOp::Union, 1e-7).unwrap();
+        assert!(u.body.validate().is_ok(), "pocket union invalid");
+        let (vu, mu) = (
+            u.body.mass_properties().unwrap().volume,
+            u.body.mesh_volume(),
+        );
+        assert!(
+            (vu - 10.0).abs() < 1e-9 && (mu - 10.0).abs() < 1e-9,
+            "pocket union {vu}/{mu} != 10"
+        );
+        // The host wall survives as an annulus: a face with an inner
+        // ring around the pocket rim.
+        let ringed = u
+            .body
+            .face_keys()
+            .into_iter()
+            .filter(|&f| u.body.faces.get(f).map(|x| x.loops.len()).unwrap_or(0) > 1)
+            .count();
+        assert_eq!(ringed, 1, "one annular host wall");
     }
 
     #[test]

@@ -46,6 +46,13 @@ fn three_bucket_boolean_oracle() {
     let (mut pass, mut decline, mut wrong) = (0usize, 0usize, 0usize);
     let (mut t_pass, mut t_decline, mut t_wrong) = (0usize, 0usize, 0usize);
     let mut first_wrong = String::new();
+    let mut breakdown: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    let mut tally = |lane: &str, op: BoolOp, delta: f64, outcome: &str| {
+        *breakdown
+            .entry(format!("{lane} {op:?} d{delta:+.0e} {outcome}"))
+            .or_insert(0) += 1;
+    };
     for trial in 0..n {
         let mut v = [0.0f64; 12];
         for x in v.iter_mut() {
@@ -107,7 +114,8 @@ fn three_bucket_boolean_oracle() {
         };
         let reference = interval_ref(&b0, &bd);
         let judge = |result: Result<&keel_topo::boolean::BoolResult, ()>,
-                     reference: f64|
+                     reference: f64,
+                     slack: f64|
          -> (bool, Option<String>) {
             // A Coincident fault is an informational note ("handled a
             // coincident contact"), not a partial failure: such
@@ -127,15 +135,19 @@ fn three_bucket_boolean_oracle() {
                     // tolerance-scale sliver faces reaches ~1e-8
                     // relative; a genuinely dropped face is feature-
                     // scale, many orders above 1e-7).
-                    let tol = 1e-9 * (1.0 + reference);
-                    let mesh_tol = 1e-7 * (1.0 + reference);
+                    let tol = 1e-9 * (1.0 + reference) + slack;
+                    let mesh_tol = 1e-7 * (1.0 + reference) + slack;
                     let mass = res.body.mass_properties().map(|m| m.volume);
                     let mesh = res.body.mesh_volume();
                     let ok = match mass {
                         Ok(m) => {
                             (m - reference).abs() <= tol && (mesh - reference).abs() <= mesh_tol
                         }
-                        Err(_) => reference <= 1e-9 && mesh.abs() <= 1e-9,
+                        // The clean empty body: right when the
+                        // reference is empty up to the contact slack
+                        // (a sub-tolerance sliver legitimately glues
+                        // to the empty touching configuration).
+                        Err(_) => reference <= 1e-9 + slack && mesh.abs() <= 1e-9 + slack,
                     };
                     if ok {
                         (true, None)
@@ -150,37 +162,49 @@ fn three_bucket_boolean_oracle() {
                 }
             }
         };
-        // STRICT lane: judged against the literal configuration; a
-        // CONTACT within the op tolerance may legitimately resolve as
-        // the coincidence-snapped configuration instead (the boolean's
-        // own tolerance contract; the Fang-Bruderlin tie), so both
-        // references are accepted there.
-        let snapped_reference = if contact && delta.abs() <= 1e-7 {
-            let mut b0s = b0;
-            let mut bds = bd;
-            b0s[axis] = a0[axis] + ad[axis];
-            bds[axis] = bd[axis] + delta;
-            Some(interval_ref(&b0s, &bds))
+        // STRICT lane: judged against the literal configuration with
+        // the EPSILON-SOLIDITY allowance (Qi-Shapiro): a contact
+        // within the op tolerance may legitimately resolve as any
+        // coincidence-glued configuration, all of which lie within
+        // op_tol x contact_area of the literal volume.
+        let contact_slack = if contact && delta.abs() <= 1e-7 {
+            // The glue may grow/shrink EITHER mating face onto the
+            // other's plane: the volume moves by up to op_tol times
+            // the larger FULL face area (not just the overlap).
+            let face_area =
+                |d: &[f64; 3]| -> f64 { (0..3).filter(|&i| i != axis).map(|i| d[i]).product() };
+            2e-7 * (1.0 + face_area(&ad).max(face_area(&bd)))
         } else {
-            None
+            0.0
         };
         let strict = boolean(&a, &b, op, 1e-7);
         match &strict {
-            Err(_) => decline += 1,
-            Ok(res) => {
-                let lit = judge(Ok(res), reference);
-                let alt = snapped_reference.map(|r| judge(Ok(res), r));
-                match (lit, alt) {
-                    ((true, _), _) | (_, Some((true, _))) => pass += 1,
-                    ((false, None), _) => decline += 1,
-                    ((false, Some(msg)), _) => {
-                        wrong += 1;
-                        if first_wrong.is_empty() {
-                            first_wrong = format!("strict trial {trial} {msg}");
-                        }
-                    }
+            Err(_) => {
+                decline += 1;
+                if contact {
+                    tally("strict", op, delta, "decline");
                 }
             }
+            Ok(res) => match judge(Ok(res), reference, contact_slack) {
+                (true, _) => {
+                    pass += 1;
+                    if contact {
+                        tally("strict", op, delta, "pass");
+                    }
+                }
+                (false, None) => {
+                    decline += 1;
+                    if contact {
+                        tally("strict", op, delta, "decline");
+                    }
+                }
+                (false, Some(msg)) => {
+                    wrong += 1;
+                    if first_wrong.is_empty() {
+                        first_wrong = format!("strict trial {trial} {msg}");
+                    }
+                }
+            },
         }
         // TOLERANT lane on contact trials: judged against the SNAPPED
         // configuration (face-snap semantics: B's mating face moves
@@ -203,8 +227,11 @@ fn three_bucket_boolean_oracle() {
                 }
                 Ok((res, conf)) => {
                     let salvage_ok = conf.salvaged == (delta != 0.0);
-                    match judge(Ok(&res), ref_snapped) {
-                        (true, _) if salvage_ok => t_pass += 1,
+                    match judge(Ok(&res), ref_snapped, 0.0) {
+                        (true, _) if salvage_ok => {
+                            t_pass += 1;
+                            tally("tolerant", op, delta, "pass");
+                        }
                         (true, _) => {
                             t_wrong += 1;
                             if first_wrong.is_empty() {
@@ -214,7 +241,10 @@ fn three_bucket_boolean_oracle() {
                                 );
                             }
                         }
-                        (false, None) => t_decline += 1,
+                        (false, None) => {
+                            t_decline += 1;
+                            tally("tolerant", op, delta, "decline");
+                        }
                         (false, Some(msg)) => {
                             t_wrong += 1;
                             if first_wrong.is_empty() {
@@ -229,5 +259,8 @@ fn three_bucket_boolean_oracle() {
     eprintln!(
         "three-bucket oracle: N {n}: strict PASS {pass} / DECLINE {decline} / WRONG {wrong}; tolerant PASS {t_pass} / DECLINE {t_decline} / WRONG {t_wrong}"
     );
+    for (k, v) in &breakdown {
+        eprintln!("  contact breakdown {k}: {v}");
+    }
     assert_eq!(wrong + t_wrong, 0, "WRONG must be zero: {first_wrong}");
 }
