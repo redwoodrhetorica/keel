@@ -5891,3 +5891,34 @@ like scan_wrong.rs brings it to ~2.6 h across 10 cores (queued before gate night
 ORDERING DECISION: optimization passes run BEFORE the gate (the gate certifies a commit;
 any post-gate change voids it; a faster kernel also raises soak executions/sec), and the
 4 WRONGs are fixed before everything.
+
+## Addendum 188: the first WRONGs fixed; ear-clip signed-fan completion (2026-06-11)
+
+THE CLASS (localized by tests/scan_wrong.rs, 10 shards over the 100k window): trials
+15219 / 48579 / 70359 / 88959, all Union with a 1e-7 sub-tolerance PENETRATION on one
+axis. In every one the MASS was exact to 1e-14 against the interval reference; only the
+MESH overcounted (4e-4 to 9e-4 relative). The boolean built the right body; the
+independent tessellated check was the liar.
+
+DIAGNOSIS (Newell-flux face probe): one face per body, a CONCAVE fragment of the mating
+face (the region outside the penetrating tool''s footprint) carrying a vertex 1e-7 from
+a corner, tessellated 6 vertices into TWO triangles. earclip_2d''s in_tri veto saw the
+1e-7 twin ON every candidate ear''s edge, found no clean ear, and the `None => break`
+arm SILENTLY emitted the partial triangulation, dropping the remainder''s area (0.0053
+at lever arm 10: the 0.018 volume excess).
+
+FIX (tessellate.rs): when clipping cannot finish (no clean ear, or the degeneracy
+guard), the remaining polygon is completed as a SIGNED FAN from its first remaining
+vertex. By the shoelace identity a fan from any vertex reproduces a simple polygon''s
+signed measure EXACTLY, concave or degenerate, so every quantitative consumer (mesh
+volume, flux, generalized winding) is exact; only unsigned raster coverage of
+pathological remainders stays approximate. No silent area loss is possible by
+construction.
+
+REHEARSAL RERUN (sharded x14 via the new KEEL_ORACLE_START instrument, ~13 min wall):
+strict PASS 95130 / DECLINE 4870 / WRONG 0; tolerant PASS 25000 / DECLINE 0 / WRONG 0.
+The fix also converted 40 former mesh-judge declines into passes. The four trials are
+pinned in tail_repro.rs (strict_mesh_wrong_regression, mass==mesh within 1e-7).
+
+CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 + 2 green; fuzz_boolean +
+fuzz_cyl_boolean merge soak (tessellation changed): counts below.

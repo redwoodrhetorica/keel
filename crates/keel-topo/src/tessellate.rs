@@ -1093,7 +1093,7 @@ fn earclip_2d(p: &[[f64; 2]]) -> Vec<[usize; 3]> {
     while idx.len() > 3 {
         guard += 1;
         if guard > n * n + 16 {
-            break; // degenerate / self-intersecting: bail with a partial fan
+            break; // degenerate / self-intersecting: SIGNED-FAN the rest below
         }
         let m = idx.len();
         let mut found = None;
@@ -1123,11 +1123,26 @@ fn earclip_2d(p: &[[f64; 2]]) -> Vec<[usize; 3]> {
                 tris.push([idx[(i + m - 1) % m], idx[i], idx[(i + 1) % m]]);
                 idx.remove(i);
             }
-            None => break,
+            None => break, // no clean ear: SIGNED-FAN the rest below
         }
     }
     if idx.len() == 3 {
         tris.push([idx[0], idx[1], idx[2]]);
+    } else if idx.len() > 3 {
+        // No clean ear remained (a tolerance-scale imprint leaves a
+        // vertex 1e-7 from a corner, and that twin sits ON every
+        // candidate ear's edge, so in_tri vetoes them all; the old
+        // silent partial output DROPPED the remainder's area: the
+        // oracle-trial-15219 mesh wrong-positive, a 6-gon emitting 2
+        // triangles). Finish with a SIGNED FAN from the first
+        // remaining vertex: by the shoelace identity a fan from any
+        // vertex reproduces a simple polygon's signed measure
+        // EXACTLY, concave or degenerate, so mesh volume, flux, and
+        // winding consumers are exact; only unsigned raster coverage
+        // of pathological remainders is approximate.
+        for i in 1..idx.len() - 1 {
+            tris.push([idx[0], idx[i], idx[i + 1]]);
+        }
     }
     tris
 }
