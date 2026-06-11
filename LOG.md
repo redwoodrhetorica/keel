@@ -5671,3 +5671,51 @@ sub-tolerance sliver glues to the empty touching configuration legitimately).
 CI: fmt; clippy -D warnings; workspace 133 + 77 + 256 green; fuzz_boolean soak: count below.
 Remaining tolerant declines (13/500): mixed sliver-assembly shapes; with curved-surface
 prepare (cylinder/cone mates) these are the M4 candidates.
+
+## Addendum 182 (2026-06-10, attended): GRACEFUL DEGRADATION M4: the pin-in-hole class, and the wrong-positive it unmasked
+
+Branch graceful-m4. The canonical CAD mating case, ORACLE FIRST: a plate with a through hole
+and the pin that exactly fills it. The oracle exposed a chain of SEVEN defects, the deepest a
+genuine WRONG-POSITIVE CLASS that predates this leg:
+
+1. THE DRILL DIFFERENCE WAS WRONG: boolean(plate, drill, Difference) returned a body whose
+   hole lateral spanned the drill''s FULL height (sticking out of the plate), passing only
+   because the curved-result gate (positive tessellated volume) is weak. Three causes:
+   (a) the drill''s seamless tube lateral (two closed rims, no seam line) made the wrap-circle
+   crossing imprint silently no-op, and the interior-ring imprint is topologically wrong for
+   a non-contractible wrap: NEW synthesize_lateral_seam (mekr between the rim seam vertices)
+   gives the crossing imprint its seam; (b) the multi-cut seam relocation was PLANAR-only:
+   NEW curved_face_containing relocates later components onto descendant cylinder bands;
+   (c) two massprops gaps hid the shape: face_covers_closed_surface short-circuits only for
+   genuinely closed surfaces now (a tube lateral is a bounded band), and the pcurve-bounds
+   path gained the periodic u-clamp plus the vertex-extent staleness witness (a fragment
+   carrying its PARENT''s pcurves read v [0,2] while its rims sit at [0,1]).
+   The drilled plate is now ANALYTICALLY EXACT: mass == 16 - pi at 1e-9.
+
+2. THE MATED-CYLINDER CLASS: coaxial equal-radius laterals are the curved on-on coincidence
+   (dossier 39 sec 5), not a crossing: seam_curves marks the pair with the informational
+   Coincident note instead of UnassemblableSeam; rim-contact SSI circles lying ON existing
+   boundary edges are spurious per sec 3.2 (NEW curve_on_face_boundary_edges filter).
+
+3. THE VERTEX-ONLY TRAP, THIRD AND FOURTH SIGHTINGS: the carrier AABB guard and
+   planar_face_contains both built extents/polygons from loop VERTICES, which a
+   circle-bounded face does not have (one seam vertex per rim): both now sample fin CURVES.
+   And the M1 no-interaction containment probe used raw vertices, ALL of which lie on the
+   other body''s boundary for a mated pin (the union returned the holed plate as "B inside
+   A"): the probe now uses guaranteed-interior points (face interior nudged inward by 1e-3
+   of the shortest edge).
+
+4. GEOMETRIC-FIRST DIVIDENDS (M4 fixes from the M3 groundwork): real point-in-face carrier
+   containment (a pin cap TILING the plate annulus shares a carrier and an AABB but not a
+   point) and the dossier-39 TWO-SIDED band test (the cap centre sits at the hole mouth
+   where the one-point winding is noise; both side-limits outside = Outside).
+
+Test pin_in_hole_booleans_are_clean: holed plate exact (16 - pi at 1e-9, analytic), union =
+the SOLID box (mass == mesh == 16 at 1e-9, zero surviving cylinder faces), difference = the
+holed plate, intersection = empty. ORACLE (N = 2000): unchanged at strict 1892/108/0,
+tolerant 487/13/0 (the box lanes do not exercise cylinders; the pin tests are the cylinder
+gate). CI: fmt; clippy -D warnings; workspace 133 + 77 + 257 green; fuzz_boolean +
+fuzz_cyl_boolean soak (boolean + imprint + massprops changed): counts below.
+FOLLOW-UP NOTED: the curved-result self-consistency gate stays weak (positive tessellated
+volume only); extending mass==mesh to curved bodies within a chordal band is the next
+honesty-net upgrade and would have caught defect 1 directly.

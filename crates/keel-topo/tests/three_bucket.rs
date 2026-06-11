@@ -244,6 +244,12 @@ fn three_bucket_boolean_oracle() {
                         (false, None) => {
                             t_decline += 1;
                             tally("tolerant", op, delta, "decline");
+                            if std::env::var("KEEL_ORACLE_DEBUG").is_ok() {
+                                eprintln!(
+                                    "t-judge-decline {trial} {op:?} d{delta:+.0e} faults {:?} a {a0:?}+{ad:?} b {b0:?}+{bd:?}",
+                                    res.faults
+                                );
+                            }
                         }
                         (false, Some(msg)) => {
                             t_wrong += 1;

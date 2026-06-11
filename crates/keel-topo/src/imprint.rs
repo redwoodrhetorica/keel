@@ -321,6 +321,67 @@ impl Body {
         Ok(())
     }
 
+    /// SYNTHESIZE the missing lateral seam on a TUBE face (a cylinder
+    /// band bounded by two closed rims and nothing else, the primitive
+    /// construction): bridge the rims' seam vertices with the ruling
+    /// edge (mekr), giving wrap-circle imprints a seam line to cross.
+    /// Without it the drill-difference imprint silently no-opped (the
+    /// crossing imprint found no seam; the interior-ring imprint is
+    /// topologically wrong for a non-contractible wrap) and the weak
+    /// curved-result gate let the unsplit body through.
+    pub(crate) fn synthesize_lateral_seam(&mut self, face: FaceKey) -> Result<(), TopoError> {
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .ok_or(TopoError::StaleKey)?;
+        if loops.len() != 2 {
+            return Err(TopoError::Precondition(
+                "seam synthesis: needs a two-rim tube face",
+            ));
+        }
+        let rim_fin = |body: &Self, lk: crate::entity::LoopKey| -> Option<FinKey> {
+            let entry = body.loops.get(lk)?.fin?;
+            let fin = body.fins.get(entry)?;
+            // A rim loop is a single closed edge.
+            (fin.next == entry && body.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true))
+                .then_some(entry)
+        };
+        let f0 =
+            rim_fin(self, loops[0]).ok_or(TopoError::Precondition("seam synthesis: rim loop 0"))?;
+        let f1 =
+            rim_fin(self, loops[1]).ok_or(TopoError::Precondition("seam synthesis: rim loop 1"))?;
+        let v_of = |body: &Self, fk: FinKey| -> Option<Vec3> {
+            let e = body.fins.get(fk)?.edge;
+            let v = body.edges.get(e)?.bounds.0;
+            Some(body.vertices.get(v)?.point)
+        };
+        let p0 = v_of(self, f0).ok_or(TopoError::StaleKey)?;
+        let p1 = v_of(self, f1).ok_or(TopoError::StaleKey)?;
+        // The seam vertices must share a ruling (the primitive puts
+        // both rim seams at the frame's zero angle).
+        let d = p1 - p0;
+        let axis = match self.face_surface3(face) {
+            Some(keel_geom::surface::Surface3::Cylinder(c)) => c.frame.z,
+            _ => {
+                return Err(TopoError::Precondition(
+                    "seam synthesis: not a cylinder lateral",
+                ));
+            }
+        };
+        if d.cross(axis).norm() > 1e-6 * d.norm().max(1.0) {
+            return Err(TopoError::Precondition(
+                "seam synthesis: rim seams not on one ruling",
+            ));
+        }
+        let out = self.mekr(f0, f1)?;
+        if let Ok(l) = keel_geom::curve::Line3::new(p0, d) {
+            self.attach_edge_curve(out.edge, Curve3::Line(l), true);
+        }
+        self.debug_validate();
+        Ok(())
+    }
+
     /// True iff the closed planar `curve` crosses one of `face`'s
     /// boundary line edges (the periodic-surface case: an SSI circle/
     /// ellipse wrapping a cylinder crosses its vertical seam line). The

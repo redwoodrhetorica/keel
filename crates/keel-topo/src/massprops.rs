@@ -702,18 +702,22 @@ impl Body {
         m: &mut Moments,
     ) -> Result<(), TopoError> {
         let tau = core::f64::consts::TAU;
-        let ((u0, u1), (v0, v1)) = if self.face_covers_closed_surface(fk) {
+        // Full-coverage short-circuits only for genuinely CLOSED
+        // surfaces. An OPEN surface (cylinder/cone) can read as
+        // "covers" when its rim circles are per-face closed edges
+        // (the drilled-plate lateral, whose rims pair with the cap
+        // annuli as coincident closed edges rather than shared ones):
+        // those faces are bounded bands and take the bounds path.
+        let closed_cover = self.face_covers_closed_surface(fk)
+            && matches!(surf, Surface3::Sphere(_) | Surface3::Torus(_));
+        let ((u0, u1), (v0, v1)) = if closed_cover {
             match surf {
                 Surface3::Sphere(_) => (
                     (0.0, tau),
                     (-core::f64::consts::FRAC_PI_2, core::f64::consts::FRAC_PI_2),
                 ),
                 Surface3::Torus(_) => ((0.0, tau), (0.0, tau)),
-                _ => {
-                    return Err(TopoError::Precondition(
-                        "full-coverage face of an open surface",
-                    ));
-                }
+                _ => unreachable!(),
             }
         } else {
             // Bounds from the pcurve polylines, GUARDED for staleness:
@@ -728,6 +732,13 @@ impl Body {
             let mut lo = (f64::INFINITY, f64::INFINITY);
             let mut hi = (f64::NEG_INFINITY, f64::NEG_INFINITY);
             let mut stale = false;
+            // Vertex-projected v-extent: the second staleness witness.
+            // A fragment can carry its PARENT's pcurves whose endpoints
+            // happen to sit on fin endpoints of sibling fins (the
+            // drilled-plate lateral kept the whole drill's [0, 2] span
+            // while its own rims sit at [0.5, 1.5]): the pcurve box
+            // must not exceed where the boundary vertices actually are.
+            let mut vert_v = (f64::INFINITY, f64::NEG_INFINITY);
             for &lk in &face.loops {
                 let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
                     continue;
@@ -763,11 +774,31 @@ impl Body {
                             hi = (hi.0.max(p.x), hi.1.max(p.y));
                         }
                     }
+                    // Vertex witness for the v-extent guard.
+                    for vk in [self.fin_start_vertex(cur), self.fin_end_vertex(cur)] {
+                        if let Some(p) = vk.and_then(|v| self.vertices.get(v)).map(|x| x.point)
+                            && let Ok(pr) = surf.project(p)
+                        {
+                            vert_v = (vert_v.0.min(pr.v), vert_v.1.max(pr.v));
+                        }
+                    }
                     cur = fin.next;
                     if cur == entry {
                         break;
                     }
                 }
+            }
+            // PERIODIC u: the pcurve endpoint box can span two
+            // revolutions when the two rims parameterize opposite
+            // turns (the drilled-plate lateral: one rim [-tau, 0],
+            // the other [0, tau]); a face never covers more than one.
+            if hi.0 - lo.0 > tau {
+                hi.0 = lo.0 + tau;
+            }
+            // The pcurve box exceeding the vertex extent is the second
+            // staleness witness (parent pcurves on a kept fragment).
+            if vert_v.0.is_finite() && (lo.1 < vert_v.0 - 1e-6 || hi.1 > vert_v.1 + 1e-6) {
+                stale = true;
             }
             if stale || !(lo.0.is_finite() && hi.0.is_finite()) {
                 // Stale or missing pcurves: the PROJECTED-BOUNDS rung
