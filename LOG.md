@@ -5505,3 +5505,28 @@ THE COMPLETION-GATE PROCEDURE (documented for the scheduled run, out of single-s
    Gate: WRONG == 0. Record PASS/DECLINE counts in the LOG.
 CI: fmt; clippy -D warnings; workspace 133 + 77 + 251 green (+2 Merge tests; the oracle
 ignored by default); fuzz_boolean soak: count below.
+
+## Addendum 178 (2026-06-10, attended): completion-gate INTERMEDIATE EXECUTION, all clean
+
+The two Add.177 instruments ran at intermediate scale on master 3907a76 (+ f690570, the
+runnable soak script fuzz/soak_sectors.sh):
+
+1. THREE-BUCKET ORACLE, N = 100,000 (release, 4259 s, ~42 ms/trial):
+   PASS 41192 / DECLINE 58808 / WRONG 0.
+   The WRONG == 0 gate holds at fifty times the smoke scale; the decline share (58.8 pct,
+   matching the N=2000 smoke) is dominated by disjoint and degenerate-contact pairs
+   declining honestly. Reducing it is visible quality work, not a gate failure.
+
+2. SEVEN-SECTOR SOAK, 20 min/target, ZERO crashes:
+   cyl_boolean 1623 runs, nurbs_boolean 921, imprint 1947, topo_ops 459456,
+   winding 2896879, pmc 3674822, ssi 273203656.
+
+REMAINING for the full gate (the scheduled overnight run, user-initiated):
+   bash fuzz/soak_sectors.sh                # all 15 targets x 40 min, ~10 h
+   KEEL_ORACLE_N=1000000 cargo test --release -p keel-topo --test three_bucket -- --ignored --nocapture
+With this, every item of the queued post-parity program (Add.163) is BUILT and gated at
+intermediate scale: the audit milestones (153-162), the queued-depth leg (164-169), the
+dossier-56 overflow handlers (170-174), the dossier-53 corner ladder M1-M3 (175-176), and
+Rung 5 Merge + the gate instruments (177). The declined tails (dossier-53 M4-M6, the
+mixed-dimension Merge instances, ov_smooth, the multi-face cap, crossing-seam imprint) are
+recorded follow-ups, each behind an honest decline.
