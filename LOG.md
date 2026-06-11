@@ -5966,3 +5966,7 @@ ms/trial with instruments paying for themselves. Oracle N=2000: strict 1911/89/0
 strict 95604/4396/0 (was 95130/4870/0: +474), tolerant 25000/0/0, WRONG = 0 everywhere.
 Suite 133+77+258+2 green; clippy clean. NEXT (OPT-M3): imprint_operand x2 (1.30 s of
 the remaining 2.1 s), residual face_interior_point volume (10.1k calls), classify.
+
+SOAK COUNTS (the OPT-M2 merge gate, 2026-06-11): fuzz_boolean 2865 runs / 601 s clean
+(was 1813 pre-optimization: the 8x visible in fuzz throughput); fuzz_cyl_boolean 698
+runs / 602 s clean.
