@@ -779,6 +779,35 @@ impl Body {
                 ));
             }
         }
+        // EXACT planar polyline pcurve (OPT-M3): a degree-1 NURBS on a
+        // planar carrier maps control-point-for-control-point under the
+        // affine UV projection, with the SAME knot vector: the polyline
+        // is exact in UV. The general fit below escalates control
+        // points chasing the polyline's C0 corners with a cubic
+        // (~173 ms per closed seam ring at 1e-7) for a strictly worse,
+        // approximate result.
+        if let (Curve3::Nurbs(n), keel_geom::surface::Surface3::Plane(pl)) = (curve, surf)
+            && n.degree() == 1
+            && !n.is_rational()
+        {
+            let o = pl.frame.origin;
+            let uv_pts: Vec<Vec3> = n
+                .control_points()
+                .iter()
+                .map(|p| {
+                    let w = *p - o;
+                    Vec3::new(w.dot(pl.frame.x), w.dot(pl.frame.y), 0.0)
+                })
+                .collect();
+            if let Ok(puv) = keel_geom::nurbs_curve::NurbsCurve::new(
+                1,
+                n.knot_vector().knots().to_vec(),
+                uv_pts,
+                None,
+            ) {
+                return Ok((puv, sample(0.0)));
+            }
+        }
         let fit = keel_geom::fit::pcurve_on_analytic(curve, surf, 64, tol.max(1e-7))
             .map_err(|_| TopoError::Precondition("imprint: pcurve fit failed"))?;
         Ok((fit.curve, sample(0.0)))

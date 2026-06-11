@@ -5970,3 +5970,43 @@ the remaining 2.1 s), residual face_interior_point volume (10.1k calls), classif
 SOAK COUNTS (the OPT-M2 merge gate, 2026-06-11): fuzz_boolean 2865 runs / 601 s clean
 (was 1813 pre-optimization: the 8x visible in fuzz throughput); fuzz_cyl_boolean 698
 runs / 602 s clean.
+
+## Addendum 190: OPT-M3, the 100x (2026-06-11)
+
+Three slices, each found by descending the profiler one level, each replacing an
+approximation with an EXACT closed form (the optimization and the exactness doctrine
+turn out to be the same move):
+
+1. EXACT PLANAR SEGMENT PCURVES (attach_seam_geometry): a straight degree-1 seam on a
+planar carrier projects to the straight UV segment through its two projected endpoints.
+The 64-sample NURBS fit it replaces was HALF the cost of every box imprint, and
+approximate. 10.7 -> 7.7 ms/trial.
+
+2. STRAIGHT-FIN POLYGONS (face_interior_point): straight fins contribute their start
+vertex to the UV polygon instead of 16 sampled-and-projected points; the chord polygon
+is identical minus collinear interior points. face_interior_point 691 -> 41 ms,
+classify_faces 655 -> 71 ms. 7.7 -> 4.4 ms/trial.
+
+3. EXACT PLANAR POLYLINE PCURVES (curve_pcurve_on): a degree-1 non-rational NURBS on a
+plane maps control-point-for-control-point under the affine UV projection with the SAME
+knot vector. The general fit was escalating a CUBIC against the polyline''s C0 corners
+at 1e-7 (~173 ms per closed seam ring, the contact-penetration class) for an
+approximate result the projection gives exactly. closed-imprint 691 -> 0.1 ms.
+4.4 -> 0.9 ms/trial.
+
+SCOREBOARD: 90.0 -> 0.9 ms/trial on the oracle workload, 100x in one day, and the
+strict boolean alone now sits UNDER the 1 ms Parasolid sky target ON THIS WORKLOAD.
+Honesty about that qualifier: the workload is box-heavy; the curved benchmark (pin,
+drill, lens, fillet bodies) is OPT-M4 and is required before any claim survives
+contact with reality. Remaining box-scale residuals (classify 71 ms, interior-point
+41 ms over 10.1k calls) are diminishing returns next to that.
+
+BUCKETS: bit-identical through all three slices (N=2000 strict 1911/89/0, tolerant
+500/0/0; N=100000 strict 95604/4396/0, tolerant 25000/0/0; WRONG = 0 everywhere).
+Suite 133+77+258+2 green; clippy clean. The pcurve fast paths IMPROVE geometry
+(exact where fitted); the sub-profilers stay in-tree.
+
+SOAK COUNTS (the OPT-M3 merge gate, 2026-06-11): fuzz_boolean 9495 runs / 601 s clean
+(1813 pre-leg: the 100x bounded to 5.2x by fuzz-harness overhead); fuzz_cyl_boolean 644
+runs / 607 s clean and FLAT versus prior soaks: the curved path gained nothing from the
+planar fast paths, which is OPT-M4''s thesis in one number.

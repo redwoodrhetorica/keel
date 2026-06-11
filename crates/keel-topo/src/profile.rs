@@ -18,6 +18,16 @@ pub(crate) static INTERIOR_PT_CALLS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static SEAM_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static SHORTCUT_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static IMPRINT_NS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static IMPRINT_FILTER_NS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static IMPRINT_PRESPLIT_NS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static IMPRINT_DISPATCH_NS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static IMPRINT_OPS_NS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static IMPRINT_OPS_CALLS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static CLOSED_IMPRINT_NS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static RING_SUBDIV_NS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static IMPRINT_MEV_NS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static IMPRINT_SPLITF_NS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static IMPRINT_SEAMGEO_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static CLASSIFY_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static STITCH_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static VALIDATE_NS: AtomicU64 = AtomicU64::new(0);
@@ -80,6 +90,15 @@ pub fn report() -> String {
          seam_curves            {:.1}\n\
          no-interaction shortcut{:.1}\n\
          imprint_operand x2     {:.1}\n\
+           boundary filter      {:.1}\n\
+           corner pre-split     {:.1}\n\
+           dispatch+imprints    {:.1}\n\
+           imprint ops          {:.1} ({} calls)\n\
+             closed imprint     {:.1}\n\
+             ring subdivide     {:.1}\n\
+             mev chain          {:.1}\n\
+             split_face         {:.1}\n\
+             seam geometry      {:.1}\n\
          classify_faces x2      {:.1}\n\
          stitch+select+finalize {:.1}\n\
          validate               {:.1}\n\
@@ -96,6 +115,16 @@ pub fn report() -> String {
         ms(&SEAM_NS),
         ms(&SHORTCUT_NS),
         ms(&IMPRINT_NS),
+        ms(&IMPRINT_FILTER_NS),
+        ms(&IMPRINT_PRESPLIT_NS),
+        ms(&IMPRINT_DISPATCH_NS),
+        ms(&IMPRINT_OPS_NS),
+        n(&IMPRINT_OPS_CALLS),
+        ms(&CLOSED_IMPRINT_NS),
+        ms(&RING_SUBDIV_NS),
+        ms(&IMPRINT_MEV_NS),
+        ms(&IMPRINT_SPLITF_NS),
+        ms(&IMPRINT_SEAMGEO_NS),
         ms(&CLASSIFY_NS),
         ms(&STITCH_NS),
         ms(&VALIDATE_NS),
@@ -121,6 +150,16 @@ pub fn reset() {
         &SEAM_NS,
         &SHORTCUT_NS,
         &IMPRINT_NS,
+        &IMPRINT_FILTER_NS,
+        &IMPRINT_PRESPLIT_NS,
+        &IMPRINT_DISPATCH_NS,
+        &IMPRINT_OPS_NS,
+        &IMPRINT_OPS_CALLS,
+        &CLOSED_IMPRINT_NS,
+        &RING_SUBDIV_NS,
+        &IMPRINT_MEV_NS,
+        &IMPRINT_SPLITF_NS,
+        &IMPRINT_SEAMGEO_NS,
         &CLASSIFY_NS,
         &STITCH_NS,
         &VALIDATE_NS,
