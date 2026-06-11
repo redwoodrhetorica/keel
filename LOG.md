@@ -5857,3 +5857,37 @@ CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 + 1 green; merge soak coun
 
 SOAK COUNTS (the M8 merge gate, 2026-06-11): fuzz_boolean 2005 runs / 602 s clean;
 fuzz_cyl_boolean 666 runs / 603 s clean.
+
+## Addendum 187: the 100k rehearsal finds 4 strict WRONGs; instruments verified (2026-06-11)
+
+THE HEADLINE: the N=100000 release oracle (the 10 percent rehearsal of the completion
+gate, ~2.6 h, ~90 ms/trial) reports strict PASS 95086 / DECLINE 4910 / WRONG 4; tolerant
+PASS 25000 / DECLINE 0 / WRONG 0. These are the FIRST WRONG results observed at any scale
+in the program''s history: N=10000 was clean in both lanes, so the class has a frequency
+near 1 in 25,000 trials. The tolerant lane stays perfect. DECLINE-never-WRONG makes this
+the top of the queue: localization is running via tests/scan_wrong.rs, a sharded replay
+of the oracle''s deterministic LCG (10 release processes x 10k trials, ~25 min wall vs
+2.6 h single-threaded; the oracle test itself now needs a per-WRONG eprintln, queued).
+Diagnosis and fix follow in the next addendum; the four trials join tail_repro.rs.
+
+INDEPENDENT VERIFICATION (Wolfram Alpha, via the pipeworx MCP gateway): the two analytic
+mass-property engines were checked against an outside computer algebra system.
+(1) LUNE QUADRATURE (massprops.rs loop_uv_polyline_planar): the literal defining double
+integral of the signed-Jacobian patch M(theta,t) = (1-t) chord + t arc was evaluated by
+Wolfram at alpha = pi/2 (0.285398 = pi/4 - 1/2 exactly) and alpha = 1 rad (0.0792645),
+and Wolfram''s independent circular-segment formula returns 1/2 (1 - sin 1), the same
+number: the GL8xGL8 rule approximates an integral whose exact value IS the segment area.
+(2) GREEN-SLAB (integrate_face_green, pole-anchored sphere slab): the cap identity
+(2 pi r^3/3)(1 - sin phi) - (pi/3) r^3 sin phi cos^2 phi == pi h^2 (3r - h)/3 with
+h = r(1 - sin phi) checks to exactly 0 at phi = 0.3 and 1.1 (numeric spot checks; the
+hand derivation reduces it to the (1-s)^2 (2+s) factorization symbolically).
+
+COMPLETION-GATE LOGISTICS (user direction): the gate will build and run from a fresh
+clone on drive D: (483 GB free; WSL sees /mnt/d; drvfs throughput matches today''s
+/mnt/c soaks): scripts/run_completion_gate.ps1 clones the certified commit, launches
+bash fuzz/soak_sectors.sh in WSL, and runs the KEEL_ORACLE_N=1000000 release oracle,
+logs on D:. Measured trial cost makes the 1M oracle ~26 h single-threaded; sharding it
+like scan_wrong.rs brings it to ~2.6 h across 10 cores (queued before gate night).
+ORDERING DECISION: optimization passes run BEFORE the gate (the gate certifies a commit;
+any post-gate change voids it; a faster kernel also raises soak executions/sec), and the
+4 WRONGs are fixed before everything.
