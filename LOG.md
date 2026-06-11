@@ -5823,3 +5823,8 @@ mass == mesh).
 CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 + 1 green. M5 commit soak completed
 clean (fuzz_boolean 665 runs, fuzz_cyl_boolean 693 runs); the combined M6 + filter soak
 gates the merge: counts below.
+
+SOAK COUNTS (the M6 + M7 merge gate, 2026-06-11): fuzz_boolean 1876 runs / 601 s clean;
+fuzz_cyl_boolean 666 runs / 606 s clean. Oracle at N=10000: strict 9507/493/0, tolerant
+2497/3/0 (the three new declines are rarer shapes surfacing at 5x sample; triage noted).
+WRONG = 0 in both lanes.
