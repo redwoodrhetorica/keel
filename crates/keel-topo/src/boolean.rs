@@ -303,20 +303,68 @@ impl Body {
             // AABB guard): without it a distant point lying on the
             // face's infinite carrier would read as coincident, which
             // matters now that classification consults this test
-            // geometrically, before any winding band.
+            // geometrically, before any winding band. The box samples
+            // boundary CURVES, not just vertices: a circle-bounded
+            // lateral carries only its seam vertices, which is no
+            // extent at all.
             {
-                let pts = self.face_outer_loop_points(f);
-                if pts.is_empty() {
-                    continue;
+                let mut lo = keel_math::vec::Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+                let mut hi = keel_math::vec::Vec3::new(
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                );
+                for lk in self
+                    .faces
+                    .get(f)
+                    .map(|x| x.loops.clone())
+                    .unwrap_or_default()
+                {
+                    let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                        continue;
+                    };
+                    let mut cur = entry;
+                    loop {
+                        if let Some(samples) = self.fin_curve_samples(cur, 16) {
+                            for q in samples {
+                                lo = keel_math::vec::Vec3::new(
+                                    lo.x.min(q.x),
+                                    lo.y.min(q.y),
+                                    lo.z.min(q.z),
+                                );
+                                hi = keel_math::vec::Vec3::new(
+                                    hi.x.max(q.x),
+                                    hi.y.max(q.y),
+                                    hi.z.max(q.z),
+                                );
+                            }
+                        } else if let Some(v) = self.fin_start_vertex(cur)
+                            && let Some(x) = self.vertices.get(v)
+                        {
+                            let q = x.point;
+                            lo = keel_math::vec::Vec3::new(
+                                lo.x.min(q.x),
+                                lo.y.min(q.y),
+                                lo.z.min(q.z),
+                            );
+                            hi = keel_math::vec::Vec3::new(
+                                hi.x.max(q.x),
+                                hi.y.max(q.y),
+                                hi.z.max(q.z),
+                            );
+                        }
+                        let Some(next) = self.fins.get(cur).map(|x| x.next) else {
+                            break;
+                        };
+                        cur = next;
+                        if cur == entry {
+                            break;
+                        }
+                    }
                 }
                 let pad = 1e-6;
-                let mut lo = pts[0];
-                let mut hi = pts[0];
-                for q in &pts {
-                    lo = keel_math::vec::Vec3::new(lo.x.min(q.x), lo.y.min(q.y), lo.z.min(q.z));
-                    hi = keel_math::vec::Vec3::new(hi.x.max(q.x), hi.y.max(q.y), hi.z.max(q.z));
-                }
-                if p.x < lo.x - pad
+                if !lo.x.is_finite()
+                    || p.x < lo.x - pad
                     || p.x > hi.x + pad
                     || p.y < lo.y - pad
                     || p.y > hi.y + pad
@@ -342,6 +390,16 @@ impl Body {
             if !on_surface {
                 continue;
             }
+            // REAL containment for planar carriers: coplanar faces
+            // that TILE (a pin's cap disc against the plate's annulus)
+            // share a carrier and an AABB but not a point; the disc
+            // centre lies in the annulus's RING hole, not on the face.
+            // Curved carriers keep the AABB guard (full-lateral mates).
+            if matches!(self.face_surface3(f), Some(Surface3::Plane(_)))
+                && !self.planar_face_contains(f, p)
+            {
+                continue;
+            }
             if let Some(n_f) = self.face_outward_normal_at(f, p)
                 && n_f.cross(n_other).norm() < 1e-6
             {
@@ -353,6 +411,65 @@ impl Body {
             }
         }
         OnSense::Unknown
+    }
+
+    /// Does the PLANAR `face` contain `p` (projected into its plane):
+    /// inside the outer loop and outside every inner ring? Loop
+    /// polygons come from fin start vertices (straight planar trims).
+    pub(crate) fn planar_face_contains(&self, face: FaceKey, p: keel_math::vec::Vec3) -> bool {
+        let Some(Surface3::Plane(pl)) = self.face_surface3(face) else {
+            return false;
+        };
+        let fr = &pl.frame;
+        let to2 = |q: keel_math::vec::Vec3| {
+            let w = q - fr.origin;
+            (w.dot(fr.x), w.dot(fr.y))
+        };
+        let q = to2(p);
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        let mut polys: Vec<Vec<(f64, f64)>> = Vec::new();
+        for lk in loops {
+            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut poly = Vec::new();
+            let mut cur = entry;
+            loop {
+                // CURVE samples, not just vertices: a circular ring
+                // edge (the drilled hole's rim) carries one seam
+                // vertex, which is no polygon at all.
+                if let Some(samples) = self.fin_curve_samples(cur, 24) {
+                    for p3 in samples {
+                        poly.push(to2(p3));
+                    }
+                } else if let Some(v) = self.fin_start_vertex(cur)
+                    && let Some(x) = self.vertices.get(v)
+                {
+                    poly.push(to2(x.point));
+                }
+                let Some(next) = self.fins.get(cur).map(|f| f.next) else {
+                    break;
+                };
+                cur = next;
+                if cur == entry {
+                    break;
+                }
+            }
+            if poly.len() >= 3 {
+                polys.push(poly);
+            }
+        }
+        let Some(outer) = polys.first() else {
+            return false;
+        };
+        if !winding_nonzero(outer, q) {
+            return false;
+        }
+        !polys[1..].iter().any(|ring| winding_nonzero(ring, q))
     }
 
     /// The analytic surface backing a face, if any (M6a is analytic).
@@ -1046,9 +1163,27 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, tol: f64) -> Vec<(Fac
                 } else {
                     let w = other.generalized_winding_number(p);
                     if (w - 0.5).abs() < COINCIDENCE_BAND {
-                        // Near the boundary with no coincident
-                        // carrier found: the on-band fallback.
-                        FaceClass::OnOther(OnSense::Unknown)
+                        // In the band with NO coincident carrier: the
+                        // dossier-39 sec 1.4 TWO-SIDED test. A sample
+                        // at a feature mouth (a pin cap's centre over
+                        // the hole) has an ambiguous one-point winding
+                        // but well-defined side limits along the
+                        // face's own normal.
+                        let eps = (tol * 100.0).max(1e-6);
+                        match working.face_outward_normal(face) {
+                            Some(nv) => {
+                                let wp = other.generalized_winding_number(p + nv * eps);
+                                let wm = other.generalized_winding_number(p - nv * eps);
+                                if wp < 0.25 && wm < 0.25 {
+                                    FaceClass::OutsideOther
+                                } else if wp > 0.75 && wm > 0.75 {
+                                    FaceClass::InsideOther
+                                } else {
+                                    FaceClass::OnOther(OnSense::Unknown)
+                                }
+                            }
+                            None => FaceClass::OnOther(OnSense::Unknown),
+                        }
                     } else if w > 0.5 {
                         FaceClass::InsideOther
                     } else {
@@ -2568,9 +2703,19 @@ pub fn boolean_with(
     // collapsed inner shell) reads as "nested" to the winding probe,
     // so it flows to the assembly whose mass==mesh gates decline it.
     if seams.is_empty() && pre.is_none() && a.mesh_volume() > 0.0 && b.mesh_volume() > 0.0 {
+        // Probe with GUARANTEED-INTERIOR points (a face interior point
+        // nudged inward), never raw vertices: a mated body's vertices
+        // can ALL lie on the other's boundary (the pin's only vertices
+        // are its rim seams, on the hole wall), where the winding is
+        // noise around one half.
         let probe = |of: &Body, against: &Body| -> Option<bool> {
-            for (_, v) in of.vertices.iter() {
-                let w = against.generalized_winding_number(v.point);
+            let eps = (shortest_edge(of) * 1e-3).clamp(1e-9, 1e-3);
+            for f in of.face_keys() {
+                let (Some(p), Some(n)) = (of.face_interior_point(f), of.face_outward_normal(f))
+                else {
+                    continue;
+                };
+                let w = against.generalized_winding_number(p - n * eps);
                 if (w - 0.5).abs() > 0.25 {
                     return Some(w > 0.5);
                 }
@@ -3154,6 +3299,105 @@ fn seam_components(members: &[usize], seams: &[SeamCurve], tol: f64) -> Vec<Vec<
 /// Used to relocate a seam component after an earlier component's
 /// imprint split its original face. Planar faces only; multi-component
 /// imprints on curved faces stay a fault.
+impl Body {
+    /// Does `curve` lie entirely along this face's existing boundary
+    /// edges (within a loose tolerance)? Such a "seam" is already
+    /// topology: the rim-contact class of file 39 sec 3.2.
+    pub(crate) fn curve_on_face_boundary_edges(
+        &self,
+        face: FaceKey,
+        curve: &keel_geom::curve::Curve3,
+        tol: f64,
+    ) -> bool {
+        let etol = tol.max(1e-7) * 10.0;
+        // Boundary samples from every edge of every loop.
+        let mut bnd: Vec<keel_math::vec::Vec3> = Vec::new();
+        for lk in self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default()
+        {
+            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            loop {
+                if let Some(s) = self.fin_curve_samples(cur, 24) {
+                    bnd.extend(s);
+                } else if let Some(v) = self.fin_start_vertex(cur)
+                    && let Some(x) = self.vertices.get(v)
+                {
+                    bnd.push(x.point);
+                }
+                let Some(next) = self.fins.get(cur).map(|f| f.next) else {
+                    break;
+                };
+                cur = next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        if bnd.is_empty() {
+            return false;
+        }
+        (0..9).all(|i| {
+            let p = curve_point(curve, i as f64 / 8.0);
+            bnd.iter().any(|q| (*q - p).norm() <= etol)
+        })
+    }
+}
+
+/// Curved companion of `planar_face_containing` (the drill lateral
+/// carries TWO wrap circles: after the first splits it, the second
+/// must relocate onto the descendant band): a cylinder face whose
+/// surface passes through `p` and whose boundary-vertex height range
+/// contains `p`'s height. Wrap circles are full rings, so the angular
+/// extent needs no check here.
+fn curved_face_containing(body: &Body, p: keel_math::vec::Vec3, tol: f64) -> Option<FaceKey> {
+    body.face_keys().into_iter().find(|&fk| {
+        let Some(Surface3::Cylinder(c)) = body.face_surface3(fk) else {
+            return false;
+        };
+        let r = (p - c.frame.origin) - c.frame.z * (p - c.frame.origin).dot(c.frame.z);
+        if (r.norm() - c.radius).abs() > tol.max(1e-7) {
+            return false;
+        }
+        let h = (p - c.frame.origin).dot(c.frame.z);
+        let mut hmin = f64::INFINITY;
+        let mut hmax = f64::NEG_INFINITY;
+        for lk in body
+            .faces
+            .get(fk)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default()
+        {
+            let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            loop {
+                if let Some(v) = body.fin_start_vertex(cur)
+                    && let Some(x) = body.vertices.get(v)
+                {
+                    let hv = (x.point - c.frame.origin).dot(c.frame.z);
+                    hmin = hmin.min(hv);
+                    hmax = hmax.max(hv);
+                }
+                let Some(next) = body.fins.get(cur).map(|f| f.next) else {
+                    break;
+                };
+                cur = next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        hmin.is_finite() && h >= hmin - tol && h <= hmax + tol
+    })
+}
+
 fn planar_face_containing(body: &Body, p: keel_math::vec::Vec3, tol: f64) -> Option<FaceKey> {
     for fk in body.face_keys() {
         let Some(Surface3::Plane(pl)) = body.face_surface3(fk) else {
@@ -3773,7 +4017,9 @@ fn imprint_operand(
         for comp in comps {
             let target = if multi {
                 let probe = curve_point(&seams[comp[0]].curve, 0.5);
-                match planar_face_containing(&working, probe, etol) {
+                match planar_face_containing(&working, probe, etol)
+                    .or_else(|| curved_face_containing(&working, probe, etol))
+                {
                     Some(fk) => fk,
                     None => {
                         faults.push(BoolFault::AssemblyFailed(
@@ -3795,6 +4041,29 @@ fn imprint_operand(
             // imprint).
             if comp.len() == 1 && seams[comp[0]].closed {
                 let curve = &seams[comp[0]].curve;
+                // A circle WRAPPING a seamless tube lateral (the drill
+                // primitive: two closed rims, no seam line) first gets
+                // its seam SYNTHESIZED (mekr between the rim seam
+                // vertices): the crossing imprint then applies. The
+                // interior-ring imprint is topologically wrong for a
+                // non-contractible wrap.
+                let wraps = match (
+                    working.face_surface3(target),
+                    closed_curve_center_axis(curve),
+                ) {
+                    (Some(Surface3::Cylinder(c)), Some((centre, ax))) => {
+                        ax.cross(c.frame.z).norm() < 1e-6
+                            && (centre - c.frame.origin).cross(c.frame.z).norm() < 1e-6
+                    }
+                    _ => false,
+                };
+                if wraps
+                    && !working.closed_curve_crosses_boundary(target, curve, tol)
+                    && let Err(e) = working.synthesize_lateral_seam(target)
+                {
+                    faults.push(BoolFault::Topo(e));
+                    continue;
+                }
                 let res = if working.closed_curve_crosses_boundary(target, curve, tol) {
                     working.imprint_closed_curve_crossing(target, curve, tol)
                 } else {
@@ -3957,6 +4226,23 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
             // direct SSI consumers and the unequal-radius mitre.
             let both_cyl = matches!(ref_a, SurfaceRef::Analytic(Surface3::Cylinder(_)))
                 && matches!(ref_b, SurfaceRef::Analytic(Surface3::Cylinder(_)));
+            // COINCIDENT cylinders (coaxial, equal radius: the mated
+            // pin-in-hole laterals, dossier 39 sec 5) are the curved
+            // on-on class, not a crossing: no seam, an informational
+            // Coincident note, and the carrier-based classification
+            // resolves the pair (full mutual coverage needs no
+            // pre-imprint).
+            if let (
+                SurfaceRef::Analytic(Surface3::Cylinder(ca)),
+                SurfaceRef::Analytic(Surface3::Cylinder(cb)),
+            ) = (&ref_a, &ref_b)
+                && ca.frame.z.cross(cb.frame.z).norm() < 1e-9
+                && (ca.frame.origin - cb.frame.origin).cross(ca.frame.z).norm() < 1e-9
+                && (ca.radius - cb.radius).abs() < tol.max(1e-9)
+            {
+                faults.push(BoolFault::Coincident(id_a, id_b));
+                continue;
+            }
             match intersect_surfaces(&ref_a, &ref_b, tol) {
                 Ok(SsiResult::Curves(cs)) if both_cyl => {
                     if cs
@@ -4017,6 +4303,16 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                         // imprint cannot yet assemble that trim, so the
                         // boolean DECLINES (the notch probe's quarter-
                         // band wrong-positive class).
+                        // A seam lying ON an existing boundary edge of
+                        // either face is already topology (the mated
+                        // pin's cap circle IS the hole lateral's rim):
+                        // spurious per file 39 sec 3.2, never imprinted,
+                        // never a fault.
+                        if a.curve_on_face_boundary_edges(fa, &c.curve, tol)
+                            || b.curve_on_face_boundary_edges(fb, &c.curve, tol)
+                        {
+                            continue;
+                        }
                         let ova = a.curve_cylinder_face_overlap(fa, &c.curve, tol);
                         let ovb = b.curve_cylinder_face_overlap(fb, &c.curve, tol);
                         match (ova, ovb) {
@@ -5076,6 +5372,61 @@ mod tests {
         let d = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
         let vd = d.body.mass_properties().unwrap().volume;
         assert!((vd - 1.0).abs() < 1e-9, "touching difference {vd} != A");
+    }
+
+    #[test]
+    fn pin_in_hole_booleans_are_clean() {
+        // The canonical CAD mating case (dossier 29 M4): a plate with
+        // a through hole and the pin that EXACTLY fills it. The
+        // laterals are coincident-opposite cylinders (dropped by the
+        // on-on tables); the pin's cap discs TILE the plate's annular
+        // faces in-plane (zero overlap), which requires REAL carrier
+        // containment (an AABB guard false-ONs the disc against the
+        // annulus) and the dossier-39 two-sided band test (the disc
+        // centre sits at the hole mouth where the one-point winding
+        // is ambiguous). Union = the solid box, exactly; difference =
+        // the holed plate unchanged; intersection = empty.
+        use keel_geom::surface::Frame3;
+        let pi = core::f64::consts::PI;
+        let mut plate = Body::new();
+        plate.block(Vec3::ZERO, 4.0, 4.0, 1.0).unwrap();
+        let dframe = Frame3::from_z(Vec3::new(2.0, 2.0, -0.5), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut drill = Body::new();
+        drill.cylinder(dframe, 1.0, 2.0).unwrap();
+        let holed = boolean(&plate, &drill, BoolOp::Difference, 1e-7)
+            .unwrap()
+            .body;
+        let vh = holed.mass_properties().unwrap().volume;
+        assert!((vh - (16.0 - pi)).abs() < 1e-9, "holed plate {vh}");
+        let pframe = Frame3::from_z(Vec3::new(2.0, 2.0, 0.0), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut pin = Body::new();
+        pin.cylinder(pframe, 1.0, 1.0).unwrap();
+        let u = boolean(&holed, &pin, BoolOp::Union, 1e-7).unwrap();
+        assert!(u.body.validate().is_ok(), "pin union invalid");
+        let (vu, mu) = (
+            u.body.mass_properties().unwrap().volume,
+            u.body.mesh_volume(),
+        );
+        assert!(
+            (vu - 16.0).abs() < 1e-9 && (mu - 16.0).abs() < 1e-9,
+            "pin union {vu}/{mu} != solid plate"
+        );
+        // No cylinder faces survive: the mated laterals are interior.
+        let cyls = u
+            .body
+            .face_keys()
+            .into_iter()
+            .filter(|&f| matches!(u.body.face_surface3(f), Some(Surface3::Cylinder(_))))
+            .count();
+        assert_eq!(cyls, 0, "mated laterals must drop");
+        let d2 = boolean(&holed, &pin, BoolOp::Difference, 1e-7).unwrap();
+        let vd2 = d2.body.mass_properties().unwrap().volume;
+        assert!(
+            (vd2 - (16.0 - pi)).abs() < 1e-9,
+            "pin difference {vd2} != holed plate"
+        );
+        let i2 = boolean(&holed, &pin, BoolOp::Intersection, 1e-7).unwrap();
+        assert_eq!(i2.body.face_keys().len(), 0, "boundary-only intersection");
     }
 
     #[test]
