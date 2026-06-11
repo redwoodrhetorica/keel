@@ -5719,3 +5719,112 @@ fuzz_cyl_boolean soak (boolean + imprint + massprops changed): counts below.
 FOLLOW-UP NOTED: the curved-result self-consistency gate stays weak (positive tessellated
 volume only); extending mass==mesh to curved bodies within a chordal band is the next
 honesty-net upgrade and would have caught defect 1 directly.
+
+## Addendum 183: graceful degradation M5, the curved chordal honesty gate (2026-06-11)
+
+Dossier 29 re-read (Part 4, confidence reporting; Part 6, no silent salvage): the doctrine
+demands that a returned body be SELF-CONSISTENT or declined, never silently wrong. The
+planar mass==mesh post-condition (research file 47) embodied that for planar results;
+curved results passed on POSITIVE TESSELLATED VOLUME alone, the weak gate that let the M4
+drill wrong-positive ship. M5 closes the asymmetry.
+
+THE GATE (assemble_boolean, curved branch): when mass_properties is computable the result
+must satisfy |mass - mesh| <= 2e-2 * (1 + |mass|), the CHORDAL band (the adaptive
+tessellation''s worst legitimate deviation on small arcs). Bodies whose mass legitimately
+declines (NURBS corner patches) keep the positive-volume floor: the gate never punishes an
+honest decline, only a self-inconsistent "success".
+
+THE GATE''S FIRST CATCH, ON ITS FIRST RUN: pin_in_hole''s drilled plate DECLINED under the
+new band. The probe: the holed lateral tessellated an angular span of [0, tau - pi/8],
+a 16 percent mesh deficit (dv -1.756 vs exact -2.094) that had been shipping silently.
+ROOT CAUSE: cyl_angular_span''s three paths all failed on a seam-split full ring: (a) no
+arc_sweep on the rim arcs, (b) no single CLOSED edge survives the seam imprint (each rim
+is two arcs), (c) the sample-gap fallback takes the complement of the LARGEST angular gap,
+and a full ring of finite samples always has a gap of one sampling step (pi/8 here).
+FIX (tessellate.rs): before the gap fallback, walk each loop''s polygon and accumulate the
+UNWRAPPED angle delta; a loop whose cumulative range covers tau - 1e-6 bounds a FULL
+revolution regardless of how its edges were split. Branch-cut-free by construction.
+
+This is the M5 thesis demonstrated in one commit: the honesty net does not just guard
+against hypothetical future bugs, it found a live one in the first body it inspected
+(WRITE THE EXACTNESS ORACLE FIRST, again). The pin test now carries the chordal witness
+assertion (|mesh - mass| of the holed plate inside the band).
+
+CI: fmt; clippy -D warnings; workspace 133 + 77 + 257 green; oracle N=2000 unchanged
+(strict 1892/108/0, tolerant 487/13/0); fuzz_boolean + fuzz_cyl_boolean soak (boolean +
+tessellation internals changed): counts below.
+NEXT (the leg continues): tolerant cylinder prepare (radial-gap pins), the residual
+13-trial tolerant tail, doctrine-wide OpReport.
+
+## Addendum 184: graceful degradation M6, the tolerant cylinder prepare (2026-06-11)
+
+Dossier 39 re-read (sec 1, the ACIS prepare phase: snap near-coincidence to EXACT
+coincidence before classification fixes the dominant share of failed booleans; sec 5,
+coincident curved carriers): M2''s prepare_snap covered planar near-mates only. M6 extends
+it to the canonical curved case, the RADIAL-GAP CLEARANCE PIN: a pin exported 1e-5 under
+its hole (or 3e-6 off-axis), which strict correctly sees as parallel non-touching laterals.
+
+THE SNAP (prepare_snap, cylinder pass): a B lateral near-mated to an A lateral (axes
+parallel within 1e-6, axis offset and radius difference within fuzz but not exactly zero,
+axial spans overlapping, B''s lateral bounded only by flat caps perpendicular to the axis)
+is re-seated on A''s EXACT carrier: the surface becomes A''s axis and radius with B''s
+axis sense and angular reference preserved; every loop vertex reprojects radially; rim
+circles are rebuilt at the exact radius about the exact axis (winding preserved); straight
+rulings re-fit their snapped endpoints. Axial extents come from fin CURVE samples (the
+vertex-only trap, sighting five, avoided at design time). After the snap the strict
+pipeline runs the M4 mated-pin machinery unchanged: coincident-opposite laterals drop,
+caps tile, the union is the SOLID box.
+
+Oracle first (tolerant_radial_gap_pin_snaps_exact): the 1e-5 undersize pin unions to
+mass == mesh == 16 at 1e-9 with salvaged/tier 2/achieved in [1e-6, 1e-4], differences back
+to 16 - pi at 1e-9; the 3e-6 axis-offset pin salvages identically. PASSED ON THE FIRST
+FULL RUN of the implementation.
+
+The flat-cap guard is the honesty boundary: oblique or curved neighbours would be pulled
+off their carriers by a radial move, so those configurations stay strict (DECLINE-never-
+WRONG). Cones and spheres remain the recorded follow-up.
+
+CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 green; oracle N=2000 unchanged
+(strict 1892/108/0, tolerant 487/13/0). M5 and M6 share this branch''s soak window
+(both touch boolean internals; one fuzz_boolean + fuzz_cyl_boolean soak gates the merge);
+counts recorded at the merge.
+
+## Addendum 185: the tolerant tail retired; the sec 3.2 filter goes universal (2026-06-11)
+
+Dossier 39 re-read (sec 3.2: "a curve along existing boundary separates nothing and is
+never imprinted"; sec 1.4 on-on classification): the residual 13-trial tolerant decline
+tail (steady through M2-M6 at 2.6 percent of contact trials) traced to ONE root cause.
+
+DIAGNOSIS (tail_repro harness, twelve deterministic LCG replays): after the coincident
+pre-imprint cuts a pocket or partial-overlap chain into a face, the SSI phase re-emits
+seams for the contact lines, and those seams lie exactly ON the freshly imprinted
+boundary. The sec 3.2 filter dropped them ONLY when a face''s seam group assembled into a
+closed loop (the L-union phantom-ring fix); the snapped-contact configurations produce
+NON-closed groups (the pocket face''s group has three sides; the enclosing face''s group
+has all four), so the boundary-coincident segments re-imprinted along existing edges:
+a duplicate ring edge, one extra E, Euler-Poincare off by exactly one. Three decline
+flavours, one cause: "stitched body invalid" (7 trials), "unmatched coedge" (2), and the
+"open chain end not on boundary" Topo fault (3, chains corrupted by boundary segments).
+
+FIX: the boundary-coincident drop is now UNIVERSAL: any seam segment whose every sample
+lies on the subject face''s existing boundary (all loops, rings included) is dropped
+regardless of the group''s chain topology. A genuine cut always carries interior samples;
+a segment that merely TOUCHES the boundary keeps its interior samples and survives. The
+old closed-loop scoping (and its interior-count heuristic) is retired; the canonical
+dedup and the chamfer shared-edge case are unaffected (those segments are not pure-
+boundary).
+
+ORACLE, the headline: tolerant 500 PASS / 0 DECLINE / 0 WRONG (was 487/13/0): the
+TOLERANT CONTACT LANE IS CLEAN. Strict improved to 1902/98/0 (was 1892/108/0). WRONG = 0
+in both lanes, as always. The twelve replays are promoted to a permanent regression
+(tolerant_contact_tail_regression: clean result, informational Coincident faults only,
+mass == mesh).
+
+CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 + 1 green. M5 commit soak completed
+clean (fuzz_boolean 665 runs, fuzz_cyl_boolean 693 runs); the combined M6 + filter soak
+gates the merge: counts below.
+
+SOAK COUNTS (the M6 + M7 merge gate, 2026-06-11): fuzz_boolean 1876 runs / 601 s clean;
+fuzz_cyl_boolean 666 runs / 606 s clean. Oracle at N=10000: strict 9507/493/0, tolerant
+2497/3/0 (the three new declines are rarer shapes surfacing at 5x sample; triage noted).
+WRONG = 0 in both lanes.
