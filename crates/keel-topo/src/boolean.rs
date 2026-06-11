@@ -2159,7 +2159,12 @@ pub(crate) fn finalize_imported_assembly(
 
     match dst.validate() {
         Ok(()) => Ok(dst),
-        Err(_) => Err(BoolFault::AssemblyFailed("stitched (curved) body invalid")),
+        Err(e) => {
+            if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
+                eprintln!("assembly validate failed: {e:?}");
+            }
+            Err(BoolFault::AssemblyFailed("stitched (curved) body invalid"))
+        }
     }
 }
 
@@ -4116,18 +4121,6 @@ fn imprint_operand(
         if bnd.len() < 3 {
             continue;
         }
-        // Scope to the spurious-RING case only. If these seams assemble into
-        // a CLOSED loop, boundary-coincident sides make it a phantom inner
-        // ring that punches a hole instead of splitting the face (L-union).
-        // Open chains / lone cuts (chamfer) must be left intact -- dropping
-        // their boundary-touching parts would un-trim a kept tool face.
-        let eps: Vec<(Vec3, Vec3)> = members
-            .iter()
-            .map(|&i| curve_endpoints(&seams[i].curve))
-            .collect();
-        if assemble_closed_loop(&eps, tol).is_none() {
-            continue;
-        }
         let on_boundary = |p: Vec3| -> bool {
             loops_bnd
                 .iter()
@@ -4143,17 +4136,18 @@ fn imprint_operand(
                 .iter()
                 .all(|&t| on_boundary(curve_point(&seams[i].curve, t)))
         };
-        // A genuine interior ring (a hole, e.g. the chamfer cutter face's
-        // footprint) has >=2 interior segments. The spurious case is a loop
-        // that closes only BECAUSE boundary-coincident segments complete it
-        // around a single real interior cut (<=1 interior segment): then the
-        // "ring" is really that one chord SPLITTING the face, and imprinting
-        // it as a closed hole punches a phantom inner loop (the L-union: 3 of
-        // 4 sides on A-top's boundary). Drop the boundary segments only then.
-        let interior = members.iter().filter(|&&i| !is_on_boundary_seg(i)).count();
-        if interior <= 1 {
-            members.retain(|&i| !is_on_boundary_seg(i));
-        }
+        // The UNIVERSAL sec 3.2 drop (research file 39): a segment whose
+        // EVERY sample lies on this face's existing boundary is already
+        // an edge of this face; it separates nothing, and re-imprinting
+        // it double-splits the boundary (a duplicate ring edge, Euler
+        // off by one: the snapped-contact tail, where a pre-imprinted
+        // pocket rim met its own SSI seams as a non-closed group that
+        // the old ring-scoped filter let through). A genuine cut always
+        // carries interior samples and survives; a partially-touching
+        // segment (endpoint on the boundary, body interior) survives
+        // because the test requires ALL five samples on the boundary.
+        let _ = face;
+        members.retain(|&i| !is_on_boundary_seg(i));
     }
 
     // Phase 1: pre-split boundary edges at unique OPEN-seam endpoints

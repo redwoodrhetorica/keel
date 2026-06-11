@@ -5788,3 +5788,38 @@ CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 green; oracle N=2000 uncha
 (strict 1892/108/0, tolerant 487/13/0). M5 and M6 share this branch''s soak window
 (both touch boolean internals; one fuzz_boolean + fuzz_cyl_boolean soak gates the merge);
 counts recorded at the merge.
+
+## Addendum 185: the tolerant tail retired; the sec 3.2 filter goes universal (2026-06-11)
+
+Dossier 39 re-read (sec 3.2: "a curve along existing boundary separates nothing and is
+never imprinted"; sec 1.4 on-on classification): the residual 13-trial tolerant decline
+tail (steady through M2-M6 at 2.6 percent of contact trials) traced to ONE root cause.
+
+DIAGNOSIS (tail_repro harness, twelve deterministic LCG replays): after the coincident
+pre-imprint cuts a pocket or partial-overlap chain into a face, the SSI phase re-emits
+seams for the contact lines, and those seams lie exactly ON the freshly imprinted
+boundary. The sec 3.2 filter dropped them ONLY when a face''s seam group assembled into a
+closed loop (the L-union phantom-ring fix); the snapped-contact configurations produce
+NON-closed groups (the pocket face''s group has three sides; the enclosing face''s group
+has all four), so the boundary-coincident segments re-imprinted along existing edges:
+a duplicate ring edge, one extra E, Euler-Poincare off by exactly one. Three decline
+flavours, one cause: "stitched body invalid" (7 trials), "unmatched coedge" (2), and the
+"open chain end not on boundary" Topo fault (3, chains corrupted by boundary segments).
+
+FIX: the boundary-coincident drop is now UNIVERSAL: any seam segment whose every sample
+lies on the subject face''s existing boundary (all loops, rings included) is dropped
+regardless of the group''s chain topology. A genuine cut always carries interior samples;
+a segment that merely TOUCHES the boundary keeps its interior samples and survives. The
+old closed-loop scoping (and its interior-count heuristic) is retired; the canonical
+dedup and the chamfer shared-edge case are unaffected (those segments are not pure-
+boundary).
+
+ORACLE, the headline: tolerant 500 PASS / 0 DECLINE / 0 WRONG (was 487/13/0): the
+TOLERANT CONTACT LANE IS CLEAN. Strict improved to 1902/98/0 (was 1892/108/0). WRONG = 0
+in both lanes, as always. The twelve replays are promoted to a permanent regression
+(tolerant_contact_tail_regression: clean result, informational Coincident faults only,
+mass == mesh).
+
+CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 + 1 green. M5 commit soak completed
+clean (fuzz_boolean 665 runs, fuzz_cyl_boolean 693 runs); the combined M6 + filter soak
+gates the merge: counts below.
