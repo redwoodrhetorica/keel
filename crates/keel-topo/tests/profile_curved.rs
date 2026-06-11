@@ -64,7 +64,7 @@ fn profile_curved_workload() {
     let sframe = Frame3::from_z(Vec3::new(1.0, 1.0, 1.0), z).unwrap();
     let mut ball = Body::new();
     ball.sphere(sframe, 0.8).unwrap();
-    timed("sphere difference (plate - ball)", 10, || {
+    let _ = timed("sphere difference (plate - ball)", 10, || {
         boolean(&plate, &ball, BoolOp::Difference, 1e-7).map(|r| r.body.mesh_volume())
     });
 

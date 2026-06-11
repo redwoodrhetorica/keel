@@ -6010,3 +6010,36 @@ SOAK COUNTS (the OPT-M3 merge gate, 2026-06-11): fuzz_boolean 9495 runs / 601 s 
 (1813 pre-leg: the 100x bounded to 5.2x by fuzz-harness overhead); fuzz_cyl_boolean 644
 runs / 607 s clean and FLAT versus prior soaks: the curved path gained nothing from the
 planar fast paths, which is OPT-M4''s thesis in one number.
+
+## Addendum 191: OPT-M4, the curved wall falls to the same key (2026-06-11)
+
+The curved benchmark (tests/profile_curved.rs, the canonical CAD bodies through timed
+reps + the stage breakdown) opened at: drill difference 270 ms/op, sphere difference
+135 ms/op, pin union 3.2 ms, 44.5k tessellate_face calls, GWN prominent again. Two
+slices:
+
+1. GWN OVER PRECOMPUTED BOUNDARY TRIANGLES: boundary_triangles() collects the outer
+tessellation ONCE per immutable borrow scope; classify_faces and the no-interaction
+probe evaluate every winding query against the slice (gwn_over). Scoped precomputation
+instead of a Body-level cache BY DESIGN: the immutable borrow makes freshness
+structural, so the silent-staleness bug class cannot exist. (Honest note: the
+single-probe public API now rebuilds the set per call, ~40 percent slower there;
+acceptable against removing a correctness risk class.)
+
+2. EXACT ANALYTIC CIRCLE PCURVES (curve_pcurve_on): a circle on its own plane is the
+exact rational-quadratic NURBS circle through the projected center/axes; a coaxial
+circle on a cylinder lateral is the exact degree-1 (theta, v) segment swept one turn.
+The general 64-sample cubic fit these replace ESCALATES against constant curvature at
+1e-7: ~69 ms per closed-curve imprint, 4.55 s of the 4.9 s curved benchmark. This is
+the third time today the profiler has pointed at a fit approximating something a
+projection gives exactly.
+
+MEASURED: drill difference 270 -> 4.3 ms/op (62x); sphere difference 135 -> 6.3 ms/op
+(21x); imprint ops 4546 -> 16 ms; pin union 4.2 ms; curved mass_properties 2.1 ms.
+With the box oracle at 0.9 ms/trial, the kernel now sits within single-digit
+milliseconds of the Parasolid yardstick across BOTH measured workloads, from 90 and
+270 ms this morning.
+
+BUCKETS: bit-identical again (N=2000 1911/89/0 + 500/0/0; N=100000 95604/4396/0 +
+25000/0/0; WRONG = 0). Suite 133+77+258+2 green; clippy clean; pin/drill exactness
+tests green throughout. Soak counts below.
