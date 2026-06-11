@@ -1022,6 +1022,33 @@ impl Body {
                 }
             }
         }
+        if best.is_none() {
+            // THIN-STRIP fallback: the fixed grid misses a face narrower
+            // than its spacing (the L-shaped remainder a contact overlap
+            // leaves on a mating face: both strips of the L can be under
+            // 1/24 of the bbox, every grid sample lands in the notch, and
+            // the face would be dropped as Unknown, orphaning its rim).
+            // The largest tessellation triangle's centroid is interior by
+            // construction for straight-edge planar faces; verify against
+            // the loops before trusting it on curved-boundary faces.
+            let tris = self.tessellate_face(face);
+            let mut cand: Option<(keel_math::vec::Vec3, f64)> = None;
+            for t in &tris {
+                let ar = (t[1] - t[0]).cross(t[2] - t[0]).norm();
+                if cand.is_none_or(|(_, b)| ar > b) {
+                    cand = Some(((t[0] + t[1] + t[2]) * (1.0 / 3.0), ar));
+                }
+            }
+            if let Some((c, _)) = cand
+                && let Ok(pr) = surf.project(c)
+                && winding_nonzero(&uv_loops[0], (pr.u, pr.v))
+                && !uv_loops[1..]
+                    .iter()
+                    .any(|h| winding_nonzero(h, (pr.u, pr.v)))
+            {
+                return Some(surf.point(pr.u, pr.v));
+            }
+        }
         best.map(|((u, v), _)| surf.point(u, v))
     }
 }
@@ -2030,6 +2057,18 @@ pub(crate) fn finalize_imported_assembly(
         .iter()
         .all(|&f| matches!(dst.face_surface3(f), Some(Surface3::Plane(_))));
     if all_planar && dst.edges.iter().any(|(_, e)| e.radial.len() < 2) {
+        if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
+            for (ek, e) in dst.edges.iter().filter(|(_, e)| e.radial.len() < 2) {
+                let (p0, p1) = (
+                    dst.vertices.get(e.bounds.0).map(|v| v.point),
+                    dst.vertices.get(e.bounds.1).map(|v| v.point),
+                );
+                eprintln!(
+                    "  unmatched edge {ek:?} radial {} {p0:?} -> {p1:?}",
+                    e.radial.len()
+                );
+            }
+        }
         return Err(BoolFault::AssemblyFailed(
             "unmatched coedge: shell-closure invariant violated",
         ));
@@ -3235,6 +3274,18 @@ fn assemble_boolean(
     let class_a = classify_faces(&ia.body, b, tol);
     let class_b = classify_faces(&ib.body, a, tol);
     let kept = select_faces(op, &class_a, &class_b);
+    if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
+        let dump = |tag: &str, body: &Body, cls: &[(FaceKey, FaceClass)]| {
+            for (f, c) in cls {
+                let pts = body.face_outer_loop_points(*f);
+                let n = pts.len().max(1) as f64;
+                let ctr = pts.iter().fold(keel_math::vec::Vec3::ZERO, |s, p| s + *p) * (1.0 / n);
+                eprintln!("  class {tag} {f:?} {c:?} ctr {ctr:?}");
+            }
+        };
+        dump("A", &ia.body, &class_a);
+        dump("B", &ib.body, &class_b);
+    }
     // NON-REGULARIZED union (item 29 Rung 1, dossier 57): the on-
     // OPPOSITE interface fragments (two solids abutting along a
     // coincident face) are retained as DOUBLE-SIDED interior partition

@@ -5828,3 +5828,29 @@ SOAK COUNTS (the M6 + M7 merge gate, 2026-06-11): fuzz_boolean 1876 runs / 601 s
 fuzz_cyl_boolean 666 runs / 606 s clean. Oracle at N=10000: strict 9507/493/0, tolerant
 2497/3/0 (the three new declines are rarer shapes surfacing at 5x sample; triage noted).
 WRONG = 0 in both lanes.
+
+## Addendum 186: graceful degradation M8, the thin-strip interior point (2026-06-11)
+
+Dossier 29 re-read (Part 2, the escalation cascade exists so that NO configuration class
+is silently unhandled) + dossier 39 sec 1.4. Scaling the oracle to N=10000 surfaced three
+new tolerant declines (trials 4743, 5547, 9839), all "unmatched coedge": one class.
+
+DIAGNOSIS: a contact overlap that shares the mating face''s far corner leaves an L-SHAPED
+remainder whose two strips are each narrower than 1/24 of the face''s bbox. The
+face_interior_point grid (24x24, most-central-sample) landed every sample in the notch,
+returned None, and classify_faces dropped the face as Unknown: its entire rim went
+radial-1 and the shell-closure invariant (correctly) declined the assembly. The vertex-
+average centroid would have failed the same way: a CONCAVE face''s centroid is not
+interior.
+
+FIX (face_interior_point): when the grid finds nothing, fall back to the LARGEST
+tessellation triangle''s centroid, interior by construction for straight-edge planar
+faces, verified against the loop windings before use (curved-boundary chordal caution).
+The grid''s most-central preference is unchanged for every face it can see.
+
+ORACLE at N=10000: tolerant 2500 PASS / 0 DECLINE / 0 WRONG; strict 9509/491/0 (the 491
+are the strict lane''s BY-DESIGN refusals of sub-tolerance contact, the configurations
+the tolerant tier exists to salvage). WRONG = 0 in both lanes. The three trials joined
+the permanent regression (now 15 replays).
+
+CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 + 1 green; merge soak counts below.

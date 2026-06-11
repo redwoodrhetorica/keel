@@ -1,0 +1,199 @@
+   Compiling keel-topo v0.1.0 (C:\Users\mcdon\Documents\Repo\Claude\parasolid\crates\keel-topo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.63s
+     Running tests\tail_repro.rs (target\debug\deps\tail_repro-34564e2a32e2a0e7.exe)
+
+running 1 test
+  class A Key(0g0) OutsideOther ctr Vec3 { x: -1.091524249001937, y: 0.16725203177789716, z: 0.8496379558030815 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: -1.091524249001937, y: 0.16725203177789716, z: -1.0803158373332389 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: -1.091524249001937, y: -1.868031180980009, z: -0.11533894076507867 }
+  class A Key(3g0) OutsideOther ctr Vec3 { x: 0.9589106793737594, y: 0.16725203177789716, z: -0.11533894076507867 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: -1.091524249001937, y: 2.2025352445358033, z: -0.11533894076507867 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: -3.1419591773776334, y: 0.16725203177789716, z: -0.11533894076507867 }
+  class A Key(6g0) OnOther(Opposite) ctr Vec3 { x: -0.6918729803436292, y: -0.2693712281678798, z: 0.8496379558030815 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: -0.6918729803436294, y: -0.26937122816787973, z: 6.162345002113147 }
+  class B Key(1g0) OnOther(Opposite) ctr Vec3 { x: -0.6918729803436294, y: -0.26937122816787973, z: 0.8496379558030815 }
+  class B Key(2g0) OutsideOther ctr Vec3 { x: -0.6918729803436294, y: -1.4740420790853888, z: 3.505991478958115 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: 0.1977023620453, y: -0.26937122816787973, z: 3.505991478958115 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: -0.6918729803436294, y: 0.9352996227496293, z: 3.505991478958115 }
+  class B Key(5g0) OutsideOther ctr Vec3 { x: -1.5814483227325589, y: -0.26937122816787973, z: 3.505991478958115 }
+  class A Key(0g0) OutsideOther ctr Vec3 { x: -1.1396159940616206, y: -0.9650376396191889, z: 3.260713868499573 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: -1.1396159940616206, y: -0.9650376396191889, z: 2.495042550292661 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: -1.1396159940616206, y: -2.915142621232966, z: 2.877878209396117 }
+  class A Key(3g0) OutsideOther ctr Vec3 { x: 0.46619030835787445, y: -0.9650376396191889, z: 2.877878209396117 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: -1.1396159940616206, y: 0.9850673419945881, z: 2.877878209396117 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: -2.7454222964811157, y: -0.9650376396191889, z: 2.877878209396117 }
+  class A Key(6g0) OnOther(Opposite) ctr Vec3 { x: -1.1197163931125842, y: -1.8360104642664905, z: 3.260713868499573 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: -1.119716393112584, y: -1.8360104642664905, z: 3.817118937618183 }
+  class B Key(1g0) OnOther(Opposite) ctr Vec3 { x: -1.119716393112584, y: -1.8360104642664903, z: 3.260713868499573 }
+  class B Key(2g0) OutsideOther ctr Vec3 { x: -1.119716393112584, y: -2.740816649935101, z: 3.5389164030588782 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: -0.7256878939891583, y: -1.8360104642664905, z: 3.5389164030588782 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: -1.119716393112584, y: -0.9312042785978796, z: 3.5389164030588782 }
+  class B Key(5g0) OutsideOther ctr Vec3 { x: -1.5137448922360095, y: -1.8360104642664903, z: 3.5389164030588782 }
+  class A Key(0g0) OutsideOther ctr Vec3 { x: 3.5202729233951304, y: 0.3188594452155502, z: 9.090568628010134 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: 3.5451498063924998, y: 0.17333379350564315, z: 4.9416356765087315 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: 3.5451498063924998, y: -0.5508665338034024, z: 7.016102152259434 }
+  class A Key(3g0) OutsideOther ctr Vec3 { x: 6.167346361955373, y: 0.17333379350564315, z: 7.016102152259434 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: 3.5238267638233265, y: 0.8975341208146885, z: 7.905159213295448 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: 0.922953250829627, y: 0.17333379350564315, z: 7.016102152259434 }
+  class A Key(6g0) OnOther(Opposite) ctr Vec3 { x: 3.4953960403977606, y: 0.5510149017033037, z: 9.090568628010136 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: 3.4953960403977606, y: 0.7335907388956775, z: 10.667636532358074 }
+  class B Key(1g0) OnOther(Opposite) ctr Vec3 { x: 3.4953960403977606, y: 0.5510149017033037, z: 9.090568628010136 }
+  class B Key(2g0) OutsideOther ctr Vec3 { x: 3.4953960403977606, y: 0.031236073036225998, z: 9.879102580184105 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: 5.399757761586848, y: 0.7663794152794798, z: 9.721395789749312 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: 3.495396040397761, y: 1.435945404755129, z: 9.879102580184105 }
+  class B Key(5g0) OutsideOther ctr Vec3 { x: 1.5910343192086733, y: 0.7663794152794798, z: 9.721395789749312 }
+  class B Key(6g0) OutsideOther ctr Vec3 { x: 3.495396040397761, y: 1.112898634390865, z: 9.090568628010136 }
+  class A Key(0g0) OutsideOther ctr Vec3 { x: 1.2228911858034122, y: 1.1374217458332383, z: 2.6906502032513937 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: 1.371705671179804, y: 0.949502992738384, z: 1.0749690534590446 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: 1.371705671179804, y: -0.0034576707742086654, z: 1.8828096283552191 }
+  class A Key(3g0) OutsideOther ctr Vec3 { x: 3.280662981464936, y: 0.949502992738384, z: 1.8828096283552191 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: 1.2441503980000395, y: 1.9024636562509765, z: 2.2290270175964366 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: -0.5372516391053281, y: 0.949502992738384, z: 1.8828096283552191 }
+  class A Key(6g0) OnOther(Opposite) ctr Vec3 { x: 1.0740767004270209, y: 1.4407651303926696, z: 2.690650203251394 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: 1.0740767004270206, y: 2.045790549124852, z: 7.82856535417044 }
+  class B Key(1g0) OnOther(Opposite) ctr Vec3 { x: 1.0740767004270204, y: 1.4407651303926696, z: 2.690650203251394 }
+  class B Key(2g0) OutsideOther ctr Vec3 { x: 1.0740767004270206, y: 0.7482173416052085, z: 5.259607778710917 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: 1.3756198401518867, y: 2.0171251705500772, z: 4.745816263619012 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: 1.0740767004270206, y: 3.3433637566444956, z: 5.259607778710917 }
+  class B Key(5g0) OutsideOther ctr Vec3 { x: 0.7725335607021544, y: 2.017125170550077, z: 4.745816263619012 }
+  class B Key(6g0) OutsideOther ctr Vec3 { x: 1.0740767004270204, y: 2.4788236964083845, z: 2.690650203251394 }
+  class A Key(0g0) OutsideOther ctr Vec3 { x: -0.8429728749540428, y: -1.700907931799608, z: 2.9746449155171493 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: -0.8429728749540428, y: -1.700907931799608, z: -2.0567606270605787 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: -0.8429728749540428, y: -2.391767999781843, z: 0.4589421442282853 }
+  class A Key(3g0) OutsideOther ctr Vec3 { x: -0.4562069601953349, y: -1.700907931799608, z: 0.4589421442282853 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: -0.8429728749540429, y: -1.0100478638173733, z: 0.4589421442282853 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: -1.229738789712751, y: -1.700907931799608, z: 0.4589421442282853 }
+  class A Key(6g0) OnOther(Opposite) ctr Vec3 { x: -0.7573673508418821, y: -1.0100478638173733, z: 0.013973652230330535 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: -0.7573673508418821, y: 1.0919131374801867, z: 1.6238470511714556 }
+  class B Key(1g0) OutsideOther ctr Vec3 { x: -0.7573673508418821, y: 1.0919131374801867, z: -1.5958997467107947 }
+  class B Key(2g0) OnOther(Opposite) ctr Vec3 { x: -0.7573673508418821, y: -1.0100478638173733, z: 0.013973652230330424 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: -0.49314482727624975, y: 1.0919131374801867, z: 0.013973652230330424 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: -0.7573673508418821, y: 3.1938741387777467, z: 0.013973652230330424 }
+  class B Key(5g0) OutsideOther ctr Vec3 { x: -1.0215898744075145, y: 1.0919131374801867, z: 0.013973652230330424 }
+  class A Key(0g0) OutsideOther ctr Vec3 { x: 2.1872297332668573, y: 0.9555150085370707, z: 3.401157245534624 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: 2.1872297332668573, y: 0.9555150085370706, z: -1.7685558718887604 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: 2.1872297332668573, y: -1.3173672194761132, z: 0.8163006868229319 }
+  class A Key(3g0) OutsideOther ctr Vec3 { x: 3.843108736224679, y: 0.9555150085370707, z: 0.8163006868229319 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: 2.1872297332668573, y: 3.2283972365502547, z: 0.8163006868229319 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: 0.5313507303090361, y: 0.9555150085370706, z: 0.8163006868229319 }
+  class A Key(6g0) OnOther(Opposite) ctr Vec3 { x: 3.8431087362246794, y: 0.7764694648111115, z: -0.053830516162891855 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: 5.74294126592892, y: 1.1679350117444445, z: 1.7090242265234583 }
+  class B Key(1g0) OutsideOther ctr Vec3 { x: 5.74294126592892, y: 1.1679350117444443, z: -1.3568101085832367 }
+  class B Key(2g0) OutsideOther ctr Vec3 { x: 5.362974759988072, y: -0.7893927229222198, z: -0.0538305161628915 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: 7.642773795633159, y: 1.1679350117444445, z: 0.17610705897011086 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: 5.742941265928919, y: 3.1252627464111087, z: 0.17610705897011086 }
+  class B Key(5g0) OnOther(Opposite) ctr Vec3 { x: 3.8431087362246794, y: 0.7764694648111115, z: -0.05383051616289145 }
+  class A Key(0g0) OutsideOther ctr Vec3 { x: 6.207711729698149, y: 0.15583215645914894, z: 0.5921005345164625 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: 6.207711729698149, y: 0.15583215645914894, z: -1.5171522679937102 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: 6.207711729698149, y: -2.468780432630581, z: -0.46252586673862384 }
+  class A Key(3g0) OutsideOther ctr Vec3 { x: 8.627172960145522, y: 0.15583215645914894, z: -0.46252586673862384 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: 6.207711729698149, y: 2.7804447455488788, z: -0.46252586673862384 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: 3.7882504992507755, y: 0.15583215645914894, z: -0.46252586673862384 }
+  class A Key(6g0) OnOther(Opposite) ctr Vec3 { x: 5.769054324789469, y: -0.6343100146702989, z: 0.5921005345164625 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: 5.769054324789468, y: -0.6343100146702985, z: 1.2619810262238902 }
+  class B Key(1g0) OnOther(Opposite) ctr Vec3 { x: 5.769054324789468, y: -0.6343100146702985, z: 0.5921005345164625 }
+  class B Key(2g0) OutsideOther ctr Vec3 { x: 5.769054324789469, y: -2.0852952410437076, z: 0.9270407803701763 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: 6.780718319850608, y: -0.6343100146702985, z: 0.9270407803701763 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: 5.769054324789469, y: 0.8166752117031106, z: 0.9270407803701763 }
+  class B Key(5g0) OutsideOther ctr Vec3 { x: 4.757390329728329, y: -0.6343100146702985, z: 0.9270407803701763 }
+  class A Key(0g0) OutsideOther ctr Vec3 { x: 5.577280274239999, y: -3.3441703741289364, z: 8.455304256255262 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: 5.341437922049921, y: -3.4469577352796863, z: 4.421230099841569 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: 5.341437922049921, y: -4.3652587805215735, z: 6.438267178048416 }
+  class A Key(3g0) OutsideOther ctr Vec3 { x: 7.141287609800964, y: -3.4469577352796863, z: 6.438267178048416 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: 5.543588509641416, y: -2.5286566900377996, z: 7.302711640137064 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: 3.541588234298878, y: -3.4469577352796863, z: 6.438267178048416 }
+  class A Key(6g0) OnOther(Opposite) ctr Vec3 { x: 5.813122626430078, y: -3.098837748390109, z: 8.455304256255262 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: 5.8131226264300775, y: -2.4116942718486394, z: 9.380606230730496 }
+  class B Key(1g0) OnOther(Opposite) ctr Vec3 { x: 5.813122626430078, y: -3.0988377483901095, z: 8.455304256255262 }
+  class B Key(2g0) OutsideOther ctr Vec3 { x: 5.8131226264300775, y: -3.9541093359185737, z: 8.917955243492878 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: 7.094492755056535, y: -2.4350867554864717, z: 8.825425046045355 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: 5.8131226264300775, y: -0.869279207778705, z: 8.917955243492878 }
+  class B Key(5g0) OutsideOther ctr Vec3 { x: 4.5317524978036205, y: -2.4350867554864717, z: 8.825425046045355 }
+  class B Key(6g0) OutsideOther ctr Vec3 { x: 5.813122626430078, y: -1.864905697134162, z: 8.455304256255262 }
+  class A Key(0g0) OutsideOther ctr Vec3 { x: 5.122946081785617, y: -0.4125751634254269, z: 4.755419879480955 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: 5.122946081785617, y: -0.4125751634254269, z: 0.6671975142660189 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: 5.122946081785617, y: -1.9403751072327067, z: 2.7113086968734867 }
+  class A Key(3g0) OutsideOther ctr Vec3 { x: 5.989765623333493, y: -0.4125751634254269, z: 2.7113086968734867 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: 5.122946081785617, y: 1.115224780381853, z: 2.7113086968734867 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: 4.256126540237741, y: -0.4125751634254269, z: 2.7113086968734867 }
+  class A Key(6g0) OnOther(Opposite) ctr Vec3 { x: 5.989765623333493, y: -0.7816897018137761, z: 1.9517895471448719 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: 6.491017253125763, y: -0.7816897018137761, z: 2.7633451653465904 }
+  class B Key(1g0) OutsideOther ctr Vec3 { x: 6.491017253125763, y: -0.7816897018137761, z: 1.140233928943153 }
+  class B Key(2g0) OutsideOther ctr Vec3 { x: 6.491017253125763, y: -1.472013150103575, z: 1.9517895471448716 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: 6.992268882918035, y: -0.7816897018137761, z: 1.9517895471448716 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: 6.491017253125764, y: -0.0913662535239772, z: 1.9517895471448716 }
+  class B Key(5g0) OnOther(Opposite) ctr Vec3 { x: 5.989765623333493, y: -0.7816897018137761, z: 1.9517895471448716 }
+  class A Key(0g0) OutsideOther ctr Vec3 { x: 4.031411891568563, y: -0.41508583949093236, z: 7.7425208012544555 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: 3.826227394252272, y: -0.4636768810589059, z: 4.785467816155176 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: 3.826227394252272, y: -0.9138137151039736, z: 6.263994308704815 }
+  class A Key(3g0) OutsideOther ctr Vec3 { x: 4.814637040683259, y: -0.4636768810589059, z: 6.263994308704815 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: 3.9747243503794625, y: -0.013540047013838263, z: 6.897648519797517 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: 2.837817747821285, y: -0.4636768810589059, z: 6.263994308704815 }
+  class A Key(6g0) OnOther(Opposite) ctr Vec3 { x: 4.198270730683372, y: -0.2959038477411347, z: 7.742520801254455 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: 4.2365963888848555, y: 0.7271747810167324, z: 11.356664959601686 }
+  class B Key(1g0) OnOther(Opposite) ctr Vec3 { x: 4.198270730683373, y: -0.29590384774113465, z: 7.742520801254455 }
+  class B Key(2g0) OutsideOther ctr Vec3 { x: 4.2365963888848555, y: -0.7194495488320793, z: 9.549592880428069 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: 4.811481261907099, y: 0.5790318154106183, z: 9.188178464593348 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: 4.2365963888848555, y: 2.173799110865544, z: 9.549592880428069 }
+  class B Key(5g0) OutsideOther ctr Vec3 { x: 3.661711515862612, y: 0.5790318154106182, z: 9.188178464593348 }
+  class B Key(6g0) OutsideOther ctr Vec3 { x: 4.198270730683373, y: 0.8613956161379147, z: 7.742520801254455 }
+  class A Key(0g0) OutsideOther ctr Vec3 { x: 1.4361645004310217, y: 5.126891311439329, z: 2.83876201924933 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: 1.4361645004310217, y: 5.126891311439329, z: -0.5590352626611841 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: 1.4361645004310217, y: 3.399068046636529, z: 1.139863378294073 }
+  class A Key(3g0) OutsideOther ctr Vec3 { x: 1.6867964461647946, y: 5.126891311439329, z: 1.139863378294073 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: 1.4361645004310215, y: 6.854714576242129, z: 1.139863378294073 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: 1.1855325546972484, y: 5.126891311439329, z: 1.139863378294073 }
+  class A Key(6g0) OnOther(Opposite) ctr Vec3 { x: 1.6867964461647946, y: 5.560705132248714, z: 0.6455554239160229 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: 3.9287382651782896, y: 5.560705132248714, z: 1.406038188039262 }
+  class B Key(1g0) OutsideOther ctr Vec3 { x: 3.9287382651782896, y: 5.560705132248714, z: -0.11492734020721601 }
+  class B Key(2g0) OutsideOther ctr Vec3 { x: 3.92873826517829, y: 4.935161713032321, z: 0.645555423916023 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: 6.170680084191785, y: 5.560705132248714, z: 0.645555423916023 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: 3.92873826517829, y: 6.1862485514651055, z: 0.645555423916023 }
+  class B Key(5g0) OnOther(Opposite) ctr Vec3 { x: 1.6867964461647946, y: 5.560705132248714, z: 0.645555423916023 }
+  class A Key(0g0) OutsideOther ctr Vec3 { x: 3.3489191756250674, y: 1.6515889499918703, z: 0.10208769059430933 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: 3.3489191756250674, y: 1.6515889499918703, z: -1.7745411359465821 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: 3.3489191756250674, y: -0.7669860057628606, z: -0.8362267226761364 }
+  class A Key(3g0) OutsideOther ctr Vec3 { x: 5.08590381376024, y: 1.6515889499918703, z: -0.8362267226761364 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: 3.348919175625067, y: 4.070163905746601, z: -0.8362267226761364 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: 1.611934537489895, y: 1.6515889499918703, z: -0.8362267226761364 }
+  class A Key(6g0) OnOther(Opposite) ctr Vec3 { x: 3.7119262920503293, y: 1.1908716649184248, z: 0.10208769059430933 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: 3.711926292050329, y: 1.1908716649184248, z: 3.768855795320944 }
+  class B Key(1g0) OnOther(Opposite) ctr Vec3 { x: 3.711926292050329, y: 1.1908716649184248, z: 0.10208769059430933 }
+  class B Key(2g0) OutsideOther ctr Vec3 { x: 3.711926292050329, y: -0.14744469863576493, z: 1.9354717429576267 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: 4.76046097054181, y: 1.1908716649184248, z: 1.9354717429576267 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: 3.711926292050329, y: 2.5291880284726145, z: 1.9354717429576267 }
+  class B Key(5g0) OutsideOther ctr Vec3 { x: 2.663391613558848, y: 1.1908716649184248, z: 1.9354717429576267 }
+  class A Key(0g0) OutsideOther ctr Vec3 { x: 7.131963356988232, y: 3.739382500898138, z: 7.733930024458916 }
+  class A Key(1g0) OutsideOther ctr Vec3 { x: 6.623192704514202, y: 3.797216669366433, z: 4.815509537377748 }
+  class A Key(2g0) OutsideOther ctr Vec3 { x: 6.623192704514202, y: 3.4836078143714406, z: 6.274719780918332 }
+  class A Key(3g0) OnOther(Opposite) ctr Vec3 { x: 9.167045966884352, y: 3.8094356756931926, z: 6.324555369709555 }
+  class A Key(4g0) OutsideOther ctr Vec3 { x: 7.1319633569882335, y: 4.110825524361426, z: 6.0028119677267044 }
+  class A Key(5g0) OutsideOther ctr Vec3 { x: 4.079339442144052, y: 3.797216669366433, z: 6.274719780918332 }
+  class A Key(6g0) Unknown ctr Vec3 { x: 9.167045966884352, y: 3.7008263885859414, z: 5.821540092265619 }
+  class B Key(0g0) OutsideOther ctr Vec3 { x: 10.027050498117532, y: 5.222485432906246, z: 9.620081311712443 }
+  class B Key(1g0) OutsideOther ctr Vec3 { x: 9.855049591870896, y: 5.000153451197282, z: 4.9151807149601945 }
+  class B Key(2g0) OutsideOther ctr Vec3 { x: 9.855049591870896, y: 3.50804582702496, z: 7.360890815560838 }
+  class B Key(3g0) OutsideOther ctr Vec3 { x: 10.88705502935071, y: 5.222485432906246, z: 7.2676310133363184 }
+  class B Key(4g0) OutsideOther ctr Vec3 { x: 10.027050498117532, y: 6.936925038787532, z: 7.2676310133363184 }
+  class B Key(5g0) OnOther(Opposite) ctr Vec3 { x: 9.167045966884352, y: 3.8094356756931926, z: 6.324555369709555 }
+  class B Key(6g0) OutsideOther ctr Vec3 { x: 9.167045966884352, y: 4.851932130057972, z: 7.42306401704385 }
+  unmatched edge Key(2g0) radial 1 Some(Vec3 { x: 9.167045966884352, y: 3.4836078143714406, z: 7.733930024458915 }) -> Some(Vec3 { x: 9.167045966884352, y: 3.50804582702496, z: 7.733930024458915 })
+  unmatched edge Key(7g0) radial 1 Some(Vec3 { x: 9.167045966884352, y: 3.4836078143714406, z: 4.815509537377748 }) -> Some(Vec3 { x: 9.167045966884352, y: 4.110825524361426, z: 4.815509537377748 })
+  unmatched edge Key(10g0) radial 1 Some(Vec3 { x: 9.167045966884352, y: 3.4836078143714406, z: 4.815509537377748 }) -> Some(Vec3 { x: 9.167045966884352, y: 3.4836078143714406, z: 7.733930024458915 })
+  unmatched edge Key(12g0) radial 1 Some(Vec3 { x: 9.167045966884352, y: 4.110825524361426, z: 4.815509537377748 }) -> Some(Vec3 { x: 9.167045966884352, y: 4.110825524361426, z: 4.9151807149601945 })
+  unmatched edge Key(18g0) radial 1 Some(Vec3 { x: 9.167045966884352, y: 4.110825524361426, z: 4.9151807149601945 }) -> Some(Vec3 { x: 9.167045966884352, y: 3.50804582702496, z: 4.9151807149601945 })
+  unmatched edge Key(24g0) radial 1 Some(Vec3 { x: 9.167045966884352, y: 3.50804582702496, z: 4.9151807149601945 }) -> Some(Vec3 { x: 9.167045966884352, y: 3.50804582702496, z: 7.733930024458915 })
+
+thread 'tolerant_contact_tail_regression' (252016) panicked at crates\keel-topo\tests\tail_repro.rs:83:23:
+trial 4743 Union d+0e0 ax0: declined: AssemblyFailed("unmatched coedge: shell-closure invariant violated")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tolerant_contact_tail_regression ... FAILED
+
+failures:
+
+failures:
+    tolerant_contact_tail_regression
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.43s
+
+error: test failed, to rerun pass `-p keel-topo --test tail_repro`
