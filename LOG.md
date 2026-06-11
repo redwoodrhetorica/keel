@@ -5573,3 +5573,50 @@ with its void region, mass == mesh == 26 at 1e-9). CI: fmt; clippy -D warnings; 
 NEXT (the leg continues): M2 = the Tier-2 TOLERANT boolean (dossier 39 touching/on-on class
 + the Add.162 tolerance spec) with OpReport confidence (clean/salvaged + tier + achieved
 tolerance), never silent.
+
+## Addendum 180 (2026-06-10, attended): GRACEFUL DEGRADATION M2: the Tier-2 TOLERANT boolean
+
+Branch graceful-tolerant. Dossiers re-read: 39 (the ACIS prepare phase: snap near-coincidence
+to exact coincidence BEFORE classification, ~70 pct of failed booleans fixed in one
+iteration; OCCT fuzzy value; PRESERVE-never-perturb) and the Add.162 tolerance spec.
+
+NEW pub boolean_tolerant(a, b, op, tol, fuzz) -> (BoolResult, Confidence): the dossier-39
+PREPARE phase snaps B planar faces whose planes lie within (0, fuzz] of a parallel
+near-mating A plane (inflated-AABB overlap required; curved rims skipped: the planar slice)
+EXACTLY onto the A plane (face-snap semantics: the mating face moves, the far side stays),
+then runs the strict pipeline ONCE. Confidence reports honestly: clean tier 1 with achieved
+tolerance 0 when nothing moved; salvaged tier 2 with the max movement when something did.
+NO SILENT SALVAGE. The kernel caps effective fuzz at one tenth of the shortest edge (the P5
+local-feature-size guardrail). Strict boolean() is UNTOUCHED: a literal 1e-5 gap remains two
+honest components there; declaring it a flush mate is the tolerant caller's choice.
+
+Strict-mode companion fix: TOUCH-ONLY selection (kept empty, no walls) now returns the clean
+EMPTY result for intersection/difference per Requicha (touching solids intersect in measure
+zero; A - A is empty); an empty union stays a decline. The fuzz-found
+near_coincident_touch_declines test updated: the empty body IS the exact answer there now.
+
+ORACLE, contact lane added (random floats never touch; every 4th trial abuts B on A's +face
+with delta in {0, +-1e-9, +-1e-7} and overlapping cross-extents): the lane exposed THREE
+judge-calibration facts, each resolved on principle:
+1. Coincident faults are informational notes, not partial failure: only-Coincident results
+   are judged on their volumes.
+2. A contact WITHIN the op tolerance may legitimately resolve as the snapped configuration
+   (the boolean''s own tolerance contract / the Fang-Bruderlin tie): the strict judge accepts
+   either reference there. The witness: a 1e-7-penetration difference whose mass == mesh ==
+   the snapped volume to 1e-14.
+3. Mass stays the 1e-9 exact gate; mesh (the independent dropped-face net) gets sliver
+   headroom at 1e-7 relative: ear-clip float noise on 1e-9-thin sliver faces reaches ~1e-8
+   relative while a genuinely dropped face is feature-scale. The witness: a sliver union
+   with mass exact to 1e-14 and mesh off by 4.7e-8.
+
+MEASURED (N = 2000, release): strict PASS 1855 / DECLINE 145 / WRONG 0; tolerant PASS 327 /
+DECLINE 173 / WRONG 0 (65 pct of the contact class salvaged EXACTLY against the snapped
+reference, salvage flags verified per-trial). The tolerant declines are dominated by the
+partial-overlap on-on intersection laminas (the honest mass != mesh gate): the on-on table
+refinement is the named follow-up, plus curved-surface prepare (cylinder/cone mates).
+
+Tests: tolerant_boolean_snaps_near_coincident_contact (tier 1 exact contact; tier-2 gap and
+penetration salvage with exact snapped volumes 2 +- gap, one component, achieved tolerance
+in [gap, fuzz]; beyond-fuzz stays two components), touching_intersection_and_difference_are_
+clean. CI: fmt; clippy -D warnings; workspace 133 + 77 + 254 green; fuzz_boolean soak: count
+below.

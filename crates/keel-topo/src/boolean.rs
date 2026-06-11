@@ -2546,6 +2546,225 @@ pub fn boolean_with(
     assemble_boolean(a, b, op, tol, &seams, faults, opts)
 }
 
+/// Confidence report for the tolerant boolean (dossier 29: honesty as
+/// a feature). `salvaged == false` means the strict pipeline ran on
+/// the input as given (tier 1, achieved tolerance 0 = exact);
+/// `salvaged == true` means the dossier-39 PREPARE phase moved
+/// geometry by at most `achieved_tolerance` before the strict
+/// pipeline ran (tier 2). Salvage is never silent: the caller always
+/// sees the tier and the bound.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Confidence {
+    pub salvaged: bool,
+    pub tier: u8,
+    pub achieved_tolerance: f64,
+}
+
+/// TOLERANT boolean (dossier 29 Tier 2; dossier 39 sec 3.4 / 4.2/4.3):
+/// snap NEAR-COINCIDENT planar contact to exact coincidence within the
+/// caller-bounded `fuzz` (the OCCT fuzzy-value semantics; ACIS's
+/// prepare phase, which Spatial reports fixes ~70 percent of failed
+/// booleans in one iteration), then run the strict pipeline ONCE on
+/// the snapped input. Coincidence is PRESERVED design intent, never
+/// perturbed away. The kernel caps the effective fuzz by local feature
+/// size (one tenth of the shortest edge, the P5 guardrail) so a
+/// generous caller bound cannot eat real features. Strict `boolean`
+/// is untouched: a literal 1e-5 gap is two honest components there;
+/// declaring it a flush mate is this caller's explicit choice.
+///
+/// Scope (the narrow honest slice): planar face pairs with straight
+/// boundary edges snap; curved near-contact stays strict-only (the
+/// cylinder/cone prepare is the follow-up).
+pub fn boolean_tolerant(
+    a: &Body,
+    b: &Body,
+    op: BoolOp,
+    tol: f64,
+    fuzz: f64,
+) -> Result<(BoolResult, Confidence), BoolFault> {
+    if !(fuzz.is_finite() && fuzz >= 0.0) {
+        return Err(BoolFault::AssemblyFailed("tolerant: bad fuzz"));
+    }
+    let cap = shortest_edge(a).min(shortest_edge(b)) / 10.0;
+    let fuzz_eff = fuzz.min(cap);
+    match prepare_snap(a, b, fuzz_eff) {
+        Some((b_snapped, moved)) => {
+            let r = boolean_with(a, &b_snapped, op, tol, BooleanOptions::default())?;
+            Ok((
+                r,
+                Confidence {
+                    salvaged: true,
+                    tier: 2,
+                    achieved_tolerance: moved,
+                },
+            ))
+        }
+        None => {
+            let r = boolean_with(a, b, op, tol, BooleanOptions::default())?;
+            Ok((
+                r,
+                Confidence {
+                    salvaged: false,
+                    tier: 1,
+                    achieved_tolerance: 0.0,
+                },
+            ))
+        }
+    }
+}
+
+/// Shortest finite edge length (the local-feature-size proxy that caps
+/// the tolerant fuzz; infinite when the body has no measurable edges).
+fn shortest_edge(b: &Body) -> f64 {
+    let mut best = f64::INFINITY;
+    for (_, e) in b.edges.iter() {
+        let (v0, v1) = e.bounds;
+        if v0 == v1 {
+            continue;
+        }
+        let (Some(p0), Some(p1)) = (
+            b.vertices.get(v0).map(|x| x.point),
+            b.vertices.get(v1).map(|x| x.point),
+        ) else {
+            continue;
+        };
+        let l = (p1 - p0).norm();
+        if l > 0.0 {
+            best = best.min(l);
+        }
+    }
+    best
+}
+
+/// The dossier-39 PREPARE phase: find B's planar faces whose planes
+/// lie within `(0, fuzz]` of a parallel near-mating A plane (inflated
+/// AABB overlap required) and snap their vertices and surfaces EXACTLY
+/// onto the A plane. Returns the snapped clone of B and the largest
+/// single movement applied; `None` when nothing is within fuzz (the
+/// clean tier-1 path). Candidates with curved boundary edges or
+/// curved surfaces are skipped (the planar slice).
+fn prepare_snap(a: &Body, b: &Body, fuzz: f64) -> Option<(Body, f64)> {
+    use keel_geom::curve::Curve3;
+    use keel_math::vec::Vec3;
+    if fuzz <= 0.0 || !fuzz.is_finite() {
+        return None;
+    }
+    let aabb = |body: &Body, f: FaceKey| -> Option<(Vec3, Vec3)> {
+        let pts = body.face_outer_loop_points(f);
+        let mut lo = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+        let mut hi = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for p in &pts {
+            lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+            hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+        }
+        lo.x.is_finite().then_some((lo, hi))
+    };
+    let mut snapped: Option<Body> = None;
+    let mut moved = 0.0f64;
+    for fa in a.face_keys() {
+        let Some(Surface3::Plane(pl_a)) = a.face_surface3(fa) else {
+            continue;
+        };
+        let Some(na) = a.face_outward_normal(fa) else {
+            continue;
+        };
+        let pa0 = pl_a.frame.origin;
+        let Some((alo, ahi)) = aabb(a, fa) else {
+            continue;
+        };
+        for fb in b.face_keys() {
+            let Some(Surface3::Plane(_)) = b.face_surface3(fb) else {
+                continue;
+            };
+            let Some(nb) = b.face_outward_normal(fb) else {
+                continue;
+            };
+            if na.cross(nb).norm() > 1e-6 {
+                continue; // not parallel in either sense
+            }
+            let Some(pb0) = b.face_outer_loop_points(fb).first().copied() else {
+                continue;
+            };
+            let off = (pb0 - pa0).dot(na);
+            if off.abs() <= 1e-12 || off.abs() > fuzz {
+                continue; // exactly coincident already, or out of reach
+            }
+            let Some((blo, bhi)) = aabb(b, fb) else {
+                continue;
+            };
+            let near = |lo1: Vec3, hi1: Vec3, lo2: Vec3, hi2: Vec3| {
+                lo1.x <= hi2.x + fuzz
+                    && lo2.x <= hi1.x + fuzz
+                    && lo1.y <= hi2.y + fuzz
+                    && lo2.y <= hi1.y + fuzz
+                    && lo1.z <= hi2.z + fuzz
+                    && lo2.z <= hi1.z + fuzz
+            };
+            if !near(alo, ahi, blo, bhi) {
+                continue;
+            }
+            // The planar slice: every boundary edge of the candidate
+            // must be straight (no attached curve geometry to re-fit).
+            let curved_rim = b.face_edge_set(fb).into_iter().any(|e| {
+                b.edges
+                    .get(e)
+                    .and_then(|x| x.curve)
+                    .and_then(|(ck, _)| b.curves.get(ck))
+                    .map(|c| !matches!(c, Curve3::Line(_)))
+                    .unwrap_or(false)
+            });
+            if curved_rim {
+                continue;
+            }
+            // Snap: project every loop vertex of fb onto A's plane and
+            // re-seat fb's surface on it, preserving fb's outward sense.
+            let body = snapped.get_or_insert_with(|| b.clone());
+            let lps = body
+                .faces
+                .get(fb)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default();
+            let mut vs: Vec<crate::entity::VertexKey> = Vec::new();
+            for lk in lps {
+                let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                loop {
+                    if let Some(v) = body.fin_start_vertex(cur)
+                        && !vs.contains(&v)
+                    {
+                        vs.push(v);
+                    }
+                    let Some(next) = body.fins.get(cur).map(|x| x.next) else {
+                        break;
+                    };
+                    cur = next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+            }
+            for v in vs {
+                if let Some(x) = body.vertices.get_mut(v) {
+                    let d = (x.point - pa0).dot(na);
+                    x.point = x.point - na * d;
+                    moved = moved.max(d.abs());
+                }
+            }
+            if let Ok(frame) = keel_geom::surface::Frame3::from_z(pa0, nb) {
+                let plane = keel_geom::surface::Plane3::new(frame);
+                body.attach_face_surface(
+                    fb,
+                    crate::entity::SurfaceGeom::Analytic(Surface3::Plane(plane)),
+                    true,
+                );
+            }
+        }
+    }
+    snapped.map(|b2| (b2, moved))
+}
+
 /// Local / selective face-pair boolean (parity item 31): the boolean
 /// restricted to the intersection seams of the given (target-face,
 /// tool-face) pairs only. Imprint, classification, selection, stitch,
@@ -2618,6 +2837,22 @@ fn assemble_boolean(
     } else {
         Vec::new()
     };
+    // TOUCH-ONLY contact (dossier 39 sec 3.3): when selection keeps
+    // NOTHING (every fragment classified ON and dropped by the
+    // regularized tables; e.g. solids abutting on a shared face, or
+    // A == B differenced), the regularized intersection / difference
+    // is the clean EMPTY result, not a stitch failure. An empty UNION
+    // of solid operands is impossible: that stays a decline.
+    if kept.is_empty() && walls.is_empty() {
+        return match op {
+            BoolOp::Intersection | BoolOp::Difference => Ok(BoolResult {
+                body: Body::new(),
+                faults,
+                op,
+            }),
+            BoolOp::Union => Err(BoolFault::AssemblyFailed("union selected no faces")),
+        };
+    }
     // PRIMARY assembly: the identity-preserving import-and-glue (research
     // file 47). It imports each kept fragment carrying its operand's edge
     // identity and glues only the genuinely-coincident cross-operand seam;
@@ -4199,17 +4434,18 @@ mod tests {
 
     #[test]
     fn near_coincident_touch_declines() {
-        // Tall thin box touched by a small box at a near-coincident face
-        // (fuzz finding): the planar mass-properties post-condition must
-        // reject the zero/sliver-volume result rather than return it.
+        // Tall thin box touched by a small box at a coincident face
+        // (fuzz finding): never a wrong "valid" body. Historically this
+        // declined; with the touch-only rule the regularized
+        // intersection is the clean EMPTY body, which is the exact
+        // answer (the contact is measure-zero).
         let a = block(Vec3::ZERO, Vec3::new(0.5, 0.5, 20.0));
         let b = block(Vec3::new(0.0, 0.0, 20.0), Vec3::new(0.5, 0.5, 0.5));
         if let Ok(res) = boolean(&a, &b, BoolOp::Intersection, 1e-7) {
-            // If anything comes back, mass properties must be computable
-            // and positive (never a wrong "valid" body).
             let v = res.body.mass_properties().map(|m| m.volume);
+            let empty = res.body.mesh_volume().abs() <= 1e-9 && v.is_err();
             assert!(
-                matches!(v, Ok(vol) if vol.is_finite() && vol > 0.0),
+                empty || matches!(v, Ok(vol) if vol.is_finite() && vol > 0.0),
                 "got {v:?}"
             );
         }
@@ -4570,6 +4806,91 @@ mod tests {
             .filter(|(_, r)| !r.solid && !r.infinite)
             .count();
         assert_eq!(voids, 1, "the cavity is a void region");
+    }
+
+    #[test]
+    fn tolerant_boolean_snaps_near_coincident_contact() {
+        // Dossier 29 M2 (Tier 2), the dossier-39 prepare phase: the
+        // tolerant boolean SNAPS near-coincident planar contact to
+        // exact coincidence within the caller-bounded fuzz (the OCCT
+        // fuzzy-value semantics, ACIS's prepare), runs the strict
+        // pipeline once, and reports honestly: clean tier 1 when
+        // nothing moved, salvaged tier 2 with the ACHIEVED tolerance
+        // when something did. Strict mode is untouched: the gapped
+        // pair is two disjoint components to boolean(); design intent
+        // (a flush mating face) is the tolerant caller's to declare.
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        // Exact abutment: tier 1, nothing to snap.
+        let mut b0 = Body::new();
+        b0.block(Vec3::new(1.0, 0.0, 0.0), 1.0, 1.0, 1.0).unwrap();
+        let (r0, c0) = boolean_tolerant(&a, &b0, BoolOp::Union, 1e-7, 1e-4).unwrap();
+        assert!(!c0.salvaged, "exact contact is clean");
+        assert_eq!(c0.tier, 1);
+        let v0 = r0.body.mass_properties().unwrap().volume;
+        assert!((v0 - 2.0).abs() < 1e-9, "abutting union {v0}");
+        // Near-touch with a 1e-5 GAP: strict sees two disjoint solids;
+        // tolerant snaps the mating faces together: ONE component of
+        // volume 2 (the snapped configuration, exactly), salvaged,
+        // achieved tolerance >= the gap and <= the fuzz.
+        let gap = 1e-5;
+        let mut bg = Body::new();
+        bg.block(Vec3::new(1.0 + gap, 0.0, 0.0), 1.0, 1.0, 1.0)
+            .unwrap();
+        let strict = boolean(&a, &bg, BoolOp::Union, 1e-7).unwrap();
+        let strict_solids = strict.body.regions.iter().filter(|(_, r)| r.solid).count();
+        assert_eq!(strict_solids, 2, "strict honors the literal gap");
+        let (rg, cg) = boolean_tolerant(&a, &bg, BoolOp::Union, 1e-7, 1e-4).unwrap();
+        assert!(cg.salvaged, "gap closure is salvage, never silent");
+        assert_eq!(cg.tier, 2);
+        assert!(
+            cg.achieved_tolerance >= gap * 0.99 && cg.achieved_tolerance <= 1e-4,
+            "achieved {}",
+            cg.achieved_tolerance
+        );
+        // Face-snap semantics: the MATING face moves onto A's plane;
+        // B's far side stays put (the prepare makes the PAIR
+        // coincident, it does not rigidly translate the body). The
+        // snapped configuration is exact: volume 2 + gap.
+        let vg = rg.body.mass_properties().unwrap().volume;
+        assert!((vg - (2.0 + gap)).abs() < 1e-9, "snapped union {vg}");
+        let solids = rg.body.regions.iter().filter(|(_, r)| r.solid).count();
+        assert_eq!(solids, 1, "the mated pair is one component");
+        // Near-OVERLAP (1e-5 penetration): same salvage; the snapped
+        // configuration's exact volume is 2 - gap.
+        let mut bo = Body::new();
+        bo.block(Vec3::new(1.0 - gap, 0.0, 0.0), 1.0, 1.0, 1.0)
+            .unwrap();
+        let (ro, co) = boolean_tolerant(&a, &bo, BoolOp::Union, 1e-7, 1e-4).unwrap();
+        assert!(co.salvaged);
+        let vo = ro.body.mass_properties().unwrap().volume;
+        assert!(
+            (vo - (2.0 - gap)).abs() < 1e-9,
+            "snapped overlap union {vo}"
+        );
+        // Fuzz is a hard cap: a gap beyond it stays two components.
+        let mut bf = Body::new();
+        bf.block(Vec3::new(1.001, 0.0, 0.0), 1.0, 1.0, 1.0).unwrap();
+        let (rf, cf) = boolean_tolerant(&a, &bf, BoolOp::Union, 1e-7, 1e-4).unwrap();
+        assert!(!cf.salvaged, "beyond-fuzz contact must not snap");
+        let sf = rf.body.regions.iter().filter(|(_, r)| r.solid).count();
+        assert_eq!(sf, 2);
+    }
+
+    #[test]
+    fn touching_intersection_and_difference_are_clean() {
+        // Touch-only contact (exact abutment): the regularized
+        // intersection is EMPTY and the difference is A unchanged,
+        // both clean strict answers (Requicha on-on), not declines.
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::new(1.0, 0.0, 0.0), 1.0, 1.0, 1.0).unwrap();
+        let i = boolean(&a, &b, BoolOp::Intersection, 1e-7).unwrap();
+        assert_eq!(i.body.face_keys().len(), 0, "touching intersection empty");
+        let d = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
+        let vd = d.body.mass_properties().unwrap().volume;
+        assert!((vd - 1.0).abs() < 1e-9, "touching difference {vd} != A");
     }
 
     #[test]
