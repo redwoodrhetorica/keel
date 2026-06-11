@@ -49,11 +49,21 @@ fuzz_target!(|data: ([f64; 12], u8)| {
 
     if let Ok(res) = boolean(&a, &b, op, 1e-7) {
         assert!(res.body.validate().is_ok(), "boolean produced invalid body");
-        let v = res
-            .body
-            .mass_properties()
-            .map(|m| m.volume)
-            .unwrap_or(f64::NAN);
+        // A clean EMPTY result (disjoint intersection / swallowed
+        // difference, dossier 29 rung 1) has no faces, so analytic mass
+        // properties decline; its volume is zero by definition. Mass
+        // declining on a NON-empty body is still a failure.
+        let v = match res.body.mass_properties() {
+            Ok(m) => m.volume,
+            Err(_) => {
+                let mv = res.body.mesh_volume();
+                assert!(
+                    mv.abs() <= 1e-9,
+                    "mass declined on a non-empty body (mesh {mv})"
+                );
+                0.0
+            }
+        };
         assert!(v.is_finite(), "non-finite result volume");
         assert!(v >= -1e-6, "negative result volume {v}");
         // Loose set bounds only when the result is clean (no faults).
