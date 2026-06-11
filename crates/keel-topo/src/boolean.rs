@@ -2791,8 +2791,10 @@ pub struct Confidence {
 /// declaring it a flush mate is this caller's explicit choice.
 ///
 /// Scope (the narrow honest slice): planar face pairs with straight
-/// boundary edges snap; curved near-contact stays strict-only (the
-/// cylinder/cone prepare is the follow-up).
+/// boundary edges snap, and near-mated cylinder lateral pairs (near-
+/// coaxial, near-equal radius, flat caps) snap onto the exact carrier
+/// (the radial-gap clearance pin); other curved near-contact stays
+/// strict-only.
 pub fn boolean_tolerant(
     a: &Body,
     b: &Body,
@@ -2978,6 +2980,198 @@ fn prepare_snap(a: &Body, b: &Body, fuzz: f64) -> Option<(Body, f64)> {
                     true,
                 );
             }
+        }
+    }
+    // CYLINDER prepare (M6): a near-mated lateral pair, near-coaxial
+    // axes and near-equal radii within fuzz, snaps B's lateral onto
+    // A's EXACT carrier (dossier 39: snap near-coincidence to exact
+    // coincidence BEFORE classification; the radial-gap clearance
+    // pin). The honest slice: B's lateral must be bounded only by
+    // planes perpendicular to the axis (flat caps), so the radial
+    // move keeps every snapped vertex on its other carriers.
+    let mut cyl_done: Vec<FaceKey> = Vec::new();
+    for fa in a.face_keys() {
+        let Some(Surface3::Cylinder(ca)) = a.face_surface3(fa) else {
+            continue;
+        };
+        let za = ca.frame.z;
+        let pa0 = ca.frame.origin;
+        for fb in b.face_keys() {
+            if cyl_done.contains(&fb) {
+                continue;
+            }
+            let Some(Surface3::Cylinder(cb)) = b.face_surface3(fb) else {
+                continue;
+            };
+            if za.cross(cb.frame.z).norm() > 1e-6 {
+                continue; // axes not parallel in either sense
+            }
+            let d = cb.frame.origin - pa0;
+            let off_ax = (d - za * d.dot(za)).norm();
+            let dr = (cb.radius - ca.radius).abs();
+            if (off_ax <= 1e-12 && dr <= 1e-12) || off_ax > fuzz || dr > fuzz {
+                continue; // exactly mated already (strict territory), or out of reach
+            }
+            // Axial overlap, from fin CURVE samples (a circle-bounded
+            // lateral has only seam vertices: the vertex-only trap).
+            let hspan = |body: &Body, f: FaceKey| -> Option<(f64, f64)> {
+                let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+                for lk in body
+                    .faces
+                    .get(f)
+                    .map(|x| x.loops.clone())
+                    .unwrap_or_default()
+                {
+                    let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
+                        continue;
+                    };
+                    let mut cur = entry;
+                    while let Some(fin) = body.fins.get(cur) {
+                        for p in body.fin_curve_samples(cur, 8).unwrap_or_default() {
+                            let h = (p - pa0).dot(za);
+                            lo = lo.min(h);
+                            hi = hi.max(h);
+                        }
+                        cur = fin.next;
+                        if cur == entry {
+                            break;
+                        }
+                    }
+                }
+                (lo <= hi).then_some((lo, hi))
+            };
+            let (Some((alo, ahi)), Some((blo, bhi))) = (hspan(a, fa), hspan(b, fb)) else {
+                continue;
+            };
+            if blo > ahi + fuzz || alo > bhi + fuzz {
+                continue;
+            }
+            // Flat-cap guard: every neighbour sharing an edge with fb
+            // must be a plane perpendicular to the axis.
+            let fb_edges = b.face_edge_set(fb);
+            let caps_ok = b.face_keys().into_iter().filter(|&fo| fo != fb).all(|fo| {
+                if !b.face_edge_set(fo).iter().any(|e| fb_edges.contains(e)) {
+                    return true;
+                }
+                matches!(b.face_surface3(fo),
+                    Some(Surface3::Plane(p)) if p.frame.z.cross(za).norm() <= 1e-9)
+            });
+            if !caps_ok {
+                continue;
+            }
+            let body = snapped.get_or_insert_with(|| b.clone());
+            // The new surface: A's exact axis and radius, B's axis
+            // sense and angular reference preserved.
+            let zb = za * za.dot(cb.frame.z).signum();
+            let Some(xb) = (cb.frame.x - zb * cb.frame.x.dot(zb)).try_normalize() else {
+                continue;
+            };
+            let org = pa0 + za * d.dot(za);
+            let frame = keel_geom::surface::Frame3 {
+                origin: org,
+                x: xb,
+                y: zb.cross(xb),
+                z: zb,
+            };
+            let Ok(cyl) = keel_geom::surface::Cylinder3::new(frame, ca.radius) else {
+                continue;
+            };
+            let sense = body
+                .faces
+                .get(fb)
+                .and_then(|f| f.surface)
+                .map(|(_, s)| s)
+                .unwrap_or(true);
+            // Vertices: radial reprojection onto the exact carrier.
+            let lps = body
+                .faces
+                .get(fb)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default();
+            let mut vs: Vec<crate::entity::VertexKey> = Vec::new();
+            for lk in lps {
+                let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                loop {
+                    if let Some(v) = body.fin_start_vertex(cur)
+                        && !vs.contains(&v)
+                    {
+                        vs.push(v);
+                    }
+                    let Some(next) = body.fins.get(cur).map(|x| x.next) else {
+                        break;
+                    };
+                    cur = next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+            }
+            for v in vs {
+                if let Some(x) = body.vertices.get_mut(v) {
+                    let w = x.point - org;
+                    let h = w.dot(za);
+                    if let Some(rad) = (w - za * h).try_normalize() {
+                        let np = org + za * h + rad * ca.radius;
+                        moved = moved.max((np - x.point).norm());
+                        x.point = np;
+                    }
+                }
+            }
+            // Curves: rims become circles of the exact radius about
+            // the exact axis (winding preserved); straight rulings
+            // re-fit their snapped endpoints.
+            for e in fb_edges {
+                let Some((ck, csense)) = body.edges.get(e).and_then(|x| x.curve) else {
+                    continue;
+                };
+                let Some(c) = body.curves.get(ck) else {
+                    continue;
+                };
+                match c {
+                    Curve3::Circle(circ) => {
+                        let h = (circ.center - org).dot(za);
+                        let n_old = circ.x_axis.cross(circ.y_axis);
+                        let nz = za * za.dot(n_old).signum();
+                        let Some(cx) = (circ.x_axis - nz * circ.x_axis.dot(nz)).try_normalize()
+                        else {
+                            continue;
+                        };
+                        if let Ok(nc) = keel_geom::curve::Circle3::new(
+                            org + za * h,
+                            cx,
+                            nz.cross(cx),
+                            ca.radius,
+                        ) {
+                            body.attach_edge_curve(e, Curve3::Circle(nc), csense);
+                        }
+                    }
+                    Curve3::Line(_) => {
+                        let Some(ed) = body.edges.get(e) else {
+                            continue;
+                        };
+                        let pts = (
+                            body.vertices.get(ed.bounds.0).map(|v| v.point),
+                            body.vertices.get(ed.bounds.1).map(|v| v.point),
+                        );
+                        if let (Some(p0), Some(p1)) = pts
+                            && let Ok(l) = keel_geom::curve::Line3::new(p0, p1 - p0)
+                        {
+                            body.attach_edge_curve(e, Curve3::Line(l), csense);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            body.attach_face_surface(
+                fb,
+                crate::entity::SurfaceGeom::Analytic(Surface3::Cylinder(cyl)),
+                sense,
+            );
+            moved = moved.max(off_ax).max(dr);
+            cyl_done.push(fb);
         }
     }
     snapped.map(|b2| (b2, moved))
@@ -5454,6 +5648,61 @@ mod tests {
         );
         let i2 = boolean(&holed, &pin, BoolOp::Intersection, 1e-7).unwrap();
         assert_eq!(i2.body.face_keys().len(), 0, "boundary-only intersection");
+    }
+
+    #[test]
+    fn tolerant_radial_gap_pin_snaps_exact() {
+        // The M6 oracle (dossier 29 tier 2, dossier 39 prepare): a pin
+        // whose radius is 1e-5 UNDER the hole (the classic clearance
+        // fit exported as-is) and a pin whose axis is offset 3e-6.
+        // Strict sees parallel non-touching laterals; the tolerant
+        // prepare snaps the pin's lateral onto the hole's EXACT
+        // carrier (radius, axis, rims, ruling), after which the strict
+        // pipeline produces the mated-pin exact results.
+        use keel_geom::surface::Frame3;
+        let pi = core::f64::consts::PI;
+        let mut plate = Body::new();
+        plate.block(Vec3::ZERO, 4.0, 4.0, 1.0).unwrap();
+        let dframe = Frame3::from_z(Vec3::new(2.0, 2.0, -0.5), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut drill = Body::new();
+        drill.cylinder(dframe, 1.0, 2.0).unwrap();
+        let holed = boolean(&plate, &drill, BoolOp::Difference, 1e-7)
+            .unwrap()
+            .body;
+        let pframe = Frame3::from_z(Vec3::new(2.0, 2.0, 0.0), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut pin = Body::new();
+        pin.cylinder(pframe, 1.0 - 1e-5, 1.0).unwrap();
+        let (u, conf) = boolean_tolerant(&holed, &pin, BoolOp::Union, 1e-7, 1e-4).unwrap();
+        assert!(
+            conf.salvaged && conf.tier == 2,
+            "radial gap must salvage: {:?}",
+            (conf.salvaged, conf.tier)
+        );
+        assert!(
+            conf.achieved_tolerance >= 1e-6 && conf.achieved_tolerance <= 1e-4,
+            "achieved {}",
+            conf.achieved_tolerance
+        );
+        let (vu, mu) = (
+            u.body.mass_properties().unwrap().volume,
+            u.body.mesh_volume(),
+        );
+        assert!(
+            (vu - 16.0).abs() < 1e-9 && (mu - 16.0).abs() < 1e-9,
+            "snapped pin union {vu}/{mu} != solid plate"
+        );
+        let (d, _) = boolean_tolerant(&holed, &pin, BoolOp::Difference, 1e-7, 1e-4).unwrap();
+        let vd = d.body.mass_properties().unwrap().volume;
+        assert!((vd - (16.0 - pi)).abs() < 1e-9, "snapped difference {vd}");
+        // The axis-offset same-radius pin snaps the same way.
+        let oframe =
+            Frame3::from_z(Vec3::new(2.0 + 3e-6, 2.0, 0.0), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut pin2 = Body::new();
+        pin2.cylinder(oframe, 1.0, 1.0).unwrap();
+        let (u2, c2) = boolean_tolerant(&holed, &pin2, BoolOp::Union, 1e-7, 1e-4).unwrap();
+        assert!(c2.salvaged, "offset pin must salvage");
+        let v2 = u2.body.mass_properties().unwrap().volume;
+        assert!((v2 - 16.0).abs() < 1e-9, "offset pin union {v2}");
     }
 
     #[test]

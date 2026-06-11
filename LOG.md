@@ -5755,3 +5755,36 @@ CI: fmt; clippy -D warnings; workspace 133 + 77 + 257 green; oracle N=2000 uncha
 tessellation internals changed): counts below.
 NEXT (the leg continues): tolerant cylinder prepare (radial-gap pins), the residual
 13-trial tolerant tail, doctrine-wide OpReport.
+
+## Addendum 184: graceful degradation M6, the tolerant cylinder prepare (2026-06-11)
+
+Dossier 39 re-read (sec 1, the ACIS prepare phase: snap near-coincidence to EXACT
+coincidence before classification fixes the dominant share of failed booleans; sec 5,
+coincident curved carriers): M2''s prepare_snap covered planar near-mates only. M6 extends
+it to the canonical curved case, the RADIAL-GAP CLEARANCE PIN: a pin exported 1e-5 under
+its hole (or 3e-6 off-axis), which strict correctly sees as parallel non-touching laterals.
+
+THE SNAP (prepare_snap, cylinder pass): a B lateral near-mated to an A lateral (axes
+parallel within 1e-6, axis offset and radius difference within fuzz but not exactly zero,
+axial spans overlapping, B''s lateral bounded only by flat caps perpendicular to the axis)
+is re-seated on A''s EXACT carrier: the surface becomes A''s axis and radius with B''s
+axis sense and angular reference preserved; every loop vertex reprojects radially; rim
+circles are rebuilt at the exact radius about the exact axis (winding preserved); straight
+rulings re-fit their snapped endpoints. Axial extents come from fin CURVE samples (the
+vertex-only trap, sighting five, avoided at design time). After the snap the strict
+pipeline runs the M4 mated-pin machinery unchanged: coincident-opposite laterals drop,
+caps tile, the union is the SOLID box.
+
+Oracle first (tolerant_radial_gap_pin_snaps_exact): the 1e-5 undersize pin unions to
+mass == mesh == 16 at 1e-9 with salvaged/tier 2/achieved in [1e-6, 1e-4], differences back
+to 16 - pi at 1e-9; the 3e-6 axis-offset pin salvages identically. PASSED ON THE FIRST
+FULL RUN of the implementation.
+
+The flat-cap guard is the honesty boundary: oblique or curved neighbours would be pulled
+off their carriers by a radial move, so those configurations stay strict (DECLINE-never-
+WRONG). Cones and spheres remain the recorded follow-up.
+
+CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 green; oracle N=2000 unchanged
+(strict 1892/108/0, tolerant 487/13/0). M5 and M6 share this branch''s soak window
+(both touch boolean internals; one fuzz_boolean + fuzz_cyl_boolean soak gates the merge);
+counts recorded at the merge.
