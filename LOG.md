@@ -5854,3 +5854,6 @@ the tolerant tier exists to salvage). WRONG = 0 in both lanes. The three trials 
 the permanent regression (now 15 replays).
 
 CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 + 1 green; merge soak counts below.
+
+SOAK COUNTS (the M8 merge gate, 2026-06-11): fuzz_boolean 2005 runs / 602 s clean;
+fuzz_cyl_boolean 666 runs / 603 s clean.
