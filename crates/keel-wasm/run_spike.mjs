@@ -27,3 +27,32 @@ const time = (label, f, reps, expected) => {
 console.log(`module: ${bytes.length} bytes (${(bytes.length / 1048576).toFixed(2)} MiB)`);
 time("box_union   ", box_union, 50, 1.875);
 time("pin_in_hole ", pin_in_hole, 20, 16.0);
+
+// Worker-protocol buffers (task 28): build the demo mesh, view the
+// buffers directly in wasm memory, verify the contract.
+const e = instance.exports;
+const t0 = performance.now();
+const status = e.demo_mesh_build();
+const buildMs = performance.now() - t0;
+if (status !== 0) throw new Error(`demo_mesh_build failed: ${status}`);
+const mem = e.memory.buffer;
+const positions = new Float32Array(mem, e.mesh_positions_ptr(), e.mesh_positions_len());
+const normals = new Float32Array(mem, e.mesh_normals_ptr(), e.mesh_normals_len());
+const indices = new Uint32Array(mem, e.mesh_indices_ptr(), e.mesh_indices_len());
+const groups = new Uint32Array(mem, e.mesh_groups_ptr(), e.mesh_groups_len());
+const lines = new Float32Array(mem, e.mesh_lines_ptr(), e.mesh_lines_len());
+
+let covered = 0;
+for (let i = 0; i < groups.length; i += 3) covered += groups[i + 2];
+const ok =
+  positions.length === normals.length &&
+  covered === indices.length &&
+  lines.length % 6 === 0 &&
+  positions.length > 0 &&
+  lines.length > 0;
+console.log(
+  `worker mesh: built in ${buildMs.toFixed(1)} ms: ${indices.length / 3} tris, ` +
+    `${groups.length / 3} face groups (cover ${covered === indices.length ? "EXACT" : "BROKEN"}), ` +
+    `${lines.length / 6} line segments -> ${ok ? "CONTRACT OK" : "CONTRACT VIOLATION"}`,
+);
+if (!ok) process.exit(1);
