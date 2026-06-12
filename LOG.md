@@ -6588,3 +6588,18 @@ notes. Fuzz soak result recorded on the commit.
 Fuzz soak: fuzz_cyl_boolean 31171 runs clean; fuzz_boolean interrupted by the
 wall-clock timeout mid-run (no crash: libFuzzer SIGTERM exit), ~3000 runs
 clean before the cut.
+
+## Addendum 217: task-29 step 5 partial: bowtie-loop e1 reassignment (2026-06-12)
+
+imprint_crossing_pair now derives e1-half assignments from the FINAL loop
+structure: after both c2-arc splits, each c2 edge''s radial loops are tested
+for pure-conic membership (a bowtie loop carries only c1/c2 edges; the
+band-rest loop carries rim/seam edges and is excluded: its e1 belongs to the
+OTHER bowtie), and the bowtie''s e1 edges reassign to the half whose azimuth
+side matches the c2 midpoint''s. With the gate open the Steinmetz now
+DECLINES HONESTLY at mass != mesh (it wrong-passed 12.41 before the metric
+layer); the dev harness still reads one bowtie at half area (its e1 arc
+samples the wrong half: the fix pass is not reaching or not flipping that
+edge: debug entry points in the task notes). The gate stays CLOSED (the
+mesh-floor path remains fragile if mass errs instead of disagreeing).
+Suite 16/16 green with the gate closed.

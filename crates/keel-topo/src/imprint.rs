@@ -659,6 +659,7 @@ impl Body {
                 }
             };
         let s_ab = (tb - ta).rem_euclid(tau);
+        let mut c2_edges: Vec<(EdgeKey, f64)> = Vec::new();
         for (start, sweep, va, vb) in [
             (ta, s_ab, xverts[0], xverts[1]),
             (tb, tau - s_ab, xverts[1], xverts[0]),
@@ -671,80 +672,6 @@ impl Body {
             let mid = arc.point(0.5 * (d0 + d1));
             let host = crate::boolean::curved_face_containing(self, mid, tol.max(1e-7))
                 .ok_or(TopoError::Precondition("crossing pair: unlocated arc host"))?;
-            // Step 5 (e1-half consistency): the host's c1-arc must be
-            // the half on the SAME azimuth side of the crossings as
-            // this c2 arc: the uniform +pi declaration from the wrap
-            // split is wrong for one host in the DEGENERATE case (the
-            // wrap split landing exactly on the crossings). Reassign by
-            // testing candidate midpoints' azimuths.
-            if let Some(keel_geom::surface::Surface3::Cylinder(host_cyl)) = self.face_surface3(host)
-            {
-                let az = |p: Vec3| -> f64 {
-                    let w = p - host_cyl.frame.origin;
-                    let w = w - host_cyl.frame.z * w.dot(host_cyl.frame.z);
-                    w.dot(host_cyl.frame.y).atan2(w.dot(host_cyl.frame.x))
-                };
-                let in_ccw = |a1: f64, a2: f64, x: f64| -> bool {
-                    (x - a1).rem_euclid(tau) < (a2 - a1).rem_euclid(tau)
-                };
-                let (a1, a2) = (az(xs[0]), az(xs[1]));
-                let want = in_ccw(a1, a2, az(mid));
-                let host_loops = self
-                    .faces
-                    .get(host)
-                    .map(|f| f.loops.clone())
-                    .unwrap_or_default();
-                let mut e1_edges: Vec<EdgeKey> = Vec::new();
-                for lk in host_loops {
-                    let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
-                        continue;
-                    };
-                    let mut cur2 = entry;
-                    while let Some(fin) = self.fins.get(cur2) {
-                        let ek = fin.edge;
-                        if !e1_edges.contains(&ek)
-                            && self
-                                .edges
-                                .get(ek)
-                                .and_then(|e| e.curve)
-                                .and_then(|(ck, _)| self.curves.get(ck))
-                                .map(|cv| same_conic(cv, c1))
-                                .unwrap_or(false)
-                        {
-                            e1_edges.push(ek);
-                        }
-                        cur2 = fin.next;
-                        if cur2 == entry {
-                            break;
-                        }
-                    }
-                }
-                for ek in e1_edges {
-                    let Some(ed) = self.edges.get(ek) else {
-                        continue;
-                    };
-                    let Some(s_cur) = ed.arc_sweep else { continue };
-                    let Some(p0) = self.vertices.get(ed.bounds.0).map(|v| v.point) else {
-                        continue;
-                    };
-                    let t0 = ang_on(c1, p0).unwrap_or(0.0);
-                    let mid_of = |sw: f64| -> Vec3 {
-                        let t = t0 + sw * 0.5;
-                        match c1 {
-                            Curve3::Circle(ci) => ci.point(t),
-                            Curve3::Ellipse(el) => el.point(t),
-                            _ => p0,
-                        }
-                    };
-                    if in_ccw(a1, a2, az(mid_of(s_cur))) != want {
-                        // The complement half, signed the other way.
-                        let alt = -(tau - s_cur.abs()) * s_cur.signum();
-                        if in_ccw(a1, a2, az(mid_of(alt))) == want {
-                            self.set_edge_arc_sweep(ek, alt);
-                        }
-                    }
-                }
-            }
             let e = self.imprint_open_arc_between(host, &Curve3::Nurbs(arc), va, vb, tol)?;
             // The edge's CARRIER is the conic itself with its recorded
             // sweep (the bounded NURBS arc served the pcurve fit): the
@@ -756,6 +683,117 @@ impl Body {
             }
             self.set_edge_arc_sweep(e, sweep);
             out_edges.push(e);
+            c2_edges.push((e, start + 0.5 * sweep));
+        }
+        // Step 5 (e1-half consistency), AFTER both splits: each e1 edge
+        // belongs to exactly ONE bowtie (the face whose loop also holds
+        // a c2 arc); its half must lie on the SAME azimuth side of the
+        // crossings as that c2 arc's midpoint. The uniform +pi
+        // declarations from the wrap split are wrong for one bowtie in
+        // the DEGENERATE case (the wrap split landing exactly on the
+        // crossings), and assignment is only decidable from the final
+        // loop structure.
+        if let Some(keel_geom::surface::Surface3::Cylinder(cyl)) = self.face_surface3(face) {
+            let az = |p: Vec3| -> f64 {
+                let w = p - cyl.frame.origin;
+                let w = w - cyl.frame.z * w.dot(cyl.frame.z);
+                w.dot(cyl.frame.y).atan2(w.dot(cyl.frame.x))
+            };
+            let in_ccw = |a1: f64, a2: f64, x: f64| -> bool {
+                (x - a1).rem_euclid(tau) < (a2 - a1).rem_euclid(tau)
+            };
+            let (a1, a2) = (az(xs[0]), az(xs[1]));
+            for &(c2e, c2_mid_t) in &c2_edges {
+                let mid3 = match c2 {
+                    Curve3::Circle(ci) => ci.point(c2_mid_t),
+                    Curve3::Ellipse(el) => el.point(c2_mid_t),
+                    _ => continue,
+                };
+                let want = in_ccw(a1, a2, az(mid3));
+                // The BOWTIE loop(s) holding this c2 edge: loops whose
+                // edges are exclusively conic carriers (c1/c2). The
+                // band-rest loop also holds the c2 edge but carries
+                // rim/seam-line edges, excluding it: its e1 edge
+                // belongs to the OTHER bowtie.
+                for rf in self
+                    .edges
+                    .get(c2e)
+                    .map(|e| e.radial.clone())
+                    .unwrap_or_default()
+                {
+                    let Some(lk) = self.fins.get(rf).map(|f| f.owner) else {
+                        continue;
+                    };
+                    let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                        continue;
+                    };
+                    // Pass 1: pure-conic loop test.
+                    let mut conic_only = true;
+                    let mut cur2 = entry;
+                    while let Some(fin) = self.fins.get(cur2) {
+                        let on_conic = self
+                            .edges
+                            .get(fin.edge)
+                            .and_then(|e| e.curve)
+                            .and_then(|(ck, _)| self.curves.get(ck))
+                            .map(|cv| same_conic(cv, c1) || same_conic(cv, c2))
+                            .unwrap_or(false);
+                        if !on_conic {
+                            conic_only = false;
+                            break;
+                        }
+                        cur2 = fin.next;
+                        if cur2 == entry {
+                            break;
+                        }
+                    }
+                    if !conic_only {
+                        continue;
+                    }
+                    // Pass 2: fix this bowtie loop's e1 edges to `want`
+                    // (collect first: the walk borrows immutably).
+                    let mut fixes: Vec<(EdgeKey, f64)> = Vec::new();
+                    let mut cur2 = entry;
+                    while let Some(fin) = self.fins.get(cur2) {
+                        let ek = fin.edge;
+                        let is_e1 = self
+                            .edges
+                            .get(ek)
+                            .and_then(|e| e.curve)
+                            .and_then(|(ck, _)| self.curves.get(ck))
+                            .map(|cv| same_conic(cv, c1))
+                            .unwrap_or(false);
+                        if is_e1
+                            && let Some(ed) = self.edges.get(ek)
+                            && let Some(s_cur) = ed.arc_sweep
+                            && let Some(p0) = self.vertices.get(ed.bounds.0).map(|v| v.point)
+                            && let Some(t0) = ang_on(c1, p0)
+                        {
+                            let mid_of = |sw: f64| -> Vec3 {
+                                let t = t0 + sw * 0.5;
+                                match c1 {
+                                    Curve3::Circle(ci) => ci.point(t),
+                                    Curve3::Ellipse(el) => el.point(t),
+                                    _ => p0,
+                                }
+                            };
+                            if in_ccw(a1, a2, az(mid_of(s_cur))) != want {
+                                let alt = -(tau - s_cur.abs()) * s_cur.signum();
+                                if in_ccw(a1, a2, az(mid_of(alt))) == want {
+                                    fixes.push((ek, alt));
+                                }
+                            }
+                        }
+                        cur2 = fin.next;
+                        if cur2 == entry {
+                            break;
+                        }
+                    }
+                    for (ek, alt) in fixes {
+                        self.set_edge_arc_sweep(ek, alt);
+                    }
+                }
+            }
         }
         self.debug_validate();
         Ok(out_edges)
