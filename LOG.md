@@ -6458,3 +6458,13 @@ winding-cloud.gif (376 KiB): a 14x14 probe sheet sweeps through the drilled
 plate, every point colored by the body's generalized winding number (green
 inside, grey outside): the bore reads correctly hollow all the way through.
 The classifier the boolean pipeline trusts, made visible. Ten gifs shipped.
+
+## Addendum 212: the Steinmetz oracle pinned (task 29 opens) (2026-06-12)
+
+tests/steinmetz.rs: two equal perpendicular unit cylinders, intersection =
+EXACTLY 16/3 (no pi: the classic bicylinder). Pinned BEFORE the crossing-seam
+imprint is built (oracle-first): today the boolean DECLINES this class
+honestly; the moment it assembles it must be exact, and the old wrong-positive
+(12.5) can never return unnoticed. The design sketch for the arrangement
+imprint (mutual-crossing split + node/arc graph + UV face tracing, arc_sweep
+recording) is in task 29.
