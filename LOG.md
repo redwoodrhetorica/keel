@@ -6107,3 +6107,22 @@ the optimization leg (100x boxes, 62x drill, all of it exactness-audit wins, Add
 crash and two million exactness-checked booleans without a wrong answer. DECLINE-never-
 WRONG holds at every scale ever measured. Next program: the fieldforge kernel swap
 (WASM spike first, branch wasm-spike).
+
+## Addendum 194: THE WASM SPIKE (task 21): Keel runs in V8, exactly (2026-06-12)
+
+The swap program opens. crates/keel-wasm: a zero-dependency cdylib exposing extern-C
+spike entries (no wasm-bindgen needed yet); run_spike.mjs loads the module raw in Node
+(V8 = the same engine as fieldforge''s WebView2 host). FINDINGS:
+
+1. keel-topo compiles to wasm32-unknown-unknown CLEAN, FIRST TRY, ZERO source changes:
+   the pure-compute discipline paid in full. (The env-gated profile instruments are
+   runtime-safe: env::var errs harmlessly in wasm, so the Instant paths never execute.)
+2. EXACTNESS SURVIVES THE TARGET: pin_in_hole returns 16.0 to machine precision in V8;
+   box_union exact. Same IEEE 754, same answers.
+3. SIZE: 740,508 bytes (0.71 MiB) release, before any wasm-opt pass: versus the tens of
+   megabytes of fieldforge''s OCCT WASM incumbent.
+4. SPEED: pin_in_hole 9.0 ms/op in WASM vs ~10.6 ms native-instrumented (parity within
+   noise); box_union 2.6 ms. Against the incumbent''s ~115 ms rebuilds: 10-40x faster.
+
+The spike''s unknown-unknowns are resolved: nothing blocks the swap on feasibility.
+The browser-worker integration and the mesh+faceGroups protocol are task 28''s scope.
