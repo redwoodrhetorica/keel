@@ -6369,3 +6369,22 @@ badge) and a 1.4 s hold on the final frame so the payoff reads. Example +
 Python only (no kernel paths): triplet green, no soak needed. Remaining
 shortlist (fillet overflow ladder, cellular wall, octant corner blend, T2 set,
 honest-DECLINE oddball) continues on this pipeline.
+
+## Addendum 205: the fillet overflow-ladder gif + the ghost-arc render fix (task 34) (2026-06-12)
+
+fillet-overflow.gif (592 KiB): the dossier-56 cliff story in one loop. On the
+4x1x2 wall-top edge the radius sweeps 0.30 to 1.55: the ordinary fillet
+handles the small radii; past the support width it DECLINES (never guesses)
+and fillet_edge_cliff engages, rolling the blend over the far edge: the
+configuration where OCCT's fillet fails outright. The sweep skips the
+trigger's immediate neighborhood (the honest both-decline band); the label
+names the active handler per frame.
+
+The gif again found a real render defect: GHOST ARCS. edge_polyline picked
+the increasing-parameter arc between an edge's endpoints unconditionally, and
+when the material arc runs the other way it drew the COMPLEMENT, floating
+outside the body (the cliff caps' full construction circles). Fixed
+trim-aware: true_arc_span tests both candidate midpoints against the adjacent
+faces' tessellation and keeps the one ON the trimmed region. Render-only path
+(render_mesh wireframes; mass/winding/boolean untouched, so no soak per the
+CI rule's scope); suite 16/16 green, clippy clean.

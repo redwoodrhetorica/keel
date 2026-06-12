@@ -165,6 +165,56 @@ fn pin(dir: &Path) {
     println!("pin: {frames} frames");
 }
 
+/// The fillet overflow ladder: the radius grows past the supporting
+/// face's width. The ordinary fillet handles the small radii; past the
+/// trigger it DECLINES (never guesses) and the cliff handler engages,
+/// rolling over the far edge (the configuration where OCCT's fillet
+/// fails outright). The sweep skips the trigger's immediate
+/// neighborhood (the honest both-decline band).
+fn fillet(dir: &Path) {
+    use keel_topo::entity::EdgeKey;
+    let frames = 36usize;
+    for i in 0..frames {
+        let t = i as f64 / (frames - 1) as f64;
+        let r = if t < 0.55 {
+            0.30 + (0.95 - 0.30) * (t / 0.55)
+        } else {
+            1.10 + (1.55 - 1.10) * ((t - 0.55) / 0.45)
+        };
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 1.0, 2.0).unwrap();
+        // The wall-top edge of the 4x1x2 block: midpoint (2, 0, 2).
+        let e: EdgeKey = b
+            .entity_ids()
+            .filter_map(|id| match b.lookup(id) {
+                Some(keel_topo::entity::AnyKey::Edge(k)) => Some(k),
+                _ => None,
+            })
+            .find(|&k| {
+                let Some(edge) = b.edge(k) else { return false };
+                let (Some(p0), Some(p1)) = (
+                    b.vertex(edge.bounds.0).map(|v| v.point),
+                    b.vertex(edge.bounds.1).map(|v| v.point),
+                ) else {
+                    return false;
+                };
+                let m = (p0 + p1) * 0.5;
+                (m - Vec3::new(2.0, 0.0, 2.0)).norm() < 1e-9
+            })
+            .expect("wall-top edge");
+        let (body, label) = match b.fillet_edge(e, r) {
+            Ok(x) => (x, "fillet".to_string()),
+            Err(_) => (
+                b.fillet_edge_cliff(e, r).expect("ladder frame declined"),
+                "overflow: cliff handler".to_string(),
+            ),
+        };
+        let mesh = body.worker_mesh();
+        write_frame(dir, i, &mesh, &format!("\"label\":\"{label} r={r:.2}\""));
+    }
+    println!("fillet: {frames} frames");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let op = args.get(1).map(String::as_str).unwrap_or("drill");
@@ -178,8 +228,9 @@ fn main() {
         "drill" => drill(dir),
         "trio" => trio(dir),
         "pin" => pin(dir),
+        "fillet" => fillet(dir),
         other => {
-            eprintln!("unknown op {other}; available: drill, trio, pin");
+            eprintln!("unknown op {other}; available: drill, trio, pin, fillet");
             std::process::exit(1);
         }
     }

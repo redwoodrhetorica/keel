@@ -229,13 +229,17 @@ impl Body {
             Curve3::Line(_) => straight,
             Curve3::Nurbs(n) if n.degree() <= 1 => straight,
             Curve3::Circle(c) => {
-                let (t0, t1) = span(c.project(p0), c.project(p1));
+                let c = *c;
+                let (t0, t1) =
+                    self.true_arc_span(edge, span(c.project(p0), c.project(p1)), |t| c.point(t));
                 (0..=N)
                     .map(|i| c.point(t0 + (t1 - t0) * i as f64 / N as f64))
                     .collect()
             }
             Curve3::Ellipse(el) => {
-                let (t0, t1) = span(el.project(p0), el.project(p1));
+                let el = *el;
+                let (t0, t1) =
+                    self.true_arc_span(edge, span(el.project(p0), el.project(p1)), |t| el.point(t));
                 (0..=N)
                     .map(|i| el.point(t0 + (t1 - t0) * i as f64 / N as f64))
                     .collect()
@@ -355,6 +359,52 @@ impl Body {
             .iter()
             .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
             .sum()
+    }
+
+    /// Disambiguate which of the two candidate arcs between an edge's
+    /// endpoints is the MATERIAL one: the increasing-parameter pick is
+    /// arbitrary (the carrier records no half), and the wrong side draws
+    /// ghost arcs outside the body (the fillet-gif cap circles). The
+    /// true arc's midpoint lies on an adjacent face's trimmed region;
+    /// the complement's floats in air.
+    fn true_arc_span(
+        &self,
+        edge: crate::entity::EdgeKey,
+        (t0, t1): (f64, f64),
+        eval: impl Fn(f64) -> Vec3,
+    ) -> (f64, f64) {
+        let tau = core::f64::consts::TAU;
+        if (t1 - t0 - tau).abs() < 1e-9 {
+            return (t0, t1); // full revolution: nothing to pick
+        }
+        let mut tris: Vec<[Vec3; 3]> = Vec::new();
+        if let Some(e) = self.edges.get(edge) {
+            let mut seen = Vec::new();
+            for &fk in &e.radial {
+                if let Some(face) = self
+                    .fins
+                    .get(fk)
+                    .and_then(|f| self.loops.get(f.owner))
+                    .map(|l| l.face)
+                    && !seen.contains(&face)
+                {
+                    seen.push(face);
+                    tris.extend(self.tessellate_face(face));
+                }
+            }
+        }
+        if tris.is_empty() {
+            return (t0, t1);
+        }
+        let dist = |p: Vec3| -> f64 {
+            tris.iter()
+                .map(|t| (closest_on_tri(p, t) - p).norm())
+                .fold(f64::INFINITY, f64::min)
+        };
+        let d_inc = dist(eval(0.5 * (t0 + t1)));
+        let alt = (t1, t0 + tau);
+        let d_alt = dist(eval(0.5 * (alt.0 + alt.1)));
+        if d_alt + 1e-9 < d_inc { alt } else { (t0, t1) }
     }
 
     /// Exact analytic area of a CURVED analytic face, reusing the same
