@@ -6904,3 +6904,28 @@ frames z-fight (painter renderer, no depth buffer).
 Pipeline hardening on the way: lines-only frames (HLR) get camera
 bounds from segments; labels stay JSON-safe. Clippy clean; the corpus
 re-renders with two commands per op.
+
+## Addendum 227: the OP GYM (task 46): the demo corpus as a numeric instrument (2026-06-12)
+
+tests/op_gym.rs: the per-op demo families re-run with RANDOM LCG-drawn
+parameters and no images (KEEL_OPGYM_N / KEEL_OPGYM_START scaling, the
+three_bucket conventions). Thirteen families: fillet (cliff fallback),
+variable fillet, partial fillet, octant/setback corners, draft/taper,
+move_face (exact prismatic differential), hollow/pierce, partition,
+curved booleans (drill / countersink / sphere socket / crossing
+cylinders, op-cycled), slice (wafers partition the mesh volume to
+1e-6), constructors (helix sweep / multi-section loft / partial
+revolve), unblend (restores the parent block to 1e-9), uniform scale
+(cubes the volume). Per Ok body: validate, finite mesh, mass==mesh
+chordal band, and the NUMERIC VISUAL ORACLE: analytic-preferred
+surface_area vs the tessellation''s own summed area within the same
+band. Blind spot stated in the file: the area gate only bites where an
+analytic area reads; tess-only faces compare trivially equal, so the
+visual corpus stays complementary.
+
+FIRST RUN (N=650): OK 647 / DECLINE 3 / VIOLATIONS 5, and all five
+violations are the task-44 partial-fillet fin, now with a numeric
+signature (analytic vs tess area off 1.5-3 percent, trials
+15/158/236/470/548 pinned in the task). The instrument is #[ignore]d
+(red while task 44 is open, by design: it becomes the regression net
+the moment the fin dies). Suite green, clippy clean.
