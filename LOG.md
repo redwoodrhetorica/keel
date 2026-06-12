@@ -6953,3 +6953,30 @@ defect underneath it. Verification: suite green, op gym now CLEAN
 (N=650: OK 647 / DECLINE 3 / VIOLATIONS 0: the instrument flips to a
 regression net), the 100k box oracle BIT-IDENTICAL again
 (95604/4396/0; tolerant 25000/0/0).
+
+## Addendum 229: bug-hunt triage: task 42 exonerated, task 45 confirmed and pinned (2026-06-12)
+
+Task 42 (the variable-fillet "flat triangle") is NOT a defect: the
+fine-tolerance arbitration (2e-4) matches the coarse per-face areas to
+four decimals at r1 in {0.3, 0.6, 0.9}, and the 500px zoom shows a
+smooth, correctly shaded tapered cone band; the 250px contact sheet''s
+flat look was downscale shading and the diagonal is the real spring
+edge. Closed without a change.
+
+Task 45 (the setback corner) is REAL and broad. The probe battery:
+validate Ok, areas consistent at fine tolerance, winding consistent,
+but the MESH VOLUME violates the op''s OWN rigorous lower bound
+(dossier 53): cube 2.0 with equal r 0.2, d 0.6 reads 6.925 against a
+7.436 floor: the corner patch removes roughly a (d+r)-box too much.
+The op gym''s setback arm now carries the dossier bounds as its
+differential and flags 10+ violations per 650 trials, every one UNDER
+the lower bound; the in-tree test config (distinct radii, d 0.8) sits
+inside its loose bounds, which is how this shipped. The zoom also
+shows the corner NURBS patch erupting as a dark polyhedral blob (real
+geometry: fine tessellation agrees) plus a stray full-circle wireframe
+(the arc-identity ghost class: the setback arcs never record
+arc_sweep). Fix target: the six-quad corner patch builder in
+fillet_corner_setback. The gym stays red while the task is open, by
+design: mass cannot cross-check these bodies (NURBS faces decline,
+the documented M5 line), so the bounds differential is the only
+numeric gate this class has.

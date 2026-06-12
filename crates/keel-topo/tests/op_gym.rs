@@ -248,7 +248,21 @@ fn op_gym() {
                         "setback",
                         b.fillet_corner_setback(&[(e1, r, d), (e2, r, d), (e3, r, d)])
                             .ok()
-                            .map(|b| (b, None)),
+                            .map(|out| {
+                                // The op's own rigorous volume bounds
+                                // (dossier 53 / the in-tree oracle):
+                                // removal at least the edge prisms up to
+                                // the cross planes, at most the prisms
+                                // full-length plus the corner box.
+                                let pi = core::f64::consts::PI;
+                                let cut = 3.0 * r * r * (1.0 - pi / 4.0);
+                                let lo = s * s * s - cut * s - (d + r).powi(3);
+                                let hi = s * s * s - cut * (s - d);
+                                let v = out.mesh_volume();
+                                let mid = 0.5 * (lo + hi);
+                                let tol = 0.5 * (hi - lo);
+                                (out, Some((v, mid, tol)))
+                            }),
                     )
                 }
             }
