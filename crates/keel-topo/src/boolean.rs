@@ -4116,6 +4116,15 @@ impl Body {
 /// surface passes through `p` and whose boundary-vertex height range
 /// contains `p`'s height. Wrap circles are full rings, so the angular
 /// extent needs no check here.
+impl Body {
+    /// Pick the face whose trimmed region contains `p` (within `tol` of
+    /// its surface): the consumer-facing point-pick (planar faces first,
+    /// then curved). `None` when `p` is not on the boundary.
+    pub fn pick_face(&self, p: keel_math::vec::Vec3, tol: f64) -> Option<FaceKey> {
+        planar_face_containing(self, p, tol).or_else(|| curved_face_containing(self, p, tol))
+    }
+}
+
 pub(crate) fn curved_face_containing(
     body: &Body,
     p: keel_math::vec::Vec3,

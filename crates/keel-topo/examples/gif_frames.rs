@@ -477,6 +477,84 @@ fn gwn(dir: &Path) {
     println!("gwn: {frames} frames");
 }
 
+/// Wire imprint + face push: a rectangle imprints onto the block's top
+/// face (real topology, not a sketch overlay), then the imprinted face
+/// pushes up and down through the loop (offset_face): the elemental
+/// feature-modeling pair.
+fn imprint_push(dir: &Path) {
+    let frames = 36usize;
+    for i in 0..frames {
+        let t = i as f64 / frames as f64;
+        let d = 0.9 * (core::f64::consts::TAU * t).sin();
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 4.0, 4.0, 1.5).unwrap();
+        let top = b
+            .pick_face(Vec3::new(2.0, 2.0, 1.5), 1e-7)
+            .expect("top face");
+        let ring = [
+            Vec3::new(1.0, 1.0, 1.5),
+            Vec3::new(3.0, 1.0, 1.5),
+            Vec3::new(3.0, 3.0, 1.5),
+            Vec3::new(1.0, 3.0, 1.5),
+        ];
+        b.imprint_closed_polyline(top, &ring).expect("imprint");
+        let pocket = b
+            .pick_face(Vec3::new(2.0, 2.0, 1.5), 1e-7)
+            .expect("imprinted face");
+        if d.abs() > 1e-9 {
+            b.offset_face(pocket, d).expect("push frame");
+        }
+        let mesh = b.worker_mesh();
+        write_frame(
+            dir,
+            i,
+            &mesh,
+            &format!("\"label\":\"imprint + push {d:+.2}\""),
+        );
+    }
+    println!("imprint_push: {frames} frames");
+}
+
+/// SGC merge: the non-regularized union keeps the interior wall as the
+/// blocks slide together (the cellular model); merge_cells then
+/// dissolves the wall and the cells fuse into one region, on camera.
+fn merge(dir: &Path) {
+    use keel_topo::boolean::{BooleanOptions, boolean_with};
+    let frames = 36usize;
+    let touch = 18usize;
+    let dissolve = 27usize;
+    for i in 0..frames {
+        // Approach until the faces COINCIDE (the item-29 abutting
+        // configuration), hold the cellular wall, then dissolve.
+        let t = (i.min(touch) as f64) / touch as f64;
+        let x = 1.0 + 1.0 * (1.0 - t);
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::new(x, 0.0, 0.0), 1.0, 1.0, 1.0).unwrap();
+        let mut body = boolean_with(
+            &a,
+            &b,
+            BoolOp::Union,
+            1e-7,
+            BooleanOptions { regularize: false },
+        )
+        .expect("merge frame declined")
+        .body;
+        let label = if i >= dissolve {
+            let n = body.merge_cells().expect("merge_cells");
+            format!("merge_cells: {n} wall dissolved")
+        } else if i >= touch {
+            "cellular: wall kept".to_string()
+        } else {
+            String::from("approach")
+        };
+        let mesh = body.worker_mesh();
+        write_frame(dir, i, &mesh, &format!("\"label\":\"{label}\""));
+    }
+    println!("merge: {frames} frames");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let op = args.get(1).map(String::as_str).unwrap_or("drill");
@@ -498,6 +576,8 @@ fn main() {
         "shell" => shell(dir),
         "offset" => offset(dir),
         "gwn" => gwn(dir),
+        "imprint_push" => imprint_push(dir),
+        "merge" => merge(dir),
         other => {
             eprintln!("unknown op {other}; available: drill, trio, pin, fillet, corner");
             std::process::exit(1);

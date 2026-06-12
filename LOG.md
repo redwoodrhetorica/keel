@@ -6514,3 +6514,22 @@ VERIFICATION: 100k oracle buckets identical (strict 95604/4396/WRONG 0,
 tolerant 25000/0/WRONG 0, the fourth consecutive bit-identical run this
 session); fuzz soak clean (fuzz_boolean 5175 runs, fuzz_cyl_boolean 32424
 runs, zero crashes).
+
+## Addendum 214: SGC-merge gif + the public pick_face API; push/pull recorded (task 34) (2026-06-12)
+
+sgc-merge.gif (96 KiB): two unit cubes approach until their faces COINCIDE
+(the item-29 abutting configuration), the non-regularized union keeps the
+interface as a cellular wall, and merge_cells dissolves it on camera ("1 wall
+dissolved" from the op's own return). Eleven gifs shipped.
+
+NEW PUBLIC API: Body::pick_face(p, tol), the consumer-facing point-pick
+(planar then curved containment): needed by the gif dumper and squarely in
+the fieldforge interaction vocabulary.
+
+The wire-imprint + face-push gif is WRITTEN (fn imprint_push) but waiting on
+a missing op recorded as task 37: offset_face is a re-solve tweak and cannot
+move a face whose neighbors are COPLANAR (an imprinted region has no side
+walls to re-solve); the true push/pull sweeps the face CREATING walls: the
+Plasticity-signature interaction fieldforge will want regardless.
+Remaining gif shortlist: imprint+push (blocked on 37), corner blend (blocked
+on the task-29 arc work).
