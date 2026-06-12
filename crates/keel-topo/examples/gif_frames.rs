@@ -402,6 +402,30 @@ fn shell(dir: &Path) {
     println!("shell: {frames} frames");
 }
 
+/// Offset breathing: an L-plate offsets outward and back (planar
+/// scope), every wall moving along its own normal: the concave corner
+/// shows the offset re-solving the intersections, not scaling.
+fn offset(dir: &Path) {
+    let frames = 36usize;
+    for i in 0..frames {
+        let t = i as f64 / frames as f64;
+        let d = 0.30 * (core::f64::consts::TAU * t).sin();
+        let mut plate = Body::new();
+        plate.block(Vec3::ZERO, 4.0, 4.0, 1.2).unwrap();
+        let mut notch = Body::new();
+        notch
+            .block(Vec3::new(1.8, 1.8, -0.5), 3.0, 3.0, 2.2)
+            .unwrap();
+        let mut body = boolean(&plate, &notch, BoolOp::Difference, 1e-7)
+            .expect("offset base declined")
+            .body;
+        body.offset_body(d).expect("offset frame");
+        let mesh = body.worker_mesh();
+        write_frame(dir, i, &mesh, &format!("\"label\":\"offset {d:+.2}\""));
+    }
+    println!("offset: {frames} frames");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let op = args.get(1).map(String::as_str).unwrap_or("drill");
@@ -421,6 +445,7 @@ fn main() {
         "decline" => decline(dir),
         "construct" => construct(dir),
         "shell" => shell(dir),
+        "offset" => offset(dir),
         other => {
             eprintln!("unknown op {other}; available: drill, trio, pin, fillet, corner");
             std::process::exit(1);

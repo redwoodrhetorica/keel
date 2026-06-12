@@ -6441,3 +6441,13 @@ shell-cutaway.gif (229 KiB): a block hollows to a breathing wall thickness
 (hollow, parity item 41) and a guillotine split (split_by_plane, item 76)
 reveals the sealed cavity face-on: the wall thickness reads directly as it
 breathes. Two real ops chained per frame. Eight gifs shipped.
+
+## Addendum 210: offset-breathing gif (task 34) (2026-06-12)
+
+offset.gif (224 KiB): an L-plate offsets outward and back (offset_body,
+planar scope), every wall moving along its own normal with the concave
+corner re-solved each frame: offsetting, not scaling. Nine gifs shipped
+(drill, trio, clearance-pin, fillet-overflow, cellular, honest-decline,
+extrude-revolve, shell-cutaway, offset). Remaining shortlist: wire imprint +
+face push, SGC merge walls, GWN cloud, corner blend (parked on the
+spring-edge arc identity).
