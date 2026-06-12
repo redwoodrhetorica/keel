@@ -161,9 +161,13 @@ impl Body {
             // needs the sense.) Each integrator folds sense_sign in with the
             // face's own loop winding.
             let sense_sign = if sense { 1.0 } else { -1.0 };
+            let v_before = m.v;
             match surf {
                 Surface3::Plane(_) => self.integrate_planar_face(fk, surf, sense_sign, &mut m)?,
                 _ => self.integrate_curved_face(fk, surf, sense_sign, &mut m)?,
+            }
+            if std::env::var("KEEL_MASS_DEBUG").is_ok() {
+                eprintln!("  mass face {fk:?} sense {sense} dv {}", m.v - v_before);
             }
         }
         if m.v <= 0.0 {
@@ -734,6 +738,11 @@ impl Body {
             let mut lo = (f64::INFINITY, f64::INFINITY);
             let mut hi = (f64::NEG_INFINITY, f64::NEG_INFINITY);
             let mut stale = false;
+            // A fin whose pcurve varies in BOTH u and v is not an
+            // iso-parameter line: the face is not its endpoint box
+            // (task 29: the bicylinder bowtie's pole-to-pole arcs gave
+            // a zero-height v box and a silent dv = 0).
+            let mut non_iso = false;
             // Vertex-projected v-extent: the second staleness witness.
             // A fragment can carry its PARENT's pcurves whose endpoints
             // happen to sit on fin endpoints of sibling fins (the
@@ -775,6 +784,16 @@ impl Body {
                             lo = (lo.0.min(p.x), lo.1.min(p.y));
                             hi = (hi.0.max(p.x), hi.1.max(p.y));
                         }
+                        let (p0, pm, p1) = (n.point(0.0), n.point(0.5), n.point(1.0));
+                        let us = [p0.x, pm.x, p1.x];
+                        let vs = [p0.y, pm.y, p1.y];
+                        let spread = |s: [f64; 3]| {
+                            s.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+                                - s.iter().cloned().fold(f64::INFINITY, f64::min)
+                        };
+                        if spread(us) > 1e-7 && spread(vs) > 1e-7 {
+                            non_iso = true;
+                        }
                     }
                     // Vertex witness for the v-extent guard.
                     for vk in [self.fin_start_vertex(cur), self.fin_end_vertex(cur)] {
@@ -802,7 +821,12 @@ impl Body {
             if vert_v.0.is_finite() && (lo.1 < vert_v.0 - 1e-6 || hi.1 > vert_v.1 + 1e-6) {
                 stale = true;
             }
-            if stale || !(lo.0.is_finite() && hi.0.is_finite()) {
+            if std::env::var("KEEL_MASS_DEBUG").is_ok() {
+                eprintln!(
+                    "  mass curved {fk:?} stale {stale} non_iso {non_iso} lo {lo:?} hi {hi:?} vert_v {vert_v:?}"
+                );
+            }
+            if stale || non_iso || !(lo.0.is_finite() && hi.0.is_finite()) {
                 // Stale or missing pcurves: the PROJECTED-BOUNDS rung
                 // (corpus-audit blend-pcurve milestone). When every
                 // boundary edge is an ISO-PARAMETER line of the

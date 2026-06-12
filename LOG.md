@@ -6656,3 +6656,75 @@ clipping may already be fine): analytic_curved_area is engaging for the
 bands with a phantom 2-unit height range despite the single-rim dedup.
 Instrument height_range next (probe details in the task notes). Gate closed;
 suite green.
+
+## Addendum 222: TASK 29 LANDED: the Steinmetz bicylinder is EXACT 16/3, gate OPEN (2026-06-12)
+
+mass_properties reads 5.333333333333355 against the exact 16/3 (2e-14), mesh
+5.3301 inside the chordal band, validate green, tests/steinmetz.rs passes
+with the seam gate PERMANENTLY OPEN. Seven fixes landed in the chain, each
+one exposed by the previous:
+
+1. import_edge now carries arc_sweep through the stitch (a result-body arc
+   without its sweep reverts to an ambiguous full carrier; the assembled
+   mesh read 7.72).
+2. The dangling-edge glue is GEOMETRY-AWARE: bounds alone cannot
+   disambiguate when several distinct arcs share both endpoints (all four
+   half-ellipses run pole to pole), so bound-matched candidates pair by
+   declared arc midpoint (imported_edge_midpoint), single candidates keep
+   the old unconditional glue.
+3. The glue loop re-checks radial-1 before absorbing: the dangling list is
+   a snapshot, and an entry that already RECEIVED a partner must not pile
+   into a third edge (the radial-6 ellipse).
+4. Subdivision alignment in merge_and_glue_imported: the operands split the
+   SAME seam conic at different wrap points, so a merged vertex lying
+   interior to a dangling conic arc splits that arc (split_edge_raw, no
+   mid-assembly validation) and welds the fresh vertex onto the existing
+   one. Both sides then expose identical boundary subdivisions.
+5. The synthesized rim-to-rim seam is DISSOLVED (kemr per band) after c1''s
+   wrap imprint and before the c2 arcs land: every azimuth line crosses
+   each wrap curve once, so the seam always crosses c2 at one interior
+   point, and that unsplit crossing poisoned the arrangement (the x>0
+   bowtie paired with the x<0 quarters because the seam excursion hung
+   between the x>0 quarters).
+6. Ring reassignment in imprint_open_arc_between: split_face leaves inner
+   rings with the surviving face; when an open arc cuts a bowtie out of a
+   periodic band, the rim ring moves to whichever child''s outer loop still
+   WRAPS the lateral azimuthally (loop_wraps_azimuth, with the new arc''s
+   geometric midpoint passed explicitly since its conic carrier is not yet
+   installed), loop kinds corrected on the way. Step 5 is correspondingly
+   CONSTRAINED: only the genuinely ambiguous half declaration (|s| = pi)
+   may flip, and only on ringless (bowtie) loops: after the seam dissolve
+   the band loops are conic-only too and were flip-warring.
+7. massprops: a boundary pcurve varying in BOTH u and v is not an
+   iso-parameter line, so the face is not its endpoint box (the bowties''
+   pole-to-pole arcs gave a zero-height v box and a silent dv = 0):
+   non-iso faces route to the Green-slab path, which integrates the
+   bowties exactly.
+
+Verification: full workspace suite green (135/77/271 and the rest), the
+torus-fillet canaries green, clippy -D warnings clean, the 100k three-bucket
+oracle BIT-IDENTICAL to reference (strict PASS 95604 / DECLINE 4396 / WRONG
+0; tolerant 25000 / 0 / 0), 10-minute fuzz soak on fuzz_cyl_boolean +
+fuzz_boolean clean. The old crossing_cylinders decline pin is rewritten to
+the landed contract: every op EXACT-OR-DECLINE (intersection 16/3, union
+12pi - 16/3, difference 6pi - 16/3; mass may degrade gracefully on band
+faces, the mesh must still match the closed form). The decline arm in
+prepare now guards only non-exact crossing-cylinder SSI residue.
+
+Also this session (task 34): the gif artifact report traced to GIF
+encoding itself (per-frame 256-color palettes shimmer, delta-frame
+disposal ghosts). render_gif.py now renders every frame at 2x and
+Lanczos-downscales, and emits animated WebP (24-bit, no palette, smaller
+files); the GIF fallback path uses ONE shared global palette plus
+restore-to-background disposal. All 12 demos re-rendered from the existing
+kernel-dumped frames (51-262 KiB, down from 98-606).
+
+The corner-blend gif UNPARKED in the same stroke: the ghost full circles
+were blend arcs whose carriers record no half (true_arc_span cannot
+discriminate when both candidate midpoints lie on the adjacent faces''
+tessellations): fillet_corner_octant now records the short-quarter
+arc_sweep on its far-cap and corner arcs (record_short_arc_sweep), and
+edge_polyline honors a recorded sweep first (plus a pcurve fallback for
+carriers that cannot parameterize their edge at all). corner-blend.webp
+ships; all 13 demos done. Next: task 38 (cone fuzz target + oracle
+sector), then task 39 (completion-gate re-run + perf re-measure).

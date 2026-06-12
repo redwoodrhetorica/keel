@@ -1644,15 +1644,26 @@ fn import_edge(
     if let Some(&de) = emap.get(&(op, sid)) {
         return Some(de);
     }
-    let (b0, b1, curve, etol) = {
+    let (b0, b1, curve, etol, sweep) = {
         let se = src.edges.get(edge)?;
-        (se.bounds.0, se.bounds.1, se.curve, se.tolerance)
+        (
+            se.bounds.0,
+            se.bounds.1,
+            se.curve,
+            se.tolerance,
+            se.arc_sweep,
+        )
     };
     let dv0 = import_vertex(dst, src, b0, op, rec, vmap)?;
     let dv1 = import_vertex(dst, src, b1, op, rec, vmap)?;
     let de = dst.new_edge(rec, (dv0, dv1), Derivation::Created);
     if let Some(e) = dst.edges.get_mut(de) {
         e.tolerance = e.tolerance.max(etol);
+        // Arc identity rides through the stitch: dropping the recorded
+        // sweep reverted result-body arcs to ambiguous full carriers
+        // (task 29: the assembled bicylinder mis-tessellated while the
+        // operand pieces were exact).
+        e.arc_sweep = sweep;
     }
     if let Some((sck, scsense)) = curve
         && let Some(c) = src.curves.get(sck).cloned()
@@ -1697,6 +1708,30 @@ fn stitch_by_import(
             Operand::A => &ia.body,
             Operand::B => &ib.body,
         };
+        if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
+            let loops = src
+                .faces
+                .get(k.face)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default();
+            for lk in loops {
+                let mut edges = Vec::new();
+                if let Some(entry) = src.loops.get(lk).and_then(|l| l.fin) {
+                    let mut cur = entry;
+                    while let Some(fin) = src.fins.get(cur) {
+                        edges.push((fin.edge, fin.forward, imported_edge_midpoint(src, fin.edge)));
+                        cur = fin.next;
+                        if cur == entry {
+                            break;
+                        }
+                    }
+                }
+                eprintln!(
+                    "  import {:?} face {:?} rev {} loop {lk:?}: {edges:?}",
+                    k.operand, k.face, k.reversed
+                );
+            }
+        }
         let f = import_face(
             &mut dst, src, k.face, k.operand, k.reversed, &mut rec, &mut vmap, &mut emap, inf,
             solid,
@@ -2241,6 +2276,64 @@ pub(crate) fn merge_and_glue_imported(
         }
     }
 
+    // Align subdivisions across operands: the two imprints may split
+    // the SAME seam conic at different wrap points (task 29: one
+    // operand's half arc through its wrap vertex faces the other's two
+    // quarter arcs, and no bounds ever match). A merged vertex lying in
+    // the INTERIOR of a dangling conic arc splits that arc, so the glue
+    // below sees identical subdivisions on both sides.
+    loop {
+        let mut job: Option<(EdgeKey, VertexKey, f64, f64)> = None;
+        'scan: for (ek, e) in dst.edges.iter() {
+            if e.radial.len() != 1 {
+                continue;
+            }
+            for (vk, v) in dst.vertices.iter() {
+                if vk == e.bounds.0 || vk == e.bounds.1 {
+                    continue;
+                }
+                if let Some((rel, s)) = conic_arc_split_rel(dst, ek, v.point, vtol) {
+                    job = Some((ek, vk, rel, s));
+                    break 'scan;
+                }
+            }
+        }
+        let Some((ek, vk, rel, s)) = job else { break };
+        let Some(p) = dst.vertices.get(vk).map(|v| v.point) else {
+            break;
+        };
+        let Ok(out) = dst.split_edge_raw(ek, p) else {
+            break;
+        };
+        dst.set_edge_arc_sweep(out.edge_a, rel);
+        dst.set_edge_arc_sweep(out.edge_b, s - rel);
+        // Weld the split's fresh vertex onto the pre-existing one.
+        let w = out.vertex;
+        if w != vk {
+            let eks: Vec<EdgeKey> = dst.edges.iter().map(|(k, _)| k).collect();
+            for e2 in eks {
+                if let Some(e) = dst.edges.get_mut(e2) {
+                    if e.bounds.0 == w {
+                        e.bounds.0 = vk;
+                    }
+                    if e.bounds.1 == w {
+                        e.bounds.1 = vk;
+                    }
+                }
+            }
+            let wfin = dst.vertices.get(w).and_then(|v| v.fin);
+            if let Some(v) = dst.vertices.get_mut(vk)
+                && v.fin.is_none()
+            {
+                v.fin = wfin;
+            }
+            if let Some(id) = dst.vertices.get(w).map(|v| v.id) {
+                dst.unregister(rec, id);
+            }
+            dst.vertices.remove(w);
+        }
+    }
+
     // Glue coincident seam edges: a DANGLING (radial-1) edge whose
     // bounds coincide (post-merge) with another edge's joins that
     // edge's radial cycle. The manifold seam glues pairs of dangling
@@ -2259,18 +2352,45 @@ pub(crate) fn merge_and_glue_imported(
         let Some(bj) = dst.edges.get(j).map(|e| e.bounds) else {
             continue; // already absorbed into an earlier target
         };
-        let target = dst.edges.iter().find_map(|(k, e)| {
+        // The dangling list is a snapshot: an entry that already RECEIVED
+        // a glued partner is radial-2 by now and must not absorb into a
+        // third edge (task 29: that pile-up built a radial-6 ellipse).
+        if dst.edges.get(j).is_none_or(|e| e.radial.len() != 1) {
+            continue;
+        }
+        // Bounds alone cannot disambiguate when several distinct arcs
+        // share both endpoints (task 29: the four Steinmetz half-
+        // ellipses all run pole to pole), so among bound-matched
+        // candidates pick the one whose geometric arc midpoint
+        // coincides. A single candidate glues unconditionally (the
+        // pre-existing manifold-seam behavior).
+        let mj = imported_edge_midpoint(dst, j);
+        let mut cands: Vec<(EdgeKey, bool, f64)> = Vec::new();
+        for (k, e) in dst.edges.iter() {
             if k == j {
-                return None;
+                continue;
             }
-            if e.bounds == bj {
-                Some((k, false))
+            let rev = if e.bounds == bj {
+                false
             } else if e.bounds == (bj.1, bj.0) {
-                Some((k, true))
+                true
             } else {
-                None
-            }
-        });
+                continue;
+            };
+            let d = match (mj, imported_edge_midpoint(dst, k)) {
+                (Some(a), Some(b)) => (a - b).norm(),
+                _ => 0.0,
+            };
+            cands.push((k, rev, d));
+        }
+        let target = if cands.len() == 1 {
+            Some((cands[0].0, cands[0].1))
+        } else {
+            cands
+                .into_iter()
+                .min_by(|a, b| a.2.total_cmp(&b.2))
+                .map(|(k, r, _)| (k, r))
+        };
         let Some((i, reversed)) = target else {
             continue;
         };
@@ -2298,6 +2418,125 @@ pub(crate) fn merge_and_glue_imported(
     }
 }
 
+/// Geometric midpoint of an imported edge's arc, honoring the recorded
+/// arc_sweep (bounds.0-relative, matching the massprops convention).
+/// Straight or carrier-less edges fall back to the chord midpoint,
+/// which is identical for any pair of bound-matched candidates.
+fn imported_edge_midpoint(dst: &Body, ek: crate::entity::EdgeKey) -> Option<keel_math::vec::Vec3> {
+    use keel_geom::curve::Curve3;
+    let tau = core::f64::consts::TAU;
+    let e = dst.edges.get(ek)?;
+    let p0 = dst.vertices.get(e.bounds.0)?.point;
+    let p1 = dst.vertices.get(e.bounds.1)?.point;
+    let wrap = |d: f64| {
+        let mut d = d;
+        while d <= -core::f64::consts::PI {
+            d += tau;
+        }
+        while d > core::f64::consts::PI {
+            d -= tau;
+        }
+        d
+    };
+    match e.curve.and_then(|(ck, _)| dst.curves.get(ck)) {
+        Some(Curve3::Circle(c)) => {
+            let ang = |p: keel_math::vec::Vec3| {
+                (p - c.center)
+                    .dot(c.y_axis)
+                    .atan2((p - c.center).dot(c.x_axis))
+            };
+            let a0 = ang(p0);
+            let s = e.arc_sweep.unwrap_or(if e.bounds.0 == e.bounds.1 {
+                tau
+            } else {
+                wrap(ang(p1) - a0)
+            });
+            Some(c.point(a0 + 0.5 * s))
+        }
+        Some(Curve3::Ellipse(el)) => {
+            let ang = |p: keel_math::vec::Vec3| {
+                let w = p - el.center;
+                (w.dot(el.y_axis) / el.b).atan2(w.dot(el.x_axis) / el.a)
+            };
+            let a0 = ang(p0);
+            let s = e.arc_sweep.unwrap_or(if e.bounds.0 == e.bounds.1 {
+                tau
+            } else {
+                wrap(ang(p1) - a0)
+            });
+            Some(el.point(a0 + 0.5 * s))
+        }
+        _ => Some((p0 + p1) * 0.5),
+    }
+}
+
+/// If `p` lies geometrically in the INTERIOR of edge `ek`'s declared
+/// conic arc, the signed angular offset of `p` from bounds.0 (in the
+/// sweep direction) together with the full sweep: the split data the
+/// subdivision-alignment pass needs. None for endpoints, off-carrier
+/// points, or non-conic edges.
+fn conic_arc_split_rel(
+    dst: &Body,
+    ek: crate::entity::EdgeKey,
+    p: keel_math::vec::Vec3,
+    vtol: f64,
+) -> Option<(f64, f64)> {
+    use keel_geom::curve::Curve3;
+    let tau = core::f64::consts::TAU;
+    let e = dst.edges.get(ek)?;
+    let p0 = dst.vertices.get(e.bounds.0)?.point;
+    let p1 = dst.vertices.get(e.bounds.1)?.point;
+    let wrap = |d: f64| {
+        let mut d = d;
+        while d <= -core::f64::consts::PI {
+            d += tau;
+        }
+        while d > core::f64::consts::PI {
+            d -= tau;
+        }
+        d
+    };
+    let (a0, a1, av, on) = match e.curve.and_then(|(ck, _)| dst.curves.get(ck))? {
+        Curve3::Circle(c) => {
+            let ang = |q: keel_math::vec::Vec3| {
+                (q - c.center)
+                    .dot(c.y_axis)
+                    .atan2((q - c.center).dot(c.x_axis))
+            };
+            let av = ang(p);
+            (ang(p0), ang(p1), av, (c.point(av) - p).norm() <= vtol)
+        }
+        Curve3::Ellipse(el) => {
+            let ang = |q: keel_math::vec::Vec3| {
+                let w = q - el.center;
+                (w.dot(el.y_axis) / el.b).atan2(w.dot(el.x_axis) / el.a)
+            };
+            let av = ang(p);
+            (ang(p0), ang(p1), av, (el.point(av) - p).norm() <= vtol)
+        }
+        _ => return None,
+    };
+    if !on {
+        return None;
+    }
+    let s = e.arc_sweep.unwrap_or(if e.bounds.0 == e.bounds.1 {
+        tau
+    } else {
+        wrap(a1 - a0)
+    });
+    let rel = if s >= 0.0 {
+        (av - a0).rem_euclid(tau)
+    } else {
+        -((a0 - av).rem_euclid(tau))
+    };
+    let eps = 1e-7;
+    if rel.abs() > eps && rel.abs() < s.abs() - eps {
+        Some((rel, s))
+    } else {
+        None
+    }
+}
+
 /// The shared back half of import-and-glue assembly (used by the boolean
 /// stitch AND by `knit`): merge coincident vertices, glue coincident free /
 /// dangling edges into radial pairs, assert the planar shell-closure
@@ -2316,6 +2555,45 @@ pub(crate) fn finalize_imported_assembly(
     use crate::entity::Side;
     use crate::lineage::Derivation;
     merge_and_glue_imported(&mut dst, &mut rec, vtol);
+
+    if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
+        for (vk, v) in dst.vertices.iter() {
+            eprintln!("  stitched vertex {vk:?} {:?}", v.point);
+        }
+        for (fk, f) in dst.faces.iter() {
+            for &lk in &f.loops {
+                let mut edges = Vec::new();
+                if let Some(entry) = dst.loops.get(lk).and_then(|l| l.fin) {
+                    let mut cur = entry;
+                    while let Some(fin) = dst.fins.get(cur) {
+                        edges.push((fin.edge, fin.forward));
+                        cur = fin.next;
+                        if cur == entry {
+                            break;
+                        }
+                    }
+                }
+                eprintln!("  stitched face {fk:?} loop {lk:?} fins {edges:?}");
+            }
+        }
+        for (ek, e) in dst.edges.iter() {
+            let kind = match e.curve.and_then(|(ck, _)| dst.curves.get(ck)) {
+                Some(keel_geom::curve::Curve3::Circle(_)) => "circle",
+                Some(keel_geom::curve::Curve3::Ellipse(_)) => "ellipse",
+                Some(keel_geom::curve::Curve3::Line(_)) => "line",
+                Some(keel_geom::curve::Curve3::Nurbs(_)) => "nurbs",
+                None => "none",
+            };
+            eprintln!(
+                "  stitched edge {ek:?} {kind} sweep {:?} radial {} {:?} -> {:?} mid {:?}",
+                e.arc_sweep,
+                e.radial.len(),
+                dst.vertices.get(e.bounds.0).map(|v| v.point),
+                dst.vertices.get(e.bounds.1).map(|v| v.point),
+                imported_edge_midpoint(&dst, ek),
+            );
+        }
+    }
 
     // Shell-closure invariant (dossier 47 Q1 / synthesis step 5): every kept
     // coedge must land in a radial pairing (or a complete radial cycle). After
@@ -3884,6 +4162,13 @@ fn assemble_boolean(
         // to declined. Bodies whose mass legitimately declines (NURBS
         // corner patches) keep the positive-volume floor.
         let v = body.tessellated_volume();
+        if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
+            eprintln!(
+                "  curved gate: tess {v} mass {:?} mesh {}",
+                body.mass_properties().map(|m| m.volume),
+                body.mesh_volume()
+            );
+        }
         match body.mass_properties() {
             Ok(m) => {
                 m.volume.is_finite()
@@ -5123,15 +5408,12 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 },
             };
             let id_b = b.faces.get(fb).map(|f| f.id.0).unwrap_or(0);
-            // Cylinder-cylinder SSI curves exist (the certified
-            // evaluator rung), but the IMPRINT cannot yet assemble two
-            // closed seams crossing each other and the periodic seam on
-            // one lateral face: proceeding produced an Euler-valid but
-            // geometrically WRONG body (the Steinmetz probe read 12.5
-            // against the exact 16/3). DECLINE-never-WRONG: these
-            // configurations keep declining at the boolean layer until
-            // the crossing-seam imprint lands; the geometry rung serves
-            // direct SSI consumers and the unequal-radius mitre.
+            // Cylinder-cylinder crossing pairs: the exact two-closed-
+            // conic form assembles through imprint_crossing_pair
+            // (task 29; the Steinmetz oracle pins 16/3). Inexact or
+            // non-conic SSI residue on such pairs keeps declining
+            // (DECLINE-never-WRONG; the old seamless path once read
+            // 12.5 against the exact 16/3).
             let both_cyl = matches!(ref_a, SurfaceRef::Analytic(Surface3::Cylinder(_)))
                 && matches!(ref_b, SurfaceRef::Analytic(Surface3::Cylinder(_)));
             // COINCIDENT cylinders (coaxial, equal radius: the mated
@@ -5171,23 +5453,26 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 continue;
             }
             match intersect_surfaces(&ref_a, &ref_b, tol) {
-                // Crossing-cylinder pairs KEEP DECLINING (task 29). The
-                // metric layer is four-fifths landed (the arc_sweep
-                // semantic is curve-parameter everywhere, fin samples
-                // localize arcs, ruling bands assign by interior side,
-                // angular spans use exact per-loop interval union); the
-                // LAST gap is e1-half consistency in the DEGENERATE
-                // crossing case (the wrap split landing exactly on the
-                // mutual crossings): the antipodal halves declared in
-                // imprint_crossing_pair must be REASSIGNED per host
-                // face to the half whose azimuth interval contains its
-                // c2-arc's midpoint azimuth: until then one bowtie's
-                // loop is geometrically inconsistent and its span/area
-                // read wrong (the dev harness shows piece 0g0 at 5.96
-                // vs the exact 4). Reopen by removing the both_cyl
-                // guard for the exact two-conic case; the Steinmetz
-                // oracle demands 16/3.
-                Ok(SsiResult::Curves(cs)) if both_cyl => {
+                // The crossing-pair imprint is LANDED (task 29): two
+                // exact closed conics on cylinder pairs assemble (the
+                // Steinmetz oracle pins 16/3 exactly). The decline arm
+                // below now guards only the residue: crossing-cylinder
+                // SSI that is NOT the exact two-closed-conic form
+                // (approximate curves, open branches) still has no
+                // assembly path.
+                Ok(SsiResult::Curves(cs))
+                    if both_cyl
+                        && !(cs.len() == 2
+                            && cs.iter().all(|c| {
+                                c.closed
+                                    && c.tol_achieved == 0.0
+                                    && matches!(
+                                        c.curve,
+                                        keel_geom::curve::Curve3::Circle(_)
+                                            | keel_geom::curve::Curve3::Ellipse(_)
+                                    )
+                            })) =>
+                {
                     if cs
                         .iter()
                         .any(|c| a.curve_on_cylinder_face(fa, &c.curve, tol))
@@ -6515,14 +6800,11 @@ mod tests {
     #[test]
     fn crossing_cylinders_decline_pending_seam_assembly() {
         // The Steinmetz configuration (two perpendicular cylinders
-        // crossing) now has CERTIFIED SSI curves (the cylinder-cylinder
-        // evaluator rung), but the imprint cannot yet assemble two
-        // closed seams crossing each other and the periodic seam on one
-        // lateral face. Proceeding SEAMLESS used to return an Euler-
-        // valid body with volume 12.5 against the exact 16/3: a wrong
-        // positive that predates the rung. DECLINE-never-WRONG: the
-        // pair is a hard UnassemblableSeam fault until the crossing-
-        // seam imprint lands.
+        // crossing). The crossing-pair imprint (task 29) assembles the
+        // INTERSECTION exactly: (16/3) r^3, no pi anywhere (the classic
+        // bicylinder). The old wrong-positive (an Euler-valid body at
+        // 12.5) stays dead: every op is EXACT-OR-DECLINE, an Ok result
+        // must agree with the closed forms and its own mesh.
         let mut a = Body::new();
         a.cylinder(
             Frame3::from_z(Vec3::new(0., 0., -3.), Vec3::new(0., 0., 1.)).unwrap(),
@@ -6537,14 +6819,41 @@ mod tests {
             6.0,
         )
         .unwrap();
-        for op in [BoolOp::Intersection, BoolOp::Union, BoolOp::Difference] {
-            assert!(
-                matches!(
-                    boolean(&a, &b, op, 1e-5),
-                    Err(BoolFault::UnassemblableSeam(..))
-                ),
-                "crossing cylinders must DECLINE ({op:?})"
-            );
+        let bicyl = 16.0 / 3.0;
+        let cyl = core::f64::consts::PI * 6.0;
+        for (op, exact) in [
+            (BoolOp::Intersection, bicyl),
+            (BoolOp::Union, 2.0 * cyl - bicyl),
+            (BoolOp::Difference, cyl - bicyl),
+        ] {
+            match boolean(&a, &b, op, 1e-5) {
+                Err(_) => {} // honest decline stays legal
+                Ok(r) => {
+                    assert!(r.body.validate().is_ok(), "{op:?}: invalid body");
+                    let mv = r.body.mesh_volume();
+                    match r.body.mass_properties() {
+                        Ok(m) => {
+                            assert!(
+                                (m.volume - exact).abs() < 1e-9,
+                                "{op:?}: volume {} vs exact {exact}",
+                                m.volume
+                            );
+                            assert!(
+                                (mv - m.volume).abs() <= 2e-2 * (1.0 + m.volume.abs()),
+                                "{op:?}: mesh {mv} vs mass {}",
+                                m.volume
+                            );
+                        }
+                        // Mass may degrade gracefully on band faces;
+                        // the mesh must still match the closed form
+                        // within the chordal band.
+                        Err(_) => assert!(
+                            (mv - exact).abs() <= 2e-2 * (1.0 + exact.abs()),
+                            "{op:?}: mesh {mv} vs exact {exact}"
+                        ),
+                    }
+                }
+            }
         }
         // Disjoint cylinder bodies do NOT trip the gate (their SSI is
         // empty on the trimmed faces; whatever the empty-intersection

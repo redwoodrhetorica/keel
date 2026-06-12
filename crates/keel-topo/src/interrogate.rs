@@ -225,24 +225,70 @@ impl Body {
             }
             (t0, t1)
         };
+        // A recorded arc_sweep IS the edge's arc identity (bounds.0-
+        // relative): no disambiguation needed. Distinct endpoints whose
+        // carrier projections COINCIDE mean the stored conic cannot
+        // parameterize this edge at all (the corner-blend spring edges):
+        // draw through the trim pcurve instead of a ghost full circle.
+        let sweep = e.arc_sweep;
+        let degenerate_proj = |a0: f64, a1: f64| -> bool {
+            let mut d = (a1 - a0).rem_euclid(tau);
+            if d > tau * 0.5 {
+                d = tau - d;
+            }
+            v0 != v1 && d < 1e-9
+        };
+        if std::env::var("KEEL_WIRE_DEBUG").is_ok() {
+            let kind = match curve {
+                Curve3::Line(_) => "line",
+                Curve3::Circle(_) => "circle",
+                Curve3::Ellipse(_) => "ellipse",
+                Curve3::Nurbs(_) => "nurbs",
+            };
+            let (a0, a1) = match curve {
+                Curve3::Circle(c) => (c.project(p0), c.project(p1)),
+                Curve3::Ellipse(el) => (el.project(p0), el.project(p1)),
+                _ => (0.0, 0.0),
+            };
+            eprintln!(
+                "  wire {edge:?} {kind} closed {} a0 {a0:.3} a1 {a1:.3} sweep {sweep:?} p0 {p0:?} p1 {p1:?}",
+                v0 == v1
+            );
+        }
         let out = match curve {
             Curve3::Line(_) => straight,
             Curve3::Nurbs(n) if n.degree() <= 1 => straight,
             Curve3::Circle(c) => {
                 let c = *c;
-                let (t0, t1) =
-                    self.true_arc_span(edge, span(c.project(p0), c.project(p1)), |t| c.point(t));
-                (0..=N)
-                    .map(|i| c.point(t0 + (t1 - t0) * i as f64 / N as f64))
-                    .collect()
+                let (a0, a1) = (c.project(p0), c.project(p1));
+                if let Some(s) = sweep {
+                    (0..=N)
+                        .map(|i| c.point(a0 + s * i as f64 / N as f64))
+                        .collect()
+                } else if degenerate_proj(a0, a1) {
+                    self.pcurve_polyline(edge).unwrap_or(straight)
+                } else {
+                    let (t0, t1) = self.true_arc_span(edge, span(a0, a1), |t| c.point(t));
+                    (0..=N)
+                        .map(|i| c.point(t0 + (t1 - t0) * i as f64 / N as f64))
+                        .collect()
+                }
             }
             Curve3::Ellipse(el) => {
                 let el = *el;
-                let (t0, t1) =
-                    self.true_arc_span(edge, span(el.project(p0), el.project(p1)), |t| el.point(t));
-                (0..=N)
-                    .map(|i| el.point(t0 + (t1 - t0) * i as f64 / N as f64))
-                    .collect()
+                let (a0, a1) = (el.project(p0), el.project(p1));
+                if let Some(s) = sweep {
+                    (0..=N)
+                        .map(|i| el.point(a0 + s * i as f64 / N as f64))
+                        .collect()
+                } else if degenerate_proj(a0, a1) {
+                    self.pcurve_polyline(edge).unwrap_or(straight)
+                } else {
+                    let (t0, t1) = self.true_arc_span(edge, span(a0, a1), |t| el.point(t));
+                    (0..=N)
+                        .map(|i| el.point(t0 + (t1 - t0) * i as f64 / N as f64))
+                        .collect()
+                }
             }
             Curve3::Nurbs(n) => {
                 let (a, b) = n.domain();
@@ -252,6 +298,49 @@ impl Body {
             }
         };
         Some(out)
+    }
+
+    /// Sample an edge through one of its fins' trim pcurves, evaluated
+    /// on that fin's face surface: the drawing authority when the 3D
+    /// carrier cannot parameterize the edge (coincident endpoint
+    /// projections).
+    fn pcurve_polyline(&self, edge: crate::entity::EdgeKey) -> Option<Vec<Vec3>> {
+        use keel_geom::curve::Curve3;
+        const N: usize = 32;
+        let e = self.edges.get(edge)?;
+        for &fk in &e.radial {
+            let Some(fin) = self.fins.get(fk) else {
+                continue;
+            };
+            let Some((pk, _)) = fin.pcurve else {
+                continue;
+            };
+            let Some(Curve3::Nurbs(n)) = self.curves.get(pk) else {
+                continue;
+            };
+            let Some(face) = self.loops.get(fin.owner).map(|l| l.face) else {
+                continue;
+            };
+            let Some((sk, _)) = self.faces.get(face).and_then(|f| f.surface) else {
+                continue;
+            };
+            let Some(crate::entity::SurfaceGeom::Analytic(s)) = self.surfaces.get(sk) else {
+                continue;
+            };
+            let (a, b) = n.domain();
+            let mut out = Vec::with_capacity(N + 1);
+            for i in 0..=N {
+                let q = n.point(a + (b - a) * i as f64 / N as f64);
+                let Ok(lg) = s.local_geometry(q.x, q.y) else {
+                    break;
+                };
+                out.push(lg.point);
+            }
+            if out.len() == N + 1 {
+                return Some(out);
+            }
+        }
+        None
     }
 
     /// Silhouette / outline edges of the body for an orthographic view
@@ -423,7 +512,48 @@ impl Body {
             let (lo, hi) = self.cyl_angular_span(face, o, ex, ey, ez);
             hi - lo
         };
+        // A PARTIAL ellipse arc disqualifies the rectangle formula: an
+        // ellipse CENTER height is the band's mean only when the edge
+        // covers the full period (the mitre band, where the tilted
+        // cut's added and removed wedges cancel over a full ring). A
+        // half-arc (the crossing-pair band) made the formula read a
+        // phantom flat bound at the center height (task 29: the bands
+        // integrated to exactly r*span*2).
+        let partial_ellipse = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .any(|lk| {
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    return false;
+                };
+                let mut cur = entry;
+                while let Some(fin) = self.fins.get(cur) {
+                    if let Some(e) = self.edges.get(fin.edge)
+                        && e.bounds.0 != e.bounds.1
+                        && matches!(
+                            e.curve.and_then(|(ck, _)| self.curves.get(ck)),
+                            Some(keel_geom::curve::Curve3::Ellipse(_))
+                        )
+                        && e.arc_sweep
+                            .map(|s| s.abs() < core::f64::consts::TAU - 1e-9)
+                            .unwrap_or(true)
+                    {
+                        return true;
+                    }
+                    cur = fin.next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+                false
+            });
         let height_range = |o: Vec3, ez: Vec3, extra: Option<f64>| {
+            if partial_ellipse {
+                return None;
+            }
             let mut h = self.cyl_circle_heights(face, o, ez);
             // DISTINCT heights only: one rim seen from both fins is
             // [h, h], a zero band that integrated curved areas to 0.

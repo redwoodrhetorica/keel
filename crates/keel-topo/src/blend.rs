@@ -3275,6 +3275,31 @@ impl Body {
     /// only the corner-arc frame and the spherical patch's mass
     /// integration needed generalizing). Setbacks and unequal radii
     /// are the dossier 53 Q2/Q3 follow-ups.
+    /// Record the SHORT arc between an edge's endpoints as its sweep
+    /// (bounds.0-relative): the arc identity for blend arcs that are
+    /// less than a half revolution by construction.
+    pub(crate) fn record_short_arc_sweep(
+        &mut self,
+        edge: EdgeKey,
+        arc: &keel_geom::curve::Circle3,
+    ) {
+        let tau = core::f64::consts::TAU;
+        let Some((b0, b1)) = self.edges.get(edge).map(|e| e.bounds) else {
+            return;
+        };
+        let (Some(p0), Some(p1)) = (
+            self.vertices.get(b0).map(|v| v.point),
+            self.vertices.get(b1).map(|v| v.point),
+        ) else {
+            return;
+        };
+        let mut s = (arc.project(p1) - arc.project(p0)).rem_euclid(tau);
+        if s > core::f64::consts::PI {
+            s -= tau;
+        }
+        self.set_edge_arc_sweep(edge, s);
+    }
+
     pub fn fillet_corner_octant(
         &self,
         corner: crate::entity::VertexKey,
@@ -3502,7 +3527,12 @@ impl Body {
                 .ok_or(TopoError::Precondition("octant: arc axis"))?;
             let arc = keel_geom::curve::Circle3::new(centre, ex, spine.dir.cross(ex), radius)
                 .map_err(|_| TopoError::Precondition("octant: bad far arc"))?;
-            b.split_blend_cap(cap, t_end, s_end, Curve3::Circle(arc))?;
+            let cap_edge = b.split_blend_cap(cap, t_end, s_end, Curve3::Circle(arc))?;
+            // Record the arc identity: the cap arc is the SHORT quarter
+            // (the long way drew ghost three-quarter circles in the
+            // wireframe; true_arc_span cannot discriminate here since
+            // both candidates lie on the adjacent faces' tessellations).
+            b.record_short_arc_sweep(cap_edge, &arc);
         }
         // Dissolve the sharp edges (each merges its two support trims
         // into one blend face), then the far corner chains.
@@ -3551,6 +3581,8 @@ impl Body {
             let arc = keel_geom::curve::Circle3::new(m_pt, n[ia], ey, radius)
                 .map_err(|_| TopoError::Precondition("octant: bad corner arc"))?;
             b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+            // The corner arc is the short quarter between the q feet.
+            b.record_short_arc_sweep(split.edge, &arc);
             let band = if b.faces_at_vertex(corner).contains(&split.face_new) {
                 split.face_old
             } else {
