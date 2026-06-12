@@ -1,11 +1,13 @@
 # The completion gate (task 18 / Addendum 177-178 instruments), built and
 # run from a clone on D: so the build + corpus + log churn stays off C:.
 # Two halves:
-#   1. WSL all-sectors fuzz soak: bash fuzz/soak_sectors.sh (15 targets
-#      x 2400 s, ~10 h sequential).
-#   2. The three-bucket oracle at 1M trials, SHARDED across processes
-#      (the LCG trial window is seekable via KEEL_ORACLE_START): on the
-#      5950X, 14 shards bring ~26 h single-threaded to ~2 h.
+#   1. WSL all-sectors fuzz soak: bash fuzz/soak_sectors.sh (16 targets
+#      x 2400 s, ~10.5 h sequential).
+#   2. The three-bucket oracle binary at 1M trials, SHARDED across
+#      processes (the LCG trial windows are seekable via
+#      KEEL_ORACLE_START): each shard runs BOTH the box oracle and the
+#      cone-sector oracle (task 38) over its window; buckets aggregate
+#      per sector below.
 # The gate passes when the soak reports zero crashes and the summed
 # oracle buckets report WRONG == 0 in both lanes.
 #
@@ -100,7 +102,19 @@ Get-ChildItem "$GateDir\oracle_shard_*.log" | ForEach-Object {
 }
 "GATE ORACLE TOTAL (N=$OracleN): strict PASS $($tot.pass) / DECLINE $($tot.dec) / WRONG $($tot.wrong); tolerant PASS $($tot.tpass) / DECLINE $($tot.tdec) / WRONG $($tot.twrong)" |
     Tee-Object -FilePath "$GateDir\oracle_gate_total.log"
-Select-String -Path "$GateDir\oracle_shard_*.log" -Pattern "WRONG (strict|tolerant)" | ForEach-Object { $_.Line }
+# The cone sector (task 38) runs in the same shard binaries; aggregate
+# its buckets separately.
+$cone = @{ pass = 0L; dec = 0L; wrong = 0L }
+Get-ChildItem "$GateDir\oracle_shard_*.log" | ForEach-Object {
+    $m = Select-String -Path $_ -Pattern "cone oracle: N \d+: PASS (\d+) / DECLINE (\d+) / WRONG (\d+)"
+    if ($m) {
+        $g = $m.Matches[0].Groups
+        $cone.pass += [long]$g[1].Value; $cone.dec += [long]$g[2].Value; $cone.wrong += [long]$g[3].Value
+    }
+}
+"GATE CONE TOTAL (N=$OracleN): PASS $($cone.pass) / DECLINE $($cone.dec) / WRONG $($cone.wrong)" |
+    Tee-Object -FilePath "$GateDir\oracle_gate_total.log" -Append
+Select-String -Path "$GateDir\oracle_shard_*.log" -Pattern "WRONG (strict|tolerant|cone)" | ForEach-Object { $_.Line }
 # The oracle now finishes in minutes; the soak takes ~10 h. The script
 # MUST outlive the soak job (a child job dies with its parent), so wait.
 Write-Host "Oracle done. Waiting for the soak (~10h)..."

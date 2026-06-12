@@ -8,8 +8,8 @@ secs="${1:-2400}"
 shift || true
 targets=("$@")
 if [ "${#targets[@]}" -eq 0 ]; then
-  targets=(fuzz_boolean fuzz_cyl_boolean fuzz_nurbs_boolean fuzz_imprint \
-    fuzz_topo_ops fuzz_winding fuzz_pmc fuzz_ssi fuzz_step_import \
+  targets=(fuzz_boolean fuzz_cyl_boolean fuzz_cone_boolean fuzz_nurbs_boolean \
+    fuzz_imprint fuzz_topo_ops fuzz_winding fuzz_pmc fuzz_ssi fuzz_step_import \
     fuzz_recover fuzz_nurbs_curve fuzz_nurbs_surface fuzz_bernstein_roots \
     fuzz_interval fuzz_solve_cubic)
 fi
