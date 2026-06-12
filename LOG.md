@@ -6214,3 +6214,24 @@ analytic family): the exact route for curved is conversion to rational NURBS (cl
 under affine, machinery exists in convert.rs) and is the recorded follow-up.
 This is the op the consumer''s OCCT-WASM build cannot perform at all (no GTransform).
 Suite 133+77+266 green; clippy clean.
+
+## Addendum 200: curved STEP export (task 27) (2026-06-12)
+
+step_export.rs grows from the planar slice to the FULL ANALYTIC SET:
+CYLINDRICAL_/CONICAL_/SPHERICAL_/TOROIDAL_SURFACE faces and CIRCLE/ELLIPSE edge
+curves, plus a real gap the planar cut hid: the writer walked only the OUTER loop
+per face, so a holed face silently dropped its rings. All loops now export
+(first = FACE_OUTER_BOUND, rest = FACE_BOUND). Oracles round-trip through the
+importer's own parse layer (surfaces_from_step / curves_from_step): cylinder
+(radius + axis exact, both rim circles), sphere, torus, frustum via loft_circles
+(semi-angle exactly atan(1/2)), drilled plate (exactly 2 FACE_BOUNDs + the bore
+wall). Full curved BODY reassembly on import stays the importer's recorded next
+milestone; the writer's next slice is NURBS (B_SPLINE_SURFACE_WITH_KNOTS) and
+vertex loops. Embedded GVP volume remains the exact analytic mass.
+Suite 133+77+267+1 green; clippy clean; no boolean/tessellation path touched
+(no soak per the CI rule).
+
+Housekeeping: the sanitized publication log (task 35, docs/ENGINEERING-LOG.md)
+passed final verification: zero hits for dates/assistant/process patterns; the 18
+remaining "session" tokens are all the kernel's session.rs subsystem and parity
+item 122, which must keep their names.

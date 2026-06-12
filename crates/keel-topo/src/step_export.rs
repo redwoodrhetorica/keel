@@ -1,10 +1,11 @@
 //! STEP AP203 export (parity interchange, roadmap 0d; the crusst peer
 //! borrowable). Maps the B-rep topology directly to STEP entities with
 //! NO tessellation: VERTEX_POINT / EDGE_CURVE / ADVANCED_FACE /
-//! CLOSED_SHELL / MANIFOLD_SOLID_BREP under AUTOMOTIVE_DESIGN. This first
-//! cut covers PLANAR solids (PLANE + LINE); analytic-curved and NURBS
-//! surfaces (CYLINDRICAL_SURFACE / B_SPLINE_SURFACE_WITH_KNOTS) are the
-//! next slice.
+//! CLOSED_SHELL / MANIFOLD_SOLID_BREP under AUTOMOTIVE_DESIGN. Covers the
+//! full analytic set: PLANE / CYLINDRICAL_SURFACE / CONICAL_SURFACE /
+//! SPHERICAL_SURFACE / TOROIDAL_SURFACE with LINE / CIRCLE / ELLIPSE edge
+//! curves and FACE_BOUND inner loops (rings). NURBS
+//! (B_SPLINE_SURFACE_WITH_KNOTS) and vertex loops are the next slice.
 
 use crate::Body;
 use crate::entity::{EdgeKey, SurfaceGeom, VertexKey};
@@ -54,6 +55,18 @@ impl Step {
     fn dir(&mut self, d: keel_math::vec::Vec3) -> usize {
         self.add(&format!("DIRECTION('',({:?},{:?},{:?}))", d.x, d.y, d.z))
     }
+    /// AXIS2_PLACEMENT_3D from an origin, axis (z) and ref direction (x).
+    fn axis2(
+        &mut self,
+        origin: keel_math::vec::Vec3,
+        z: keel_math::vec::Vec3,
+        x: keel_math::vec::Vec3,
+    ) -> usize {
+        let o = self.point(origin);
+        let zd = self.dir(z);
+        let xd = self.dir(x);
+        self.add(&format!("AXIS2_PLACEMENT_3D('',#{o},#{zd},#{xd})"))
+    }
 }
 
 /// Export `body` as a STEP AP203 part. Returns the STEP text, or an
@@ -92,7 +105,21 @@ pub fn to_step_string(body: &Body) -> Result<String, StepError> {
                 let vec = s.add(&format!("VECTOR('',#{dd},1.0)"));
                 s.add(&format!("LINE('',#{op},#{vec})"))
             }
-            Some(_) => return Err(StepError::Unsupported("non-line edge curve")),
+            // The curved slice: rim circles and cap ellipses (the
+            // analytic primitives' and booleans' edge vocabulary).
+            Some(Curve3::Circle(ci)) => {
+                let n = ci.x_axis.cross(ci.y_axis);
+                let ax = s.axis2(ci.center, n, ci.x_axis);
+                s.add(&format!("CIRCLE('',#{ax},{:?})", ci.radius))
+            }
+            Some(Curve3::Ellipse(el)) => {
+                let n = el.x_axis.cross(el.y_axis);
+                let ax = s.axis2(el.center, n, el.x_axis);
+                s.add(&format!("ELLIPSE('',#{ax},{:?},{:?})", el.a, el.b))
+            }
+            Some(Curve3::Nurbs(_)) => {
+                return Err(StepError::Unsupported("NURBS edge curve (next slice)"));
+            }
         };
         let sv = *vmap.get(&v0).ok_or(StepError::BadTopology)?;
         let ev = *vmap.get(&v1).ok_or(StepError::BadTopology)?;
@@ -116,8 +143,60 @@ pub fn to_step_string(body: &Body) -> Result<String, StepError> {
                     .unwrap_or(true);
                 (s.add(&format!("PLANE('',#{ax})")), sense)
             }
-            Some(SurfaceGeom::Analytic(_)) => {
-                return Err(StepError::Unsupported("non-planar analytic surface"));
+            Some(SurfaceGeom::Analytic(Surface3::Cylinder(c))) => {
+                let ax = s.axis2(c.frame.origin, c.frame.z, c.frame.x);
+                let sense = body
+                    .face(fk)
+                    .and_then(|f| f.surface)
+                    .map(|(_, sn)| sn)
+                    .unwrap_or(true);
+                (
+                    s.add(&format!("CYLINDRICAL_SURFACE('',#{ax},{:?})", c.radius)),
+                    sense,
+                )
+            }
+            Some(SurfaceGeom::Analytic(Surface3::Cone(c))) => {
+                let ax = s.axis2(c.frame.origin, c.frame.z, c.frame.x);
+                let sense = body
+                    .face(fk)
+                    .and_then(|f| f.surface)
+                    .map(|(_, sn)| sn)
+                    .unwrap_or(true);
+                (
+                    s.add(&format!(
+                        "CONICAL_SURFACE('',#{ax},{:?},{:?})",
+                        c.radius,
+                        c.half_angle.abs()
+                    )),
+                    sense,
+                )
+            }
+            Some(SurfaceGeom::Analytic(Surface3::Sphere(c))) => {
+                let ax = s.axis2(c.frame.origin, c.frame.z, c.frame.x);
+                let sense = body
+                    .face(fk)
+                    .and_then(|f| f.surface)
+                    .map(|(_, sn)| sn)
+                    .unwrap_or(true);
+                (
+                    s.add(&format!("SPHERICAL_SURFACE('',#{ax},{:?})", c.radius)),
+                    sense,
+                )
+            }
+            Some(SurfaceGeom::Analytic(Surface3::Torus(c))) => {
+                let ax = s.axis2(c.frame.origin, c.frame.z, c.frame.x);
+                let sense = body
+                    .face(fk)
+                    .and_then(|f| f.surface)
+                    .map(|(_, sn)| sn)
+                    .unwrap_or(true);
+                (
+                    s.add(&format!(
+                        "TOROIDAL_SURFACE('',#{ax},{:?},{:?})",
+                        c.major, c.minor
+                    )),
+                    sense,
+                )
             }
             Some(SurfaceGeom::Nurbs(_)) => {
                 return Err(StepError::Unsupported("NURBS surface"));
@@ -125,38 +204,55 @@ pub fn to_step_string(body: &Body) -> Result<String, StepError> {
             None => return Err(StepError::BadTopology),
         };
 
-        // Outer loop -> EDGE_LOOP of ORIENTED_EDGEs.
-        let lp = body
+        // ALL loops: the first is the FACE_OUTER_BOUND, the rest are
+        // FACE_BOUNDs (rings: a drilled plate's hole must export, the
+        // planar slice only walked the outer loop).
+        let loops = body
             .faces
             .get(fk)
-            .and_then(|f| f.loops.first().copied())
+            .map(|f| f.loops.clone())
             .ok_or(StepError::BadTopology)?;
-        let first = body
-            .loops
-            .get(lp)
-            .and_then(|l| l.fin)
-            .ok_or(StepError::BadTopology)?;
-        let mut fins: Vec<(EdgeKey, bool)> = Vec::new();
-        let mut cur = first;
-        loop {
-            let fin = body.fins.get(cur).ok_or(StepError::BadTopology)?;
-            fins.push((fin.edge, fin.forward));
-            cur = fin.next;
-            if cur == first {
-                break;
+        if loops.is_empty() {
+            return Err(StepError::BadTopology);
+        }
+        let mut bounds = Vec::new();
+        for (li, lp) in loops.iter().enumerate() {
+            let first = body
+                .loops
+                .get(*lp)
+                .and_then(|l| l.fin)
+                .ok_or(StepError::Unsupported("vertex loop (next slice)"))?;
+            let mut fins: Vec<(EdgeKey, bool)> = Vec::new();
+            let mut cur = first;
+            loop {
+                let fin = body.fins.get(cur).ok_or(StepError::BadTopology)?;
+                fins.push((fin.edge, fin.forward));
+                cur = fin.next;
+                if cur == first {
+                    break;
+                }
             }
+            let mut oriented = Vec::new();
+            for (ek, forward) in fins {
+                let ec = *emap.get(&ek).ok_or(StepError::BadTopology)?;
+                let f = if forward { ".T." } else { ".F." };
+                oriented.push(s.add(&format!("ORIENTED_EDGE('',*,*,#{ec},{f})")));
+            }
+            let refs: Vec<String> = oriented.iter().map(|i| format!("#{i}")).collect();
+            let loop_id = s.add(&format!("EDGE_LOOP('',({}))", refs.join(",")));
+            let kind = if li == 0 {
+                "FACE_OUTER_BOUND"
+            } else {
+                "FACE_BOUND"
+            };
+            bounds.push(s.add(&format!("{kind}('',#{loop_id},.T.)")));
         }
-        let mut oriented = Vec::new();
-        for (ek, forward) in fins {
-            let ec = *emap.get(&ek).ok_or(StepError::BadTopology)?;
-            let f = if forward { ".T." } else { ".F." };
-            oriented.push(s.add(&format!("ORIENTED_EDGE('',*,*,#{ec},{f})")));
-        }
-        let refs: Vec<String> = oriented.iter().map(|i| format!("#{i}")).collect();
-        let loop_id = s.add(&format!("EDGE_LOOP('',({}))", refs.join(",")));
-        let bound = s.add(&format!("FACE_OUTER_BOUND('',#{loop_id},.T.)"));
+        let bound_refs: Vec<String> = bounds.iter().map(|i| format!("#{i}")).collect();
         let ss = if same_sense { ".T." } else { ".F." };
-        face_ids.push(s.add(&format!("ADVANCED_FACE('',(#{bound}),#{surf_id},{ss})")));
+        face_ids.push(s.add(&format!(
+            "ADVANCED_FACE('',({}),#{surf_id},{ss})",
+            bound_refs.join(",")
+        )));
     }
 
     let face_refs: Vec<String> = face_ids.iter().map(|i| format!("#{i}")).collect();
@@ -256,10 +352,75 @@ mod tests {
     }
 
     #[test]
-    fn curved_body_declines() {
+    fn cylinder_exports_curved_entities_that_reimport_exactly() {
+        use crate::step_import::{ImportedSurface, curves_from_step, surfaces_from_step};
+        use keel_geom::curve::Curve3;
+        use keel_geom::surface::Surface3;
+
         let mut b = Body::new();
         let f = keel_geom::surface::Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
         b.cylinder(f, 1.0, 2.0).unwrap();
-        assert!(matches!(to_step_string(&b), Err(StepError::Unsupported(_))));
+        let step = to_step_string(&b).unwrap();
+        // Geometry round trip through the importer's parsing layer: the
+        // lateral cylinder and both rim circles must come back exactly.
+        // (Full curved BODY reassembly is the importer's next milestone.)
+        let surfs = surfaces_from_step(&step).unwrap();
+        let cyl = surfs
+            .iter()
+            .find_map(|s| match s {
+                ImportedSurface::Analytic(Surface3::Cylinder(c)) => Some(c),
+                _ => None,
+            })
+            .expect("cylindrical surface survives the round trip");
+        assert!((cyl.radius - 1.0).abs() < 1e-12);
+        assert!((cyl.frame.z.z.abs() - 1.0).abs() < 1e-12);
+        let circles: Vec<_> = curves_from_step(&step)
+            .unwrap()
+            .into_iter()
+            .filter_map(|c| match c {
+                Curve3::Circle(ci) => Some(ci),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(circles.len(), 2, "two rim circles");
+        for ci in &circles {
+            assert!((ci.radius - 1.0).abs() < 1e-12);
+        }
+        // The embedded validation volume is the exact analytic mass.
+        let v = b.mass_properties().unwrap().volume;
+        assert!((v - std::f64::consts::PI * 2.0).abs() < 1e-12);
+        assert!(step.contains(&format!("VOLUME_MEASURE({v:?})")));
+    }
+
+    #[test]
+    fn drilled_plate_exports_hole_rings_as_inner_bounds() {
+        use crate::step_import::{ImportedSurface, surfaces_from_step};
+        use keel_geom::surface::Surface3;
+
+        let mut plate = Body::new();
+        plate.block(Vec3::ZERO, 4.0, 4.0, 1.0).unwrap();
+        let mut drill = Body::new();
+        let f =
+            keel_geom::surface::Frame3::from_z(Vec3::new(2.0, 2.0, -0.5), Vec3::new(0.0, 0.0, 1.0))
+                .unwrap();
+        drill.cylinder(f, 1.0, 2.0).unwrap();
+        let holed =
+            crate::boolean::boolean(&plate, &drill, crate::boolean::BoolOp::Difference, 1e-9)
+                .unwrap()
+                .body;
+        let step = to_step_string(&holed).unwrap();
+        // The hole's rings on the top and bottom plate faces must export
+        // as FACE_BOUND inner loops, not be silently dropped (the planar
+        // slice walked only the outer loop).
+        assert_eq!(step.matches("FACE_BOUND(").count(), 2);
+        let surfs = surfaces_from_step(&step).unwrap();
+        let bore = surfs
+            .iter()
+            .find_map(|s| match s {
+                ImportedSurface::Analytic(Surface3::Cylinder(c)) => Some(c),
+                _ => None,
+            })
+            .expect("bore wall survives the round trip");
+        assert!((bore.radius - 1.0).abs() < 1e-12);
     }
 }
