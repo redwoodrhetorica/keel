@@ -31,6 +31,7 @@ pub mod profile;
 pub mod query;
 pub mod render;
 pub mod replace;
+pub mod report;
 pub mod session;
 pub mod sheet;
 pub mod shell;

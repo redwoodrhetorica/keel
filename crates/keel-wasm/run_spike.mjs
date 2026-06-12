@@ -56,3 +56,18 @@ console.log(
     `${lines.length / 6} line segments -> ${ok ? "CONTRACT OK" : "CONTRACT VIOLATION"}`,
 );
 if (!ok) process.exit(1);
+
+// OpReport across the boundary (task 22): a tolerant salvage must
+// arrive loud: salvaged flag, tier, achieved tolerance, warnings text.
+const vol = e.demo_tolerant_build();
+const warn = new TextDecoder().decode(
+  new Uint8Array(e.memory.buffer, e.report_warnings_ptr(), e.report_warnings_len()),
+);
+const exact = Math.abs(vol - 16.0) < 1e-9;
+const salvaged = e.report_salvaged() === 1;
+console.log(
+  `op report: volume ${exact ? "EXACT" : vol}, salvaged ${salvaged}, tier ${e.report_tier()}, ` +
+    `achieved ${e.report_achieved_tolerance().toExponential(2)}`,
+);
+console.log(`  warnings: ${warn.split("\n").length} -> "${warn.split("\n").pop()}"`);
+if (!exact || !salvaged) process.exit(1);
