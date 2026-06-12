@@ -6603,3 +6603,15 @@ samples the wrong half: the fix pass is not reaching or not flipping that
 edge: debug entry points in the task notes). The gate stays CLOSED (the
 mesh-floor path remains fragile if mass errs instead of disagreeing).
 Suite 16/16 green with the gate closed.
+
+## Addendum 218: task-29 step 5: the conflated-carrier fix (2026-06-12)
+
+same_conic was CONFLATING the two Steinmetz ellipses: in the symmetric
+equal-radii configuration both SSI ellipses share center AND semi-axes
+exactly: only their planes differ: so the e1-edge collection swept up e2
+edges and the half-fix pass mangled both curves. The carrier identity now
+includes the plane normal. The step-5 pass then applies sanely (the
+KEEL_STEINMETZ_DEBUG trace shows correct per-bowtie decisions), and the
+remaining wrong piece traces to a loop whose conic arcs are ALL c2-carrier
+(the c1/c2 role analysis per loop is the next debug entry, mapped in the
+task). Gate closed; suite 16/16 green; the canary green.

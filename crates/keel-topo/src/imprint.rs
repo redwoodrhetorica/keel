@@ -534,15 +534,22 @@ impl Body {
                 _ => None,
             }
         };
+        // Carrier identity INCLUDING the plane: the symmetric Steinmetz
+        // pair shares center and semi-axes exactly (only the planes
+        // differ), so a center+axes test CONFLATES e1 with e2 and the
+        // half-fix pass mangles both.
         let same_conic = |cv: &Curve3, target: &Curve3| -> bool {
             match (cv, target) {
                 (Curve3::Circle(a), Curve3::Circle(b)) => {
-                    (a.center - b.center).norm() < 1e-9 && (a.radius - b.radius).abs() < 1e-9
+                    (a.center - b.center).norm() < 1e-9
+                        && (a.radius - b.radius).abs() < 1e-9
+                        && (a.x_axis.cross(a.y_axis) - b.x_axis.cross(b.y_axis)).norm() < 1e-9
                 }
                 (Curve3::Ellipse(a), Curve3::Ellipse(b)) => {
                     (a.center - b.center).norm() < 1e-9
                         && (a.a - b.a).abs() < 1e-9
                         && (a.b - b.b).abs() < 1e-9
+                        && (a.x_axis.cross(a.y_axis) - b.x_axis.cross(b.y_axis)).norm() < 1e-9
                 }
                 _ => false,
             }
@@ -747,6 +754,11 @@ impl Body {
                             break;
                         }
                     }
+                    if std::env::var("KEEL_STEINMETZ_DEBUG").is_ok() {
+                        eprintln!(
+                            "  step5: c2e {c2e:?} loop {lk:?} conic_only {conic_only} want {want}"
+                        );
+                    }
                     if !conic_only {
                         continue;
                     }
@@ -777,6 +789,14 @@ impl Body {
                                     _ => p0,
                                 }
                             };
+                            if std::env::var("KEEL_STEINMETZ_DEBUG").is_ok() {
+                                let alt = -(tau - s_cur.abs()) * s_cur.signum();
+                                eprintln!(
+                                    "  step5: e1 {ek:?} t0 {t0:.3} s {s_cur:.3} cur {} alt {} want {want}",
+                                    in_ccw(a1, a2, az(mid_of(s_cur))),
+                                    in_ccw(a1, a2, az(mid_of(alt))),
+                                );
+                            }
                             if in_ccw(a1, a2, az(mid_of(s_cur))) != want {
                                 let alt = -(tau - s_cur.abs()) * s_cur.signum();
                                 if in_ccw(a1, a2, az(mid_of(alt))) == want {
