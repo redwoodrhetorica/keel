@@ -737,13 +737,48 @@ impl Body {
         let (ck, csense) = e.curve?;
         let c = self.curves.get(ck)?;
         let fwd = csense == f.forward;
-        // (TASK 29 NOTE: arc-bounded fragments need this sampler to
-        // honor edge.arc_sweep instead of sweeping the FULL periodic
-        // carrier: angular spans, height bands, interior points and UV
-        // polygons all mislocate without it. The localization landed
-        // and was backed out with the crossing-pair metric layer: the
-        // torus-fillet family consumes full-carrier samples here and
-        // regressed. Reconcile the two consumers when the layer lands.)
+        // An arc with a RECORDED sweep on a periodic carrier samples its
+        // OWN span exactly (arc identity, task 29): from the start
+        // vertex's parameter angle, `arc_sweep` forward in the curve's
+        // own parameterization, reversed for a backward fin. Without
+        // this the sampler sweeps the FULL carrier and every consumer
+        // (angular spans, height bands, interior points, UV polygons)
+        // mislocates arc-bounded fragments. (Safe now that the
+        // azimuth-reading shortcut in cyl_angular_span is gone: the
+        // sweep semantic is curve-parameter everywhere.)
+        if let Some(sweep) = e.arc_sweep
+            && e.bounds.0 != e.bounds.1
+            && matches!(c, Curve3::Circle(_) | Curve3::Ellipse(_))
+        {
+            let ang = |p: keel_math::vec::Vec3| -> f64 {
+                match c {
+                    Curve3::Circle(ci) => {
+                        let w = p - ci.center;
+                        w.dot(ci.y_axis).atan2(w.dot(ci.x_axis))
+                    }
+                    Curve3::Ellipse(el) => {
+                        let w = p - el.center;
+                        (w.dot(el.y_axis) / el.b).atan2(w.dot(el.x_axis) / el.a)
+                    }
+                    _ => unreachable!(),
+                }
+            };
+            let evalt = |t: f64| -> keel_math::vec::Vec3 {
+                match c {
+                    Curve3::Circle(ci) => ci.point(t),
+                    Curve3::Ellipse(el) => el.point(t),
+                    _ => unreachable!(),
+                }
+            };
+            let t0 = ang(self.vertices.get(e.bounds.0)?.point);
+            let mut out = Vec::with_capacity(m);
+            for i in 0..m {
+                let f01 = i as f64 / m as f64;
+                let f01 = if f.forward { f01 } else { 1.0 - f01 };
+                out.push(evalt(t0 + sweep * f01));
+            }
+            return Some(out);
+        }
         let eval = |s: f64| -> keel_math::vec::Vec3 {
             match c {
                 Curve3::Nurbs(n) => {
@@ -5136,17 +5171,22 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 continue;
             }
             match intersect_surfaces(&ref_a, &ref_b, tol) {
-                // Crossing-cylinder pairs KEEP DECLINING for now. The
-                // task-29 arrangement imprint (imprint_crossing_pair)
-                // assembles the equal-radii two-ellipse rung
-                // TOPOLOGICALLY, but the metric layer (angular spans,
-                // ruling bands and the Green integral on arc-bounded
-                // pieces) is not yet exact, and the curved gate's
-                // mass-error mesh-floor would ship a wrong volume
-                // (the pinned Steinmetz oracle, tests/steinmetz.rs,
-                // demands 16/3 exactly). Re-open this gate by removing
-                // the `both_cyl` guard for the exact two-conic case
-                // once the metric layer lands.
+                // Crossing-cylinder pairs KEEP DECLINING (task 29). The
+                // metric layer is four-fifths landed (the arc_sweep
+                // semantic is curve-parameter everywhere, fin samples
+                // localize arcs, ruling bands assign by interior side,
+                // angular spans use exact per-loop interval union); the
+                // LAST gap is e1-half consistency in the DEGENERATE
+                // crossing case (the wrap split landing exactly on the
+                // mutual crossings): the antipodal halves declared in
+                // imprint_crossing_pair must be REASSIGNED per host
+                // face to the half whose azimuth interval contains its
+                // c2-arc's midpoint azimuth: until then one bowtie's
+                // loop is geometrically inconsistent and its span/area
+                // read wrong (the dev harness shows piece 0g0 at 5.96
+                // vs the exact 4). Reopen by removing the both_cyl
+                // guard for the exact two-conic case; the Steinmetz
+                // oracle demands 16/3.
                 Ok(SsiResult::Curves(cs)) if both_cyl => {
                     if cs
                         .iter()

@@ -671,6 +671,80 @@ impl Body {
             let mid = arc.point(0.5 * (d0 + d1));
             let host = crate::boolean::curved_face_containing(self, mid, tol.max(1e-7))
                 .ok_or(TopoError::Precondition("crossing pair: unlocated arc host"))?;
+            // Step 5 (e1-half consistency): the host's c1-arc must be
+            // the half on the SAME azimuth side of the crossings as
+            // this c2 arc: the uniform +pi declaration from the wrap
+            // split is wrong for one host in the DEGENERATE case (the
+            // wrap split landing exactly on the crossings). Reassign by
+            // testing candidate midpoints' azimuths.
+            if let Some(keel_geom::surface::Surface3::Cylinder(host_cyl)) = self.face_surface3(host)
+            {
+                let az = |p: Vec3| -> f64 {
+                    let w = p - host_cyl.frame.origin;
+                    let w = w - host_cyl.frame.z * w.dot(host_cyl.frame.z);
+                    w.dot(host_cyl.frame.y).atan2(w.dot(host_cyl.frame.x))
+                };
+                let in_ccw = |a1: f64, a2: f64, x: f64| -> bool {
+                    (x - a1).rem_euclid(tau) < (a2 - a1).rem_euclid(tau)
+                };
+                let (a1, a2) = (az(xs[0]), az(xs[1]));
+                let want = in_ccw(a1, a2, az(mid));
+                let host_loops = self
+                    .faces
+                    .get(host)
+                    .map(|f| f.loops.clone())
+                    .unwrap_or_default();
+                let mut e1_edges: Vec<EdgeKey> = Vec::new();
+                for lk in host_loops {
+                    let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                        continue;
+                    };
+                    let mut cur2 = entry;
+                    while let Some(fin) = self.fins.get(cur2) {
+                        let ek = fin.edge;
+                        if !e1_edges.contains(&ek)
+                            && self
+                                .edges
+                                .get(ek)
+                                .and_then(|e| e.curve)
+                                .and_then(|(ck, _)| self.curves.get(ck))
+                                .map(|cv| same_conic(cv, c1))
+                                .unwrap_or(false)
+                        {
+                            e1_edges.push(ek);
+                        }
+                        cur2 = fin.next;
+                        if cur2 == entry {
+                            break;
+                        }
+                    }
+                }
+                for ek in e1_edges {
+                    let Some(ed) = self.edges.get(ek) else {
+                        continue;
+                    };
+                    let Some(s_cur) = ed.arc_sweep else { continue };
+                    let Some(p0) = self.vertices.get(ed.bounds.0).map(|v| v.point) else {
+                        continue;
+                    };
+                    let t0 = ang_on(c1, p0).unwrap_or(0.0);
+                    let mid_of = |sw: f64| -> Vec3 {
+                        let t = t0 + sw * 0.5;
+                        match c1 {
+                            Curve3::Circle(ci) => ci.point(t),
+                            Curve3::Ellipse(el) => el.point(t),
+                            _ => p0,
+                        }
+                    };
+                    if in_ccw(a1, a2, az(mid_of(s_cur))) != want {
+                        // The complement half, signed the other way.
+                        let alt = -(tau - s_cur.abs()) * s_cur.signum();
+                        if in_ccw(a1, a2, az(mid_of(alt))) == want {
+                            self.set_edge_arc_sweep(ek, alt);
+                        }
+                    }
+                }
+            }
             let e = self.imprint_open_arc_between(host, &Curve3::Nurbs(arc), va, vb, tol)?;
             // The edge's CARRIER is the conic itself with its recorded
             // sweep (the bounded NURBS arc served the pcurve fit): the

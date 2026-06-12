@@ -276,35 +276,13 @@ impl Body {
         let Some(f) = self.faces.get(face) else {
             return (0.0, tau);
         };
-        // If a boundary arc carries an explicit signed sweep (a wide-angle
-        // partial revolve), the span is start_angle .. start_angle + sweep,
-        // taken continuously -- so a sector wider than pi is exact and the
-        // atan2 branch cut is never crossed.
-        for &lk in &f.loops {
-            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
-                continue;
-            };
-            let mut cur = entry;
-            while let Some(fin) = self.fins.get(cur) {
-                if let Some(e) = self.edges.get(fin.edge)
-                    && let Some(sweep) = e.arc_sweep
-                    && let Some(p0) = self.vertices.get(e.bounds.0).map(|v| v.point)
-                {
-                    let w = p0 - origin;
-                    let w = w - ez * w.dot(ez);
-                    let a = w.dot(ey).atan2(w.dot(ex));
-                    return if sweep >= 0.0 {
-                        (a, a + sweep)
-                    } else {
-                        (a + sweep, a)
-                    };
-                }
-                cur = fin.next;
-                if cur == entry {
-                    break;
-                }
-            }
-        }
+        // (The old first-arc shortcut that read edge.arc_sweep as an
+        // AZIMUTH span is gone: arc_sweep is a CURVE-PARAMETER sweep
+        // (the loop_polygon and massprops reading), and the two only
+        // coincide for coaxial circles. Wide revolve sectors are
+        // handled below: loop_polygon follows swept arcs and the
+        // unwrapped cumulative span never crosses the atan2 branch
+        // cut. Task 29 semantic reconciliation, step 1.)
         // Closed boundary edge (a full-circle rim): whole revolution.
         for &lk in &f.loops {
             let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
@@ -364,40 +342,115 @@ impl Body {
                 return (0.0, tau);
             }
         }
-        let mut angles: Vec<f64> = Vec::new();
+        // EXACT per-loop azimuth INTERVALS (task 29 metric layer): each
+        // loop's continuous unwrapped walk covers [a0+clo, a0+chi],
+        // independent of sampling density: the old point-sample gap
+        // complement ate one sampling step out of arc-bounded pieces.
+        // The span is the complement of the largest gap between the
+        // merged intervals.
+        let mut intervals: Vec<(f64, f64)> = Vec::new();
         for &lk in &f.loops {
+            let (mut cum, mut prev, mut a0) = (0.0f64, f64::NAN, f64::NAN);
+            let (mut clo, mut chi) = (0.0f64, 0.0f64);
             for p in self.loop_polygon(lk) {
                 let w = p - origin;
                 let w = w - ez * w.dot(ez);
                 if w.norm() < 1e-9 * (1.0 + (p - origin).norm()) {
                     continue; // on the axis (apex/pole): no angle
                 }
-                angles.push(w.dot(ey).atan2(w.dot(ex)));
+                let a = w.dot(ey).atan2(w.dot(ex));
+                if prev.is_nan() {
+                    prev = a;
+                    a0 = a;
+                    continue;
+                }
+                let mut d = a - prev;
+                if d > core::f64::consts::PI {
+                    d -= tau;
+                }
+                if d < -core::f64::consts::PI {
+                    d += tau;
+                }
+                cum += d;
+                prev = a;
+                clo = clo.min(cum);
+                chi = chi.max(cum);
+            }
+            if !a0.is_nan() && chi > clo {
+                intervals.push((a0 + clo, a0 + chi));
             }
         }
-        if angles.len() < 2 {
+        if intervals.is_empty() {
             return (0.0, tau);
         }
-        angles.sort_by(f64::total_cmp);
-        let n = angles.len();
-        let (mut gap, mut gap_at) = (tau - (angles[n - 1] - angles[0]), n - 1);
-        for i in 0..n - 1 {
-            let g = angles[i + 1] - angles[i];
+        if intervals.iter().any(|(lo, hi)| hi - lo >= tau - 1e-6) {
+            return (0.0, tau);
+        }
+        // Merge modulo tau, then take the complement of the widest gap.
+        let mut iv: Vec<(f64, f64)> = intervals
+            .iter()
+            .map(|&(lo, hi)| {
+                let l = lo.rem_euclid(tau);
+                (l, l + (hi - lo))
+            })
+            .collect();
+        iv.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
+        let mut merged: Vec<(f64, f64)> = Vec::new();
+        for (l, h) in iv {
+            if let Some(last) = merged.last_mut()
+                && l <= last.1 + 1e-9
+            {
+                last.1 = last.1.max(h);
+            } else {
+                merged.push((l, h));
+            }
+        }
+        // Wrap-around merge: the last interval may reach past tau into
+        // the first.
+        if merged.len() > 1
+            && let (Some(&(fl, fh)), Some(&(_, lh))) = (merged.first(), merged.last())
+            && lh >= fl + tau - 1e-9
+        {
+            let nh = (lh - tau).max(fh);
+            merged[0] = (fl, nh);
+            merged.pop();
+        }
+        if merged.len() == 1 {
+            let (l, h) = merged[0];
+            if h - l >= tau - 1e-6 {
+                return (0.0, tau);
+            }
+            return (l, h);
+        }
+        // Several disjoint covered intervals: the face's span is the
+        // complement of the WIDEST gap (the contiguous cover holding
+        // every interval).
+        let m = merged.len();
+        let (mut gap, mut gap_at) = (f64::NEG_INFINITY, 0usize);
+        for i in 0..m {
+            let (l_next, h_this) = (
+                if i + 1 < m {
+                    merged[i + 1].0
+                } else {
+                    merged[0].0 + tau
+                },
+                merged[i].1,
+            );
+            let g = l_next - h_this;
             if g > gap {
                 gap = g;
                 gap_at = i;
             }
         }
-        if gap <= 1e-9 {
-            return (0.0, tau);
-        }
-        if gap_at == n - 1 {
-            // The gap wraps through +-pi: the span is contiguous.
-            (angles[0], angles[n - 1])
+        let start = if gap_at + 1 < m {
+            merged[gap_at + 1].0
         } else {
-            // The span itself wraps: start after the gap, extend past tau.
-            (angles[gap_at + 1], angles[gap_at] + tau)
-        }
+            merged[0].0
+        };
+        let end = merged[gap_at].1;
+        let width = (end - start).rem_euclid(tau);
+        let width = if width <= 1e-9 { tau } else { width };
+        (start, start + width)
     }
 
     /// Lat-band tessellate a cylindrical face. The axial band [hlo,hhi]
@@ -425,20 +478,36 @@ impl Body {
         // heights (the mitre blend, bounded by one cap arc + ellipse
         // sub-arcs) takes its band from the raw boundary vertices.
         let mut heights = self.cyl_circle_heights(face, origin, ez);
+        // DISTINCT heights only: a single rim circle reports once per
+        // fin, and [h, h] is no band (task 29 keeper fix).
+        heights.sort_by(f64::total_cmp);
+        heights.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
         if heights.len() < 2 {
+            // Fin CURVE samples, not just vertices (the vertex-only
+            // trap: a crossing-pair bowtie piece has ALL its vertices
+            // at one height while its arcs bulge across the band).
             for lk in self
                 .faces
                 .get(face)
                 .map(|f| f.loops.clone())
                 .unwrap_or_default()
             {
-                for e in self.ring_edges(lk) {
-                    if let Some(ed) = self.edges.get(e) {
-                        for v in [ed.bounds.0, ed.bounds.1] {
-                            if let Some(p) = self.vertices.get(v).map(|x| x.point) {
-                                heights.push((p - origin).dot(ez));
-                            }
-                        }
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                while let Some(fin) = self.fins.get(cur) {
+                    for p in self.fin_curve_samples(cur, 8).unwrap_or_default() {
+                        heights.push((p - origin).dot(ez));
+                    }
+                    if let Some(v) = self.fin_start_vertex(cur)
+                        && let Some(x) = self.vertices.get(v)
+                    {
+                        heights.push((x.point - origin).dot(ez));
+                    }
+                    cur = fin.next;
+                    if cur == entry {
+                        break;
                     }
                 }
             }
@@ -489,6 +558,12 @@ impl Body {
         let pt = |phi: f64, v: f64| -> Vec3 {
             origin + (ex * phi.cos() + ey * phi.sin()) * radius + ez * v
         };
+        // Which side of each clipping plane the FACE lives on, from its
+        // interior point (task 29 metric layer): the closest-extreme
+        // heuristic mis-assigned planes near their crossings (the
+        // Steinmetz bowtie pinch), tessellating bands the face does not
+        // own. Falls back to the heuristic when no interior is known.
+        let p_int = self.face_interior_point(face);
         let ruling_band = |phi: f64| -> (f64, f64) {
             if cap_planes.is_empty() {
                 return (hlo, hhi);
@@ -496,9 +571,8 @@ impl Body {
             let radial = ex * phi.cos() + ey * phi.sin();
             // A clipping plane REPLACES the vertex band on its end (the
             // mitre ellipse legitimately bulges past the extreme
-            // boundary vertices), but several planes on ONE end (the
-            // two-face roof cap) combine to the BINDING innermost one,
-            // not the last visited.
+            // boundary vertices); several planes on ONE end combine to
+            // the BINDING innermost one.
             let (mut lo_clip, mut hi_clip): (Option<f64>, Option<f64>) = (None, None);
             for (q, n) in &cap_planes {
                 let dv = ez.dot(*n);
@@ -507,7 +581,14 @@ impl Body {
                 }
                 let base = (origin + radial * radius - *q).dot(*n);
                 let hc = -base / dv;
-                if (hc - hlo).abs() < (hc - hhi).abs() {
+                let to_lo = match p_int {
+                    // The face survives where (h*dv + base) has the
+                    // interior's sign: a LOWER bound when that sign and
+                    // dv agree.
+                    Some(p) => ((p - *q).dot(*n) >= 0.0) == (dv > 0.0),
+                    None => (hc - hlo).abs() < (hc - hhi).abs(),
+                };
+                if to_lo {
                     lo_clip = Some(lo_clip.map_or(hc, |x: f64| x.max(hc)));
                 } else {
                     hi_clip = Some(hi_clip.map_or(hc, |x: f64| x.min(hc)));
@@ -515,7 +596,7 @@ impl Body {
             }
             let l = lo_clip.unwrap_or(hlo);
             let h = hi_clip.unwrap_or(hhi);
-            (l.min(h), l.max(h))
+            if l > h { (l, l) } else { (l, h) }
         };
         let mut tris = Vec::new();
         for j in 0..np {
@@ -981,14 +1062,22 @@ impl Body {
                     (w.dot(el.y_axis) / el.b).atan2(w.dot(el.x_axis) / el.a)
                 };
                 let ts = ang(ps);
-                let mut d = ang(pe) - ts;
                 let pi = core::f64::consts::PI;
-                while d > pi {
-                    d -= core::f64::consts::TAU;
-                }
-                while d <= -pi {
-                    d += core::f64::consts::TAU;
-                }
+                // An explicit recorded sweep (the crossing-pair arcs,
+                // whose antipodal halves are direction-AMBIGUOUS at
+                // exactly pi) wins over the short-span default.
+                let d = if let Some(sweep) = self.edges.get(fin.edge).and_then(|e| e.arc_sweep) {
+                    if fin.forward { sweep } else { -sweep }
+                } else {
+                    let mut d = ang(pe) - ts;
+                    while d > pi {
+                        d -= core::f64::consts::TAU;
+                    }
+                    while d <= -pi {
+                        d += core::f64::consts::TAU;
+                    }
+                    d
+                };
                 let seg = ((d.abs() * 8.0 / pi).ceil() as usize).max(8);
                 for k in 1..seg {
                     verts.push(el.point(ts + d * (k as f64 / seg as f64)));

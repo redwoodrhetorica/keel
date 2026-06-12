@@ -6555,3 +6555,36 @@ topology), then push_face breathes it +-0.9: boss up, pocket down. TWELVE
 gifs shipped; only the corner blend remains (blocked on the task-29 arc
 identity work). Additive op (no boolean/tessellation/parser path touched):
 triplet green, suite 16/16.
+
+## Addendum 216: task-29 metric layer, four of five steps (2026-06-12)
+
+The arc_sweep SEMANTIC OVERLOAD IS RESOLVED: arc_sweep is a CURVE-PARAMETER
+sweep from bounds.0, everywhere. cyl_angular_span''s first-arc shortcut (which
+read it as an AZIMUTH span: the revolve coincidence) is REMOVED and the whole
+suite is green without it: loop_polygon follows swept arcs (the ellipse
+branch now honors recorded sweeps too: exact-pi antipodal arcs are direction-
+ambiguous without them) and the span path needs no shortcut. With the
+semantic unified, two reverted pieces RE-LANDED CLEAN: fin_curve_samples
+localizes arcs by their recorded sweep (the torus-fillet canary green this
+time), and tessellate_cylinder''s ruling bands assign clip planes by the
+face-INTERIOR side. NEW: cyl_angular_span computes EXACT per-loop azimuth
+intervals (cumulative unwrapped walk, merged modulo tau, complement of the
+widest gap), density-independent: the sample-gap heuristic that ate one
+sampling step out of arc-bounded pieces is gone.
+
+THE GATE STAYS CLOSED on one remaining defect, precisely mapped (task 29
+notes + the both_cyl comment): in the DEGENERATE crossing case the antipodal
+e1-halves declared uniformly +pi leave one bowtie''s loop geometrically
+inconsistent; the fix is per-host reassignment from the hosted c2-arc''s
+midpoint azimuth. Dev harness numbers: one bowtie exact (3.9988 ~ 4), the
+other 5.96. Suite 16/16 green; verification below.
+VERIFICATION (steps 1-4 + the step-5 attempt, gate closed): 100k oracle
+buckets identical for the FIFTH consecutive run (strict 95604/4396/WRONG 0,
+tolerant 25000/0/WRONG 0); suite 16/16 green incl. the torus-fillet canary.
+Step-5 status: the e1-half reassignment by hosted-arc azimuth side improves
+the Steinmetz (topology v2/e1/f2, mesh 3.97 toward the exact 5.333) but
+interacts with c2-arc hosting order: the precise reorder is in the task-29
+notes. Fuzz soak result recorded on the commit.
+Fuzz soak: fuzz_cyl_boolean 31171 runs clean; fuzz_boolean interrupted by the
+wall-clock timeout mid-run (no crash: libFuzzer SIGTERM exit), ~3000 runs
+clean before the cut.
