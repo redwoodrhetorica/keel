@@ -6857,3 +6857,50 @@ the same Ak_1-shaped interface, triggered when a kernel consumer
 (2D UV arrangements / sketch booleans / Tier-2 escalation) lands. No
 existing kernel call path was rerouted: the layer is additive, so the
 certified corpus is untouched (suite green 135/87/271/4, clippy clean).
+
+## Addendum 226: the per-op demo corpus (task 40): 26 new animations, 4 kernel bugs surfaced (2026-06-12)
+
+User directive: an animation for EVERY kernel operation, saved under
+docs/media, primary purpose BUG HUNTING (the visual oracle catches what
+mass==mesh forgives). 26 new ops join the existing 13 (39 total .webp):
+socket (the task-36 success story: carve + seated ball), steinmetz
+(op-cycling crossing cylinders), countersink (+ mated plug), primitives
+(torus/tube/cone), helix (sweep_along_path), vfillet, draft, moveface,
+nonuniform (planar scope), revolve_partial, loft (loft_sections),
+wiretrim (wire-solid booleans), blendzoo (g2 / conic / hold-line /
+partial / chain roll-on / notch), corners2 (mitre + setback), unblend,
+sheets (trim_by_plane + thicken), partition (partition_by_sheet tilt
+sweep), multitool (boolean_multi), slicestack (slice + exploded wafers),
+defeature (defeature_small_holes threshold sweep), pierce
+(hollow_pierce), mirror, taperface, deleteface (the coplanar-merge
+heal), knit (five sheets to a solid pyramid), hlr (the hidden-line
+wireframe AS the product). Every frame is real kernel output
+(honest-output rule); declining frames show the inputs + the DECLINED
+flag.
+
+KERNEL BUGS SURFACED (tasks filed):
+- #41: crossing-cylinder UNION/DIFFERENCE decline at height 4
+  ("stitched (curved) body invalid") while height 6 assembles: the
+  task-29 machinery's band/cap assembly is configuration-sensitive.
+- #42: fillet_edge_variable renders the blend as a FLAT TRIANGLE at
+  large r1 (the item-48 ellipse-bounded cone tessellation).
+- #43 (capability): scaled_nonuniform declines all curved surfaces:
+  the bore-to-ellipse differentiator story is unimplemented.
+- #44: fillet_edge_partial raises a spurious triangular fin above the
+  top face.
+- #45: fillet_corner_setback draws a dark jagged fin (flipped or
+  degenerate band) on the vertical edge plus a stray full circle.
+
+Exonerated by inspection: delete_face''s boss-wall decline (documented
+coplanar-merge scope), unblend_all (the demo misread the (removed,
+remaining) contract; the op heals correctly), chain/notch/g2/partition/
+knit first-run failures (demo parameter contract errors against
+documented preconditions), HLR rim over-visibility (the documented
+midpoint-classification approximation). Observation, no task: slice/
+split caps carry a diameter split edge from the revolve seam plane
+(benign topology, visible as chords in wireframes); declined-overlay
+frames z-fight (painter renderer, no depth buffer).
+
+Pipeline hardening on the way: lines-only frames (HLR) get camera
+bounds from segments; labels stay JSON-safe. Clippy clean; the corpus
+re-renders with two commands per op.

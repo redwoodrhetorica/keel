@@ -155,7 +155,12 @@ def main():
     lo = np.array([np.inf, np.inf])
     hi = -lo
     for d in datas:
-        pos = np.array(d["positions"], dtype=np.float64).reshape(-1, 3) @ cam.T
+        # Lines-only frames (the HLR demo) have empty positions; the
+        # camera bounds must still cover their segments.
+        pts = list(d["positions"]) + list(d.get("lines", []))
+        if not pts:
+            continue
+        pos = np.array(pts, dtype=np.float64).reshape(-1, 3) @ cam.T
         xz = pos[:, [0, 2]]
         lo = np.minimum(lo, xz.min(axis=0))
         hi = np.maximum(hi, xz.max(axis=0))
