@@ -6143,3 +6143,17 @@ segments) + worker_mesh_drilled_plate (group coverage + signed-volume agreement 
 mesh_volume within the f32 quantization band). The remaining fieldforge-side work
 (op-tree JSON in, the actual buildShape port) belongs to the app integration, not the
 kernel surface.
+
+## Addendum 196: OpReport (task 22): no silent salvage, wired to the consumer (2026-06-12)
+
+keel-topo/src/report.rs: OpReport {warnings, salvaged, tier, achieved_tolerance}, the
+dossier-29 Part 4 confidence contract designed against its real consumer (fieldforge''s
+BuildReport channel: warnings to the status bar, failures mark items). Constructors
+stay strict by contract (clean or Err: nothing to report), so no speculative plumbing:
+the report formalizes what the boolean pipeline produces: informational faults become
+human-readable warnings; a tolerant salvage reports its tier and the most any geometry
+moved; declines are Errs at the call site. keel-wasm carries the report across the
+worker boundary (UTF-8 warnings buffer + confidence accessors); run_spike.mjs proves
+it in V8: the clearance-pin salvage arrives as volume EXACT 16.0, salvaged true,
+tier 2, achieved 1.0e-5, "geometry salvaged at tier 2 (moved up to 1.000e-5)".
+Tests: strict_clean_report_is_pristine + tolerant_salvage_reports_loudly.
