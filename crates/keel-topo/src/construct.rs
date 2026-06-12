@@ -2003,7 +2003,7 @@ impl Body {
     }
 
     /// Production fin addressing: the fin of `lp` ending at `v`.
-    fn fin_ending_at(
+    pub(crate) fn fin_ending_at(
         &self,
         lp: crate::entity::LoopKey,
         v: VertexKey,

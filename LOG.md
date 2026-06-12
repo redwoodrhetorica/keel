@@ -6533,3 +6533,25 @@ walls to re-solve); the true push/pull sweeps the face CREATING walls: the
 Plasticity-signature interaction fieldforge will want regardless.
 Remaining gif shortlist: imprint+push (blocked on 37), corner blend (blocked
 on the task-29 arc work).
+
+## Addendum 215: PUSH/PULL lands (task 37) + the imprint-push gif (task 34) (2026-06-12)
+
+Body::push_face (tweak.rs): sweep a planar face along its outward normal by
+d (negative = pocket), CREATING the side walls: the op offset_face cannot be,
+because an imprinted region''s neighbours are coplanar and give the tweak
+nothing to re-solve. This is the Plasticity-signature direct-modeling
+interaction, squarely in fieldforge''s vocabulary. Euler mechanics mirror the
+prism construction (one mev per boundary vertex, one mef per boundary edge),
+in place; wall planes from each wall''s own Newell normal; new edges carry
+their lines. Slice scope: single-loop planar faces with straight boundaries;
+rings/curved boundaries decline honestly; the caller bounds d (the
+tweak-family contract: no self-intersection guard). ORACLES
+(tests/push_face.rs): the 2x2 imprinted region on a 4x4x1.5 block pushed
++0.5 = volume EXACTLY 26 and pulled -0.5 = EXACTLY 22, mass == mesh at 1e-9
+both ways, plus decline rails. fin_ending_at promoted to pub(crate).
+
+imprint-push.gif (190 KiB): the rectangle imprints onto the top face (real
+topology), then push_face breathes it +-0.9: boss up, pocket down. TWELVE
+gifs shipped; only the corner blend remains (blocked on the task-29 arc
+identity work). Additive op (no boolean/tessellation/parser path touched):
+triplet green, suite 16/16.

@@ -502,7 +502,7 @@ fn imprint_push(dir: &Path) {
             .pick_face(Vec3::new(2.0, 2.0, 1.5), 1e-7)
             .expect("imprinted face");
         if d.abs() > 1e-9 {
-            b.offset_face(pocket, d).expect("push frame");
+            b.push_face(pocket, d).expect("push frame");
         }
         let mesh = b.worker_mesh();
         write_frame(

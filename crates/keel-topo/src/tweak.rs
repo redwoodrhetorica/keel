@@ -34,6 +34,154 @@ fn three_plane_point(n0: Vec3, d0: f64, n1: Vec3, d1: f64, n2: Vec3, d2: f64) ->
 }
 
 impl Body {
+    /// PUSH/PULL (task 37, the Plasticity-signature interaction): sweep
+    /// a planar `face` along its OUTWARD normal by `d` (negative =
+    /// inward pocket), CREATING the side walls: the op offset_face
+    /// cannot be, because an imprinted region's neighbours are COPLANAR
+    /// and give it no walls to re-solve. Euler mechanics mirror the
+    /// prism construction (one mev per boundary vertex, one mef per
+    /// boundary edge), in place on the existing body; wall planes come
+    /// from each wall's own Newell normal (the Euler construction
+    /// guarantees consistent winding). Slice scope: single-loop planar
+    /// faces with straight boundary edges; the caller bounds `d` (no
+    /// self-intersection guard, the tweak-family contract).
+    pub fn push_face(&mut self, face: FaceKey, d: f64) -> Result<(), TopoError> {
+        if !(d.is_finite() && d != 0.0) {
+            return Err(TopoError::Precondition("push: bad distance"));
+        }
+        let (pl, sense) = self
+            .face_plane(face)
+            .ok_or(TopoError::Precondition("push: non-planar face"))?;
+        let n_out = if sense { pl.frame.z } else { pl.frame.z * -1.0 };
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .ok_or(TopoError::StaleKey)?;
+        if loops.len() != 1 {
+            return Err(TopoError::Precondition(
+                "push: ring-carrying face (follow-up)",
+            ));
+        }
+        let lp = loops[0];
+        // Ordered boundary vertices; straight edges only (the slice).
+        let entry = self
+            .loops
+            .get(lp)
+            .and_then(|l| l.fin)
+            .ok_or(TopoError::Precondition("push: face has no boundary"))?;
+        let mut vs: Vec<VertexKey> = Vec::new();
+        let mut cur = entry;
+        loop {
+            let fin = self.fins.get(cur).ok_or(TopoError::StaleKey)?;
+            let straight = matches!(
+                self.edges
+                    .get(fin.edge)
+                    .and_then(|e| e.curve)
+                    .and_then(|(ck, _)| self.curves.get(ck)),
+                None | Some(Curve3::Line(_))
+            );
+            if !straight {
+                return Err(TopoError::Precondition("push: curved boundary (follow-up)"));
+            }
+            if let Some(v) = self.fin_start_vertex(cur)
+                && !vs.contains(&v)
+            {
+                vs.push(v);
+            }
+            cur = fin.next;
+            if cur == entry {
+                break;
+            }
+        }
+        let n = vs.len();
+        if n < 3 {
+            return Err(TopoError::Precondition("push: degenerate boundary"));
+        }
+        let lift = n_out * d;
+        // One mev per vertex (the lifted rim), then one mef per original
+        // boundary edge (the walls); the face itself becomes the moved cap.
+        let mut tops: Vec<VertexKey> = Vec::new();
+        let mut new_edges: Vec<EdgeKey> = Vec::new();
+        for &v in &vs {
+            let at = self.fin_ending_at(lp, v)?;
+            let p = self
+                .vertices
+                .get(v)
+                .map(|x| x.point + lift)
+                .ok_or(TopoError::StaleKey)?;
+            let m = self.mev(crate::euler::MevSite::AfterFin(at), p)?;
+            tops.push(m.vertex);
+            new_edges.push(m.edge);
+        }
+        let mut walls: Vec<FaceKey> = Vec::new();
+        for i in 0..n {
+            let a = self.fin_ending_at(lp, tops[i])?;
+            let c = self.fin_ending_at(lp, tops[(i + 1) % n])?;
+            let mef = self.mef(a, c, None)?;
+            walls.push(mef.face);
+            new_edges.push(mef.edge);
+        }
+        // Geometry: the cap re-seats on the offset plane (sense kept).
+        let cap_frame = Frame3 {
+            origin: pl.frame.origin + lift,
+            x: pl.frame.x,
+            y: pl.frame.y,
+            z: pl.frame.z,
+        };
+        self.attach_face_surface(
+            face,
+            SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(cap_frame))),
+            sense,
+        );
+        // Walls: plane from each wall's own loop (Newell), sense true.
+        for w in walls {
+            let pts = self.face_outer_loop_points(w);
+            let m = pts.len();
+            if m < 3 {
+                continue;
+            }
+            let mut nw = Vec3::ZERO;
+            for i in 0..m {
+                let a = pts[i];
+                let b = pts[(i + 1) % m];
+                nw = nw
+                    + Vec3::new(
+                        (a.y - b.y) * (a.z + b.z),
+                        (a.z - b.z) * (a.x + b.x),
+                        (a.x - b.x) * (a.y + b.y),
+                    );
+            }
+            let Some(nw) = nw.try_normalize() else {
+                continue;
+            };
+            if let Ok(fr) = Frame3::from_z(pts[0], nw) {
+                self.attach_face_surface(
+                    w,
+                    SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(fr))),
+                    true,
+                );
+            }
+        }
+        // New edges are straight: attach their lines.
+        for e in new_edges {
+            let Some(ed) = self.edges.get(e) else {
+                continue;
+            };
+            let (Some(p0), Some(p1)) = (
+                self.vertices.get(ed.bounds.0).map(|v| v.point),
+                self.vertices.get(ed.bounds.1).map(|v| v.point),
+            ) else {
+                continue;
+            };
+            if let Ok(l) = Line3::new(p0, p1 - p0) {
+                self.attach_edge_curve(e, Curve3::Line(l), true);
+            }
+        }
+        self.debug_validate();
+        Ok(())
+    }
+
     /// The (plane, sense) of a planar face, or None if non-planar.
     fn face_plane(&self, face: FaceKey) -> Option<(Plane3, bool)> {
         let (sk, sense) = self.faces.get(face).and_then(|f| f.surface)?;
