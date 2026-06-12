@@ -6235,3 +6235,66 @@ Housekeeping: the sanitized publication log (task 35, docs/ENGINEERING-LOG.md)
 passed final verification: zero hits for dates/assistant/process patterns; the 18
 remaining "session" tokens are all the kernel's session.rs subsystem and parity
 item 122, which must keep their names.
+
+## Addendum 201: the cone boolean slice (task 30 groundwork) (2026-06-12)
+
+ORACLE-FIRST again earned its keep: the #30 probe (countersink carve, the simplest
+cone boolean) found that cones had NO SSI support at all: every plane-cone pair
+returned IntersectionFailed, and the empty-seam result assembled to an empty body
+with recorded faults. Six layers, each found by the same probe failing one level
+deeper, each fixed exactly:
+
+1. plane_cone SSI (ssi.rs): perpendicular slice = exact CIRCLE of the local
+   radius; tilted slice = exact ELLIPSE by the tilt-plane construction (intersect
+   the cutting line with both silhouette lines in the plane of the axis and the
+   normal: the hits are the major-axis endpoints; semi-minor = sqrt(rho1*rho2),
+   the Dandelin geometric mean, which reduces to b = R on a cylinder; verified
+   against both implicits at 24 samples). Parabolic/hyperbolic slices DECLINE
+   (tier 2 follow-up); apex slice = point. cone_uv pcurve helper added.
+2. curve_cylinder_face_overlap generalized to CONE faces (same axial band +
+   angular span): without it a phantom SSI circle on the unbounded cone's FAR
+   NAPPE imprinted onto the block bottom and broke shell closure.
+3. Coaxial-circle exact pcurve extended to cones (u = angle, v = height: the
+   same straight pcurve as the cylinder fast path).
+4. synthesize_lateral_seam: cone two-rim tubes synthesize their seam along the
+   SLANTED generator (radial*tan(half_angle) + axis), and the wraps dispatch
+   recognizes coaxial circles on cone laterals.
+5. cone_face_interior_point (the cylinder rung's twin, radius evaluated at the
+   mid-height): classification had silently dropped cone bands (faces with no
+   interior point classify Unknown and vanish: the unmatched-coedge decline).
+6. Coincident CONE pre-check in seam_curves (coaxial, equal taper in the shared
+   axis sense, equal radius at a common plane) mirroring the M4 cylinder arm,
+   plus the SEAM MODEL fix it exposed: a seam lying on an existing boundary edge
+   was skipped if EITHER side had it; the mated plug's lateral crosses the sunk
+   block's EXISTING rim, so the skip is now PER-SIDE (SeamCurve.on_boundary_a/b)
+   and the other operand still imprints.
+
+ORACLES (tests/cone_boolean.rs, permanent): block(4x4x2) minus 45-degree frustum
+= 32 - 3.25*pi/3 EXACT (28.596607958610992, 1e-13); the EXACT MATED PLUG
+re-unioned = 32 + 12.25*pi/3 EXACT (44.828170002158025): coincident laterals AND
+the coincident floor cap resolve through the on-on machinery. This is the
+countersink vocabulary fieldforge needs and the strict foundation #30's tolerant
+cone prepare sits on.
+
+THE SPHERE LEG IS DEFERRED with a full map (memory: sphere-split-integration-
+trap): the ball-in-socket strict carve sits on three stacked integration defects
+(degenerate pcurve boxes integrating dV=0 silently; the Green-slab path being
+SIDE-AMBIGUOUS on full-period sphere wraps: it returned the cap's flux for the
+rest face; the ring-vs-arcs glue mismatch that face_covers_closed_surface turns
+into a full-sphere integration). Attempted fixes traded the M6a sphere family
+for the socket and back (the two rim topologies carry IDENTICAL local flags
+needing opposite answers): reverted to the milestone boundary. KEPT groundwork,
+all green: find_planar_seam_crossing handles CIRCLE seam edges (a latitude rim
+crossing the meridian splits via the crossing imprint), and
+sphere_face_interior_point uses an off-rim boundary VERTEX as a side witness
+(pole stubs) before the orientation rule. The socket carve DECLINES honestly,
+with a decline-rail test that demands exactness if it ever assembles.
+
+Suite 134+77+271+2 green; clippy clean. Verification: 100k three-bucket oracle
+strict 95604/4396/WRONG 0, tolerant 25000/0/WRONG 0 (master-baseline comparison
+and the 10-min WSL fuzz soak recorded below before merge).
+VERIFICATION COMPLETE: 100k oracle BIT-IDENTICAL to a clean master worktree
+(strict 95604/4396/WRONG 0, tolerant 25000/0/WRONG 0, every contact-breakdown
+class equal line for line: the per-side seam flags and cone additions shift
+nothing in the fuzz sectors). WSL fuzz soak clean: fuzz_boolean 4733 runs/293s,
+fuzz_cyl_boolean 32742 runs/291s, fuzz_imprint 661387 runs/191s, zero crashes.

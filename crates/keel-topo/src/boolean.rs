@@ -68,6 +68,12 @@ pub struct SeamCurve {
     /// conics, ~the fit error for marched NURBS. This rides onto the
     /// imprinted edge's tolerance (the tolerant-geometry contract, M7b).
     pub tol: f64,
+    /// The seam already lies ON an existing boundary edge of this
+    /// operand's face (file 39 sec 3.2): no imprint needed on that side.
+    /// One-sided cases are real (the countersink plug's lateral crosses
+    /// the sunk block's EXISTING rim): the other side still imprints.
+    pub on_boundary_a: bool,
+    pub on_boundary_b: bool,
 }
 
 impl Body {
@@ -150,11 +156,17 @@ impl Body {
         tol: f64,
     ) -> CurveFaceOverlap {
         use keel_geom::curve::Curve3;
-        let Some(Surface3::Cylinder(c)) = self.face_surface3(face) else {
-            return CurveFaceOverlap::All;
+        // Cones share the cylinder's trim story exactly (an axial band
+        // between rim circles plus an angular span): without this, a
+        // phantom SSI circle on the UNBOUNDED cone's far nappe imprints
+        // onto the face and breaks shell closure (the countersink probe).
+        let frame = match self.face_surface3(face) {
+            Some(Surface3::Cylinder(c)) => c.frame,
+            Some(Surface3::Cone(c)) => c.frame,
+            _ => return CurveFaceOverlap::All,
         };
-        let (origin, ez) = (c.frame.origin, c.frame.z);
-        let (ex, ey) = (c.frame.x, c.frame.y);
+        let (origin, ez) = (frame.origin, frame.z);
+        let (ex, ey) = (frame.x, frame.y);
         // Axial band from the face's circle/arc edges.
         let heights = self.cyl_circle_heights(face, origin, ez);
         if heights.len() < 2 {
@@ -884,6 +896,25 @@ impl Body {
         Some(origin + ex * (-r) + ez * hmid)
     }
 
+    /// The cone twin of the cylinder rung: rim heights bound the band,
+    /// and the surface radius at the mid-height places the point.
+    fn cone_face_interior_point(
+        &self,
+        face: FaceKey,
+        cone: &keel_geom::surface::Cone3,
+    ) -> Option<keel_math::vec::Vec3> {
+        let (origin, ex, ez) = (cone.frame.origin, cone.frame.x, cone.frame.z);
+        let heights = self.cyl_circle_heights(face, origin, ez);
+        if heights.len() < 2 {
+            return None;
+        }
+        let hlo = heights.iter().cloned().fold(f64::INFINITY, f64::min);
+        let hhi = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let hmid = 0.5 * (hlo + hhi);
+        let r = cone.radius + hmid * cone.half_angle.tan();
+        Some(origin + ex * (-r) + ez * hmid)
+    }
+
     /// Interior point of a spherical cap fragment: the cap apex, on the
     /// side of the bounding SSI circle that this face occupies (chosen
     /// by the boundary fin's into-face direction). Robust for the
@@ -912,19 +943,86 @@ impl Body {
             let mut cur = entry;
             loop {
                 let fin = self.fins.get(cur)?;
-                // Only the CLOSED SSI seam circle bounds a cap; skip the
-                // sphere's open pole-to-pole meridian.
-                let closed = self.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true);
-                if closed
+                // An SSI rim bounds the cap whether it is the closed
+                // circle (M6a) or split arcs (the seam-crossing imprint).
+                // Skip the sphere's own seam edges (BOTH fins on this
+                // face: they bound nothing) and non-circle geometry.
+                let seam_edge = self
+                    .edges
+                    .get(fin.edge)
+                    .map(|e| {
+                        e.radial.len() >= 2
+                            && e.radial.iter().all(|&rf| {
+                                self.fins
+                                    .get(rf)
+                                    .and_then(|x| self.loops.get(x.owner))
+                                    .map(|x| x.face)
+                                    == Some(face)
+                            })
+                    })
+                    .unwrap_or(false);
+                if !seam_edge
                     && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
                     && let Some(cv) = self.curves.get(ck)
+                    && matches!(cv, keel_geom::curve::Curve3::Circle(_))
                     && let Some((_center_c, ax)) = closed_curve_center_axis(cv)
                     && let Some((m, t)) = closed_curve_point_tangent(cv, 0.25)
                 {
+                    // Side WITNESS first: a boundary vertex OFF this rim
+                    // circle (a pole at the end of a seam stub, after the
+                    // seam-crossing imprint) tells directly which side of
+                    // the rim this face occupies. The orientation rule
+                    // below cannot: the crossing topology's flags are
+                    // indistinguishable from the ring imprint's.
+                    if let Some(cir) = match cv {
+                        keel_geom::curve::Curve3::Circle(c) => Some(c),
+                        _ => None,
+                    } {
+                        let off_rim = self
+                            .faces
+                            .get(face)
+                            .map(|f| f.loops.clone())
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter_map(|lk| self.loops.get(lk).and_then(|l| l.fin))
+                            .flat_map(|e2| {
+                                let mut vs = Vec::new();
+                                let mut c2 = e2;
+                                loop {
+                                    if let Some(v) = self.fin_start_vertex(c2)
+                                        && let Some(x) = self.vertices.get(v)
+                                    {
+                                        vs.push(x.point);
+                                    }
+                                    let Some(nx) = self.fins.get(c2).map(|x| x.next) else {
+                                        break;
+                                    };
+                                    c2 = nx;
+                                    if c2 == e2 {
+                                        break;
+                                    }
+                                }
+                                vs
+                            })
+                            .find(|p| {
+                                let w = *p - cir.center;
+                                let nrm = cir.x_axis.cross(cir.y_axis);
+                                w.dot(nrm).abs() > 1e-7
+                                    || ((w - nrm * w.dot(nrm)).norm() - cir.radius).abs() > 1e-7
+                            });
+                        if let Some(p) = off_rim {
+                            let side = (p - center).dot(ax);
+                            if side.abs() > 1e-9 {
+                                let apex = center + ax * (radius * side.signum());
+                                return Some(apex);
+                            }
+                        }
+                    }
                     let n = (m - center).try_normalize()?; // sphere outward at m
+                    // No off-rim witness (the M6a ring topology: the rim
+                    // is the face's whole boundary): the orientation rule.
                     // Into-face = surface-tangent to the LEFT of the
-                    // traversal for an outer loop; flipped for an inner
-                    // ring (whose interior is on the other side).
+                    // curve-ordered traversal, flipped for an inner ring.
                     let mut into = n.cross(t);
                     if inner {
                         into = into * -1.0;
@@ -962,6 +1060,9 @@ impl Body {
         }
         if let Surface3::Cylinder(c) = &surf {
             return self.cylinder_face_interior_point(face, c);
+        }
+        if let Surface3::Cone(c) = &surf {
+            return self.cone_face_interior_point(face, c);
         }
         let loops: Vec<crate::entity::LoopKey> = self
             .faces
@@ -1263,6 +1364,10 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, tol: f64) -> Vec<(Fac
                     Some(n) => other.coincident_sense_at(p, n, tol),
                     None => OnSense::Unknown,
                 };
+                if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
+                    let w = crate::winding::gwn_over(&other_tris, p);
+                    eprintln!("  classify {face:?} p {p:?} geo {geo_sense:?} w {w}");
+                }
                 if geo_sense != OnSense::Unknown {
                     FaceClass::OnOther(geo_sense)
                 } else {
@@ -1567,7 +1672,13 @@ pub fn boolean_sheet_solid(
         }
     };
     let (seams, mut faults) = seam_curves(sheet, tool, tol);
-    let ia = imprint_operand(sheet, &seams, |s| s.face_a, tol, &mut faults);
+    let ia = imprint_operand(
+        sheet,
+        &seams,
+        |s| (s.face_a, s.on_boundary_a),
+        tol,
+        &mut faults,
+    );
     if let Some(f) = faults.into_iter().next() {
         return Err(f);
     }
@@ -1890,7 +2001,13 @@ pub fn partition_by_sheet(solid: &Body, sheet: &Body, tol: f64) -> Result<Body, 
             "partition_by_sheet: sheet does not cross the solid boundary",
         ));
     }
-    let ia = imprint_operand(solid, &seams, |s| s.face_a, tol, &mut faults);
+    let ia = imprint_operand(
+        solid,
+        &seams,
+        |s| (s.face_a, s.on_boundary_a),
+        tol,
+        &mut faults,
+    );
     if let Some(f) = faults.into_iter().next() {
         return Err(f);
     }
@@ -3379,8 +3496,8 @@ fn assemble_boolean(
     let (ia, ib) = {
         let _prof = crate::profile::Scope::new(&crate::profile::IMPRINT_NS);
         (
-            imprint_operand(a, seams, |s| s.face_a, tol, &mut faults),
-            imprint_operand(b, seams, |s| s.face_b, tol, &mut faults),
+            imprint_operand(a, seams, |s| (s.face_a, s.on_boundary_a), tol, &mut faults),
+            imprint_operand(b, seams, |s| (s.face_b, s.on_boundary_b), tol, &mut faults),
         )
     };
     let (class_a, class_b) = {
@@ -3547,8 +3664,8 @@ pub fn imprint(a: &Body, b: &Body, tol: f64) -> Result<(Body, Body), BoolFault> 
     {
         return Err(f);
     }
-    let ia = imprint_operand(a, &seams, |s| s.face_a, tol, &mut faults);
-    let ib = imprint_operand(b, &seams, |s| s.face_b, tol, &mut faults);
+    let ia = imprint_operand(a, &seams, |s| (s.face_a, s.on_boundary_a), tol, &mut faults);
+    let ib = imprint_operand(b, &seams, |s| (s.face_b, s.on_boundary_b), tol, &mut faults);
     Ok((ia.body, ib.body))
 }
 
@@ -4267,7 +4384,7 @@ fn subdivide_seam_ring(
 fn imprint_operand(
     body: &Body,
     seams: &[SeamCurve],
-    pick: impl Fn(&SeamCurve) -> FaceKey,
+    pick: impl Fn(&SeamCurve) -> (FaceKey, bool),
     tol: f64,
     faults: &mut Vec<BoolFault>,
 ) -> ImprintedOperand {
@@ -4277,10 +4394,14 @@ fn imprint_operand(
     let mut seam_edges = Vec::new();
     let etol = tol.max(1e-7);
 
-    // Group seam indices by their face on this operand.
+    // Group seam indices by their face on this operand. A seam already
+    // lying on this side's boundary topology imprints nothing here.
     let mut groups: BTreeMap<u64, (FaceKey, Vec<usize>)> = BTreeMap::new();
     for (i, s) in seams.iter().enumerate() {
-        let face = pick(s);
+        let (face, on_boundary) = pick(s);
+        if on_boundary {
+            continue;
+        }
         let id = working.faces.get(face).map(|f| f.id.0).unwrap_or(u64::MAX);
         groups.entry(id).or_insert((face, Vec::new())).1.push(i);
     }
@@ -4481,6 +4602,12 @@ fn imprint_operand(
                         ax.cross(c.frame.z).norm() < 1e-6
                             && (centre - c.frame.origin).cross(c.frame.z).norm() < 1e-6
                     }
+                    // A coaxial circle wraps a cone lateral the same way
+                    // (the countersink rim on the frustum face).
+                    (Some(Surface3::Cone(c)), Some((centre, ax))) => {
+                        ax.cross(c.frame.z).norm() < 1e-6
+                            && (centre - c.frame.origin).cross(c.frame.z).norm() < 1e-6
+                    }
                     _ => false,
                 };
                 if wraps
@@ -4571,7 +4698,13 @@ impl Body {
     /// never silently dropped).
     pub fn imprint_body(&self, tool: &Body, tol: f64) -> Result<Body, BoolFault> {
         let (seams, mut faults) = seam_curves(self, tool, tol);
-        let ia = imprint_operand(self, &seams, |s| s.face_a, tol, &mut faults);
+        let ia = imprint_operand(
+            self,
+            &seams,
+            |s| (s.face_a, s.on_boundary_a),
+            tol,
+            &mut faults,
+        );
         if let Some(f) = faults.into_iter().next() {
             return Err(f);
         }
@@ -4593,8 +4726,8 @@ pub fn imprint_pair(
     tol: f64,
 ) -> (ImprintedOperand, ImprintedOperand, Vec<BoolFault>) {
     let (seams, mut faults) = seam_curves(a, b, tol);
-    let ia = imprint_operand(a, &seams, |s| s.face_a, tol, &mut faults);
-    let ib = imprint_operand(b, &seams, |s| s.face_b, tol, &mut faults);
+    let ia = imprint_operand(a, &seams, |s| (s.face_a, s.on_boundary_a), tol, &mut faults);
+    let ib = imprint_operand(b, &seams, |s| (s.face_b, s.on_boundary_b), tol, &mut faults);
     (ia, ib, faults)
 }
 
@@ -4680,6 +4813,25 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 faults.push(BoolFault::Coincident(id_a, id_b));
                 continue;
             }
+            // COINCIDENT cones (the mated countersink plug): coaxial,
+            // equal taper in the shared axis sense, equal radius at a
+            // common plane. Same on-on contract as the cylinder pair.
+            if let (
+                SurfaceRef::Analytic(Surface3::Cone(ca)),
+                SurfaceRef::Analytic(Surface3::Cone(cb)),
+            ) = (&ref_a, &ref_b)
+                && ca.frame.z.cross(cb.frame.z).norm() < 1e-9
+                && (ca.frame.origin - cb.frame.origin).cross(ca.frame.z).norm() < 1e-9
+                && {
+                    let sense = ca.frame.z.dot(cb.frame.z).signum();
+                    let d = (cb.frame.origin - ca.frame.origin).dot(ca.frame.z);
+                    (sense * cb.half_angle.tan() - ca.half_angle.tan()).abs() < 1e-9
+                        && (cb.radius - d * ca.half_angle.tan() - ca.radius).abs() < tol.max(1e-9)
+                }
+            {
+                faults.push(BoolFault::Coincident(id_a, id_b));
+                continue;
+            }
             match intersect_surfaces(&ref_a, &ref_b, tol) {
                 Ok(SsiResult::Curves(cs)) if both_cyl => {
                     if cs
@@ -4727,6 +4879,8 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                                             curve: keel_geom::curve::Curve3::Nurbs(seg),
                                             closed: false,
                                             tol: c.tol_achieved,
+                                            on_boundary_a: false,
+                                            on_boundary_b: false,
                                         });
                                     }
                                 }
@@ -4740,18 +4894,29 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                         // imprint cannot yet assemble that trim, so the
                         // boolean DECLINES (the notch probe's quarter-
                         // band wrong-positive class).
-                        // A seam lying ON an existing boundary edge of
-                        // either face is already topology (the mated
-                        // pin's cap circle IS the hole lateral's rim):
-                        // spurious per file 39 sec 3.2, never imprinted,
-                        // never a fault.
-                        if a.curve_on_face_boundary_edges(fa, &c.curve, tol)
-                            || b.curve_on_face_boundary_edges(fb, &c.curve, tol)
-                        {
+                        // A seam lying ON an existing boundary edge of a
+                        // face is already topology on that side (the
+                        // mated pin's cap circle IS the hole lateral's
+                        // rim): spurious per file 39 sec 3.2 on BOTH
+                        // sides means nothing to do; on ONE side the
+                        // other operand still needs the split (the
+                        // countersink plug's lateral crossing the sunk
+                        // block's existing rim).
+                        let on_a = a.curve_on_face_boundary_edges(fa, &c.curve, tol);
+                        let on_b = b.curve_on_face_boundary_edges(fb, &c.curve, tol);
+                        if on_a && on_b {
                             continue;
                         }
-                        let ova = a.curve_cylinder_face_overlap(fa, &c.curve, tol);
-                        let ovb = b.curve_cylinder_face_overlap(fb, &c.curve, tol);
+                        let ova = if on_a {
+                            CurveFaceOverlap::All
+                        } else {
+                            a.curve_cylinder_face_overlap(fa, &c.curve, tol)
+                        };
+                        let ovb = if on_b {
+                            CurveFaceOverlap::All
+                        } else {
+                            b.curve_cylinder_face_overlap(fb, &c.curve, tol)
+                        };
                         match (ova, ovb) {
                             (CurveFaceOverlap::All, CurveFaceOverlap::All) => {}
                             (CurveFaceOverlap::None, _) | (_, CurveFaceOverlap::None) => {
@@ -4768,6 +4933,8 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                             curve: c.curve,
                             closed: c.closed,
                             tol: c.tol_achieved,
+                            on_boundary_a: on_a,
+                            on_boundary_b: on_b,
                         });
                     }
                 }

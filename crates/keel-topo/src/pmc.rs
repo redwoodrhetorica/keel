@@ -96,6 +96,15 @@ impl Body {
                 let Some(edge) = self.edges.get(fin.edge) else {
                     return false;
                 };
+                // A genuinely closed surface has no boundary: every edge
+                // is an interior seam appearing TWICE in this face. A
+                // DANGLING rim (radial-1, e.g. an unglued SSI arc on a
+                // kept sphere piece) is a boundary, and promoting such a
+                // face to full closed-surface integration produced the
+                // socket-carve wrong volume.
+                if edge.radial.len() < 2 {
+                    return false;
+                }
                 for &rf in &edge.radial {
                     let owner_face = self
                         .fins

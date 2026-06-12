@@ -359,13 +359,25 @@ impl Body {
         let p0 = v_of(self, f0).ok_or(TopoError::StaleKey)?;
         let p1 = v_of(self, f1).ok_or(TopoError::StaleKey)?;
         // The seam vertices must share a ruling (the primitive puts
-        // both rim seams at the frame's zero angle).
+        // both rim seams at the frame's zero angle). On a cylinder the
+        // ruling is the axis; on a cone it is the slanted generator
+        // through p0 (radial * tan(half_angle) + axis).
         let d = p1 - p0;
         let axis = match self.face_surface3(face) {
             Some(keel_geom::surface::Surface3::Cylinder(c)) => c.frame.z,
+            Some(keel_geom::surface::Surface3::Cone(c)) => {
+                let z = c.frame.z;
+                let w = p0 - c.frame.origin;
+                let rad = (w - z * w.dot(z))
+                    .try_normalize()
+                    .ok_or(TopoError::Precondition("seam synthesis: apex seam vertex"))?;
+                (rad * c.half_angle.tan() + z)
+                    .try_normalize()
+                    .ok_or(TopoError::Precondition("seam synthesis: degenerate ruling"))?
+            }
             _ => {
                 return Err(TopoError::Precondition(
-                    "seam synthesis: not a cylinder lateral",
+                    "seam synthesis: not a cylinder/cone lateral",
                 ));
             }
         };
@@ -529,21 +541,66 @@ impl Body {
                 if let Some(ek) = edge
                     && let Some(e) = self.edges.get(ek)
                 {
-                    let is_line = matches!(
-                        e.curve.and_then(|(ck, _)| self.curves.get(ck)),
-                        Some(Curve3::Line(_))
-                    );
+                    let ecurve = e.curve.and_then(|(ck, _)| self.curves.get(ck)).cloned();
                     let (a, b) = (
                         self.vertices.get(e.bounds.0).map(|v| v.point),
                         self.vertices.get(e.bounds.1).map(|v| v.point),
                     );
-                    if is_line && let (Some(a), Some(b)) = (a, b) {
+                    if matches!(ecurve, Some(Curve3::Line(_)) | None)
+                        && let (Some(a), Some(b)) = (a, b)
+                    {
                         let denom = (b - a).dot(n);
                         if denom.abs() > 1e-12 {
                             let t = (pt - a).dot(n) / denom;
                             if t > 1e-6 && t < 1.0 - 1e-6 {
                                 let cross = a + (b - a) * t;
                                 return Ok((ek, cross));
+                            }
+                        }
+                    }
+                    // CIRCLE seam edge (a sphere's meridian): the cutting
+                    // plane meets the carrier circle where
+                    // A cos(t) + B sin(t) = C; the solution strictly
+                    // interior to THIS arc (its angular span unwrapped
+                    // from fin samples) is the crossing.
+                    if let Some(Curve3::Circle(ci)) = ecurve {
+                        let ca = ci.x_axis.dot(n) * ci.radius;
+                        let cb = ci.y_axis.dot(n) * ci.radius;
+                        let cc = (pt - ci.center).dot(n);
+                        let rr = ca.hypot(cb);
+                        if rr > 1e-12 && cc.abs() < rr {
+                            let tau = core::f64::consts::TAU;
+                            let phi = cb.atan2(ca);
+                            let dc = (cc / rr).clamp(-1.0, 1.0).acos();
+                            let ang = |p: Vec3| {
+                                let w = p - ci.center;
+                                w.dot(ci.y_axis).atan2(w.dot(ci.x_axis))
+                            };
+                            let samples = self.fin_curve_samples(cur, 16).unwrap_or_default();
+                            if samples.len() >= 2 {
+                                let mut th: Vec<f64> = samples.iter().map(|p| ang(*p)).collect();
+                                for i in 1..th.len() {
+                                    while th[i] - th[i - 1] > core::f64::consts::PI {
+                                        th[i] -= tau;
+                                    }
+                                    while th[i - 1] - th[i] > core::f64::consts::PI {
+                                        th[i] += tau;
+                                    }
+                                }
+                                let lo = th.iter().cloned().fold(f64::INFINITY, f64::min);
+                                let hi = th.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                                for cand in [phi + dc, phi - dc] {
+                                    let mut t = cand;
+                                    while t < lo {
+                                        t += tau;
+                                    }
+                                    while t > hi {
+                                        t -= tau;
+                                    }
+                                    if t > lo + 1e-6 && t < hi - 1e-6 {
+                                        return Ok((ek, ci.point(t)));
+                                    }
+                                }
                             }
                         }
                     }
@@ -811,9 +868,22 @@ impl Body {
         // straight line v = height swept once around theta; exact as a
         // degree-1 segment (orientation from the circle normal against
         // the cylinder axis).
-        if let (Curve3::Circle(ci), keel_geom::surface::Surface3::Cylinder(cy)) = (curve, surf) {
-            let z = cy.frame.z;
-            let d = ci.center - cy.frame.origin;
+        // (Cones share the parameterization: u = angle, v = height, so a
+        // coaxial rim circle is the same straight pcurve.)
+        if let (Curve3::Circle(ci), Some(z), Some(o)) = (
+            curve,
+            match surf {
+                keel_geom::surface::Surface3::Cylinder(cy) => Some(cy.frame.z),
+                keel_geom::surface::Surface3::Cone(co) => Some(co.frame.z),
+                _ => None,
+            },
+            match surf {
+                keel_geom::surface::Surface3::Cylinder(cy) => Some(cy.frame.origin),
+                keel_geom::surface::Surface3::Cone(co) => Some(co.frame.origin),
+                _ => None,
+            },
+        ) {
+            let d = ci.center - o;
             let coaxial = ci.x_axis.cross(ci.y_axis).cross(z).norm() < 1e-9
                 && (d - z * d.dot(z)).norm() < 1e-9;
             if coaxial && let Ok(pr0) = surf.project(sample(0.0)) {
@@ -1001,6 +1071,196 @@ mod tests {
         assert!(
             (zs[0] - 1.25).abs() < 1e-6 && (zs[1] - 3.75).abs() < 1e-6,
             "band mid-heights {zs:?}"
+        );
+    }
+
+    #[test]
+    fn imprint_crossing_circle_on_cone_lateral() {
+        // The cone analog of the cylinder slice: a coaxial circle at
+        // mid-height wraps the frustum lateral. Synthesize the seam if
+        // the face is a two-rim tube, then crossing-imprint.
+        let mut b = Body::new();
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap();
+        b.loft_circles(frame, 0.5, 2.5, 2.0).unwrap();
+        let lateral = b
+            .face_keys()
+            .into_iter()
+            .find(|&fk| matches!(b.face_surface3(fk), Some(Surface3::Cone(_))))
+            .expect("frustum lateral");
+        // r(1) = 0.5 + 1*tan(atan(1)) = 1.5.
+        let slice = Curve3::Circle(
+            Circle3::new(
+                Vec3::new(0.0, 0.0, 1.0),
+                Vec3::new(1., 0., 0.),
+                Vec3::new(0., 1., 0.),
+                1.5,
+            )
+            .unwrap(),
+        );
+        if !b.closed_curve_crosses_boundary(lateral, &slice, 1e-7) {
+            b.synthesize_lateral_seam(lateral).unwrap();
+        }
+        assert!(
+            b.closed_curve_crosses_boundary(lateral, &slice, 1e-7),
+            "slice must cross the (synthesized) seam"
+        );
+        let rep = b
+            .imprint_closed_curve_crossing(lateral, &slice, 1e-7)
+            .unwrap();
+        assert!(b.validate().is_ok(), "cone crossing imprint invalid");
+        let radial = b.edge(rep.edge).map(|e| e.radial.clone()).unwrap();
+        assert_eq!(radial.len(), 2, "arc shared by both bands");
+        let cones: Vec<_> = b
+            .face_keys()
+            .into_iter()
+            .filter(|&fk| matches!(b.face_surface3(fk), Some(Surface3::Cone(_))))
+            .collect();
+        assert_eq!(cones.len(), 2, "lateral split into two band faces");
+        // Classification depends on an interior point for every curved
+        // face: both bands must produce one, at the right height.
+        let mut zs: Vec<f64> = cones
+            .iter()
+            .map(|&fk| {
+                b.face_interior_point(fk)
+                    .expect("cone band interior point")
+                    .z
+            })
+            .collect();
+        zs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(
+            zs[0] > 0.0 && zs[0] < 1.0 && zs[1] > 1.0 && zs[1] < 2.0,
+            "band interior heights {zs:?}"
+        );
+    }
+
+    #[test]
+    fn imprint_latitude_ring_crossing_sphere_seam() {
+        // The socket-carve shape: a latitude circle on a seamed sphere
+        // (poles along z) CROSSES the meridian seam arc, so the crossing
+        // imprint must split the seam at the crossing and the face into
+        // cap + bowl, keeping total mass == mesh == the sphere's.
+        let mut b = Body::new();
+        let frame = Frame3::from_z(Vec3::new(2.0, 2.0, 1.5), Vec3::new(0., 0., 1.)).unwrap();
+        b.sphere(frame, 1.0).unwrap();
+        let face = b
+            .face_keys()
+            .into_iter()
+            .find(|&fk| matches!(b.face_surface3(fk), Some(Surface3::Sphere(_))))
+            .unwrap();
+        // Rim at z = 2: radius sqrt(1 - 0.25).
+        let circle = Curve3::Circle(
+            Circle3::new(
+                Vec3::new(2.0, 2.0, 2.0),
+                Vec3::new(1., 0., 0.),
+                Vec3::new(0., 1., 0.),
+                0.75f64.sqrt(),
+            )
+            .unwrap(),
+        );
+        assert!(
+            b.closed_curve_crosses_boundary(face, &circle, 1e-7),
+            "latitude must register as crossing the meridian seam"
+        );
+        b.imprint_closed_curve_crossing(face, &circle, 1e-7)
+            .unwrap();
+        assert!(b.validate().is_ok(), "crossing ring imprint invalid");
+        // (Mass integration of split sphere pieces is the recorded
+        // follow-up: their pcurve boxes are degenerate and the Green
+        // path is side-ambiguous on full-period wraps. Topology and
+        // classification inputs are what this slice certifies.)
+        // Classification ground truth: each piece's interior point must
+        // be on ITS side of the rim plane z = 2 (the cap's at the north
+        // pole, the bowl's at the south pole).
+        let mut zs: Vec<f64> = b
+            .face_keys()
+            .into_iter()
+            .map(|fk| {
+                b.face_interior_point(fk)
+                    .expect("split sphere piece interior point")
+                    .z
+            })
+            .collect();
+        zs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(
+            zs[0] < 2.0 && zs[1] > 2.0,
+            "piece interior points straddle the rim: {zs:?}"
+        );
+    }
+
+    #[test]
+    fn boolean_imprinted_ball_pieces_interior_points() {
+        // The socket scenario's ACTUAL imprinted tool operand: the same
+        // split must yield straddling interior points there too.
+        let mut block = Body::new();
+        block.block(Vec3::ZERO, 4.0, 4.0, 2.0).unwrap();
+        let mut ball = Body::new();
+        ball.sphere(
+            Frame3::from_z(Vec3::new(2.0, 2.0, 1.5), Vec3::new(0., 0., 1.)).unwrap(),
+            1.0,
+        )
+        .unwrap();
+        let (_, ib, faults) = crate::boolean::imprint_pair(&block, &ball, 1e-7);
+        assert!(faults.is_empty(), "{faults:?}");
+        let mut zs: Vec<f64> = ib
+            .body
+            .face_keys()
+            .into_iter()
+            .filter(|&fk| matches!(ib.body.face_surface3(fk), Some(Surface3::Sphere(_))))
+            .map(|fk| {
+                ib.body
+                    .face_interior_point(fk)
+                    .expect("ball piece interior point")
+                    .z
+            })
+            .collect();
+        zs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(zs.len(), 2);
+        assert!(
+            zs[0] < 2.0 && zs[1] > 2.0,
+            "ball piece interior points straddle the rim: {zs:?}"
+        );
+    }
+
+    #[test]
+    fn imprint_latitude_ring_reversed_winding_same_answer() {
+        // The same split with the rim circle wound the OTHER way (the
+        // SSI circle's axes come from the cutting plane's frame, whose
+        // orientation is arbitrary): interior points must not flip.
+        let mut b = Body::new();
+        let frame = Frame3::from_z(Vec3::new(2.0, 2.0, 1.5), Vec3::new(0., 0., 1.)).unwrap();
+        b.sphere(frame, 1.0).unwrap();
+        let face = b
+            .face_keys()
+            .into_iter()
+            .find(|&fk| matches!(b.face_surface3(fk), Some(Surface3::Sphere(_))))
+            .unwrap();
+        let circle = Curve3::Circle(
+            Circle3::new(
+                Vec3::new(2.0, 2.0, 2.0),
+                Vec3::new(1., 0., 0.),
+                Vec3::new(0., -1., 0.),
+                0.75f64.sqrt(),
+            )
+            .unwrap(),
+        );
+        if !b.closed_curve_crosses_boundary(face, &circle, 1e-7) {
+            b.synthesize_lateral_seam(face).unwrap();
+        }
+        b.imprint_closed_curve_crossing(face, &circle, 1e-7)
+            .unwrap();
+        let mut zs: Vec<f64> = b
+            .face_keys()
+            .into_iter()
+            .map(|fk| {
+                b.face_interior_point(fk)
+                    .expect("split sphere piece interior point")
+                    .z
+            })
+            .collect();
+        zs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(
+            zs[0] < 2.0 && zs[1] > 2.0,
+            "piece interior points straddle the rim: {zs:?}"
         );
     }
 

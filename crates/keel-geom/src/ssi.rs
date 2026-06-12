@@ -1029,6 +1029,8 @@ fn analytic_analytic(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, 
         (Plane(_), Cylinder(_)) => plane_cylinder(a, b, tol),
         (Cylinder(_), Plane(_)) => plane_cylinder(b, a, tol),
         (Cylinder(_), Cylinder(_)) => cylinder_cylinder(a, b, tol),
+        (Plane(_), Cone(_)) => plane_cone(a, b, tol),
+        (Cone(_), Plane(_)) => plane_cone(b, a, tol),
         // Other analytic pairs route to tier 2 (one side implicitized)
         // in Task 4; until then, unsupported.
         _ => Err(GeomError::Degenerate),
@@ -1467,7 +1469,111 @@ fn plane_cylinder(plane: &Surface3, cyl: &Surface3, tol: f64) -> Result<SsiResul
     }]))
 }
 
+/// Plane x cone, the analytic conic rungs (the countersink vocabulary):
+/// a perpendicular slice is an exact CIRCLE of the cone's local radius;
+/// a tilted slice that cuts every ruling of one nappe is an exact
+/// ELLIPSE by the tilt-plane construction (intersect the cutting line
+/// with both silhouette lines of the cone in the plane spanned by the
+/// axis and the plane normal: the two hits are the major-axis
+/// endpoints, and the semi-minor is the geometric mean sqrt(rho1*rho2)
+/// of their distances to the axis, the Dandelin result that reduces to
+/// b = R on a cylinder). Parabolic and hyperbolic slices DECLINE (the
+/// tier-2 follow-up); a slice through the apex inside the ellipse
+/// condition is the apex point.
+fn plane_cone(plane: &Surface3, cone: &Surface3, tol: f64) -> Result<SsiResult, GeomError> {
+    let (f,) = plane_of(plane);
+    let Surface3::Cone(c) = cone else {
+        unreachable!()
+    };
+    let axis = c.frame.z;
+    let tan = c.half_angle.tan();
+    let cos = axis.dot(f.z).abs();
+    if cos >= 1.0 - COINCIDENCE_ANG {
+        // Perpendicular slice: circle (|r| covers both nappes of the
+        // unbounded surface; trims never reach the far nappe).
+        let denom = axis.dot(f.z);
+        let t = (f.origin - c.frame.origin).dot(f.z) / denom;
+        let center = c.frame.origin + axis * t;
+        let r = c.radius + t * tan;
+        if r.abs() <= tol {
+            return Ok(SsiResult::Points(vec![SsiPoint {
+                point: center,
+                uv_a: plane_uv(f, center),
+                uv_b: cone_uv(c, center),
+            }]));
+        }
+        let circle = Circle3::new(center, c.frame.x, c.frame.y, r.abs())?;
+        return Ok(SsiResult::Curves(vec![SsiCurve {
+            curve: Curve3::Circle(circle),
+            closed: true,
+            tangential: false,
+            tol_achieved: 0.0,
+        }]));
+    }
+    // Tilted slice. 2D frame in the tilt plane: u = the plane normal's
+    // component perpendicular to the axis, h = along the axis. The
+    // cutting plane is the line nu*u + nh*h = rhs there; the cone is
+    // the silhouette pair u = +-(radius + h*tan).
+    let u_dir = (f.z - axis * axis.dot(f.z))
+        .try_normalize()
+        .ok_or(GeomError::Degenerate)?;
+    let nu = f.z.dot(u_dir);
+    let nh = f.z.dot(axis);
+    let rhs = (f.origin - c.frame.origin).dot(f.z);
+    let mut hits = [(0.0f64, 0.0f64); 2];
+    for (i, s) in [1.0f64, -1.0].into_iter().enumerate() {
+        let den = nu * s * tan + nh;
+        if den.abs() <= 1e-12 {
+            // Parallel to a ruling: parabolic slice. DECLINE.
+            return Err(GeomError::Degenerate);
+        }
+        let h = (rhs - nu * s * c.radius) / den;
+        hits[i] = (h, c.radius + h * tan);
+    }
+    let (h1, rho1) = hits[0];
+    let (h2, rho2) = hits[1];
+    if rho1 * rho2 <= 0.0 {
+        // The endpoints straddle the apex: hyperbolic slice. DECLINE.
+        return Err(GeomError::Degenerate);
+    }
+    let p1 = c.frame.origin + u_dir * rho1 + axis * h1;
+    let p2 = c.frame.origin - u_dir * rho2 + axis * h2;
+    let center = (p1 + p2) * 0.5;
+    let a_semi = (p2 - p1).norm() * 0.5;
+    if a_semi <= tol {
+        return Ok(SsiResult::Points(vec![SsiPoint {
+            point: center,
+            uv_a: plane_uv(f, center),
+            uv_b: cone_uv(c, center),
+        }]));
+    }
+    let major_dir = (p2 - p1).try_normalize().ok_or(GeomError::Degenerate)?;
+    let minor_dir =
+        f.z.cross(major_dir)
+            .try_normalize()
+            .ok_or(GeomError::Degenerate)?;
+    let b_semi = (rho1.abs() * rho2.abs()).sqrt();
+    let ellipse = Ellipse3::new(center, major_dir, minor_dir, a_semi, b_semi)?;
+    Ok(SsiResult::Curves(vec![SsiCurve {
+        curve: Curve3::Ellipse(ellipse),
+        closed: true,
+        tangential: false,
+        tol_achieved: 0.0,
+    }]))
+}
+
 // ---- pcurve helpers --------------------------------------------------
+
+fn cone_uv(c: &crate::surface::Cone3, p: Vec3) -> (f64, f64) {
+    let w = p - c.frame.origin;
+    let (dx, dy) = (w.dot(c.frame.x), w.dot(c.frame.y));
+    let u = if dx == 0.0 && dy == 0.0 {
+        0.0
+    } else {
+        dy.atan2(dx).rem_euclid(core::f64::consts::TAU)
+    };
+    (u, w.dot(c.frame.z))
+}
 
 fn plane_uv(f: &crate::surface::Frame3, p: Vec3) -> (f64, f64) {
     let w = p - f.origin;
@@ -1789,6 +1895,87 @@ mod tests {
 
     fn cyl_at(origin: Vec3, axis: Vec3, r: f64) -> Surface3 {
         Surface3::Cylinder(Cylinder3::new(Frame3::from_z(origin, axis).unwrap(), r).unwrap())
+    }
+
+    #[test]
+    fn plane_cone_circle_ellipse_and_declines() {
+        use crate::surface::Cone3;
+        // 45-degree cone, radius 1 at the origin plane, apex at z = -1.
+        let cone = Surface3::Cone(
+            Cone3::new(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                1.0,
+                core::f64::consts::FRAC_PI_4,
+            )
+            .unwrap(),
+        );
+        // Perpendicular slice at z = 1: an exact circle of radius 2.
+        let perp = plane_at(Vec3::new(0., 0., 1.), Vec3::new(0., 0., 1.));
+        let r = intersect_surfaces(
+            &SurfaceRef::Analytic(&perp),
+            &SurfaceRef::Analytic(&cone),
+            TOL,
+        )
+        .unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("{r:?}")
+        };
+        let Curve3::Circle(ci) = &cs[0].curve else {
+            panic!("{:?}", cs[0].curve)
+        };
+        assert!((ci.radius - 2.0).abs() < 1e-12);
+        assert!((ci.center - Vec3::new(0., 0., 1.)).norm() < 1e-12);
+        check_curve_on_both(&perp, &cone, &cs[0].curve, 24);
+        // Tilted slice (within the ellipse condition): an exact ellipse,
+        // center OFF the axis.
+        let tilt = plane_at(Vec3::new(0., 0., 1.), Vec3::new(-0.5, 0., 1.));
+        let r = intersect_surfaces(
+            &SurfaceRef::Analytic(&tilt),
+            &SurfaceRef::Analytic(&cone),
+            TOL,
+        )
+        .unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("{r:?}")
+        };
+        assert!(
+            matches!(cs[0].curve, Curve3::Ellipse(_)),
+            "{:?}",
+            cs[0].curve
+        );
+        check_curve_on_both(&tilt, &cone, &cs[0].curve, 24);
+        // Hyperbolic slice (plane parallel to the axis): DECLINE.
+        let hyp = plane_at(Vec3::new(0.5, 0., 0.), Vec3::new(1., 0., 0.));
+        assert!(
+            intersect_surfaces(
+                &SurfaceRef::Analytic(&hyp),
+                &SurfaceRef::Analytic(&cone),
+                TOL
+            )
+            .is_err()
+        );
+        // Parabolic slice (plane parallel to a ruling): DECLINE.
+        let par = plane_at(Vec3::new(0., 0., 2.), Vec3::new(-1., 0., 1.));
+        assert!(
+            intersect_surfaces(
+                &SurfaceRef::Analytic(&par),
+                &SurfaceRef::Analytic(&cone),
+                TOL
+            )
+            .is_err()
+        );
+        // Perpendicular slice through the apex: the apex point.
+        let apex = plane_at(Vec3::new(0., 0., -1.), Vec3::new(0., 0., 1.));
+        let r = intersect_surfaces(
+            &SurfaceRef::Analytic(&apex),
+            &SurfaceRef::Analytic(&cone),
+            TOL,
+        )
+        .unwrap();
+        let SsiResult::Points(ps) = r else {
+            panic!("{r:?}")
+        };
+        assert!((ps[0].point - Vec3::new(0., 0., -1.)).norm() < 1e-12);
     }
 
     #[test]
