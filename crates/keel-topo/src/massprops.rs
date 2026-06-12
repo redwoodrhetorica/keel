@@ -586,8 +586,15 @@ impl Body {
                                 d
                             });
                             let t0 = ang(pa);
-                            (0..=8)
-                                .map(|k| ci.point(t0 + sweep * k as f64 / 8.0))
+                            // Ring density (64 per full turn): a rim
+                            // SPLIT into open halves must not sample
+                            // sparser than an intact ring, or the
+                            // largest-gap full-wrap detection reads
+                            // the sampling gap as a real one (task 36:
+                            // the union cap's u span lost pi/8).
+                            let n = ((sweep.abs() * 64.0 / tau).ceil() as usize).max(8);
+                            (0..=n)
+                                .map(|k| ci.point(t0 + sweep * k as f64 / n as f64))
                                 .collect()
                         }
                     }
@@ -599,17 +606,22 @@ impl Body {
                         if a == b {
                             (0..64).map(|k| el.point(tau * k as f64 / 64.0)).collect()
                         } else {
-                            let mut sweep = ang(pb) - ang(pa);
-                            let pi = core::f64::consts::PI;
-                            while sweep <= -pi {
-                                sweep += tau;
-                            }
-                            while sweep > pi {
-                                sweep -= tau;
-                            }
+                            let sweep = edge.arc_sweep.unwrap_or_else(|| {
+                                let mut d = ang(pb) - ang(pa);
+                                let pi = core::f64::consts::PI;
+                                while d <= -pi {
+                                    d += tau;
+                                }
+                                while d > pi {
+                                    d -= tau;
+                                }
+                                d
+                            });
                             let t0 = ang(pa);
-                            (0..=8)
-                                .map(|k| el.point(t0 + sweep * k as f64 / 8.0))
+                            // Ring density: see the circle arm.
+                            let n = ((sweep.abs() * 64.0 / tau).ceil() as usize).max(8);
+                            (0..=n)
+                                .map(|k| el.point(t0 + sweep * k as f64 / n as f64))
                                 .collect()
                         }
                     }
@@ -821,12 +833,17 @@ impl Body {
             if vert_v.0.is_finite() && (lo.1 < vert_v.0 - 1e-6 || hi.1 > vert_v.1 + 1e-6) {
                 stale = true;
             }
+            // A DEGENERATE box (zero width or height) cannot be the
+            // face's region: a split sphere piece's only pcurves are
+            // its rim arcs, all at ONE latitude, and the GL rectangle
+            // integrated dv = 0 SILENTLY (the task-36 trap, defect 1).
+            let degenerate_box = lo.0.is_finite() && (hi.0 - lo.0 <= 1e-9 || hi.1 - lo.1 <= 1e-9);
             if std::env::var("KEEL_MASS_DEBUG").is_ok() {
                 eprintln!(
-                    "  mass curved {fk:?} stale {stale} non_iso {non_iso} lo {lo:?} hi {hi:?} vert_v {vert_v:?}"
+                    "  mass curved {fk:?} stale {stale} non_iso {non_iso} degenerate {degenerate_box} lo {lo:?} hi {hi:?} vert_v {vert_v:?}"
                 );
             }
-            if stale || non_iso || !(lo.0.is_finite() && hi.0.is_finite()) {
+            if stale || non_iso || degenerate_box || !(lo.0.is_finite() && hi.0.is_finite()) {
                 // Stale or missing pcurves: the PROJECTED-BOUNDS rung
                 // (corpus-audit blend-pcurve milestone). When every
                 // boundary edge is an ISO-PARAMETER line of the
@@ -854,6 +871,26 @@ impl Body {
                 ((lo.0, hi.0), (lo.1, hi.1))
             }
         };
+        // RECTANGLE WITNESS for sphere trims (task 36): an iso pcurve
+        // box is only the face's region if its spherical area matches
+        // the face's own tessellation. The union cap's two half-rim
+        // pcurves have endpoints at u = 0 and pi only, so the endpoint
+        // box spanned HALF the period and integrated half the flux
+        // (a wrong-positive the mass==mesh band did not catch).
+        if !closed_cover && let Surface3::Sphere(s) = surf {
+            let rect_area = (u1 - u0).abs() * (v1.sin() - v0.sin()).abs() * s.radius * s.radius;
+            let tess_area: f64 = self
+                .tessellate_face(fk)
+                .iter()
+                .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
+                .sum();
+            if (rect_area - tess_area).abs() > 5e-2 * (1.0 + tess_area) {
+                return self.integrate_face_green(fk, surf, sense_sign, m);
+            }
+        }
+        if std::env::var("KEEL_MASS_DEBUG").is_ok() {
+            eprintln!("  rect {fk:?} u [{u0:.4}, {u1:.4}] v [{v0:.4}, {v1:.4}]");
+        }
         let panels = 16usize;
         for iu in 0..panels {
             let ua = u0 + (u1 - u0) * iu as f64 / panels as f64;
@@ -939,8 +976,42 @@ impl Body {
             let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
                 continue;
             };
+            // Collect the loop's fins first. A SLIT pair (the same edge
+            // traversed once each way within one loop: the seam bridge
+            // running from a rim down to the enclosed pole on a split
+            // sphere piece) contributes equal and opposite boundary
+            // integrals: skip both fins, which also keeps the anchor
+            // pole off the effective boundary (task 36, defect 2).
+            let mut walk: Vec<crate::entity::FinKey> = Vec::new();
             let mut cur = entry;
             loop {
+                walk.push(cur);
+                let Some(f) = self.fins.get(cur) else { break };
+                cur = f.next;
+                if cur == entry {
+                    break;
+                }
+            }
+            let mut skip: Vec<crate::entity::FinKey> = Vec::new();
+            for (i, &fa) in walk.iter().enumerate() {
+                for &fb in walk.iter().skip(i + 1) {
+                    let (Some(xa), Some(xb)) = (self.fins.get(fa), self.fins.get(fb)) else {
+                        continue;
+                    };
+                    if xa.edge == xb.edge
+                        && xa.forward != xb.forward
+                        && !skip.contains(&fa)
+                        && !skip.contains(&fb)
+                    {
+                        skip.push(fa);
+                        skip.push(fb);
+                    }
+                }
+            }
+            for &cur in &walk {
+                if skip.contains(&cur) {
+                    continue;
+                }
                 let fin = self.fins.get(cur).ok_or(TopoError::StaleKey)?;
                 let edge = self.edges.get(fin.edge).ok_or(TopoError::StaleKey)?;
                 let (b0, b1) = edge.bounds;
@@ -1028,10 +1099,6 @@ impl Body {
                         fins_c.push(FinCurve::Seg(ps, pe));
                     }
                 }
-                cur = fin.next;
-                if cur == entry {
-                    break;
-                }
             }
         }
         if !v_min.is_finite() {
@@ -1100,18 +1167,58 @@ impl Body {
         let v_base = if winding.abs() < 0.5 {
             v_min
         } else if is_sphere && (winding.abs() - 1.0).abs() < 0.25 {
+            // The trim encloses exactly ONE pole, and the anchor must
+            // sit at the ENCLOSED one (anchoring at the other pole
+            // integrates the complement: the trap's defect 2, where the
+            // REST face read the cap's flux). The boundary nodes decide
+            // it: area(vb) = -sum wu (v_t - vb) is the patch area for
+            // the right anchor and the complement's negative for the
+            // wrong one, so the candidate whose magnitude matches the
+            // face's own tessellated area wins.
             let pole = core::f64::consts::FRAC_PI_2;
-            if v_max > pole - 1e-6 {
+            // SPHERICAL area from the boundary nodes (dA = r^2 cos v
+            // dv du, so the inner integral is sin v_t - sin vb): the
+            // same units as the tessellated area witness.
+            let r2 = match surf {
+                Surface3::Sphere(s) => s.radius * s.radius,
+                _ => 1.0,
+            };
+            let area_at = |vb: f64| -> f64 {
+                let mut s = 0.0;
+                for &(_, v_t, wu) in &nodes {
+                    s -= wu * (v_t.sin() - vb.sin());
+                }
+                (s * r2).abs()
+            };
+            let tess_area: f64 = self
+                .tessellate_face(fk)
+                .iter()
+                .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
+                .sum();
+            let chosen = if (area_at(pole) - tess_area).abs() <= (area_at(-pole) - tess_area).abs()
+            {
+                pole
+            } else {
+                -pole
+            };
+            if (chosen > 0.0 && v_max > pole - 1e-6) || (chosen < 0.0 && v_min < -pole + 1e-6) {
                 return Err(TopoError::Precondition(
                     "green-slab: boundary touches the anchor pole",
                 ));
             }
-            pole
+            chosen
         } else {
             return Err(TopoError::Precondition(
                 "green-slab: unsupported boundary winding",
             ));
         };
+        if std::env::var("KEEL_MASS_DEBUG").is_ok() {
+            eprintln!(
+                "  green {fk:?} winding {winding} v_base {v_base:.4} v_min {v_min:.4} v_max {v_max:.4} nodes {} fins {}",
+                nodes.len(),
+                fins_c.len()
+            );
+        }
         let mut area = 0.0;
         let mut acc: Vec<(f64, f64, f64)> = Vec::new();
         for &(u, v_t, wu) in &nodes {
@@ -1135,12 +1242,68 @@ impl Body {
             return Err(TopoError::Precondition("green-slab: degenerate UV region"));
         }
         let flip = area.signum();
+        // COMPLEMENT detection (task 36, the sphere-sphere rest face):
+        // a boundary that does not wrap u and does not enclose a pole
+        // is an ISLAND in UV, and the slab integrates the ISLAND'S
+        // region (the lens cap), even when the face is everything BUT
+        // that island. The face's own tessellated area decides: if it
+        // matches sphere-total minus the enclosed area, integrate the
+        // FULL sphere and subtract the island.
+        let complement = if is_sphere && winding.abs() < 0.5 {
+            let r2 = match surf {
+                Surface3::Sphere(s) => s.radius * s.radius,
+                _ => 1.0,
+            };
+            let mut enc = 0.0;
+            for &(_, v_t, wu) in &nodes {
+                enc -= wu * (v_t.sin() - v_base.sin());
+            }
+            let enc = (enc * r2).abs();
+            let total = 2.0 * tau * r2; // 4 pi r^2
+            let tess_area: f64 = self
+                .tessellate_face(fk)
+                .iter()
+                .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
+                .sum();
+            ((total - enc) - tess_area).abs() < (enc - tess_area).abs()
+        } else {
+            false
+        };
+        let island_sign = if complement { -1.0 } else { 1.0 };
         for (u, s, w) in acc {
             let Ok(lg) = surf.local_geometry(u, s) else {
                 continue;
             };
             let n = lg.du.cross(lg.dv) * sense_sign;
-            m.add(lg.point, n, w * flip);
+            m.add(lg.point, n, w * flip * island_sign);
+        }
+        if complement {
+            // The full closed sphere's flux over the canonical
+            // rectangle (the closed-cover quadrature), with this
+            // face's orientation.
+            let (u0, u1) = (0.0, tau);
+            let (v0, v1) = (-core::f64::consts::FRAC_PI_2, core::f64::consts::FRAC_PI_2);
+            let panels = 16usize;
+            for iu in 0..panels {
+                let ua = u0 + (u1 - u0) * iu as f64 / panels as f64;
+                let ub = u0 + (u1 - u0) * (iu + 1) as f64 / panels as f64;
+                for iv in 0..panels {
+                    let va = v0 + (v1 - v0) * iv as f64 / panels as f64;
+                    let vb = v0 + (v1 - v0) * (iv + 1) as f64 / panels as f64;
+                    for (xu, wu) in GL8_X.iter().zip(GL8_W) {
+                        let u = 0.5 * (ua + ub) + 0.5 * (ub - ua) * xu;
+                        for (xv, wv) in GL8_X.iter().zip(GL8_W) {
+                            let v = 0.5 * (va + vb) + 0.5 * (vb - va) * xv;
+                            let Ok(lg) = surf.local_geometry(u, v) else {
+                                continue;
+                            };
+                            let n = lg.du.cross(lg.dv) * sense_sign;
+                            let w = wu * wv * 0.25 * (ub - ua) * (vb - va);
+                            m.add(lg.point, n, w);
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }

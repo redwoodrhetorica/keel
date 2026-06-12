@@ -6766,3 +6766,56 @@ BIT-IDENTICAL for the seventh consecutive run (strict 95604 / 4396 /
 WRONG 0; tolerant 25000 / 0 / 0): neither the disjoint rung nor the
 density change shifts the box corpus. Next: task 39, the full
 completion-gate re-run from D:\keel-gate plus the perf re-measure.
+
+## Addendum 224: TASK 36 LANDED: the sphere strict-boolean milestone (2026-06-12)
+
+The block-ball socket family assembles and integrates EXACTLY: difference
+28.465708264711516 against the closed form 28.465708264711483 (3e-14),
+intersection 4e-16 off, union 2.8e-13 off, and the ball-in-socket
+re-union (coincident sphere laterals through the on-on machinery,
+informational Coincident fault) matches the union form to 2.8e-13. The
+old decline rail is rewritten into the milestone pin
+(sphere_socket_carve_is_exact) plus the legacy rail kept verbatim with
+the Err arm now a panic.
+
+The task-29 machinery carried most of it for free: the trap''s defect 3
+(ring-vs-arcs stitch mismatch, the one that broke debug_validate when
+attempted at glue time) is exactly what the subdivision-alignment pass
+does via split_edge_raw, and the rim arrived already split and glued
+radial-2. The remaining work was all in MASS INTEGRATION (massprops),
+five fixes:
+
+1. DEGENERATE pcurve boxes (the trap''s defect 1: a split sphere piece''s
+   rim pcurves all sit at one latitude, and the GL rectangle silently
+   integrated dv = 0): a zero-width or zero-height box now routes to
+   projected bounds / Green.
+2. Green anchors at the ENCLOSED pole (defect 2: the REST face read the
+   cap''s flux): candidate anchors compared by SPHERICAL area (sin-
+   latitude form) against the face''s tessellated area.
+3. SLIT pairs (the same edge traversed both ways within one loop: the
+   seam bridge to the enclosed pole) are skipped in the Green boundary:
+   their contributions cancel exactly and they kept the anchor pole on
+   the effective boundary.
+4. projected_rect_bounds samples open arcs at ring density (64 per full
+   turn, honoring arc_sweep): a rim split into halves sampled at 9
+   points faked a pi/8 boundary gap and the largest-gap full-wrap
+   detection clipped the union cap''s u span (mass 32.34 vs exact 32.65,
+   a wrong-positive INSIDE the mass==mesh band: killed).
+5. COMPLEMENT detection in Green (the sphere-sphere rest face): a
+   non-wrapping boundary is an ISLAND in UV and the slab integrates the
+   island''s region even when the face is everything BUT it; the
+   tessellated-area witness decides, and the complement integrates the
+   full closed sphere minus the island. This turned the M6a sphere-
+   sphere legacy class from mass-errors-into-mesh-floor into REAL exact
+   mass (their suite tests now pass through the strict gate).
+
+Also: a rectangle-area witness for sphere trims in the iso-box path
+(rect spherical area must match the tessellation) backstops the whole
+class. Verification: suite green 135/77/271/4, clippy clean, the 100k
+box oracle BIT-IDENTICAL for the EIGHTH consecutive run (strict
+95604/4396/WRONG 0; tolerant 25000/0/0), cone oracle 1998/2/0, 10-min
+soak (fuzz_boolean + fuzz_cyl_boolean) clean alongside the running
+completion-gate soak. NOTE: the full gate currently running (task 39)
+certifies the pre-m36 commit; m36 lands with the standard cascade, and
+a follow-up full-gate run on the merged head is the user''s call (the
+instruments are one command).

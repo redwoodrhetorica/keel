@@ -108,10 +108,60 @@ fn tolerant_countersink_plug_snaps_exact() {
 }
 
 #[test]
-fn sphere_socket_carve_declines_honestly() {
-    // Block minus a ball poking through the top face: strict sphere
-    // socket carving is not yet assembled+integrated end to end; the
-    // honesty gates must DECLINE it, never return a wrong volume.
+fn sphere_socket_carve_is_exact() {
+    // The sphere strict-boolean milestone (task 36): a ball poking
+    // through the block's top face. All three ops assemble and their
+    // mass properties match the closed forms exactly; the re-unioned
+    // ball (coincident sphere laterals, the on-on class) restores the
+    // union. The old decline rail's wrong-positive (an Euler-valid
+    // body whose bowl integrated to silent zero) stays dead.
+    let pi = core::f64::consts::PI;
+    let cap = pi * 0.25 * 2.5 / 3.0; // spherical cap above z = 2
+    let ball_v = 4.0 * pi / 3.0;
+    let mut block = Body::new();
+    block.block(Vec3::ZERO, 4.0, 4.0, 2.0).unwrap();
+    let mut ball = Body::new();
+    ball.sphere(
+        Frame3::from_z(Vec3::new(2.0, 2.0, 1.5), Vec3::new(0., 0., 1.)).unwrap(),
+        1.0,
+    )
+    .unwrap();
+    for (op, exact) in [
+        (BoolOp::Difference, 32.0 - (ball_v - cap)),
+        (BoolOp::Intersection, ball_v - cap),
+        (BoolOp::Union, 32.0 + cap),
+    ] {
+        let r = boolean(&block, &ball, op, 1e-7).unwrap();
+        assert!(r.body.validate().is_ok(), "{op:?}: invalid body");
+        let v = r.body.mass_properties().unwrap().volume;
+        assert!((v - exact).abs() < 1e-9, "{op:?}: {v} vs exact {exact}");
+        let mv = r.body.mesh_volume();
+        assert!(
+            (mv - v).abs() <= 2e-2 * (1.0 + v.abs()),
+            "{op:?}: mesh {mv} vs mass {v}"
+        );
+    }
+    // Ball-in-socket: carve, then re-union the SAME ball. The
+    // coincident sphere laterals resolve through the on-on machinery
+    // (an informational Coincident fault, never a decline).
+    let sunk = boolean(&block, &ball, BoolOp::Difference, 1e-7)
+        .unwrap()
+        .body;
+    let r = boolean(&sunk, &ball, BoolOp::Union, 1e-7).unwrap();
+    assert!(r.body.validate().is_ok(), "ball-in-socket: invalid body");
+    let v = r.body.mass_properties().unwrap().volume;
+    let expect = 32.0 + cap;
+    assert!(
+        (v - expect).abs() < 1e-9,
+        "ball-in-socket {v} vs exact {expect}"
+    );
+}
+
+#[test]
+fn sphere_socket_carve_legacy_rail() {
+    // The original decline-or-exact rail kept verbatim: an Err is no
+    // longer acceptable (the milestone landed), but the exactness arm
+    // is the same oracle.
     let mut block = Body::new();
     block.block(Vec3::ZERO, 4.0, 4.0, 2.0).unwrap();
     let mut ball = Body::new();
@@ -121,9 +171,8 @@ fn sphere_socket_carve_declines_honestly() {
     )
     .unwrap();
     match boolean(&block, &ball, BoolOp::Difference, 1e-7) {
-        Err(_) => {}
+        Err(e) => panic!("socket carve must assemble (task 36): {e:?}"),
         Ok(r) => {
-            // If a future milestone makes this assemble, it must be RIGHT.
             let v = r.body.mass_properties().unwrap().volume;
             let pi = core::f64::consts::PI;
             let cap = pi * 0.25 * 2.5 / 3.0;
