@@ -6980,3 +6980,19 @@ fillet_corner_setback. The gym stays red while the task is open, by
 design: mass cannot cross-check these bodies (NURBS faces decline,
 the documented M5 line), so the bounds differential is the only
 numeric gate this class has.
+
+## Addendum 230: task 41 diagnosed: the crossing-pair difference is a GENUS problem (2026-06-12)
+
+The height sweep (h in {4, 5, 6, 8}) kills the configuration-
+sensitivity theory: intersection is EXACT everywhere (16/3 to 2e-14);
+union ASSEMBLES everywhere (mesh inside the band of 2 pi h - 16/3)
+with mass declining at "green-slab: unsupported boundary winding"
+(the union bands wind u by one and Green''s winding anchor is
+sphere-only: a rim-height anchor for cylinders is the extension);
+difference declines at EVERY height with EulerPoincareViolated
+{ lhs: 4, rhs: 6 }: cylinder B tunnels through A, the result is
+genus 1, and the stitch finalize''s shell/genus bookkeeping has no
+handle accounting. Fix targets recorded in the task: genus-aware
+finalize for the difference, the cylinder winding anchor for the
+union mass. Exact-or-decline held throughout: every wrong-shaped
+assembly declined honestly.
