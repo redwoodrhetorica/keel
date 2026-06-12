@@ -6434,3 +6434,10 @@ scale (extrude_tapered), then a revolved vase breathing its bulge (revolve,
 pole-to-pole linear profile: honest stacked cones). Real constructions per
 frame, labeled. One mild stray arc on the vase bulge: the same arc-identity
 family as the parked corner blend (noted, not blocking).
+
+## Addendum 209: shell-cutaway gif (task 34) (2026-06-12)
+
+shell-cutaway.gif (229 KiB): a block hollows to a breathing wall thickness
+(hollow, parity item 41) and a guillotine split (split_by_plane, item 76)
+reveals the sealed cavity face-on: the wall thickness reads directly as it
+breathes. Two real ops chained per frame. Eight gifs shipped.

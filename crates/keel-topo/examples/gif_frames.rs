@@ -381,6 +381,27 @@ fn construct(dir: &Path) {
     println!("construct: {frames} frames");
 }
 
+/// Shell/hollow cutaway: a block hollows to a breathing wall thickness
+/// and a guillotine split reveals the cavity (both ops real: hollow,
+/// then split_by_plane keeping the back piece).
+fn shell(dir: &Path) {
+    let frames = 36usize;
+    for i in 0..frames {
+        let t = i as f64 / frames as f64;
+        let w = 1.0 - (2.0 * t - 1.0).abs();
+        let th = 0.12 + 0.38 * w;
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.4, 2.4, 1.8).unwrap();
+        let hollowed = b.hollow(th).expect("hollow frame");
+        let (_back, front) = hollowed
+            .split_by_plane(Vec3::new(1.2, 1.2, 0.9), Vec3::new(-1.0, 1.0, 0.0))
+            .expect("cutaway split");
+        let mesh = front.worker_mesh();
+        write_frame(dir, i, &mesh, &format!("\"label\":\"hollow t={th:.2}\""));
+    }
+    println!("shell: {frames} frames");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let op = args.get(1).map(String::as_str).unwrap_or("drill");
@@ -399,6 +420,7 @@ fn main() {
         "cellular" => cellular(dir),
         "decline" => decline(dir),
         "construct" => construct(dir),
+        "shell" => shell(dir),
         other => {
             eprintln!("unknown op {other}; available: drill, trio, pin, fillet, corner");
             std::process::exit(1);
