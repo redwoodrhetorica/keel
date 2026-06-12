@@ -460,7 +460,12 @@ impl Body {
         let arc2_edge = mef.edge;
         let new_face = mef.face;
         // Geometry: the full circle curve + pcurve on both arc edges'
-        // fins; both faces keep the surface.
+        // fins; both faces keep the surface. (TASK 29 NOTE: recording
+        // arc_sweep = pi here is what arc identity wants, but
+        // cyl_angular_span's first-arc shortcut reads sweeps as AZIMUTH
+        // spans and HALVED every face carrying them: the torus fillets
+        // regressed. The recording lives in imprint_crossing_pair until
+        // the sweep semantic and the span machinery are reconciled.)
         let pkey = self.add_curve(Curve3::Nurbs(pcurve));
         for arc in [arc1_edge, arc2_edge] {
             let ckey = self.add_curve(curve.clone());
@@ -488,6 +493,257 @@ impl Body {
             edge: arc1_edge,
             faces: vec![face, new_face],
         })
+    }
+
+    /// The CROSSING-PAIR arrangement imprint (task 29, the equal-radii
+    /// crossing-cylinder slice): two closed planar seam curves on one
+    /// cylinder lateral, mutually crossing at exactly two points `xs`.
+    /// Sequential reduction to proven primitives: curve 1 imprints as
+    /// the standard wrap (seam synthesis + antipodal crossing split,
+    /// each arc RECORDING its half via arc_sweep); its arcs then split
+    /// at the exact crossings; curve 2 splits into two arcs at the
+    /// crossings and each imprints as an open boundary-to-boundary
+    /// curve between the crossing vertices on whichever piece hosts it.
+    pub(crate) fn imprint_crossing_pair(
+        &mut self,
+        face: FaceKey,
+        c1: &Curve3,
+        c2: &Curve3,
+        xs: &[Vec3],
+        tol: f64,
+    ) -> Result<Vec<crate::entity::EdgeKey>, TopoError> {
+        use crate::entity::EdgeKey;
+        let tau = core::f64::consts::TAU;
+        if xs.len() != 2 {
+            return Err(TopoError::Precondition("crossing pair: need two crossings"));
+        }
+        let ang_on = |c: &Curve3, p: Vec3| -> Option<f64> {
+            match c {
+                Curve3::Circle(ci) => {
+                    let w = p - ci.center;
+                    Some(w.dot(ci.y_axis).atan2(w.dot(ci.x_axis)).rem_euclid(tau))
+                }
+                Curve3::Ellipse(el) => {
+                    let w = p - el.center;
+                    Some(
+                        (w.dot(el.y_axis) / el.b)
+                            .atan2(w.dot(el.x_axis) / el.a)
+                            .rem_euclid(tau),
+                    )
+                }
+                _ => None,
+            }
+        };
+        let same_conic = |cv: &Curve3, target: &Curve3| -> bool {
+            match (cv, target) {
+                (Curve3::Circle(a), Curve3::Circle(b)) => {
+                    (a.center - b.center).norm() < 1e-9 && (a.radius - b.radius).abs() < 1e-9
+                }
+                (Curve3::Ellipse(a), Curve3::Ellipse(b)) => {
+                    (a.center - b.center).norm() < 1e-9
+                        && (a.a - b.a).abs() < 1e-9
+                        && (a.b - b.b).abs() < 1e-9
+                }
+                _ => false,
+            }
+        };
+        // 1. Curve 1: the standard closed-wrap dispatch.
+        if !self.closed_curve_crosses_boundary(face, c1, tol) {
+            self.synthesize_lateral_seam(face)?;
+        }
+        let rep1 = self.imprint_closed_curve_crossing(face, c1, tol)?;
+        let mut out_edges: Vec<EdgeKey> = vec![rep1.edge];
+        // Curve 1's two antipodal OPEN arcs (carrier matches c1):
+        // record their halves HERE (arc_sweep = pi from each start
+        // vertex), local to this gated path.
+        let mut arcs: Vec<EdgeKey> = self
+            .edges
+            .iter()
+            .filter(|(_, e)| {
+                e.bounds.0 != e.bounds.1
+                    && e.curve
+                        .and_then(|(ck, _)| self.curves.get(ck))
+                        .map(|cv| same_conic(cv, c1))
+                        .unwrap_or(false)
+            })
+            .map(|(k, _)| k)
+            .collect();
+        let arcs_snapshot = arcs.clone();
+        for arc in arcs_snapshot {
+            self.set_edge_arc_sweep(arc, core::f64::consts::PI);
+        }
+        // 2. Split the containing arc at each crossing (the recorded
+        //    sweeps make containment decidable).
+        let mut xverts = Vec::new();
+        for &x in xs {
+            // The crossing may COINCIDE with an existing arc endpoint
+            // (the Steinmetz seam placement lands the wrap split exactly
+            // on the mutual crossings): reuse that vertex, no split.
+            let existing = arcs.iter().find_map(|&e| {
+                let ed = self.edges.get(e)?;
+                for v in [ed.bounds.0, ed.bounds.1] {
+                    if let Some(vp) = self.vertices.get(v)
+                        && (vp.point - x).norm() < 1e-9
+                    {
+                        return Some(v);
+                    }
+                }
+                None
+            });
+            if let Some(v) = existing {
+                xverts.push(v);
+                continue;
+            }
+            let tx =
+                ang_on(c1, x).ok_or(TopoError::Precondition("crossing pair: non-conic curve 1"))?;
+            let arc_data = |e: EdgeKey| -> Option<(f64, f64)> {
+                let ed = self.edges.get(e)?;
+                let p0 = self.vertices.get(ed.bounds.0)?.point;
+                Some((ang_on(c1, p0)?, ed.arc_sweep?))
+            };
+            let host = arcs
+                .iter()
+                .copied()
+                .find(|&e| {
+                    arc_data(e)
+                        .map(|(t0, sw)| {
+                            let rel = (tx - t0).rem_euclid(tau);
+                            rel > 1e-9 && rel < sw - 1e-9
+                        })
+                        .unwrap_or(false)
+                })
+                .ok_or_else(|| {
+                    if std::env::var("KEEL_STEINMETZ_DEBUG").is_ok() {
+                        eprintln!("  crossing tx {tx} x {x:?}");
+                        for &e in &arcs {
+                            eprintln!("    arc {e:?} data {:?}", arc_data(e));
+                        }
+                    }
+                    TopoError::Precondition("crossing pair: crossing not interior to any arc")
+                })?;
+            let (t0, sw) =
+                arc_data(host).ok_or(TopoError::Precondition("crossing pair: arc data"))?;
+            let rel = (tx - t0).rem_euclid(tau);
+            let split = self.split_edge(host, x)?;
+            self.set_edge_arc_sweep(split.edge_a, rel);
+            self.set_edge_arc_sweep(split.edge_b, sw - rel);
+            arcs.retain(|&e| e != host);
+            arcs.push(split.edge_a);
+            arcs.push(split.edge_b);
+            out_edges.push(split.edge_a);
+            out_edges.push(split.edge_b);
+            xverts.push(split.vertex);
+        }
+        // 3. Curve 2 as two exact rational arcs between the crossings.
+        let ta =
+            ang_on(c2, xs[0]).ok_or(TopoError::Precondition("crossing pair: non-conic curve 2"))?;
+        let tb =
+            ang_on(c2, xs[1]).ok_or(TopoError::Precondition("crossing pair: non-conic curve 2"))?;
+        let mk_arc =
+            |start: f64, sweep: f64| -> Result<keel_geom::nurbs_curve::NurbsCurve, TopoError> {
+                let bad = |_| TopoError::Precondition("crossing pair: arc construction");
+                match c2 {
+                    Curve3::Circle(ci) => {
+                        let xr = ci.x_axis * start.cos() + ci.y_axis * start.sin();
+                        let yr = ci.x_axis * (-start.sin()) + ci.y_axis * start.cos();
+                        keel_geom::nurbs_curve::NurbsCurve::circular_arc(
+                            ci.center, xr, yr, ci.radius, sweep,
+                        )
+                        .map_err(bad)
+                    }
+                    Curve3::Ellipse(el) => keel_geom::nurbs_curve::NurbsCurve::elliptic_arc(
+                        el.center, el.x_axis, el.y_axis, el.a, el.b, start, sweep,
+                    )
+                    .map_err(bad),
+                    _ => Err(TopoError::Precondition("crossing pair: non-conic curve 2")),
+                }
+            };
+        let s_ab = (tb - ta).rem_euclid(tau);
+        for (start, sweep, va, vb) in [
+            (ta, s_ab, xverts[0], xverts[1]),
+            (tb, tau - s_ab, xverts[1], xverts[0]),
+        ] {
+            if sweep < 1e-9 {
+                return Err(TopoError::Precondition("crossing pair: degenerate arc"));
+            }
+            let arc = mk_arc(start, sweep)?;
+            let (d0, d1) = arc.domain();
+            let mid = arc.point(0.5 * (d0 + d1));
+            let host = crate::boolean::curved_face_containing(self, mid, tol.max(1e-7))
+                .ok_or(TopoError::Precondition("crossing pair: unlocated arc host"))?;
+            let e = self.imprint_open_arc_between(host, &Curve3::Nurbs(arc), va, vb, tol)?;
+            // The edge's CARRIER is the conic itself with its recorded
+            // sweep (the bounded NURBS arc served the pcurve fit): the
+            // Green boundary integral and the wireframe samplers read
+            // conic + arc_sweep exactly, where an opaque NURBS chords.
+            let ckey = self.add_curve(c2.clone());
+            if let Some(ed) = self.edges.get_mut(e) {
+                ed.curve = Some((ckey, true));
+            }
+            self.set_edge_arc_sweep(e, sweep);
+            out_edges.push(e);
+        }
+        self.debug_validate();
+        Ok(out_edges)
+    }
+
+    /// Imprint an OPEN on-surface curve between two EXISTING boundary
+    /// vertices of `face` (both already on its outer loop): split the
+    /// face between the fins ending at the two vertices, attach the
+    /// curve and pcurves. The between-vertices variant of
+    /// `imprint_open_curve` (which splits boundary EDGES at the
+    /// endpoints instead).
+    pub(crate) fn imprint_open_arc_between(
+        &mut self,
+        face: FaceKey,
+        curve: &Curve3,
+        va: crate::entity::VertexKey,
+        vb: crate::entity::VertexKey,
+        tol: f64,
+    ) -> Result<crate::entity::EdgeKey, TopoError> {
+        let surf = self.face_analytic_surface(face)?;
+        let (pcurve, _) = self.curve_pcurve_on(face, curve, &surf, tol)?;
+        // The loop holding both vertices.
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .ok_or(TopoError::StaleKey)?;
+        let lp = loops
+            .into_iter()
+            .find(|&lk| {
+                self.fin_ending_at_vertex(lk, va).is_ok()
+                    && self.fin_ending_at_vertex(lk, vb).is_ok()
+            })
+            .ok_or(TopoError::Precondition(
+                "open arc: vertices not on one loop of the face",
+            ))?;
+        let fin_a = self.fin_ending_at_vertex(lp, va)?;
+        let fin_b = self.fin_ending_at_vertex(lp, vb)?;
+        let split = self.split_face(fin_a, fin_b, None)?;
+        let new_edge = split.edge;
+        let ckey = self.add_curve(curve.clone());
+        if let Some(e) = self.edges.get_mut(new_edge) {
+            e.curve = Some((ckey, true));
+        }
+        let pkey = self.add_curve(Curve3::Nurbs(pcurve));
+        let radial = self
+            .edges
+            .get(new_edge)
+            .map(|e| e.radial.clone())
+            .unwrap_or_default();
+        for fk in radial {
+            if let Some(f) = self.fins.get_mut(fk) {
+                f.pcurve = Some((pkey, true));
+            }
+        }
+        if let Some((sk, sense)) = self.faces.get(face).and_then(|f| f.surface)
+            && let Some(nf) = self.faces.get_mut(split.face_new)
+        {
+            nf.surface = Some((sk, sense));
+        }
+        self.debug_validate();
+        Ok(new_edge)
     }
 
     /// All fins of loop `lp` whose end vertex is `v` (in loop order).
@@ -965,6 +1221,62 @@ impl Body {
 
 /// The plane (a point on it, unit normal) of a closed planar curve.
 /// None for non-planar / unsupported curve kinds.
+/// Mutual intersection points of two PLANAR closed curves lying on one
+/// cylinder carrier (the crossing-pair arrangement, task 29): the two
+/// planes meet in a LINE, and the line meets the cylinder where an
+/// exact QUADRATIC vanishes; points are verified on both curves. Empty
+/// for parallel/coplanar planes or a missing real root.
+pub(crate) fn planar_curve_crossings(
+    c1: &Curve3,
+    c2: &Curve3,
+    cyl: &keel_geom::surface::Cylinder3,
+) -> Vec<Vec3> {
+    let Some((p1, n1)) = closed_curve_plane(c1) else {
+        return Vec::new();
+    };
+    let Some((p2, n2)) = closed_curve_plane(c2) else {
+        return Vec::new();
+    };
+    let dir = n1.cross(n2);
+    let Some(d) = dir.try_normalize() else {
+        return Vec::new();
+    };
+    // A point on the plane-plane line (the 2x2 normal-plane solve).
+    let (da, db) = (n1.dot(p1), n2.dot(p2));
+    let (naa, nab, nbb) = (n1.dot(n1), n1.dot(n2), n2.dot(n2));
+    let det = naa * nbb - nab * nab;
+    if det.abs() < 1e-300 {
+        return Vec::new();
+    }
+    let o = n1 * ((da * nbb - db * nab) / det) + n2 * ((db * naa - da * nab) / det);
+    // Line (o + t d) on the cylinder: |perp-axis component|^2 = r^2.
+    let z = cyl.frame.z;
+    let w = o - cyl.frame.origin;
+    let wp = w - z * w.dot(z);
+    let dp = d - z * d.dot(z);
+    let (qa, qb, qc) = (
+        dp.dot(dp),
+        2.0 * wp.dot(dp),
+        wp.dot(wp) - cyl.radius * cyl.radius,
+    );
+    let mut out = Vec::new();
+    if qa.abs() < 1e-300 {
+        return out;
+    }
+    let disc = qb * qb - 4.0 * qa * qc;
+    if disc < 0.0 {
+        return out;
+    }
+    let s = disc.sqrt();
+    for t in [(-qb - s) / (2.0 * qa), (-qb + s) / (2.0 * qa)] {
+        let p = o + d * t;
+        if out.iter().all(|q: &Vec3| (*q - p).norm() > 1e-9) {
+            out.push(p);
+        }
+    }
+    out
+}
+
 fn closed_curve_plane(curve: &Curve3) -> Option<(Vec3, Vec3)> {
     match curve {
         Curve3::Circle(c) => Some((c.center, c.x_axis.cross(c.y_axis).try_normalize()?)),
@@ -1262,6 +1574,60 @@ mod tests {
             zs[0] < 2.0 && zs[1] > 2.0,
             "piece interior points straddle the rim: {zs:?}"
         );
+    }
+
+    #[test]
+    #[ignore = "task 29 development harness: needs the crossing-pair seam gate OPEN (see the both_cyl arm in seam_curves) and the metric layer; asserts piece areas/interiors for the Steinmetz operand"]
+    fn crossing_pair_pieces_have_area_and_interior_points() {
+        // The Steinmetz operand after the crossing-pair imprint: four
+        // lateral pieces, every one with positive area and an interior
+        // point (classification's inputs).
+        let mut a = Body::new();
+        a.cylinder(
+            Frame3::from_z(Vec3::new(0.0, 0.0, -2.0), Vec3::new(0.0, 0.0, 1.0)).unwrap(),
+            1.0,
+            4.0,
+        )
+        .unwrap();
+        let mut b = Body::new();
+        b.cylinder(
+            Frame3::from_z(Vec3::new(-2.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)).unwrap(),
+            1.0,
+            4.0,
+        )
+        .unwrap();
+        let (ia, _, faults) = crate::boolean::imprint_pair(&a, &b, 1e-7);
+        assert!(faults.is_empty(), "{faults:?}");
+        let laterals: Vec<_> = ia
+            .body
+            .face_keys()
+            .into_iter()
+            .filter(|&fk| {
+                matches!(
+                    ia.body.face_surface3(fk),
+                    Some(keel_geom::surface::Surface3::Cylinder(_))
+                )
+            })
+            .collect();
+        assert_eq!(laterals.len(), 4, "lateral splits into four pieces");
+        for fk in laterals {
+            let area = ia.body.face_area(fk);
+            eprintln!("piece {fk:?}: tris {}", ia.body.tessellate_face(fk).len());
+            eprintln!(
+                "piece {fk:?}: area {area} interior {:?} span {:?}",
+                ia.body.face_interior_point(fk),
+                {
+                    let c = match ia.body.face_surface3(fk) {
+                        Some(keel_geom::surface::Surface3::Cylinder(c)) => c,
+                        _ => unreachable!(),
+                    };
+                    ia.body
+                        .cyl_angular_span(fk, c.frame.origin, c.frame.x, c.frame.y, c.frame.z)
+                }
+            );
+            assert!(area > 0.1, "piece {fk:?} area {area}");
+            assert!(ia.body.face_interior_point(fk).is_some());
+        }
     }
 
     #[test]

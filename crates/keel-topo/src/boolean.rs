@@ -737,6 +737,13 @@ impl Body {
         let (ck, csense) = e.curve?;
         let c = self.curves.get(ck)?;
         let fwd = csense == f.forward;
+        // (TASK 29 NOTE: arc-bounded fragments need this sampler to
+        // honor edge.arc_sweep instead of sweeping the FULL periodic
+        // carrier: angular spans, height bands, interior points and UV
+        // polygons all mislocate without it. The localization landed
+        // and was backed out with the crossing-pair metric layer: the
+        // torus-fillet family consumes full-carrier samples here and
+        // regressed. Reconcile the two consumers when the layer lands.)
         let eval = |s: f64| -> keel_math::vec::Vec3 {
             match c {
                 Curve3::Nurbs(n) => {
@@ -884,16 +891,53 @@ impl Body {
         face: FaceKey,
         cyl: &keel_geom::surface::Cylinder3,
     ) -> Option<keel_math::vec::Vec3> {
-        let (origin, ex, ez, r) = (cyl.frame.origin, cyl.frame.x, cyl.frame.z, cyl.radius);
-        let heights = self.cyl_circle_heights(face, origin, ez);
+        let (origin, ex, ey, ez, r) = (
+            cyl.frame.origin,
+            cyl.frame.x,
+            cyl.frame.y,
+            cyl.frame.z,
+            cyl.radius,
+        );
+        let mut heights = self.cyl_circle_heights(face, origin, ez);
+        // DISTINCT rim heights only (a single rim reports once per fin).
+        heights.sort_by(f64::total_cmp);
+        heights.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
         if heights.len() < 2 {
-            return None;
+            // Fewer than two distinct rims (a crossing-pair piece
+            // bounded by ellipse arcs): heights from the fins' curve
+            // samples as well (KEEPING any rim height found).
+            for lk in self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default()
+            {
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                while let Some(fin) = self.fins.get(cur) {
+                    for p in self.fin_curve_samples(cur, 8).unwrap_or_default() {
+                        heights.push((p - origin).dot(ez));
+                    }
+                    cur = fin.next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+            }
+            if heights.len() < 2 {
+                return None;
+            }
         }
         let hlo = heights.iter().cloned().fold(f64::INFINITY, f64::min);
         let hhi = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let hmid = 0.5 * (hlo + hhi);
-        // Angle pi (opposite the seam at angle 0): origin - ex*r + ez*hmid.
-        Some(origin + ex * (-r) + ez * hmid)
+        // The face's angular-span midpoint (a full ring gives pi, the
+        // historic pick opposite the seam).
+        let (a0, a1) = self.cyl_angular_span(face, origin, ex, ey, ez);
+        let amid = 0.5 * (a0 + a1);
+        Some(origin + (ex * amid.cos() + ey * amid.sin()) * r + ez * hmid)
     }
 
     /// The cone twin of the cylinder rung: rim heights bound the band,
@@ -1350,6 +1394,12 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, tol: f64) -> Vec<(Fac
         // of zero is not a real face: mark it Unknown (select_faces keeps no
         // Unknown), dropping it from both assembly paths.
         if working.face_area(face).abs() <= tol * tol {
+            if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
+                eprintln!(
+                    "  classify {face:?}: AREA GATE ({})",
+                    working.face_area(face)
+                );
+            }
             out.push((face, FaceClass::Unknown));
             continue;
         }
@@ -1401,7 +1451,12 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, tol: f64) -> Vec<(Fac
                     }
                 }
             }
-            None => FaceClass::Unknown,
+            None => {
+                if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
+                    eprintln!("  classify {face:?}: NO INTERIOR POINT");
+                }
+                FaceClass::Unknown
+            }
         };
         out.push((face, class));
     }
@@ -4061,7 +4116,11 @@ impl Body {
 /// surface passes through `p` and whose boundary-vertex height range
 /// contains `p`'s height. Wrap circles are full rings, so the angular
 /// extent needs no check here.
-fn curved_face_containing(body: &Body, p: keel_math::vec::Vec3, tol: f64) -> Option<FaceKey> {
+pub(crate) fn curved_face_containing(
+    body: &Body,
+    p: keel_math::vec::Vec3,
+    tol: f64,
+) -> Option<FaceKey> {
     body.face_keys().into_iter().find(|&fk| {
         let Some(Surface3::Cylinder(c)) = body.face_surface3(fk) else {
             return false;
@@ -4752,6 +4811,37 @@ fn imprint_operand(
             }
             members = keep;
         }
+        // CROSSING-PAIR arrangement (task 29, the equal-radii slice):
+        // exactly two closed seams on one cylinder lateral that
+        // mutually cross reduce sequentially to proven primitives (the
+        // first as the standard wrap, the second as two open arcs
+        // between the EXACT crossing vertices: the seam planes' line
+        // meets the cylinder in a closed-form quadratic).
+        if members.len() == 2
+            && members.iter().all(|&i| seams[i].closed)
+            && let Some(Surface3::Cylinder(cyl)) = working.face_surface3(face)
+        {
+            let xs = crate::imprint::planar_curve_crossings(
+                &seams[members[0]].curve,
+                &seams[members[1]].curve,
+                &cyl,
+            );
+            if xs.len() == 2 {
+                let _prof = crate::profile::Scope::new(&crate::profile::IMPRINT_OPS_NS);
+                crate::profile::count(&crate::profile::IMPRINT_OPS_CALLS);
+                match working.imprint_crossing_pair(
+                    face,
+                    &seams[members[0]].curve,
+                    &seams[members[1]].curve,
+                    &xs,
+                    tol,
+                ) {
+                    Ok(mut es) => seam_edges.append(&mut es),
+                    Err(e) => faults.push(BoolFault::Topo(e)),
+                }
+                continue;
+            }
+        }
         // Partition the face's deduped seams into connected components
         // (open-endpoint adjacency within etol; closed seams stand
         // alone). A face cut by two parallel tool planes carries two
@@ -5037,6 +5127,17 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 continue;
             }
             match intersect_surfaces(&ref_a, &ref_b, tol) {
+                // Crossing-cylinder pairs KEEP DECLINING for now. The
+                // task-29 arrangement imprint (imprint_crossing_pair)
+                // assembles the equal-radii two-ellipse rung
+                // TOPOLOGICALLY, but the metric layer (angular spans,
+                // ruling bands and the Green integral on arc-bounded
+                // pieces) is not yet exact, and the curved gate's
+                // mass-error mesh-floor would ship a wrong volume
+                // (the pinned Steinmetz oracle, tests/steinmetz.rs,
+                // demands 16/3 exactly). Re-open this gate by removing
+                // the `both_cyl` guard for the exact two-conic case
+                // once the metric layer lands.
                 Ok(SsiResult::Curves(cs)) if both_cyl => {
                     if cs
                         .iter()

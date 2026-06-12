@@ -36,8 +36,19 @@ fn steinmetz_declines_today_and_must_be_exact_when_it_lands() {
     let (a, b) = crossing_cylinders();
     let exact = 16.0 / 3.0; // (16/3) r^3, r = 1
     match boolean(&a, &b, BoolOp::Intersection, 1e-7) {
-        Err(_) => {} // the honest decline (current state)
+        Err(e) => {
+            if std::env::var("KEEL_STEINMETZ_DEBUG").is_ok() {
+                eprintln!("DECLINED: {e:?}");
+            }
+        }
         Ok(r) => {
+            if std::env::var("KEEL_STEINMETZ_DEBUG").is_ok() {
+                eprintln!("counts: {:?}", r.body.counts());
+                eprintln!("faults: {:?}", r.faults);
+                eprintln!("mesh_volume: {}", r.body.mesh_volume());
+                eprintln!("tess_volume: {}", r.body.tessellated_volume());
+                eprintln!("mass: {:?}", r.body.mass_properties().map(|m| m.volume));
+            }
             // The crossing-seam imprint has landed: the bicylinder must
             // be exact (this is the wrong-positive the decline guards:
             // the old attempt read 12.5).

@@ -300,6 +300,46 @@ impl NurbsCurve {
         Self::from_homogeneous(kv, ctrl)
     }
 
+    /// Exact rational ELLIPTIC arc: semi-axes `a` along `x_axis` and
+    /// `b` along `y_axis`, starting at parameter angle `start` (the
+    /// ellipse's own parameterization: point(t) = c + a cos t X +
+    /// b sin t Y) and sweeping `sweep` (> 0, <= tau). Built as the
+    /// affine image of the unit rational circular arc (an affine map of
+    /// a rational quadric curve maps control points and keeps weights:
+    /// exact, no sampling).
+    pub fn elliptic_arc(
+        center: Vec3,
+        x_axis: Vec3,
+        y_axis: Vec3,
+        a: f64,
+        b: f64,
+        start: f64,
+        sweep: f64,
+    ) -> Result<Self, GeomError> {
+        if !(a.is_finite() && a > 0.0 && b.is_finite() && b > 0.0) {
+            return Err(GeomError::Degenerate);
+        }
+        let xu = x_axis.try_normalize().ok_or(GeomError::Degenerate)?;
+        let yu = y_axis.try_normalize().ok_or(GeomError::Degenerate)?;
+        // Unit circle arc in the (xu, yu) plane, rotated so its t = 0
+        // sits at the requested start angle.
+        let xr = xu * start.cos() + yu * start.sin();
+        let yr = xu * (-start.sin()) + yu * start.cos();
+        let unit = Self::circular_arc(Vec3::ZERO, xr, yr, 1.0, sweep)?;
+        let ctrl: Vec<Vec4> = unit
+            .homogeneous_control()
+            .iter()
+            .map(|h| {
+                // Euclidean control point of the unit arc, scaled per
+                // ellipse axis, re-weighted.
+                let p = Vec3::new(h.x / h.w, h.y / h.w, h.z / h.w);
+                let q = center + xu * (a * p.dot(xu)) + yu * (b * p.dot(yu));
+                Vec4::new(q.x * h.w, q.y * h.w, q.z * h.w, h.w)
+            })
+            .collect();
+        Self::from_homogeneous(unit.kv.clone(), ctrl)
+    }
+
     /// Exact full circle in the plane spanned by x_axis/y_axis.
     pub fn full_circle(
         center: Vec3,
@@ -558,6 +598,37 @@ mod tests {
     use super::*;
     use crate::basis::basis_funs;
     use proptest::prelude::*;
+
+    #[test]
+    fn elliptic_arc_matches_the_ellipse_parameterization() {
+        // A tilted ellipse arc from start angle pi/3 sweeping 3pi/4:
+        // the rational arc must sit ON the analytic ellipse and hit the
+        // exact endpoints (machine precision: it is an affine image of
+        // the exact rational circle, not a fit).
+        let c = Vec3::new(1.0, -2.0, 0.5);
+        let x = Vec3::new(1.0, 1.0, 0.0).try_normalize().unwrap();
+        let y = Vec3::new(-1.0, 1.0, 1.0).try_normalize().unwrap();
+        let y = (y - x * y.dot(x)).try_normalize().unwrap();
+        let (a, b) = (2.0, 0.7);
+        let (start, sweep) = (core::f64::consts::FRAC_PI_3, 2.356194490192345);
+        let arc = NurbsCurve::elliptic_arc(c, x, y, a, b, start, sweep).unwrap();
+        let on_ellipse = |t: f64| c + x * (a * t.cos()) + y * (b * t.sin());
+        let (d0, d1) = arc.domain();
+        // Endpoints exact.
+        assert!((arc.point(d0) - on_ellipse(start)).norm() < 1e-12);
+        assert!((arc.point(d1) - on_ellipse(start + sweep)).norm() < 1e-12);
+        // Interior samples lie on the implicit ellipse (the rational
+        // parameterizations differ, so compare implicitly).
+        for k in 0..=24 {
+            let p = arc.point(d0 + (d1 - d0) * k as f64 / 24.0);
+            let w = p - c;
+            let (u, v) = (w.dot(x) / a, w.dot(y) / b);
+            assert!(
+                (u * u + v * v - 1.0).abs() < 1e-12 && w.dot(x.cross(y)).abs() < 1e-12,
+                "off ellipse at sample {k}"
+            );
+        }
+    }
 
     #[test]
     fn construction_validates() {

@@ -6468,3 +6468,49 @@ honestly; the moment it assembles it must be exact, and the old wrong-positive
 (12.5) can never return unnoticed. The design sketch for the arrangement
 imprint (mutual-crossing split + node/arc graph + UV face tracing, arc_sweep
 recording) is in task 29.
+
+## Addendum 213: crossing-pair imprint groundwork; the gate stays closed (task 29) (2026-06-12)
+
+The equal-radii crossing-cylinder ARRANGEMENT IMPRINT is built and works
+TOPOLOGICALLY: imprint_crossing_pair (imprint.rs) reduces the two-ellipse
+Steinmetz seams to proven primitives: curve 1 imprints as the standard wrap
+(seam synthesis + antipodal crossing split), its arcs split at the EXACT
+mutual crossings (planar_curve_crossings: the two seam planes' line meets the
+cylinder in a closed-form quadratic; the degenerate case where the wrap split
+lands ON a crossing reuses the vertex), and curve 2 imprints as two exact
+rational arcs (NurbsCurve::elliptic_arc, the affine image of the rational
+circle: machine exact) between the crossing vertices via the new
+imprint_open_arc_between. The assembled bicylinder has the right structure
+(four lateral bowtie/band pieces per the partition; classification identified
+both bowties per lateral as genuinely inside the other cylinder, which is
+CORRECT: the Steinmetz wall has walls at both poles).
+
+THE SEAM GATE STAYS CLOSED (both_cyl pairs keep declining) because the METRIC
+layer is not exact yet, and the curved gate's mass-error mesh-floor would have
+shipped a wrong volume (the pinned oracle held the line at every step: it
+caught 12.41, then 7.29, against the exact 16/3). Diagnosed and recorded for
+the next session, each with a TASK 29 NOTE comment at the site:
+- arc identity wants edge.arc_sweep recorded at imprint time, but the field
+  is semantically OVERLOADED: cyl_angular_span's first-arc shortcut reads it
+  as an AZIMUTH span (the revolve vocabulary) while massprops range() and the
+  new machinery read CURVE-PARAMETER sweep: recording it globally HALVED the
+  spans of every face carrying crossing-imprint arcs (the torus fillets
+  regressed). The recording now lives inside the gated path only.
+- fin_curve_samples must localize arcs by their recorded sweep (the full-
+  carrier sweep mislocates spans/heights/interiors of arc-bounded pieces),
+  but the torus-fillet family consumes full-carrier samples: reconcile.
+- tessellate_cylinder's ruling-band clip needs interior-SIDE plane assignment
+  (the closest-extreme heuristic mis-clips the bowtie pinch); reverted with
+  the metric layer for the same reason.
+LANDED KEEPERS (suite green, in this commit): duplicate-rim height dedup in
+tessellate_cylinder / analytic_curved_area / cylinder_face_interior_point
+(one rim read [h, h] and degenerate-banded or zero-area'd: a real latent
+defect class), the fin-sample heights fallback for rimless pieces, the
+angular-span-midpoint interior point, NurbsCurve::elliptic_arc, and the
+classify Unknown-source debug rails. The dev harness test is #[ignore]d with
+re-enable instructions; reopen the gate by removing the both_cyl guard for
+the exact two-conic case once the metric layer lands.
+VERIFICATION: 100k oracle buckets identical (strict 95604/4396/WRONG 0,
+tolerant 25000/0/WRONG 0, the fourth consecutive bit-identical run this
+session); fuzz soak clean (fuzz_boolean 5175 runs, fuzz_cyl_boolean 32424
+runs, zero crashes).

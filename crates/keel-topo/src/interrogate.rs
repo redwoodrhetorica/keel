@@ -425,6 +425,10 @@ impl Body {
         };
         let height_range = |o: Vec3, ez: Vec3, extra: Option<f64>| {
             let mut h = self.cyl_circle_heights(face, o, ez);
+            // DISTINCT heights only: one rim seen from both fins is
+            // [h, h], a zero band that integrated curved areas to 0.
+            h.sort_by(f64::total_cmp);
+            h.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
             if let Some(e) = extra
                 && h.len() < 2
             {
