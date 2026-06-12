@@ -9,3 +9,4 @@
 # CodeGraph local index (tooling artifact, not source)
 .codegraph/
 docs/media/frames/
+gate_launch.log
