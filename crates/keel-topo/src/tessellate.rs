@@ -707,6 +707,18 @@ impl Body {
             .get(face)
             .map(|f| f.loops.clone())
             .unwrap_or_default();
+        // RING faces (holes) get a true polygon-with-holes triangulation
+        // (ring bridged into the outer loop, then ear-clipped): the old
+        // reversed-fan path is exact for volume/winding by SIGNED
+        // CANCELLATION but its triangles COVER the hole, which renders
+        // wrongly in any viewer consuming the worker mesh (task 34's
+        // drill gif showed a capped bore). Falls back to the fan path if
+        // the bridge cannot be placed.
+        if loops.len() > 1
+            && let Some(tris) = self.tessellate_planar_holed(&loops, nz, outward)
+        {
+            return tris;
+        }
         let mut tris = Vec::new();
         for (li, lk) in loops.iter().enumerate() {
             let poly = self.loop_polygon(*lk);
@@ -732,6 +744,147 @@ impl Body {
             }
         }
         tris
+    }
+
+    /// True triangulation of a planar face with inner rings: each ring
+    /// is spliced into the outer polygon through a mutually visible
+    /// bridge vertex pair (the classic hole-cutting reduction), and the
+    /// resulting simple polygon ear-clips. `None` when a bridge cannot
+    /// be placed (the caller falls back to the signed-fan path).
+    fn tessellate_planar_holed(
+        &self,
+        loops: &[crate::entity::LoopKey],
+        nz: Vec3,
+        outward: Vec3,
+    ) -> Option<Vec<[Vec3; 3]>> {
+        let seed = if nz.x.abs() < 0.9 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0)
+        };
+        let u = (seed - nz * seed.dot(nz)).try_normalize()?;
+        let w = nz.cross(u);
+        let to2 = |q: Vec3| [q.dot(u), q.dot(w)];
+        let signed_area = |p: &[Vec3]| -> f64 {
+            let n = p.len();
+            (0..n)
+                .map(|i| {
+                    let a = to2(p[i]);
+                    let b = to2(p[(i + 1) % n]);
+                    a[0] * b[1] - a[1] * b[0]
+                })
+                .sum::<f64>()
+                * 0.5
+        };
+        // Outer loop CCW in (u, w); rings CW (holes wind opposite).
+        let mut outer = self.loop_polygon(loops[0]);
+        if outer.len() < 3 {
+            return None;
+        }
+        if signed_area(&outer) < 0.0 {
+            outer.reverse();
+        }
+        let mut scale = 0.0f64;
+        for p in &outer {
+            let q = to2(*p);
+            scale = scale.max(q[0].abs()).max(q[1].abs());
+        }
+        let eps = 1e-12 * scale.max(1.0);
+        let cross2 = |o: [f64; 2], a: [f64; 2], b: [f64; 2]| {
+            (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+        };
+        // Strict segment-segment crossing (shared endpoints don't count).
+        let seg_cross = |a: Vec3, b: Vec3, c: Vec3, d: Vec3| -> bool {
+            let (a, b, c, d) = (to2(a), to2(b), to2(c), to2(d));
+            let d1 = cross2(c, d, a);
+            let d2 = cross2(c, d, b);
+            let d3 = cross2(a, b, c);
+            let d4 = cross2(a, b, d);
+            ((d1 > eps && d2 < -eps) || (d1 < -eps && d2 > eps))
+                && ((d3 > eps && d4 < -eps) || (d3 < -eps && d4 > eps))
+        };
+        let mut rings: Vec<Vec<Vec3>> = Vec::new();
+        for lk in &loops[1..] {
+            let mut ring = self.loop_polygon(*lk);
+            if ring.len() < 3 {
+                return None;
+            }
+            if signed_area(&ring) > 0.0 {
+                ring.reverse();
+            }
+            rings.push(ring);
+        }
+        // Splice rings one at a time, rightmost-first (in u), so later
+        // bridges see the already-spliced boundary.
+        rings.sort_by(|r1, r2| {
+            let m1 = r1
+                .iter()
+                .map(|p| to2(*p)[0])
+                .fold(f64::NEG_INFINITY, f64::max);
+            let m2 = r2
+                .iter()
+                .map(|p| to2(*p)[0])
+                .fold(f64::NEG_INFINITY, f64::max);
+            m2.partial_cmp(&m1).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for ring in &rings {
+            // Bridge from the ring's max-u vertex to the nearest outer
+            // vertex the bridge segment can reach without crossing the
+            // current boundary or the ring itself.
+            let mi = (0..ring.len())
+                .max_by(|&i, &j| {
+                    to2(ring[i])[0]
+                        .partial_cmp(&to2(ring[j])[0])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or(0);
+            let m = ring[mi];
+            let mut cands: Vec<usize> = (0..outer.len()).collect();
+            cands.sort_by(|&i, &j| {
+                let di = (outer[i] - m).norm();
+                let dj = (outer[j] - m).norm();
+                di.partial_cmp(&dj).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let visible = |pi: usize| -> bool {
+                let p = outer[pi];
+                let n = outer.len();
+                for i in 0..n {
+                    let (a, b) = (outer[i], outer[(i + 1) % n]);
+                    if i != pi && (i + 1) % n != pi && seg_cross(m, p, a, b) {
+                        return false;
+                    }
+                }
+                let rn = ring.len();
+                for i in 0..rn {
+                    let (a, b) = (ring[i], ring[(i + 1) % rn]);
+                    if i != mi && (i + 1) % rn != mi && seg_cross(m, p, a, b) {
+                        return false;
+                    }
+                }
+                true
+            };
+            let pi = cands.into_iter().find(|&pi| visible(pi))?;
+            // outer[..=pi] ++ ring[mi..] ++ ring[..=mi] ++ [outer[pi]] ++ rest
+            let mut next = Vec::with_capacity(outer.len() + ring.len() + 2);
+            next.extend_from_slice(&outer[..=pi]);
+            for k in 0..=ring.len() {
+                next.push(ring[(mi + k) % ring.len()]);
+            }
+            next.push(outer[pi]);
+            next.extend_from_slice(&outer[pi + 1..]);
+            outer = next;
+        }
+        let pts2: Vec<[f64; 2]> = outer.iter().map(|&q| to2(q)).collect();
+        let tris2 = earclip_2d_eps(&pts2, eps);
+        if tris2.is_empty() {
+            return None;
+        }
+        Some(
+            tris2
+                .into_iter()
+                .map(|[ia, ib, ic]| orient([outer[ia], outer[ib], outer[ic]], outward))
+                .collect(),
+        )
     }
 
     /// A loop's boundary polygon: its fins' start vertices for a straight
@@ -1069,6 +1222,77 @@ fn earclip_3d(poly: &[Vec3], nz: Vec3) -> Vec<[usize; 3]> {
     let w = nz.cross(u);
     let p: Vec<[f64; 2]> = poly.iter().map(|&q| [q.dot(u), q.dot(w)]).collect();
     earclip_2d(&p)
+}
+
+/// Ear clipping with an EPS-tolerant containment test: a bridge-spliced
+/// polygon (hole cutting) carries DUPLICATE vertices lying exactly on
+/// other edges, which a boundary-inclusive blocking test deadlocks on.
+/// Points within eps of an ear's boundary do not block; near-zero-area
+/// ears (the bridge passage itself) are clipped without emitting a
+/// triangle. Returns empty on failure (the caller falls back).
+fn earclip_2d_eps(p: &[[f64; 2]], eps: f64) -> Vec<[usize; 3]> {
+    let n = p.len();
+    if n < 3 {
+        return Vec::new();
+    }
+    let cross = |o: [f64; 2], a: [f64; 2], b: [f64; 2]| {
+        (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    };
+    let area2: f64 = (0..n)
+        .map(|i| cross([0.0, 0.0], p[i], p[(i + 1) % n]))
+        .sum();
+    let ccw = area2 > 0.0;
+    let strictly_in = |q: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+        let (d1, d2, d3) = (cross(a, b, q), cross(b, c, q), cross(c, a, q));
+        if ccw {
+            d1 > eps && d2 > eps && d3 > eps
+        } else {
+            d1 < -eps && d2 < -eps && d3 < -eps
+        }
+    };
+    let mut idx: Vec<usize> = (0..n).collect();
+    let mut tris = Vec::new();
+    let mut guard = 0usize;
+    while idx.len() > 3 {
+        guard += 1;
+        if guard > n * n + 16 {
+            return Vec::new();
+        }
+        let m = idx.len();
+        let mut found = None;
+        for i in 0..m {
+            let (ia, ib, ic) = (idx[(i + m - 1) % m], idx[i], idx[(i + 1) % m]);
+            let (a, b, c) = (p[ia], p[ib], p[ic]);
+            let turn = cross(a, b, c);
+            if (ccw && turn < -eps) || (!ccw && turn > eps) {
+                continue; // reflex vertex: not an ear tip
+            }
+            let degenerate = turn.abs() <= eps;
+            let mut clean = true;
+            for &j in &idx {
+                if j != ia && j != ib && j != ic && strictly_in(p[j], a, b, c) {
+                    clean = false;
+                    break;
+                }
+            }
+            if clean {
+                found = Some((i, degenerate, [ia, ib, ic]));
+                break;
+            }
+        }
+        let Some((i, degenerate, tri)) = found else {
+            return Vec::new();
+        };
+        if !degenerate {
+            tris.push(tri);
+        }
+        idx.remove(i);
+    }
+    let (a, b, c) = (p[idx[0]], p[idx[1]], p[idx[2]]);
+    if cross(a, b, c).abs() > eps {
+        tris.push([idx[0], idx[1], idx[2]]);
+    }
+    tris
 }
 
 fn earclip_2d(p: &[[f64; 2]]) -> Vec<[usize; 3]> {

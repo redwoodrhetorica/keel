@@ -6323,3 +6323,33 @@ sphere-split integration map, Addendum 201).
 VERIFICATION: 100k oracle buckets again identical (strict 95604/4396/WRONG 0,
 tolerant 25000/0/WRONG 0); fuzz soak clean (fuzz_boolean 4578 runs,
 fuzz_cyl_boolean 35080 runs, zero crashes). Suite 134+77+271+3 green.
+
+## Addendum 203: GIF pipeline + the ring-tessellation viewer fix (task 34, first slice) (2026-06-12)
+
+The README op-GIF pipeline is built end to end and proven with the first gif:
+crates/keel-topo/examples/gif_frames.rs runs a parameter sweep (the drill
+difference: bore radius triangle-wave looping 0.25 to 1.5), runs a REAL boolean
+per frame, and dumps the kernel's own worker_mesh as JSON (the honest-output
+rule: frames come from the kernel, never a re-modelled approximation);
+docs/media/render_gif.py renders 250x250 flat-shaded isometric frames
+(painter's sort + backface cull, GitHub-dark background, kernel edge polylines
+as feature lines) and encodes the loop. docs/media/drill.gif: 36 frames,
+285 KiB (target was under 1.5 MB).
+
+THE GIF FOUND A REAL DEFECT (the pipeline as an oracle, again): the drilled
+plate rendered with a CAPPED bore. tessellate_planar handled inner rings by a
+REVERSED CENTROID FAN: exact for volume and winding by signed cancellation,
+but its triangles physically COVER the hole, so every consumer of the worker
+mesh (the fieldforge viewer contract, task 28) would draw holes capped. Fixed
+with a true polygon-with-holes triangulation: each ring splices into the outer
+loop through a mutually visible bridge (rightmost-first; visibility = strict
+segment-crossing test), and the spliced simple polygon ear-clips via
+earclip_2d_eps, an EPS-tolerant ear clipper whose containment test does not
+let the bridge's duplicate vertices (lying exactly on edges) block ears, and
+which clips near-zero-area ears (the bridge passage) without emitting
+triangles. Falls back to the signed-fan path if no bridge placement exists.
+Permanent oracle: tests/ring_tessellation.rs (zero triangles covering the
+bore + chordal volume agreement). Suite 16/16 green.
+VERIFICATION: 100k oracle buckets identical (strict 95604/4396/WRONG 0,
+tolerant 25000/0/WRONG 0); fuzz soak clean (fuzz_boolean 5189 runs,
+fuzz_cyl_boolean 31418 runs, zero crashes).
