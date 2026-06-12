@@ -6157,3 +6157,33 @@ worker boundary (UTF-8 warnings buffer + confidence accessors); run_spike.mjs pr
 it in V8: the clearance-pin salvage arrives as volume EXACT 16.0, salvaged true,
 tier 2, achieved 1.0e-5, "geometry salvaged at tier 2 (moved up to 1.000e-5)".
 Tests: strict_clean_report_is_pristine + tolerant_salvage_reports_loudly.
+
+## Addendum 197: loft + RMF sweep (task 23) (2026-06-12)
+
+Dossiers 48 (skinning/lofting) + 49 (sweep RMF) re-read; both note the existing
+loft_sections (faceted polygon sections) and translational sweep_along_path. This
+milestone adds the two missing pieces the swap needs, both on the analytic-rung-first
+doctrine:
+
+1. loft_circles (construct.rs): the EXACT circle-pair loft: a cone FRUSTUM between
+coaxial parallel circles, lateral = Cone3 through both rims, volume exact at 1e-9
+(pi h (r0^2 + r0 r1 + r1^2)/3, via the iso-rectangular cone mass integration already
+in-tree from the blend program); equal radii delegate to the exact cylinder. A faceted
+loft of sampled circles would be approximate everywhere this is exact.
+
+2. sweep_profile_rmf (construct.rs): ROTATION-MINIMIZING-frame sweep along a polyline
+path (the double-reflection method, Wang et al. 2008): the profile stays normal to the
+path, bends join in the bisecting mitre plane. Oracles: a diagonal straight path is an
+exact oblique prism (volume 3 at 1e-9, mass == mesh); the 90-degree L-path elbow comes
+out in CLOSED FORM: 2 + sqrt(2), exact.
+
+THE LATENT BUG THE EXACTNESS PINNED: loft_sections oriented side-face planes by an
+away-from-the-global-loft-axis heuristic; on a bent path two mitre-band quads sat on
+the wrong side of that axis and their frames flipped (mass 2.354 vs mesh 4.707, BOTH
+wrong, while the loop-order flux summed to the exact 3.414). Side planes now orient by
+the FACE'S OWN LOOP WINDING (Newell over its outer loop), which the Euler construction
+guarantees: the heuristic class is gone for every loft consumer, not just sweeps.
+
+Suite 133+77+264 green; clippy clean. Smooth NURBS skinning (Park common-knot
+reduction, dossier 48) stays the recorded follow-up: the consumer''s loft vocabulary
+(polygon profiles, circle pairs) is covered exactly without it.

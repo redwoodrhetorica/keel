@@ -481,26 +481,28 @@ impl Body {
             SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(top_frame))),
             true,
         );
-        // Side planes per band: normal from the quad, oriented outward
-        // (away from the loft axis). Band bj uses sections bj and bj+1;
-        // its side face i is faces[1 + bj*n + i].
+        // Side planes per band: the outward normal comes from the
+        // FACE'S OWN LOOP WINDING (Newell over its outer loop), which
+        // the Euler construction guarantees consistent across the
+        // shell. The previous away-from-the-loft-axis heuristic broke
+        // on bent paths (an RMF L-sweep put two mitre-band quads on
+        // the wrong side of the global axis, flipping their frames:
+        // mass and mesh both wrong while the winding was exact).
+        // Band bj uses sections bj and bj+1; side face i is
+        // faces[1 + bj*n + i].
         for bj in 0..k - 1 {
-            let (lo, hi) = (sections[bj], sections[bj + 1]);
             for i in 0..n {
-                let (b0, b1) = (lo[i], lo[(i + 1) % n]);
-                let t0 = hi[i];
-                let mut normal = (b1 - b0)
-                    .cross(t0 - b0)
+                let fk = faces[1 + bj * n + i];
+                let poly = self.face_outer_loop_points(fk);
+                let normal = newell(&poly)
                     .try_normalize()
                     .ok_or(TopoError::Precondition("loft: degenerate side quad"))?;
-                let mid = (b0 + b1 + t0) / 3.0;
-                let axis_pt = cb + up * (mid - cb).dot(up);
-                if normal.dot(mid - axis_pt) < 0.0 {
-                    normal = normal * -1.0;
-                }
-                let frame = Frame3::from_z(b0, normal).map_err(geom_err)?;
+                let anchor = *poly
+                    .first()
+                    .ok_or(TopoError::Precondition("loft: empty side loop"))?;
+                let frame = Frame3::from_z(anchor, normal).map_err(geom_err)?;
                 self.attach_face_surface(
-                    faces[1 + bj * n + i],
+                    fk,
                     SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(frame))),
                     true,
                 );
@@ -563,6 +565,112 @@ impl Body {
             .map(|&pj| profile.iter().map(|&q| q + (pj - p0)).collect())
             .collect();
         let refs: Vec<&[Vec3]> = sections.iter().map(|s| s.as_slice()).collect();
+        self.loft_sections(&refs)
+    }
+
+    /// Sweep a planar profile along a polyline path with ROTATION-
+    /// MINIMIZING frames (swap task 23; dossier 49, the double-
+    /// reflection method): the profile stays normal to the path and
+    /// does not spin about it, the standard CAD pipe semantics the
+    /// translational `sweep_along_path` lacks. The profile is given in
+    /// WORLD coordinates in the plane through `path[0]` normal to the
+    /// first segment; bends join with the mitre section in the
+    /// bisecting plane (the node tangent is the adjacent-segment
+    /// average).
+    pub fn sweep_profile_rmf(
+        &mut self,
+        profile: &[Vec3],
+        path: &[Vec3],
+    ) -> Result<PrimitiveOut, TopoError> {
+        if path.len() < 2 {
+            return Err(TopoError::Precondition("rmf sweep: path needs >= 2 points"));
+        }
+        if profile.len() < 3 {
+            return Err(TopoError::Precondition(
+                "rmf sweep: profile needs 3+ points",
+            ));
+        }
+        if path.iter().chain(profile.iter()).any(|p| !p.is_finite()) {
+            return Err(TopoError::Precondition("rmf sweep: non-finite input"));
+        }
+        // Node tangents: averaged adjacent segment directions.
+        let seg = |i: usize| (path[i + 1] - path[i]).try_normalize();
+        let n = path.len();
+        let mut tangents = Vec::with_capacity(n);
+        for i in 0..n {
+            let t = if i == 0 {
+                seg(0)
+            } else if i == n - 1 {
+                seg(n - 2)
+            } else {
+                match (seg(i - 1), seg(i)) {
+                    (Some(a), Some(b)) => (a + b).try_normalize(),
+                    _ => None,
+                }
+            };
+            tangents.push(t.ok_or(TopoError::Precondition("rmf sweep: degenerate path"))?);
+        }
+        // Express the profile in the start frame (r0 = a unit vector
+        // normal to t0; s0 = t0 x r0). The profile must be planar
+        // normal to t0: out-of-plane components decline.
+        let t0 = tangents[0];
+        let seed = if t0.x.abs() < 0.9 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0)
+        };
+        let r0 = (seed - t0 * seed.dot(t0))
+            .try_normalize()
+            .ok_or(TopoError::Precondition("rmf sweep: frame seed"))?;
+        let s0 = t0.cross(r0);
+        for &p in profile {
+            let w = p - path[0];
+            if w.dot(t0).abs() > 1e-7 * (1.0 + w.norm()) {
+                return Err(TopoError::Precondition(
+                    "rmf sweep: profile not in the start plane",
+                ));
+            }
+        }
+        let local: Vec<(f64, f64)> = profile
+            .iter()
+            .map(|&p| {
+                let w = p - path[0];
+                (w.dot(r0), w.dot(s0))
+            })
+            .collect();
+        // Double-reflection RMF propagation (Wang et al. 2008).
+        let mut r = r0;
+        let mut sections: Vec<Vec<Vec3>> = Vec::with_capacity(n);
+        for i in 0..n {
+            if i > 0 {
+                let v1 = path[i] - path[i - 1];
+                let c1 = v1.dot(v1);
+                if c1 <= 0.0 {
+                    return Err(TopoError::Precondition("rmf sweep: repeated path point"));
+                }
+                let r_l = r - v1 * (2.0 / c1 * v1.dot(r));
+                let t_l = tangents[i - 1] - v1 * (2.0 / c1 * v1.dot(tangents[i - 1]));
+                let v2 = tangents[i] - t_l;
+                let c2 = v2.dot(v2);
+                r = if c2 > 1e-30 {
+                    r_l - v2 * (2.0 / c2 * v2.dot(r_l))
+                } else {
+                    r_l
+                };
+                // Keep r exactly normal to the node tangent.
+                r = (r - tangents[i] * r.dot(tangents[i]))
+                    .try_normalize()
+                    .ok_or(TopoError::Precondition("rmf sweep: frame collapse"))?;
+            }
+            let s = tangents[i].cross(r);
+            sections.push(
+                local
+                    .iter()
+                    .map(|&(u, w)| path[i] + r * u + s * w)
+                    .collect(),
+            );
+        }
+        let refs: Vec<&[Vec3]> = sections.iter().map(|x| x.as_slice()).collect();
         self.loft_sections(&refs)
     }
 
@@ -1379,6 +1487,110 @@ impl Body {
         })
     }
 
+    /// The ANALYTIC circle-pair loft (swap task 23, the exact rung):
+    /// a solid cone FRUSTUM between coaxial parallel circles of radii
+    /// `r0` (at the frame origin) and `r1` (at height `h`). Equal
+    /// radii delegate to the exact cylinder. Volume is exact
+    /// (pi h (r0^2 + r0 r1 + r1^2) / 3) through the iso-rectangular
+    /// cone mass integration; a faceted loft of sampled circles would
+    /// be approximate everywhere this is exact.
+    pub fn loft_circles(
+        &mut self,
+        frame: Frame3,
+        r0: f64,
+        r1: f64,
+        h: f64,
+    ) -> Result<PrimitiveOut, TopoError> {
+        if r0 <= 0.0
+            || r1 <= 0.0
+            || h <= 0.0
+            || !r0.is_finite()
+            || !r1.is_finite()
+            || !h.is_finite()
+        {
+            return Err(TopoError::Precondition("loft_circles: bad parameters"));
+        }
+        if (r0 - r1).abs() <= 1e-12 * (1.0 + r0.abs()) {
+            return self.cylinder(frame, r0, h);
+        }
+        let mut reports = Vec::new();
+        let r = self.infinite_region();
+        let seam0 = frame.origin + frame.x * r0;
+        let seam1 = frame.origin + frame.x * r1 + frame.z * h;
+        let seed = self.mvfs(r, seam0)?;
+        reports.push(seed.report.clone());
+        let lp = self
+            .faces
+            .get(seed.face)
+            .map(|f| f.loops[0])
+            .ok_or(TopoError::StaleKey)?;
+        // Bottom circle (closed edge at the seam vertex) + bottom cap.
+        let bot = self.mef_on_vertex_loop(lp, None)?;
+        reports.push(bot.report.clone());
+        // Slanted seam ruling upward.
+        let g = self
+            .loops
+            .get(lp)
+            .and_then(|l| l.fin)
+            .ok_or(TopoError::StaleKey)?;
+        let seam = self.mev(MevSite::AfterFin(g), seam1)?;
+        reports.push(seam.report.clone());
+        // Top circle + top cap.
+        let at_top = self.fin_ending_at(lp, seam.vertex)?;
+        let top = self.mef(at_top, at_top, None)?;
+        reports.push(top.report.clone());
+        self.debug_validate();
+
+        // Geometry. Lateral = the cone through both rims.
+        let half_angle = ((r1 - r0) / h).atan();
+        self.attach_face_surface(
+            seed.face,
+            SurfaceGeom::Analytic(Surface3::Cone(
+                Cone3::new(frame.clone(), r0, half_angle).map_err(geom_err)?,
+            )),
+            true,
+        );
+        let bottom_frame = Frame3::from_z(frame.origin, frame.z * -1.0).map_err(geom_err)?;
+        let top_frame = Frame3::from_z(frame.origin + frame.z * h, frame.z).map_err(geom_err)?;
+        self.attach_face_surface(
+            bot.face,
+            SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(bottom_frame))),
+            true,
+        );
+        self.attach_face_surface(
+            top.face,
+            SurfaceGeom::Analytic(Surface3::Plane(Plane3::new(top_frame))),
+            true,
+        );
+        let c0 = Circle3::new(frame.origin, frame.x, frame.y, r0).map_err(geom_err)?;
+        let c1 =
+            Circle3::new(frame.origin + frame.z * h, frame.x, frame.y, r1).map_err(geom_err)?;
+        self.attach_edge_curve(bot.edge, Curve3::Circle(c0), true);
+        self.attach_edge_curve(top.edge, Curve3::Circle(c1), true);
+        let seam_line = Line3::new(seam0, seam1 - seam0).map_err(geom_err)?;
+        self.attach_edge_curve(seam.edge, Curve3::Line(seam_line), true);
+        // Pcurves: lateral rectangle in the unwrapped cover (cone v =
+        // axial height, the cylinder convention); planar caps.
+        let tau = core::f64::consts::TAU;
+        self.attach_loop_uv_path(
+            lp,
+            &[
+                ((0.0, 0.0), (tau, 0.0)),
+                ((tau, 0.0), (tau, h)),
+                ((tau, h), (0.0, h)),
+                ((0.0, h), (0.0, 0.0)),
+            ],
+        )?;
+        self.attach_plane_pcurves(bot.face)?;
+        self.attach_plane_pcurves(top.face)?;
+        Ok(PrimitiveOut {
+            faces: vec![seed.face, bot.face, top.face],
+            edges: vec![bot.edge, seam.edge, top.edge],
+            vertices: vec![seed.vertex, seam.vertex],
+            reports,
+        })
+    }
+
     /// Solid cone: base disc of `radius` at the frame origin, apex at
     /// height h on the axis. Topology V2 E2 F2.
     pub fn cone(&mut self, frame: Frame3, radius: f64, h: f64) -> Result<PrimitiveOut, TopoError> {
@@ -1833,6 +2045,103 @@ impl MapErrDegenerate for Option<Vec3> {
 mod tests {
     use super::*;
     use crate::entity::AnyKey;
+
+    #[test]
+    fn loft_circles_frustum_exact_mass() {
+        // The analytic circle-pair loft (task 23): exact frustum
+        // volume pi h (r0^2 + r0 r1 + r1^2) / 3 at 1e-9, mesh within
+        // the chordal band, validate clean.
+        let pi = core::f64::consts::PI;
+        let f = Frame3::from_z(Vec3::new(1.0, -2.0, 0.5), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut b = Body::new();
+        b.loft_circles(f, 2.0, 1.0, 3.0).unwrap();
+        assert!(b.validate().is_ok(), "frustum invalid: {:?}", b.validate());
+        let v = b.mass_properties().unwrap().volume;
+        let expect = pi * 3.0 * (4.0 + 2.0 + 1.0) / 3.0;
+        assert!(
+            (v - expect).abs() < 1e-9 * (1.0 + expect),
+            "frustum {v} != {expect}"
+        );
+        let mesh = b.mesh_volume();
+        assert!(
+            (mesh - v).abs() <= 2e-2 * (1.0 + v.abs()),
+            "frustum mesh {mesh} vs mass {v}"
+        );
+        // Growing frustum (r1 > r0) too: orientation must hold.
+        let f2 = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut b2 = Body::new();
+        b2.loft_circles(f2.clone(), 0.5, 1.5, 2.0).unwrap();
+        let v2 = b2.mass_properties().unwrap().volume;
+        let expect2 = pi * 2.0 * (0.25 + 0.75 + 2.25) / 3.0;
+        assert!(
+            (v2 - expect2).abs() < 1e-9 * (1.0 + expect2),
+            "growing frustum {v2} != {expect2}"
+        );
+        // Equal radii delegate to the exact cylinder.
+        let mut b3 = Body::new();
+        b3.loft_circles(f2, 1.0, 1.0, 2.0).unwrap();
+        let v3 = b3.mass_properties().unwrap().volume;
+        assert!((v3 - 2.0 * pi).abs() < 1e-9 * (1.0 + 2.0 * pi));
+    }
+
+    #[test]
+    fn rmf_sweep_straight_and_bent() {
+        // Straight DIAGONAL path: the RMF sweep of a unit square must
+        // be an exact oblique prism: volume = area x length, mass ==
+        // mesh (all-planar), validate clean. The diagonal exercises
+        // the frame seeding away from the axes.
+        let dir = Vec3::new(1.0, 2.0, 2.0); // length 3
+        let t = (dir * (1.0 / 3.0)).try_normalize().unwrap();
+        let seed = Vec3::new(1.0, 0.0, 0.0);
+        let r0 = (seed - t * seed.dot(t)).try_normalize().unwrap();
+        let s0 = t.cross(r0);
+        let profile: Vec<Vec3> = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+            .iter()
+            .map(|&(u, w)| r0 * u + s0 * w)
+            .collect();
+        let mut b = Body::new();
+        b.sweep_profile_rmf(&profile, &[Vec3::ZERO, dir]).unwrap();
+        assert!(b.validate().is_ok(), "straight sweep invalid");
+        let v = b.mass_properties().unwrap().volume;
+        assert!((v - 3.0).abs() < 1e-9 * 4.0, "oblique prism {v} != 3");
+        let mesh = b.mesh_volume();
+        assert!(
+            (mesh - v).abs() < 1e-9 * (1.0 + v),
+            "mass {v} != mesh {mesh}"
+        );
+
+        // L-path with a 90-degree bend: must build a VALID solid with
+        // mass == mesh and volume close to area x centerline length
+        // (the RMF pipe necks slightly at the mitre, so a band, not
+        // an equality).
+        let path = [
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, 2.0),
+            Vec3::new(2.0, 0.0, 2.0),
+        ];
+        let prof2: Vec<Vec3> = [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)]
+            .iter()
+            .map(|&(u, w)| Vec3::new(u, w, 0.0))
+            .collect();
+        let mut b2 = Body::new();
+        b2.sweep_profile_rmf(&prof2, &path).unwrap();
+        assert!(b2.validate().is_ok(), "bent sweep invalid");
+        let v2 = b2.mass_properties().unwrap().volume;
+        let mesh2 = b2.mesh_volume();
+        assert!(
+            (mesh2 - v2).abs() < 1e-9 * (1.0 + v2),
+            "bent sweep mass {v2} != mesh {mesh2}"
+        );
+        // The RMF elbow's volume in CLOSED FORM: each leg loses the
+        // mitre wedge, total 2 + sqrt(2). (This exactness also pinned
+        // the latent loft_sections side-plane orientation bug: the
+        // away-from-axis heuristic flipped two mitre-band frames.)
+        let expect2 = 2.0 + core::f64::consts::SQRT_2;
+        assert!(
+            (v2 - expect2).abs() < 1e-9 * (1.0 + expect2),
+            "bent sweep volume {v2} != 2 + sqrt(2)"
+        );
+    }
 
     #[test]
     fn wire_constructor_makes_wire_body() {
