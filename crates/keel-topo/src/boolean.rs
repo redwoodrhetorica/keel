@@ -5452,6 +5452,73 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 faults.push(BoolFault::Coincident(id_a, id_b));
                 continue;
             }
+            // CERTIFIED-DISJOINT plane/cone rung (task 38): a plane
+            // PARALLEL to the cone axis meets the infinite cone in a
+            // hyperbola, which SSI has no section rung for; but when
+            // the plane's distance from the axis exceeds the trimmed
+            // lateral's largest radius the faces provably never meet,
+            // and attempting SSI only records a spurious
+            // IntersectionFailed (every countersink carried four).
+            {
+                let plane_cone = match (&ref_a, &ref_b) {
+                    (
+                        SurfaceRef::Analytic(Surface3::Plane(p)),
+                        SurfaceRef::Analytic(Surface3::Cone(c)),
+                    ) => Some((p.clone(), c.clone(), fb, false)),
+                    (
+                        SurfaceRef::Analytic(Surface3::Cone(c)),
+                        SurfaceRef::Analytic(Surface3::Plane(p)),
+                    ) => Some((p.clone(), c.clone(), fa, true)),
+                    _ => None,
+                };
+                if let Some((p, c, cone_face, cone_is_a)) = plane_cone
+                    && p.frame.z.dot(c.frame.z).abs() < 1e-9
+                {
+                    let body = if cone_is_a { a } else { b };
+                    let mut zlo = f64::INFINITY;
+                    let mut zhi = f64::NEG_INFINITY;
+                    let mut sampled = true;
+                    'fins: for &lk in body
+                        .faces
+                        .get(cone_face)
+                        .map(|f| &f.loops)
+                        .into_iter()
+                        .flatten()
+                    {
+                        let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
+                            continue;
+                        };
+                        let mut cur = entry;
+                        while let Some(fin) = body.fins.get(cur) {
+                            match body.fin_curve_samples(cur, 8) {
+                                Some(pts) => {
+                                    for q in pts {
+                                        let z = (q - c.frame.origin).dot(c.frame.z);
+                                        zlo = zlo.min(z);
+                                        zhi = zhi.max(z);
+                                    }
+                                }
+                                None => {
+                                    sampled = false;
+                                    break 'fins;
+                                }
+                            }
+                            cur = fin.next;
+                            if cur == entry {
+                                break;
+                            }
+                        }
+                    }
+                    if sampled && zlo.is_finite() {
+                        let r_at = |z: f64| (c.radius + z * c.half_angle.tan()).abs();
+                        let rmax = r_at(zlo).max(r_at(zhi));
+                        let dist = (c.frame.origin - p.frame.origin).dot(p.frame.z).abs();
+                        if dist > rmax + tol.max(1e-9) + 1e-9 {
+                            continue; // provably disjoint: no SSI, no fault
+                        }
+                    }
+                }
+            }
             match intersect_surfaces(&ref_a, &ref_b, tol) {
                 // The crossing-pair imprint is LANDED (task 29): two
                 // exact closed conics on cylinder pairs assemble (the
