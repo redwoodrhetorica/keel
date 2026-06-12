@@ -3059,10 +3059,12 @@ pub struct Confidence {
 /// declaring it a flush mate is this caller's explicit choice.
 ///
 /// Scope (the narrow honest slice): planar face pairs with straight
-/// boundary edges snap, and near-mated cylinder lateral pairs (near-
+/// boundary edges snap; near-mated cylinder lateral pairs (near-
 /// coaxial, near-equal radius, flat caps) snap onto the exact carrier
-/// (the radial-gap clearance pin); other curved near-contact stays
-/// strict-only.
+/// (the radial-gap clearance pin); near-mated CONE lateral pairs
+/// (near-coaxial same-sense, near-equal taper and radius, flat caps:
+/// the countersink clearance plug, task 30) snap the same way; other
+/// curved near-contact stays strict-only.
 pub fn boolean_tolerant(
     a: &Body,
     b: &Body,
@@ -3440,6 +3442,208 @@ fn prepare_snap(a: &Body, b: &Body, fuzz: f64) -> Option<(Body, f64)> {
             );
             moved = moved.max(off_ax).max(dr);
             cyl_done.push(fb);
+        }
+    }
+    // CONE prepare (task 30, the M6 mirror): a near-mated lateral cone
+    // pair (near-coaxial, same axis sense, near-equal taper, near-equal
+    // radius at a common plane: the countersink clearance plug) snaps
+    // B's lateral onto A's EXACT carrier. Same honest slice as the
+    // cylinder: B's lateral bounded only by planes perpendicular to the
+    // axis, so the radial move keeps every vertex on its other carriers.
+    let mut cone_done: Vec<FaceKey> = Vec::new();
+    for fa in a.face_keys() {
+        let Some(Surface3::Cone(ca)) = a.face_surface3(fa) else {
+            continue;
+        };
+        let za = ca.frame.z;
+        let pa0 = ca.frame.origin;
+        let tan_a = ca.half_angle.tan();
+        for fb in b.face_keys() {
+            if cone_done.contains(&fb) {
+                continue;
+            }
+            let Some(Surface3::Cone(cb)) = b.face_surface3(fb) else {
+                continue;
+            };
+            if za.cross(cb.frame.z).norm() > 1e-6 || za.dot(cb.frame.z) <= 0.0 {
+                continue; // axes not parallel in the same taper sense
+            }
+            let d = cb.frame.origin - pa0;
+            let off_ax = (d - za * d.dot(za)).norm();
+            // B's radius measured at A's origin plane, and the taper gap.
+            let dz = d.dot(za);
+            let rb_at_a0 = cb.radius - dz * cb.half_angle.tan();
+            let dr = (rb_at_a0 - ca.radius).abs();
+            let dtan = (cb.half_angle.tan() - tan_a).abs();
+            // Axial overlap from fin CURVE samples (the vertex-only trap).
+            let hspan = |body: &Body, f: FaceKey| -> Option<(f64, f64)> {
+                let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+                for lk in body
+                    .faces
+                    .get(f)
+                    .map(|x| x.loops.clone())
+                    .unwrap_or_default()
+                {
+                    let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
+                        continue;
+                    };
+                    let mut cur = entry;
+                    while let Some(fin) = body.fins.get(cur) {
+                        for p in body.fin_curve_samples(cur, 8).unwrap_or_default() {
+                            let h = (p - pa0).dot(za);
+                            lo = lo.min(h);
+                            hi = hi.max(h);
+                        }
+                        cur = fin.next;
+                        if cur == entry {
+                            break;
+                        }
+                    }
+                }
+                (lo <= hi).then_some((lo, hi))
+            };
+            let (Some((alo, ahi)), Some((blo, bhi))) = (hspan(a, fa), hspan(b, fb)) else {
+                continue;
+            };
+            if blo > ahi + fuzz || alo > bhi + fuzz {
+                continue;
+            }
+            // The lateral gap over B's actual span (taper mismatch grows
+            // with height) bounds the whole snap movement.
+            let span_max = blo.abs().max(bhi.abs());
+            let gap = off_ax + dr + dtan * span_max;
+            if gap <= 1e-12 || gap > fuzz {
+                continue; // exactly mated already, or out of reach
+            }
+            // Flat-cap guard: every neighbour sharing an edge with fb
+            // must be a plane perpendicular to the axis.
+            let fb_edges = b.face_edge_set(fb);
+            let caps_ok = b.face_keys().into_iter().filter(|&fo| fo != fb).all(|fo| {
+                if !b.face_edge_set(fo).iter().any(|e| fb_edges.contains(e)) {
+                    return true;
+                }
+                matches!(b.face_surface3(fo),
+                    Some(Surface3::Plane(p)) if p.frame.z.cross(za).norm() <= 1e-9)
+            });
+            if !caps_ok {
+                continue;
+            }
+            let body = snapped.get_or_insert_with(|| b.clone());
+            // The new surface: A's exact axis, taper and radius, B's
+            // angular reference preserved; B's origin moved onto A's
+            // axis at its own height (radius re-derived there).
+            let Some(xb) = (cb.frame.x - za * cb.frame.x.dot(za)).try_normalize() else {
+                continue;
+            };
+            let org = pa0 + za * dz;
+            let r_at_org = ca.radius + dz * tan_a;
+            let frame = keel_geom::surface::Frame3 {
+                origin: org,
+                x: xb,
+                y: za.cross(xb),
+                z: za,
+            };
+            let Ok(cone) = keel_geom::surface::Cone3::new(frame, r_at_org, ca.half_angle) else {
+                continue;
+            };
+            let sense = body
+                .faces
+                .get(fb)
+                .and_then(|f| f.surface)
+                .map(|(_, s)| s)
+                .unwrap_or(true);
+            // Vertices: radial reprojection onto the exact carrier at
+            // their own height (caps perpendicular to the axis stay
+            // satisfied by construction).
+            let lps = body
+                .faces
+                .get(fb)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default();
+            let mut vs: Vec<crate::entity::VertexKey> = Vec::new();
+            for lk in lps {
+                let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                loop {
+                    if let Some(v) = body.fin_start_vertex(cur)
+                        && !vs.contains(&v)
+                    {
+                        vs.push(v);
+                    }
+                    let Some(next) = body.fins.get(cur).map(|x| x.next) else {
+                        break;
+                    };
+                    cur = next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+            }
+            for v in vs {
+                if let Some(x) = body.vertices.get_mut(v) {
+                    let w = x.point - pa0;
+                    let h = w.dot(za);
+                    if let Some(rad) = (w - za * h).try_normalize() {
+                        let np = pa0 + za * h + rad * (ca.radius + h * tan_a);
+                        moved = moved.max((np - x.point).norm());
+                        x.point = np;
+                    }
+                }
+            }
+            // Curves: rims become circles of the exact local radius
+            // about the exact axis; straight rulings re-fit their
+            // snapped endpoints.
+            for e in fb_edges {
+                let Some((ck, csense)) = body.edges.get(e).and_then(|x| x.curve) else {
+                    continue;
+                };
+                let Some(c) = body.curves.get(ck) else {
+                    continue;
+                };
+                match c {
+                    Curve3::Circle(circ) => {
+                        let h = (circ.center - pa0).dot(za);
+                        let n_old = circ.x_axis.cross(circ.y_axis);
+                        let nz = za * za.dot(n_old).signum();
+                        let Some(cx) = (circ.x_axis - nz * circ.x_axis.dot(nz)).try_normalize()
+                        else {
+                            continue;
+                        };
+                        if let Ok(nc) = keel_geom::curve::Circle3::new(
+                            pa0 + za * h,
+                            cx,
+                            nz.cross(cx),
+                            ca.radius + h * tan_a,
+                        ) {
+                            body.attach_edge_curve(e, Curve3::Circle(nc), csense);
+                        }
+                    }
+                    Curve3::Line(_) => {
+                        let Some(ed) = body.edges.get(e) else {
+                            continue;
+                        };
+                        let pts = (
+                            body.vertices.get(ed.bounds.0).map(|v| v.point),
+                            body.vertices.get(ed.bounds.1).map(|v| v.point),
+                        );
+                        if let (Some(p0), Some(p1)) = pts
+                            && let Ok(l) = keel_geom::curve::Line3::new(p0, p1 - p0)
+                        {
+                            body.attach_edge_curve(e, Curve3::Line(l), csense);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            body.attach_face_surface(
+                fb,
+                crate::entity::SurfaceGeom::Analytic(Surface3::Cone(cone)),
+                sense,
+            );
+            moved = moved.max(gap);
+            cone_done.push(fb);
         }
     }
     snapped.map(|b2| (b2, moved))

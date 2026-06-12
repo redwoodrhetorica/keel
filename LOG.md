@@ -6298,3 +6298,28 @@ VERIFICATION COMPLETE: 100k oracle BIT-IDENTICAL to a clean master worktree
 class equal line for line: the per-side seam flags and cone additions shift
 nothing in the fuzz sectors). WSL fuzz soak clean: fuzz_boolean 4733 runs/293s,
 fuzz_cyl_boolean 32742 runs/291s, fuzz_imprint 661387 runs/191s, zero crashes.
+
+## Addendum 202: tolerant cone prepare (task 30) (2026-06-12)
+
+prepare_snap (boolean.rs) grows the CONE rung, the M6 radial-gap clearance
+pin's twin: a near-mated lateral cone pair (near-coaxial axes in the SAME taper
+sense, near-equal taper, near-equal radius at a common plane, flat caps
+perpendicular to the axis) snaps B's lateral onto A's EXACT carrier before the
+strict pipeline runs. The movement bound folds all three gap sources:
+off_axis + |radius gap at A's origin plane| + |tan(half_angle) gap| * |span|,
+and must sit within the caller's fuzz (still capped by local feature size).
+Vertices reproject radially at their own height onto r(h) = r0 + h*tan; rim
+circles become exact circles of the local radius about the exact axis; rulings
+re-fit their snapped endpoints.
+
+ORACLES (tests/cone_boolean.rs): the countersink clearance plug with radii
+1e-5 UNDER (same taper) salvages at tier 2 and unions to EXACTLY 32 +
+12.25*pi/3 (1e-9); the 3e-6 axis-offset plug salvages the same; a fuzz bound
+SMALLER than the gap refuses to salvage (the honesty rail). This completes the
+task-30 CONE story end to end: strict mated cones (Addendum 201) + the
+tolerant prepare that funnels real-world clearance exports onto them. The
+SPHERE prepare remains deferred behind the strict sphere socket (the
+sphere-split integration map, Addendum 201).
+VERIFICATION: 100k oracle buckets again identical (strict 95604/4396/WRONG 0,
+tolerant 25000/0/WRONG 0); fuzz soak clean (fuzz_boolean 4578 runs,
+fuzz_cyl_boolean 35080 runs, zero crashes). Suite 134+77+271+3 green.
