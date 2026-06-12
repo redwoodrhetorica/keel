@@ -6615,3 +6615,18 @@ KEEL_STEINMETZ_DEBUG trace shows correct per-bowtie decisions), and the
 remaining wrong piece traces to a loop whose conic arcs are ALL c2-carrier
 (the c1/c2 role analysis per loop is the next debug entry, mapped in the
 task). Gate closed; suite 16/16 green; the canary green.
+
+## Addendum 219: task-29 root cause fully characterized (2026-06-12)
+
+The harness''s per-fin loop dump settles it: after the crossing-pair imprint,
+one face holds BOTH c2 arcs plus the rim, seam and all four c1 quarter-arcs:
+the SECOND c2 arc was hosted onto the face the first had already split.
+curved_face_containing judges containment THROUGH the declared arc geometry
+(spans and bands built from the arc_sweep declarations), but the antipodal
+half declarations are a free choice made independently: a CIRCULAR
+consistency problem between declaration and hosting. In the degenerate case
+the declaration is a genuine relabeling and the result is correct IFF
+hosting follows the same declaration; the fix is declaration-driven hosting
+(or topology-driven arc placement), after which the step-5 post-fix pass
+dissolves. Full fix direction in the task notes. Gate closed; suite 16/16
+green; this is the cleanest re-entry point the milestone has had.

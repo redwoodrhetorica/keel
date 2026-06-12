@@ -1757,6 +1757,44 @@ mod tests {
                         .cyl_angular_span(fk, c.frame.origin, c.frame.x, c.frame.y, c.frame.z)
                 }
             );
+            // Per-fin loop dump: carrier plane, sweep, direction.
+            for lk in ia
+                .body
+                .faces
+                .get(fk)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default()
+            {
+                let Some(entry) = ia.body.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                while let Some(fin) = ia.body.fins.get(cur) {
+                    let ek = fin.edge;
+                    let e = ia.body.edges.get(ek).unwrap();
+                    let kind = match e.curve.and_then(|(ck, _)| ia.body.curves.get(ck)) {
+                        Some(Curve3::Ellipse(el)) => {
+                            let n = el.x_axis.cross(el.y_axis);
+                            format!("ell n=({:.2},{:.2},{:.2})", n.x, n.y, n.z)
+                        }
+                        Some(Curve3::Circle(_)) => "circ".into(),
+                        Some(Curve3::Line(_)) | None => "line".into(),
+                        Some(Curve3::Nurbs(_)) => "nurbs".into(),
+                    };
+                    let (p0, p1) = (
+                        ia.body.vertices.get(e.bounds.0).map(|v| v.point),
+                        ia.body.vertices.get(e.bounds.1).map(|v| v.point),
+                    );
+                    eprintln!(
+                        "  fin e {ek:?} {kind} sweep {:?} fwd {} b0 {:?} b1 {:?}",
+                        e.arc_sweep, fin.forward, p0, p1
+                    );
+                    cur = fin.next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+            }
             assert!(area > 0.1, "piece {fk:?} area {area}");
             assert!(ia.body.face_interior_point(fk).is_some());
         }
