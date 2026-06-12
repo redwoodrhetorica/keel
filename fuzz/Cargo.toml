@@ -87,6 +87,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "fuzz_cone_boolean"
+path = "fuzz_targets/fuzz_cone_boolean.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "fuzz_nurbs_boolean"
 path = "fuzz_targets/fuzz_nurbs_boolean.rs"
 test = false

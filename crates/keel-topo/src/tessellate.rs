@@ -1083,8 +1083,14 @@ impl Body {
                         d
                     };
                     // More segments for wider arcs so chord error stays
-                    // bounded as the sweep approaches 2pi.
-                    let seg = ((d.abs() * 8.0 / core::f64::consts::PI).ceil() as usize).max(8);
+                    // bounded as the sweep approaches 2pi. Density
+                    // matches the closed-circle fallback (32 per full
+                    // turn): at the old 16 a rim split into two open
+                    // halves polygonized visibly coarser than an intact
+                    // rim (task 38: the countersink hole read 2.5
+                    // percent small and pushed small intersections out
+                    // of the mass==mesh band).
+                    let seg = ((d.abs() * 16.0 / core::f64::consts::PI).ceil() as usize).max(8);
                     for k in 1..seg {
                         verts.push(c.point(ts + d * (k as f64 / seg as f64)));
                     }
@@ -1128,7 +1134,8 @@ impl Body {
                     }
                     d
                 };
-                let seg = ((d.abs() * 8.0 / pi).ceil() as usize).max(8);
+                // Same density as the circle arm (32 per full turn).
+                let seg = ((d.abs() * 16.0 / pi).ceil() as usize).max(8);
                 for k in 1..seg {
                     verts.push(el.point(ts + d * (k as f64 / seg as f64)));
                 }

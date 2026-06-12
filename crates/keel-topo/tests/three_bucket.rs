@@ -39,6 +39,145 @@ impl Lcg {
     }
 }
 
+/// The CONE sector (task 38: gate coverage for the cone vocabulary the
+/// task-30 slice added). Random block-countersink configurations (an
+/// axis-aligned frustum crossing the block top transversally), where
+/// the reference volume is the EXACT closed-form frustum slice:
+///
+///   overlap = pi/3 * h_in * (r0^2 + r0*rt + rt^2),  rt = r(block top)
+///
+/// Buckets: PASS = clean result, mass within 1e-9 of the reference and
+/// mesh within the curved CHORDAL band (2e-2: adaptive tessellation's
+/// worst legitimate deviation); DECLINE = Err / faulted / mass
+/// gracefully declined; WRONG = a clean result disagreeing with the
+/// closed form. The gate: WRONG == 0, always. Separate LCG stream:
+/// the box oracle's buckets stay bit-identical.
+#[test]
+#[ignore = "completion-gate instrument; run: cargo test --release -p keel-topo --test three_bucket -- --ignored --nocapture, scaled by KEEL_ORACLE_N"]
+fn three_bucket_cone_oracle() {
+    use keel_geom::surface::Frame3;
+    let pi = core::f64::consts::PI;
+    let n: usize = std::env::var("KEEL_ORACLE_N")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2000);
+    let start: usize = std::env::var("KEEL_ORACLE_START")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let mut rng = Lcg(0xC0DE_5EC7_0123_4567);
+    for _ in 0..start * 9 {
+        rng.f();
+    }
+    let (mut pass, mut decline, mut wrong) = (0usize, 0usize, 0usize);
+    let mut first_wrong = String::new();
+    for trial in start..start + n {
+        let mut v = [0.0f64; 9];
+        for x in v.iter_mut() {
+            *x = rng.f();
+        }
+        let ext = [2.0 + 8.0 * v[0], 2.0 + 8.0 * v[1], 2.0 + 8.0 * v[2]];
+        // Frustum base strictly inside the block, top above the block
+        // top (the transversal countersink class; same clamps as
+        // fuzz_cone_boolean).
+        let base = 0.3 + (ext[2] - 0.6) * v[3];
+        let height = (ext[2] - base) + 0.3 + 5.0 * v[4];
+        // The WHOLE frustum (including the part above the block top)
+        // stays inside the wall footprint: a wide overhanging top makes
+        // the wall/lateral AABBs overlap and the plane-parallel-to-axis
+        // SSI (a hyperbola section) declines the trial before the
+        // countersink machinery runs.
+        let rmax = (ext[0].min(ext[1]) * 0.5 - 0.3).max(0.3);
+        let r0 = 0.2 + (rmax - 0.2).max(0.0) * v[5];
+        let r1 = 0.2 + (rmax - 0.2).max(0.0) * v[6];
+        let rt = r0 + (r1 - r0) * (ext[2] - base) / height;
+        let rmaxz = r0.max(r1);
+        let dbg = std::env::var("KEEL_ORACLE_DEBUG").is_ok();
+        if (r1 - r0).abs() < 1e-3 {
+            decline += 1; // a cylinder in disguise, not the cone class
+            continue;
+        }
+        let cx = (rmaxz + 0.1) + (ext[0] - 2.0 * (rmaxz + 0.1)) * v[7];
+        let cy = (rmaxz + 0.1) + (ext[1] - 2.0 * (rmaxz + 0.1)) * v[8];
+        let mut a = Body::new();
+        a.block(Vec3::new(0.0, 0.0, 0.0), ext[0], ext[1], ext[2])
+            .unwrap();
+        let frame = Frame3::from_z(Vec3::new(cx, cy, base), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut b = Body::new();
+        if b.loft_circles(frame, r0, r1, height).is_err() {
+            decline += 1;
+            continue;
+        }
+        let op = match trial % 3 {
+            0 => BoolOp::Union,
+            1 => BoolOp::Intersection,
+            _ => BoolOp::Difference,
+        };
+        let va = ext[0] * ext[1] * ext[2];
+        let frustum = |ra: f64, rb: f64, h: f64| pi / 3.0 * h * (ra * ra + ra * rb + rb * rb);
+        let overlap = frustum(r0, rt, ext[2] - base);
+        let vb = frustum(r0, r1, height);
+        let reference = match op {
+            BoolOp::Union => va + vb - overlap,
+            BoolOp::Intersection => overlap,
+            BoolOp::Difference => va - overlap,
+        };
+        match boolean(&a, &b, op, 1e-7) {
+            Err(e) => {
+                decline += 1;
+                if dbg && trial < start + 20 {
+                    eprintln!("  cone {trial} {op:?}: boolean Err {e:?}");
+                }
+            }
+            Ok(res) => {
+                let informational = res
+                    .faults
+                    .iter()
+                    .all(|f| matches!(f, keel_topo::boolean::BoolFault::Coincident(..)));
+                if !informational {
+                    decline += 1;
+                    if dbg && trial < start + 20 {
+                        eprintln!("  cone {trial} {op:?}: faulted {:?}", res.faults);
+                    }
+                    continue;
+                }
+                let mesh = res.body.mesh_volume();
+                let mesh_ok = (mesh - reference).abs() <= 2e-2 * (1.0 + reference);
+                match res.body.mass_properties().map(|m| m.volume) {
+                    Ok(m) => {
+                        if (m - reference).abs() <= 1e-9 * (1.0 + reference) && mesh_ok {
+                            pass += 1;
+                        } else {
+                            wrong += 1;
+                            eprintln!(
+                                "WRONG cone trial {trial} {op:?}: ref {reference}, mass {m}, mesh {mesh}; ext {ext:?} base {base} h {height} r0 {r0} r1 {r1} c ({cx},{cy})"
+                            );
+                            if first_wrong.is_empty() {
+                                first_wrong =
+                                    format!("cone trial {trial} {op:?} ref {reference} mass {m}");
+                            }
+                        }
+                    }
+                    // Graceful mass decline: honest, but the mesh must
+                    // not silently disagree with the closed form.
+                    Err(_) if mesh_ok => decline += 1,
+                    Err(e) => {
+                        wrong += 1;
+                        eprintln!(
+                            "WRONG cone trial {trial} {op:?}: mass declined ({e:?}) AND mesh {mesh} vs ref {reference}; ext {ext:?} base {base} h {height} r0 {r0} r1 {r1}"
+                        );
+                        if first_wrong.is_empty() {
+                            first_wrong = format!("cone trial {trial} mesh {mesh} vs {reference}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("cone oracle: N {n}: PASS {pass} / DECLINE {decline} / WRONG {wrong}");
+    assert_eq!(wrong, 0, "WRONG must be zero: {first_wrong}");
+}
+
 #[test]
 #[ignore = "completion-gate instrument (~150ms/trial debug); run: cargo test --release -p keel-topo --test three_bucket -- --ignored --nocapture, scaled by KEEL_ORACLE_N"]
 fn three_bucket_boolean_oracle() {

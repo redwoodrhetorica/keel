@@ -6728,3 +6728,41 @@ edge_polyline honors a recorded sweep first (plus a pcurve fallback for
 carriers that cannot parameterize their edge at all). corner-blend.webp
 ships; all 13 demos done. Next: task 38 (cone fuzz target + oracle
 sector), then task 39 (completion-gate re-run + perf re-measure).
+
+## Addendum 223: task 38: cone gate coverage (fuzz target + oracle sector) + two cone-class fixes (2026-06-12)
+
+The new vocabulary gets gate instruments. fuzz_cone_boolean (block
+countersunk by an axis-aligned frustum, clamped to the transversal
+class; difference/intersection; the standard never-panic / valid /
+bounded-volume invariants): smoke soak 89,559 runs in 301 s, zero
+crashes. three_bucket_cone_oracle (same file as the box oracle, its own
+LCG stream so the box buckets stay untouched): random block-countersink
+configurations against the EXACT closed-form frustum slice, mass within
+1e-9, mesh within the curved chordal band: 2,000 trials = PASS 1998 /
+DECLINE 2 / WRONG 0 (the 2 = the cylinder-in-disguise filter).
+
+Building the sector exposed two real cone-class defects, both fixed:
+
+1. Every countersink carried four spurious IntersectionFailed faults:
+   the block walls are planes PARALLEL to the cone axis (a hyperbola
+   section SSI has no rung for), and prepare attempted them anyway. New
+   CERTIFIED-DISJOINT plane/cone rung: a parallel plane whose distance
+   from the axis exceeds the trimmed lateral''s largest radius (fin
+   samples give the axial range) provably never meets the face: no SSI
+   attempt, no fault. The inside-footprint class is now fault-free.
+
+2. Countersink INTERSECTIONS declined at the internal mass==mesh gate:
+   mass was EXACT (pi/3 closed form to 1e-14) but the mesh read 3
+   percent small. Per-face triangle accounting traced it to
+   loop_polygon''s OPEN-arc sampling (8 segments per half turn): a rim
+   split by the imprint into open arcs polygonized at HALF the density
+   of an intact closed rim (32-gon fallback), and on a small
+   intersection the missing chordal volume blew the 2 percent band.
+   Open circle and ellipse arcs now sample at 32 per full turn,
+   matching the closed fallback.
+
+Verification: suite green, clippy clean, the 100k BOX oracle
+BIT-IDENTICAL for the seventh consecutive run (strict 95604 / 4396 /
+WRONG 0; tolerant 25000 / 0 / 0): neither the disjoint rung nor the
+density change shifts the box corpus. Next: task 39, the full
+completion-gate re-run from D:\keel-gate plus the perf re-measure.
