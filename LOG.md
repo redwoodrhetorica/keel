@@ -6126,3 +6126,20 @@ spike entries (no wasm-bindgen needed yet); run_spike.mjs loads the module raw i
 
 The spike''s unknown-unknowns are resolved: nothing blocks the swap on feasibility.
 The browser-worker integration and the mesh+faceGroups protocol are task 28''s scope.
+
+## Addendum 195: the worker-protocol mesh surface (task 28) (2026-06-12)
+
+keel-topo/src/render.rs: WorkerMesh = the consumer-shaped packaging (flat f32
+positions/normals duplicated per triangle, u32 indices, per-face (id,start,count)
+picking groups, LineSegments pairs flattened from the parity-era render_mesh edge
+polylines: the item-95 machinery reused, not duplicated; the groups are the one thing
+it lacked). keel-wasm: demo_mesh_build + raw buffer accessors (thread-local staging,
+zero-copy typed-array views host-side); run_spike.mjs verifies the contract in V8.
+
+MEASURED (Node/V8): demo scene (drilled plate) builds + meshes in 6.2 ms inside WASM:
+2,124 tris, 7 face groups covering the index buffer EXACTLY, 141 edge segments; module
+0.72 MiB. Tests: worker_mesh_block_shape (exact counts: 36 indices, 6 groups, 12
+segments) + worker_mesh_drilled_plate (group coverage + signed-volume agreement with
+mesh_volume within the f32 quantization band). The remaining fieldforge-side work
+(op-tree JSON in, the actual buildShape port) belongs to the app integration, not the
+kernel surface.

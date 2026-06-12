@@ -29,6 +29,7 @@ pub mod partition;
 pub mod pmc;
 pub mod profile;
 pub mod query;
+pub mod render;
 pub mod replace;
 pub mod session;
 pub mod sheet;
