@@ -334,6 +334,53 @@ fn decline(dir: &Path) {
     println!("decline: {frames} frames");
 }
 
+/// Extrude + revolve: a tapered pentagon tower morphs (top scale
+/// breathing), then a revolved vase whose bulge breathes. Both halves
+/// are real constructions, not booleans.
+fn construct(dir: &Path) {
+    let frames = 36usize;
+    for i in 0..frames {
+        let half = 18usize;
+        let (body, label) = if i < half {
+            let t = i as f64 / half as f64;
+            let w = 1.0 - (2.0 * t - 1.0).abs();
+            let s = 1.0 - 0.6 * w;
+            let base: Vec<Vec3> = (0..5)
+                .map(|k| {
+                    let a = core::f64::consts::TAU * k as f64 / 5.0 + core::f64::consts::FRAC_PI_2;
+                    Vec3::new(a.cos(), a.sin(), 0.0)
+                })
+                .collect();
+            let mut b = Body::new();
+            b.extrude_tapered(&base, Vec3::new(0.0, 0.0, 2.0), s)
+                .expect("extrude frame");
+            (b, format!("extrude taper {s:.2}"))
+        } else {
+            let t = (i - half) as f64 / half as f64;
+            let w = 1.0 - (2.0 * t - 1.0).abs();
+            let bulge = 0.75 + 0.45 * w;
+            let f = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+            let mut b = Body::new();
+            b.revolve(
+                f,
+                &[
+                    (0.0, 0.0),
+                    (0.55, 0.0),
+                    (bulge, 0.7),
+                    (0.45, 1.5),
+                    (0.5, 2.0),
+                    (0.0, 2.0),
+                ],
+            )
+            .expect("revolve frame");
+            (b, "revolve".to_string())
+        };
+        let mesh = body.worker_mesh();
+        write_frame(dir, i, &mesh, &format!("\"label\":\"{label}\""));
+    }
+    println!("construct: {frames} frames");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let op = args.get(1).map(String::as_str).unwrap_or("drill");
@@ -351,6 +398,7 @@ fn main() {
         "corner" => corner(dir),
         "cellular" => cellular(dir),
         "decline" => decline(dir),
+        "construct" => construct(dir),
         other => {
             eprintln!("unknown op {other}; available: drill, trio, pin, fillet, corner");
             std::process::exit(1);

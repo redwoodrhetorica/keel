@@ -6426,3 +6426,11 @@ instead of emitting a plausible-but-wrong body it refuses ON CAMERA: the
 amber "DECLINED (never a wrong body)" badge is the doctrine made visible.
 The dumper asserts honesty both ways: if the kernel ever starts carving this,
 the frame relabels rather than keep claiming a decline. Six gifs total now.
+
+## Addendum 208: extrude+revolve gif (task 34) (2026-06-12)
+
+extrude-revolve.gif (470 KiB): a tapered pentagon tower breathing its top
+scale (extrude_tapered), then a revolved vase breathing its bulge (revolve,
+pole-to-pole linear profile: honest stacked cones). Real constructions per
+frame, labeled. One mild stray arc on the vase bulge: the same arc-identity
+family as the parked corner blend (noted, not blocking).
