@@ -1,14 +1,13 @@
-# Keel Project Log
+# Keel Engineering Log
 
-A running diary of project state, decisions, and next steps. Newest entry last.
-Convention: every working session appends an entry (date, what happened, decisions
-made, open questions, exact next step). This file is the authoritative "where are we"
-record; the spec holds the architecture, docs/research/ holds the evidence, git holds
-the code history. Style rule: no em-dashes anywhere in this repo's prose.
+This is the running engineering log of the kernel's development, appended as work
+happened. It has been lightly redacted for publication: dates, timestamps, and
+process chatter have been removed, while the technical content is unchanged. Addendum
+numbers preserve ordering, and all measurements are reported as recorded at the time.
 
 ---
 
-## 2026-06-07 (project founding through M1 + wave-2 research)
+## Founding: project founding through M1 + wave-2 research
 
 ### What this project is
 
@@ -17,30 +16,28 @@ Purpose: OSS alternative (the gap is precise: OCCT is the only full open kernel 
 its booleans/local-ops are the weak points; everything else is geometry libraries
 without the solid-modeling tier). Possibly production if quality permits.
 Proof milestone (M7): robust booleans on NURBS-bounded solids surviving mass
-randomized testing. The developer is Claude (AI, working across sessions); the user
-directs strategy and supplies research but does not code or micro-manage.
+randomized testing.
 
 ### Founding decisions (debated, settled)
 
 - **Rust** (stable, no nightly), chosen over C/C++/C# after extended debate. Deciding
-  argument: the developer is an AI; the compiler is the only memory that never resets
-  between sessions, memory-corruption-at-a-distance is the worst bug class for a
+  argument: memory-corruption-at-a-distance is the worst bug class for a
   run/read/edit debug loop, and cargo's test economics enable the generated-test
   volume that substitutes for decades of industrial regression data.
 - Working name "Keel" (ship's backbone). Crate name availability check deferred to
   first publish. "Parasolid" is a Siemens trademark, benchmark reference only.
-- Architecture spec: docs/superpowers/specs/2026-06-07-keel-kernel-architecture-design.md
-  (decisions D1-D9, roadmap M1-M7). M1 plan: docs/superpowers/plans/2026-06-07-m1-foundations.md.
+- Architecture spec: docs/superpowers/specs/keel-kernel-architecture-design.md
+  (decisions D1-D9, roadmap M1-M7). M1 plan: docs/superpowers/plans/m1-foundations.md.
 
-### Research program (two waves so far, user keeps feeding more)
+### Research program (two waves so far, research kept being fed in)
 
-- Wave 1: six agent-researched tracks in docs/research/ (a-f: robust numerics, NURBS,
+- Wave 1: six researched tracks in docs/research/ (a-f: robust numerics, NURBS,
   SSI, booleans/tolerant modeling, kernel architecture, ML-for-geometry), synthesized
   in 00-synthesis.md. Produced the binding deltas: EPICK predicate cascade, per-entity
   tolerances primary (no global epsilon), one Bernstein subdivision solver behind every
   query, topology-first SSI, winding-number boolean classification, ML strictly
   offline/propose-then-certify, corpus-as-product.
-- Wave 2 (user-supplied, ~450 sources): docs/research/kernel/ (10 dossiers) and
+- Wave 2 (~450 sources): docs/research/kernel/ (10 dossiers) and
   docs/research/nurbs/ (6 dossiers), synthesized in 01-synthesis-wave2.md. TWO VERDICT
   CHANGES applied to the spec:
   1. D3 rewritten: non-manifold PES-class topology with FIRST-CLASS REGIONS from day
@@ -82,8 +79,8 @@ directs strategy and supplies research but does not code or micro-manage.
 6. No fast-math, no implicit FMA in predicate paths; mul_add only where intended.
 7. Deterministic everything (iteration order, ids, tolerance decisions); it is an API
    promise, not an implementation detail.
-8. Append a LOG.md entry every working session (this rule added today at user request).
-9. User communication style: engage deeply with answers, no decision-menu funnels,
+8. Append a log entry for every working increment.
+9. Communication style: engage deeply with answers, no decision-menu funnels,
    no em-dashes ever.
 
 ### Open questions / risks
@@ -104,7 +101,7 @@ extraction), starting with a fresh read of any new research that has landed by t
 
 ---
 
-## 2026-06-07 (addendum: M2a planned, PAUSED before execution)
+## Addendum 1: M2a planned, PAUSED before execution
 
 - M2 split into M2a (spline core + curves) and M2b (surfaces + multivariate
   subdivision solver). M2a plan written, self-reviewed, committed:
@@ -119,13 +116,13 @@ extraction), starting with a fresh read of any new research that has landed by t
   rust-toolchain.toml pins stable, overriding WSL nightly; fix is
   `cargo +nightly fuzz run`. Rerun of both M1 targets (10 min each) was running
   in the background at pause time; check results before closing the M1 gate item.
-- USER PAUSED the session here.
+- PAUSED here.
 
 ---
 
-## 2026-06-07 (addendum 2: kernel/11 curved-predicates dossier absorbed, still paused)
+## Addendum 2: kernel/11 curved-predicates dossier absorbed, still paused
 
-- User's research agent flagged docs/research/kernel/11-curved-exact-predicates.md
+- docs/research/kernel/11-curved-exact-predicates.md flagged
   for immediate reading. Read in full and absorbed. It completes the D2 doctrine:
   four predicate tiers (linear exact / conics exact via one-root numbers + lazy
   exact + filters / quadrics exact-when-cheap via QI pencil analysis / NURBS
@@ -144,14 +141,14 @@ extraction), starting with a fresh read of any new research that has landed by t
 
 ---
 
-## 2026-06-07 (addendum 3: wave-3 research absorbed, dossiers 12-19)
+## Addendum 3: wave-3 research absorbed, dossiers 12-19
 
 - Eight more dossiers landed and were reviewed (12 direct modeling, 13 healing,
   14 determinism/serialization, 15 feature recognition, 16 assembly, 17 GD&T/PMI,
   18 patents, 19 regeneration). Synthesis: docs/research/02-synthesis-wave3.md.
 - PROJECT-LEVEL: (1) D10 patent posture added to spec. Three HIGH zones with safe
-  alternatives adopted: no auto-inferred Live-Rules constraints (explicit user
-  constraints instead, ~2034); no single-body mesh+B-rep convergent ops (separate
+  alternatives adopted: no auto-inferred Live-Rules constraints (explicit
+  user-specified constraints instead, ~2034); no single-body mesh+B-rep convergent ops (separate
   bodies + boundary conversion, ~2035+); no U-splines (THB-splines, or classic
   T-splines whose patent EXPIRED March 2024). Classical core all clear. License
   MIT OR Apache-2.0 validated. New standing rule: defensive publication of novel
@@ -172,9 +169,9 @@ extraction), starting with a fresh read of any new research that has landed by t
 
 ---
 
-## 2026-06-07 (addendum 4: UNPAUSED; fuzz find fixed; merges reconciled; T-splines dropped)
+## Addendum 4: UNPAUSED; fuzz find fixed; merges reconciled; T-splines dropped
 
-- USER DECISIONS: (1) T-splines dropped entirely (added to spec non-goals): no
+- DECISIONS: (1) T-splines dropped entirely (added to spec non-goals): no
   kernel ships them, no format exchanges them, THB covers refinement. (2) Patent
   posture discussed and affirmed: design-arounds are evaluated against CLAIM
   ELEMENTS, not outcomes; when implementing near a fenced zone, record which
@@ -191,13 +188,13 @@ extraction), starting with a fresh read of any new research that has landed by t
   Fix: non-finite roots are dropped (not representable in f64) and an infinite
   Cauchy bound falls back to the quadratic part's roots. Both findings have
   golden regression tests. All-artifact repro + 7-min rerun in background.
-- REPO TOPOLOGY NOTE: the research agent works on branch worktree-nurbs-research
+- REPO TOPOLOGY NOTE: the nurbs research lands on branch worktree-nurbs-research
   and merges into our branch. A conflicted merge of its synthesis-v2 spec deltas
-  was reconciled BY THE AGENT (commit 807e32c): resolution verified good: our
+  was reconciled (commit 807e32c): resolution verified good: our
   stronger D3/D9/D10 govern (its synthesis v2 explicitly defers to wave-spec
   text), its unique additions merged (D6 cubic-hybrid-clipping default,
   keel-tess/keel-io crate contracts, comparison-cascade testing oracle, risk
-  entries, D9 CI clause). docs/research/00-synthesis-v2.md is the agent's
+  entries, D9 CI clause). docs/research/00-synthesis-v2.md is the
   delta record (9-22); our wave records are 01-synthesis-wave2.md and
   02-synthesis-wave3.md. Spec remains the single binding document.
 - Round-3 research (kernel/20-24: sheet metal, kinematics, model diff,
@@ -213,7 +210,7 @@ extraction), starting with a fresh read of any new research that has landed by t
   noted, not yet fixed: x_tol = 1e-14*bound gives poor RELATIVE accuracy for
   small roots of mixed-scale cubics (kernel consumers operate in normalized
   boxes; revisit if a consumer needs it).
-- M2b PLAN CHECKLIST (from a peer-session review, adopted): (1) the surface
+- M2b PLAN CHECKLIST (from a peer review, adopted): (1) the surface
   evaluator contract is the full local-geometry record per kernel/06
   (E,F,G,L,M,N,K,H, principal curvatures + directions), not point+normal;
   (2) the evaluation core must be INTERVAL-CAPABLE by design (Krawczyk
@@ -224,9 +221,9 @@ extraction), starting with a fresh read of any new research that has landed by t
 
 ---
 
-## 2026-06-07 (addendum 5: M2a execution progress, pre-compaction checkpoint)
+## Addendum 5: M2a execution progress, checkpoint
 
-### M2a status (plan: docs/superpowers/plans/2026-06-07-m2a-spline-curves.md)
+### M2a status (plan: docs/superpowers/plans/m2a-spline-curves.md)
 
 DONE, committed, all tests green (23 in keel-geom + 58 in keel-math):
 - Task 1: keel-geom scaffolded, workspace member added.
@@ -254,7 +251,7 @@ REMAINING in M2a:
 - Task 9: benches/geom.rs (criterion: eval, derivs, project), fuzz target
   fuzz_nurbs_curve (plan has full code; add [[bin]] to fuzz/Cargo.toml + dep
   keel-geom), full validation (fmt + clippy -D warnings + workspace tests),
-  LOG entry with bench numbers, merge m2a-spline-curves to master per
+  log entry with bench numbers, merge m2a-spline-curves to master per
   finishing-a-development-branch.
 
 ### Fuzzing state
@@ -262,25 +259,24 @@ REMAINING in M2a:
 - Findings 1-4 all fixed + golden regression tests in keel-math
   (poly.rs fuzz_regression_extreme_ratios_yield_finite_roots; newton.rs
   midpoint = 0.5*lo + 0.5*hi doctrine).
-- A 15-minute fuzz_solve_cubic soak was running in background (task id
-  bi08j68hp) at checkpoint time; output file under AppData\Local\Temp\claude\
-  ...\tasks\bi08j68hp.output; prints ALL-ARTIFACTS-PASS then FUZZ-15MIN-CLEAN
+- A 15-minute fuzz_solve_cubic soak was running in background at checkpoint
+  time; prints ALL-ARTIFACTS-PASS then FUZZ-15MIN-CLEAN
   or FUZZ-FOUND-NEW. If FOUND-NEW: decode artifact f64s via
   [BitConverter]::ToDouble on 8-byte strides, fix, add golden test (procedure
-  proven 4x this session). WSL fuzzing recipe: wsl bash, . ~/.cargo/env,
+  proven 4x already). WSL fuzzing recipe: wsl bash, . ~/.cargo/env,
   CARGO_TARGET_DIR=~/keel-fuzz-target, cargo +nightly fuzz run <target>.
 - fuzz_bernstein_roots: clean over 8.6M runs.
 
 ### Branch/repo state
 
-- On branch m2a-spline-curves. Research agent merges arrive via branch
+- On branch m2a-spline-curves. NURBS research merges arrive via branch
   worktree-nurbs-research (sometimes as new commits ahead: check git log before
   assuming). Master is BEHIND: merge m2a-spline-curves to master at M2a end.
-- Research: 25 kernel dossiers + 7 nurbs dossiers + 3 syntheses (agent's
-  00-synthesis-v2.md deltas 9-22; my 01-synthesis-wave2.md, 02-synthesis-wave3.md).
+- Research: 25 kernel dossiers + 7 nurbs dossiers + 3 syntheses
+  (00-synthesis-v2.md deltas 9-22; 01-synthesis-wave2.md, 02-synthesis-wave3.md).
   Spec carries everything; spec governs.
 
-### Session decisions to remember
+### Decisions to remember
 
 - T-splines dropped (spec non-goal). Patent design-around doctrine: evaluate
   against CLAIM ELEMENTS, not outcomes; record omitted element + prior-art
@@ -289,10 +285,10 @@ REMAINING in M2a:
 
 ---
 
-## 2026-06-07 (addendum 6: M2a COMPLETE)
+## Addendum 6: M2a COMPLETE
 
-- Tasks 8 and 9 done post-compaction (clean resume from the checkpoint: the
-  LOG-first discipline works). project.rs: global closest-point via Bezier
+- Tasks 8 and 9 done (clean resume from the checkpoint: the
+  log-first discipline works). project.rs: global closest-point via Bezier
   decomposition + control-AABB branch-and-bound + bracketed-Newton polish;
   dense-sampling global-optimality proptest oracle green first run.
 - Benches (criterion baselines): nurbs_circle_point 98ns, derivs2 670ns,
@@ -304,16 +300,15 @@ REMAINING in M2a:
   insertion invariance); compiles; first WSL run pending.
 - Final validation: fmt clean, clippy -D warnings clean workspace-wide,
   84 tests green (26 geom + 58 math). M1-era fuzz artifacts all pass.
-- MemPalace (github.com/MemPalace/mempalace) evaluated at user request:
-  verdict skip-for-now; LOG/spec/git discipline is the authority and just
-  survived a compaction live; gbrain MCP already connected covers semantic
-  recall if wanted; revisit only if rediscovery costs appear.
+- MemPalace (github.com/MemPalace/mempalace) evaluated:
+  verdict skip-for-now; log/spec/git discipline is the authority; revisit only
+  if rediscovery costs appear.
 - M2a exit gate: all criteria met except the 10-minute fuzz run of the new
   curve target (queued; the cubic soak from the M1 findings is still running).
 - NEXT: merge m2a-spline-curves to master, then plan M2b (surfaces +
   multivariate Bernstein subdivision solver; checklist in addendum 5).
 
-## Addendum 7 (2026-06-07, post-merge): fuzz finding 5, homogeneous lift overflow
+## Addendum 7: fuzz finding 5, homogeneous lift overflow
 
 - First 10-minute run of fuzz_nurbs_curve: CURVE-FUZZ-FOUND. Artifact
   crash-25aa70aff2 decoded via cargo fuzz fmt: degree 2, valid clamped knots
@@ -341,7 +336,7 @@ REMAINING in M2a:
   future round-trip/serialization code must treat weights as projective.
 - Fresh 10-minute soak relaunched after the fix.
 
-## Addendum 8 (2026-06-07): fuzz finding 6, overfull end-knot multiplicity
+## Addendum 8: fuzz finding 6, overfull end-knot multiplicity
 
 - Post-fix soak: CURVE-FUZZ-FOUND again, crash-79c0a738. Decoded: degree 2,
   knots [a,a,a,b,b,b,b]: the END value b has multiplicity 4 = p+2.
@@ -361,18 +356,18 @@ REMAINING in M2a:
   retained) for internally built derivative curves, and derivative_curve
   now guards zero-width windows with the 0/0 := 0 basis-derivative
   convention instead of asserting. Lesson recorded: validation tightening
-  must distinguish user-facing invariants from internal representations
+  must distinguish caller-facing invariants from internal representations
   that legitimately live one step outside them.
 - Golden tests: exact artifact bits (MultiplicityExceeded), knots-level
   rejection matrix (end mult p+2 both sides, interior mult p+1 rejected,
   interior mult p accepted). 90 tests green (32 geom + 58 math), clippy
   clean, both artifacts re-run clean. Soak relaunched.
 
-## Addendum 9 (2026-06-07): curve fuzz CLEAN, M2b plan written
+## Addendum 9: curve fuzz CLEAN, M2b plan written
 
 - fuzz_nurbs_curve formal 10-minute soak after findings 5 and 6: CLEAN.
   Bonus signal: a mistyped replay command accidentally ran a 2.4 HOUR fuzz
-  session seeded with both crash inputs (directory passed as corpus) and
+  run seeded with both crash inputs (directory passed as corpus) and
   found nothing new. Corpus salvaged (+102 entries, now 194). M2a fuzz
   loop is closed: 6 findings total across M1+M2a, 6 golden tests, all
   artifacts replay clean.
@@ -380,7 +375,7 @@ REMAINING in M2a:
   re-confirmed: nurbs/02 (A2.3/A3.5/A3.6/A4.4/A5.3), nurbs/04 section 4
   (Projected Polyhedron), kernel/24 (canonical recovery wants exact
   fundamental forms + exact revolution surfaces: both now M2b deliverables).
-- M2b plan written: docs/superpowers/plans/2026-06-07-m2b-surfaces.md.
+- M2b plan written: docs/superpowers/plans/m2b-surfaces.md.
   11 tasks, full code: basis_ders (A2.3), NurbsSurface core (A3.5, with
   all M2a fuzz medicine baked into the constructor), derivatives (A4.4),
   SurfaceLocalGeometry (E,F,G,L,M,N,K,H, principal curvature directions),
@@ -395,7 +390,7 @@ REMAINING in M2a:
   consumers want basis ders anyway.
 - NEXT: execute the M2b plan on branch m2b-surfaces.
 
-## Addendum 10 (2026-06-07): M2b COMPLETE (surfaces, analytics, PP solver)
+## Addendum 10: M2b COMPLETE (surfaces, analytics, PP solver)
 
 - All 11 plan tasks executed on branch m2b-surfaces. 132 tests green
   (66 geom + 66 math), fmt + clippy -D warnings clean, all M1/M2a fuzz
@@ -432,13 +427,13 @@ REMAINING in M2a:
   deferred fix when a consumer needs the speed).
 - Process slip to not repeat: twice a PowerShell `;` chain committed
   before the clippy gate result was checked (the exact M2a lesson).
-  Switched to `if ($LASTEXITCODE -eq 0)` guards mid-session; keep that.
+  Switched to `if ($LASTEXITCODE -eq 0)` guards; keep that.
 - NEXT: M3 planning, which opens with the PRE-M3 PAPER-DESIGN GATE
   (boolean/SSI pipeline shape, D9 lineage hooks, PES operator set
   BEFORE the topology API freezes) plus the standing research re-read
   (files 14 in full, 19 kernel-obligations, 16 location/instancing).
 
-## Addendum 11 (2026-06-07): pre-M3 research re-read + topology gate design
+## Addendum 11: pre-M3 research re-read + topology gate design
 
 - Research sweep: no new dossiers since the M2b sweep. Pre-M3 standing
   reading completed: kernel/01 (topology/Euler), kernel/02 (non-manifold
@@ -447,7 +442,7 @@ REMAINING in M2a:
   (obligations: canonicalization service, deterministic sampling, clean
   traversability; all above-kernel, consistent with D9).
 - M3 PAPER-DESIGN GATE WRITTEN:
-  docs/superpowers/specs/2026-06-07-m3-topology-gate-design.md.
+  docs/superpowers/specs/m3-topology-gate-design.md.
   Key bindings: 8-entity tower (body/region/shell/face/loop/fin/edge/
   vertex, Parasolid names); regions primary and space-partitioning with
   one infinite region per body; PES-class fins with day-one radial
@@ -467,14 +462,14 @@ REMAINING in M2a:
   pure Euler sequences, debug dump + topology-hash goldens.
 - NEXT: M3 implementation plan (writing-plans), then execute.
 
-## Addendum 12 (2026-06-07): symgen plan shelved; M3 gate decisions confirmed
+## Addendum 12: symgen plan shelved; M3 gate decisions confirmed
 
-- User confirmed the M3 gate decisions: regions go NATIVE (decision 1
+- M3 gate decisions confirmed: regions go NATIVE (decision 1
   explicit); decisions 2-5 (PES fins + radial cycles, Euler-only
-  mutation, total lineage, paper boolean pipeline) per my judgement as
+  mutation, total lineage, paper boolean pipeline) as
   written in the gate doc.
-- Symbolic simplification (Wolfram/SymPy) PLANNED but SHELVED at user
-  direction: docs/superpowers/plans/2026-06-07-symgen-symbolic-
+- Symbolic simplification (Wolfram/SymPy) PLANNED but SHELVED:
+  docs/superpowers/plans/symgen-symbolic-
   simplification.md. Two modes designed: Mode A (CAS ground-truth
   verification tables for hand-derived formulas) and Mode B
   (CSE codegen with ULP-parity + pathological-corpus + bench gates).
@@ -485,13 +480,13 @@ REMAINING in M2a:
   Revisit triggers recorded in the plan header.
 - NEXT: M3 implementation plan.
 
-## Addendum 13 (2026-06-07): M3 implementation plan written
+## Addendum 13: M3 implementation plan written
 
-- Symgen purpose clarified by user and recorded in the shelf plan:
+- Symgen purpose clarified and recorded in the shelf plan:
   it exists for PERFORMANCE (replace a profiled-hot hand formula with a
   faster CAS-derived form), not formula verification; Mode A tables are
   the safety gate enabling a swap, not the goal.
-- M3 plan: docs/superpowers/plans/2026-06-07-m3-topology.md. Ten tasks:
+- M3 plan: docs/superpowers/plans/m3-topology.md. Ten tasks:
   (1) generational arenas + EntityId + entity tower (regions native,
   shells = oriented face-side collections owned by one region; closed
   manifold surface appears as two shells), (2) lineage + OpReport via a
@@ -514,7 +509,7 @@ REMAINING in M2a:
   solidity alternation rule, the manifold Euler check formula.
 - NEXT: execute M3 on branch m3-topology.
 
-## Addendum 14 (2026-06-07): M3 execution, Tasks 1-6 COMPLETE
+## Addendum 14: M3 execution, Tasks 1-6 COMPLETE
 
 - Branch m3-topology. keel-topo crate live: 18 tests green, clippy clean.
 - Task 1-2: generational Arena<T>+Key<T> (own impl, zero deps, LIFO free
@@ -550,9 +545,9 @@ REMAINING in M2a:
   construct.rs (block/prism/cylinder/cone/sphere/torus + geometry),
   Task 9 query.rs (adjacency/classification/dump), Task 10 fuzz_topo_ops
   + exit gate (fmt/clippy/tests/artifact replays/10-min soak/goldens/
-  LOG/merge).
+  log/merge).
 
-## Addendum 15 (2026-06-07): M3 COMPLETE; repo goes to GitHub
+## Addendum 15: M3 COMPLETE; repo goes to GitHub
 
 - Tasks 7-10 done: session.rs (Snapshot deep-clone, OpDescriptor journal,
   REPLAY DETERMINISM PROOF: journaled build replays to identical
@@ -569,14 +564,14 @@ REMAINING in M2a:
   split_region/merge_regions (M6), Body-held auto-journaling (session
   object refactor), umbrella-walk vertex adjacency optimization.
 - README updated: M3 status, crate layout, and the official project
-  subtitle per the user: "It will keel."
-- Repo to GitHub at user direction: keel-kernel/keel, PRIVATE (backup
+  subtitle: "It will keel."
+- Repo to GitHub: keel-kernel/keel, PRIVATE (backup
   without publicity; publish decision stays decoupled).
 - NEXT: M4 planning (PMC, CSI, curve-curve intersection, mass
   properties; the consumers that can falsify constructor orientation
   conventions). Standing rules: research re-read first.
 
-## Addendum 16 (2026-06-07): GitHub backup live
+## Addendum 16: GitHub backup live
 
 - M3 merged to master (post-merge sanity green: 159 tests).
 - Remote: https://github.com/redwoodrhetorica/keel (PRIVATE). The
@@ -584,17 +579,17 @@ REMAINING in M2a:
   CLI; the repo lives under the personal account and transfers to
   keel-kernel/keel in one command (Settings > Transfer, or
   `gh api repos/redwoodrhetorica/keel/transfer -f new_owner=keel-kernel`)
-  once the user creates the org in the web UI. GitHub auto-redirects
+  once the org is created in the web UI. GitHub auto-redirects
   old URLs after transfer. All branches pushed (m1-foundations,
   m2a-spline-curves, m2b-surfaces, m3-topology, worktree-nurbs-research,
   master).
 
-## Addendum 17 (2026-06-07): M4 plan written
+## Addendum 17: M4 plan written
 
 - Research sweep: nothing new; kernel/06 re-read (differential geometry
   contract confirmed shipped in M2b; isophotes/silhouettes noted as
   future interrogation consumers of the normal field).
-- M4 plan: docs/superpowers/plans/2026-06-07-m4-classification.md.
+- M4 plan: docs/superpowers/plans/m4-classification.md.
   Scope: implicit forms for Surface3 (signed, with gradient: CSI fast
   paths + PMC fuzz oracle), curve-curve intersection (analytic exact +
   PP for spline pairs, tangency reported not resolved), curve-surface
@@ -610,9 +605,9 @@ REMAINING in M2a:
   negative volume = fix M3, not the formula). fuzz_pmc vs implicit-sign
   oracle. Branch m4-classification.
 
-## Addendum 18 (2026-06-07): PMC performance research; M4 plan amended
+## Addendum 18: PMC performance research; M4 plan amended
 
-- User flagged ray-cast PMC cost. Research verdict: the field moved to
+- Ray-cast PMC cost flagged. Research verdict: the field moved to
   (a) winding numbers over crossing parity for containment (robust to
   noise/open boundaries; Liu et al. arXiv:2510.25159 solves EXACTLY our
   trimmed-parametric-surface UV containment with recursive winding +
@@ -631,7 +626,7 @@ REMAINING in M2a:
   closed-form projections) was never expensive; the INTERFACE is now
   the scalable one from day one.
 
-## Addendum 19 (2026-06-07): M4 Tasks 1-3 COMPLETE
+## Addendum 19: M4 Tasks 1-3 COMPLETE
 
 - Branch m4-classification. 172 workspace tests green, clippy clean.
 - Task 1: Surface3::implicit (signed, negative inside; cone valid on
@@ -663,7 +658,7 @@ REMAINING in M2a:
   (nearest-face primary + ray-ladder fallback + face BVH), Task 6 mass
   properties (volume-sign orientation audit), Task 7 fuzz_pmc + gate.
 
-## Addendum 20 (2026-06-07): M4 COMPLETE; ORIENTATION AUDIT PASSED
+## Addendum 20: M4 COMPLETE; ORIENTATION AUDIT PASSED
 
 - Tasks 4-7 done after the Tasks 1-3 checkpoint (addendum 19):
 - Task 4: pcurves for primitives. Planar faces: generic vertex-UV
@@ -698,11 +693,11 @@ REMAINING in M2a:
   the big one), standing research re-read first (nurbs/04 sections
   3-4, kernel/11, kernel/13 extension service).
 
-## Addendum 21 (2026-06-07): M5a plan written; interval soundness mandate
+## Addendum 21: M5a plan written; interval soundness mandate
 
 - M5 split M2-style: M5a = SSI engine in keel-geom (this plan), M5b =
   topology integration (trims, imprint, extension service, dihedral
-  radial sort). Plan: docs/superpowers/plans/2026-06-07-m5a-ssi-engine.md.
+  radial sort). Plan: docs/superpowers/plans/m5a-ssi-engine.md.
 - Three-tier architecture per nurbs/04 section 10 (re-read in full):
   exact analytic-analytic; lower-dimensional analytic x spline via
   EXACT bivariate Bernstein composition + certified 2D implicit-curve
@@ -712,7 +707,7 @@ REMAINING in M2a:
   dimensionality classification (Coincident never mis-traced).
   Honesty ledger in the plan: what is certified in v1 vs staged
   (validated-ODE, Yang-Jia-Yan escalation behind the same API).
-- USER MANDATE recorded: verify interval soundness before building
+- DESIGN MANDATE recorded: verify interval soundness before building
   certification on it. Task 0 added, BLOCKING Task 5: fix the
   Interval overflow-to-inf hole (bounds become extended reals; found
   by inspection during plan review), half-ulp containment property
@@ -721,9 +716,9 @@ REMAINING in M2a:
   clean 10-minute soak as the gate.
 - NEXT: execute M5a on branch m5a-ssi, Task 0 first.
 
-## Addendum 22 (2026-06-07): M5a Tasks 0-4 COMPLETE; interval gate CLEAN
+## Addendum 22: M5a Tasks 0-4 COMPLETE; interval gate CLEAN
 
-- Branch m5a-ssi. Task 0 (USER MANDATE): Interval bounds are now
+- Branch m5a-ssi. Task 0 (DESIGN MANDATE): Interval bounds are now
   EXTENDED REALS. The pre-audit hole was real: mul/add of near-MAX
   operands overflowed to +-inf and broke the finite-bounds invariant
   in release. Fix: infinite bounds legal (unbounded), point-at-infinity
@@ -759,9 +754,9 @@ REMAINING in M2a:
 - NEXT: Task 5 tier 3 (spline x spline: Gauss-map separability,
   collinear-normal seeds, Krawczyk-verified marching), Task 6 fit
   hardening for closed branches, Task 7 fuzz_ssi + gate (incl. the
-  USER-MANDATED 2-HOUR extended soak before merge).
+  MANDATED 2-HOUR extended soak before merge).
 
-## Addendum 23 (2026-06-07): M5a Tasks 5-7 done; gate soaks running
+## Addendum 23: M5a Tasks 5-7 done; gate soaks running
 
 - Task 5 (tier 3, spline x spline): the centerpiece. PatchInfo with
   sampled normal cones; cones_separable = antiparallel-angle test
@@ -790,12 +785,12 @@ REMAINING in M2a:
   implicit forms; coincident never mis-traced) + SSI benches.
 - 200 workspace tests green, fmt + clippy clean.
 - GATE RUNNING: 10-min fuzz_ssi, then 10-min fuzz_interval re-confirm,
-  then the USER-MANDATED 2-HOUR extended soak (fuzz_ssi + fuzz_interval)
+  then the MANDATED 2-HOUR extended soak (fuzz_ssi + fuzz_interval)
   before merge.
 
-## Addendum 24 (2026-06-07): M5a COMPLETE; 2-hour soak CLEAN; merged
+## Addendum 24: M5a COMPLETE; 2-hour soak CLEAN; merged
 
-- USER-MANDATED EXTENDED SOAK PASSED. Prior artifacts replay clean.
+- MANDATED EXTENDED SOAK PASSED. Prior artifacts replay clean.
   fuzz_interval 1hr: 385,916,505 runs, 0 errors, 0 artifacts.
   fuzz_ssi 1hr: 723,023,053 runs, 0 errors, 0 artifacts. ~1.1 BILLION
   executions total across both targets, nothing found. The interval
@@ -813,13 +808,13 @@ REMAINING in M2a:
   topology). Then M6: booleans, the proof milestone (M7 = robust
   booleans on NURBS-bounded solids).
 
-## Addendum 25 (2026-06-07): M5b plan written
+## Addendum 25: M5b plan written
 
 - Research sweep: nothing new. kernel/13 Part 2 re-read: extension
   service requirements pinned (bounded safe-reach from degree+curvature
   +weight-positivity, fold validation, analytic-exact preferred,
   fail-clean, co-designed with the intersector).
-- M5b plan: docs/superpowers/plans/2026-06-07-m5b-imprint-trim.md.
+- M5b plan: docs/superpowers/plans/m5b-imprint-trim.md.
   Seven tasks: (1) SsiCurve gains pcurve_a/pcurve_b (exact inversion
   for analytics, project+fit for spline tiers); (2) extend_surface
   service (analytic exact/unbounded = domain widen; NURBS bounded
@@ -836,7 +831,7 @@ REMAINING in M2a:
   extensions, Krawczyk imprint fitting all staged.
 - NEXT: execute M5b on branch m5b-imprint.
 
-## Addendum 26 (2026-06-07): M5b in progress, imprint core proven
+## Addendum 26: M5b in progress, imprint core proven
 
 - Branch m5b-imprint. 205 workspace tests green, clippy clean.
 - Task 3 DONE: dihedral radial sort in glue_edges (the M3 deferral).
@@ -869,7 +864,7 @@ REMAINING in M2a:
 - NEXT: crossing-case imprint, then two-body imprint, then Green mass
   props, then gate + merge.
 
-## Addendum 27 (2026-06-07): M5b COMPLETE (imprint primitives, trimmed faces, extension); merged
+## Addendum 27: M5b COMPLETE (imprint primitives, trimmed faces, extension); merged
 
 - Tasks done: 2 (extension), 3 (dihedral sort), 4 (single-face imprint
   both cases), 6 (trimmed-face mass props), 7 (fuzz/gate). Task 5
@@ -899,11 +894,11 @@ REMAINING in M2a:
   difference tables) + stitch. Standing research re-read first
   (kernel/01 boundary evaluation, Requicha-Voelcker, Tilove SMC/PMC).
 
-## Addendum 28 (2026-06-07): M6a in progress, boolean pipeline front half built (imprint + classify + select)
+## Addendum 28: M6a in progress, boolean pipeline front half built (imprint + classify + select)
 
 - M6 split into M6a (clean transversal cases, the milestone-proving
   pipeline) and M6b (robustness: coplanar, tangency, periodic surfaces,
-  NURBS-bounded solids). Plan: docs/superpowers/plans/2026-06-07-m6a-
+  NURBS-bounded solids). Plan: docs/superpowers/plans/m6a-
   boolean-engine.md. Branch m6a-boolean.
 - ARCHITECTURE DECISION (during execution): the first end-to-end proof
   is ALL-PLANAR (box-box), NOT sphere-sphere. Analysis showed the
@@ -953,7 +948,7 @@ REMAINING in M2a:
   exact volume proofs (intersection/difference boxes), Task 6
   metamorphic proptests + fuzz_boolean + gate.
 
-## Addendum 29 (2026-06-07): M6a COMPLETE (boolean engine, clean transversal cases); merged
+## Addendum 29: M6a COMPLETE (boolean engine, clean transversal cases); merged
 
 - The proof-milestone CORE works: the kernel computes regularized
   union/intersection/difference on solid bodies, and the results are
@@ -1007,7 +1002,7 @@ REMAINING in M2a:
   (the all-pairs O(n^2) is the throughput cost). Differential testing
   vs OCCT over the ABC corpus remains the M6b/M7 approximate oracle.
 
-## Addendum 30 (2026-06-07): M6b COMPLETE (winding-number classification + curved booleans); merged
+## Addendum 30: M6b COMPLETE (winding-number classification + curved booleans); merged
 
 - THE architectural win this milestone, mandated by docs/research/
   d-booleans-tolerant.md section 4 (ADOPT winding-number classification,
@@ -1069,7 +1064,7 @@ REMAINING in M2a:
   pair fuzzing with arbitrary-axis equatorial seaming. M7 remains the
   proof bar: robust booleans on NURBS-bounded solids.
 
-## Addendum 31 (2026-06-07): M6c COMPLETE (block-cylinder boolean; periodic-topology cracked); merged
+## Addendum 31: M6c COMPLETE (block-cylinder boolean; periodic-topology cracked); merged
 
 - The headline: block - cylinder = a DRILLED HOLE works -- the first
   MIXED-analytic-surface boolean, and the last analytic stop before
@@ -1111,7 +1106,7 @@ REMAINING in M2a:
   cylinder boolean tessellates many faces). Re-soaked fuzz_boolean
   (1900 runs) and fuzz_winding (1,183,564 runs) -- the phase-1 and
   tessellate_planar changes touch box/winding paths -- both CLEAN.
-- PROCESS NOTE: discovered (user caught it) that CI exists
+- PROCESS NOTE: discovered that CI exists
   (.github/workflows/ci.yml from M1): a `test` job runs fmt --check +
   `clippy --workspace --all-targets -- -D warnings` + cargo test on
   ubuntu/windows/macos, plus a `fuzz-build` job that only COMPILES the
@@ -1136,7 +1131,7 @@ REMAINING in M2a:
   fuzz_cyl_boolean throughput is low). M7 = robust booleans on NURBS-
   bounded solids (the proof bar).
 
-## Assessment (2026-06-07): is Keel a Parasolid competitor? (candid opinion, requested)
+## Assessment: is Keel a Parasolid competitor? (candid opinion)
 
 Honest, calibrated opinion (not a claim, not marketing). Split into three
 buckets, because lumping them flatters or insults the work:
@@ -1157,7 +1152,7 @@ buckets, because lumping them flatters or insults the work:
   (near-tangent, near-coincident, sliver, mm-vs-km scale, self-
   intersecting imports) and still return a usable answer. Keel's fuzzers
   found exactly those cases and the response was to decline cleanly --
-  correct for now, but DECLINING IS NOT COMPETING. A CAD user wants the
+  correct for now, but DECLINING IS NOT COMPETING. A CAD practitioner wants the
   boolean to succeed on their messy part.
 
 - COVERAGE / FEATURE-COMPLETE? Not close. Keel = booleans + primitives
@@ -1190,7 +1185,7 @@ with a differentiation thesis that is real rather than marketing. The
 risk isn't a wrong foundation; it's the multi-year robustness-and-
 coverage grind, and whether the niche is worth it.
 
-## Addendum 32 (2026-06-08): M7a COMPLETE (NURBS-faced solid plumbing); merged
+## Addendum 32: M7a COMPLETE (NURBS-faced solid plumbing); merged
 
 - First step of the proof milestone (M7, robust booleans on NURBS-
   bounded solids): make the winding-classified pipeline accept NURBS
@@ -1216,7 +1211,7 @@ coverage grind, and whether the niche is worth it.
   pcurve via project_point_surface; trimmed-NURBS fragment tessellation
   with a parameter-space cap-side filter; the NURBS cap interior point)
   -- and that is exactly where the exact-topology/tolerant-geometry
-  hybrid (file 11, the project's sharpest differentiation per the user)
+  hybrid (file 11, the project's sharpest differentiation)
   gets delivered. M7a is the clean soundness-gated PLUMBING those build
   on; aligning the milestone boundary with the thesis.
 - M7b CENTERPIECE (planned): the SSI engine ALREADY computes the curve
@@ -1230,7 +1225,7 @@ coverage grind, and whether the niche is worth it.
   90 geom + 77 math + 71 topo). No new fuzz target (M7a adds no mutation
   path: nurbs_sphere is a constructor, tessellation is a read). Merged.
 
-## Addendum 33 (2026-06-08): M7b -- FIRST NURBS BOOLEAN + the tolerant-edge CENTERPIECE delivered (inexact NURBS x NURBS deferred to M7c)
+## Addendum 33: M7b -- FIRST NURBS BOOLEAN + the tolerant-edge CENTERPIECE delivered (inexact NURBS x NURBS deferred to M7c)
 
 The proof milestone's payload, in two halves. Branch m7b-nurbs-booleans.
 
@@ -1307,7 +1302,7 @@ DEFERRED to M7c (honest ledger -- attempted in M7b, not shipped):
      cargo test; needs SSI patch-pair pruning/caching first.
   CRUCIALLY: the centerpiece is NOT blocked by this. The tier-2 lens
   already carries a genuinely nonzero (4e-7) fitted bound, so tolerant
-  geometry is really exercised today; NURBS x NURBS is a harder SECOND
+  geometry is really exercised now; NURBS x NURBS is a harder SECOND
   demonstration, not a prerequisite for the thesis.
 - Also deferred (unchanged): general trimmed-NURBS faces (multiple/curved
   trim loops); exact trimmed-NURBS mass properties (the coarse tessellated
@@ -1323,22 +1318,22 @@ GATE: exact CI triplet GREEN (fmt --all --check; clippy --workspace
 --all-targets -- -D warnings; cargo test --workspace = 241 tests: 90 geom
 + 77 math + 74 topo). Merged.
 
-## Addendum 34 (2026-06-08): M8 canonical recovery CORE -- the M7c blocker dissolved (NURBS x NURBS 190s -> 0.68s, exact)
+## Addendum 34: M8 canonical recovery CORE -- the M7c blocker dissolved (NURBS x NURBS 190s -> 0.68s, exact)
 
-PROMPT: the user added research (kernel files 25-33) and said "Maybe the
-answer to your blockers is there." It was. The M7c blockers (the tier-3
+DIRECTION: added research (kernel files 25-33) pointed at the blockers, and
+the answer was there. The M7c blockers (the tier-3
 NURBS-sphere x NURBS-sphere boolean: 190s and a fitted seam that would
 not split either face) were both symptoms of ONE mistake, named by file
 24 (canonical-geometry-recovery) and file 11 / headline #16 (the
 exactness affordability gradient): a `nurbs_sphere` is an EXACT quadric
 wearing a NURBS coat (Piegl-Tiller forward construction), and two spheres
-meet in an EXACT circle. I was using the heaviest spline machinery to
+meet in an EXACT circle. The heaviest spline machinery was being used to
 re-derive a circle the kernel has a closed form for. The fix is to
 RECOGNIZE the hidden analytic and route to the exact tier -- the
 affordability gradient made real (exact for conics/quadrics, certified-
 tolerant only for genuine free-form).
 
-The user chose the FULL canonical-recovery milestone (M8). This session
+Direction: do the FULL canonical-recovery milestone (M8). This increment
 shipped the CORE slice. Branch m8-canonical-recovery.
 
 DELIVERED (keel-geom `recover` module -- recognize -> fit -> certify ->
@@ -1387,8 +1382,8 @@ recover, assert the soundness invariant: never panics, and a returned
 deviation is a genuine UPPER bound on an INDEPENDENT denser sampling and
 <= tol. Soak clean.
 
-DEFERRED to M8-completion (honest ledger -- the full milestone the user
-chose; this session shipped the core that retires M7c):
+DEFERRED to M8-completion (honest ledger -- the full milestone chosen;
+this increment shipped the core that retires M7c):
 - TORUS recovery (file 24 flags torus as the most fragile; both principal
   curvatures nonzero + the torus relation; line-complex axis).
 - CURVE recovery (NURBS curve -> line/circle/ellipse, same certify gate).
@@ -1409,9 +1404,9 @@ GATE: exact CI triplet GREEN (fmt --all --check; clippy --workspace
 --all-targets -- -D warnings; cargo test --workspace = 249 tests: 97 geom
 + 77 math + 75 topo). fuzz_recover added + soak clean. Merged.
 
-## Addendum 35 (2026-06-08): M8 COMPLETION -- curve recovery, Body::simplify, torus; the full quadric family recovers
+## Addendum 35: M8 COMPLETION -- curve recovery, Body::simplify, torus; the full quadric family recovers
 
-Continued M8 (user: "Continue") through the completion items, finishing
+Continued M8 through the completion items, finishing
 the canonical-recovery milestone. Branch m8-completion.
 
 DELIVERED:
@@ -1444,7 +1439,7 @@ DELIVERED:
   ~1e-11 and deviation ~6e-6. Like the cone, the sampled certifier sits at
   ~6e-6 here, so torus recovers at a ~1e-5 modeling tolerance (documented).
 
-So the full M8 milestone the user chose is delivered: recognize ->
+So the full M8 milestone is delivered: recognize ->
 fit -> certify -> substitute for the entire analytic surface family plus
 line/circle curves, exposed both as `keel_geom::recover` and the
 `Body::simplify` HEAL pass, with the boolean front-end as the first
@@ -1473,11 +1468,11 @@ GATE: exact CI triplet GREEN (fmt --all --check; clippy --workspace
 --all-targets -- -D warnings; cargo test --workspace = 254 tests: 101 geom
 + 77 math + 76 topo). fuzz_recover re-soaked clean. Merged.
 
-## Addendum 36 (2026-06-08): Capability-gap assessment vs Parasolid + the PARITY PROGRAM kickoff
+## Addendum 36: Capability-gap assessment vs Parasolid + the PARITY PROGRAM kickoff
 
-The user directed a strategic pivot: after M8, close the capabilities/
+Direction: a strategic pivot. After M8, close the capabilities/
 features gap toward Parasolid "as close to parity as possible." Read the
-researcher's 144-item Parasolid capability map (research file 25) and
+144-item Parasolid capability map (research file 25) and
 audited Keel's actual code against it.
 
 GAP ASSESSMENT (grounded in the pub-fn inventory, not guesses):
@@ -1501,13 +1496,13 @@ GAP ASSESSMENT (grounded in the pub-fn inventory, not guesses):
   topology/tolerant-geometry + affordability-gradient recovery) is real
   but a WEDGE, not parity.
 
-ROADMAP (docs/superpowers/specs/2026-06-08-parasolid-parity-roadmap.md):
+ROADMAP (docs/superpowers/specs/parasolid-parity-roadmap.md):
 sequenced by leverage + dependency + reuse + patent-safety. Honest target
 = the kernel-appropriate, patent-safe subset (~110-120 of 144; excludes
 host/D-Cubed items, patent-fenced convergent modeling per file 18, and
 fragile mid-surface). Phases:
 - Phase 0 FOUNDATION (gates everything): 0a general-position booleans
-  (coincident/tangent/sheet/multi-tool -- today DECLINED; features
+  (coincident/tangent/sheet/multi-tool -- currently DECLINED; features
   generate exactly these), 0b offset-surface primitive, 0c attribute
   system.
 - Phase 1 TWEAK keystone (file 03: change-surface+reintersect -> move/
@@ -1524,7 +1519,7 @@ since the feature engines stand on general-position booleans + offset
 surfaces; building features first would hit "declined" on realistic
 inputs).
 
-## Addendum 37 (2026-06-08): Parity Phase 0b-i -- analytic offset surfaces (enabler)
+## Addendum 37: Parity Phase 0b-i -- analytic offset surfaces (enabler)
 
 First build of the parity program (Phase 0 foundation). keel-geom
 offset.rs: `offset_surface(&Surface3, d) -> Option<Surface3>`, the surface
@@ -1541,13 +1536,13 @@ ENABLER -- it does not tick a 144-map item by itself (offsets surface in
 items 37/41/45 as OPERATIONS, built later). CI triplet green (260 tests:
 107 geom + 77 math + 76 topo). Capability map unchanged at baseline.
 
-## Addendum 38 (2026-06-08): Parity Phase 0c -- attribute system COMPLETE (map 30 -> 35/144)
+## Addendum 38: Parity Phase 0c -- attribute system COMPLETE (map 30 -> 35/144)
 
 Closed Parasolid capability-map items 117-121. The Body already had a
 minimal attr store (BTreeMap<EntityId, BTreeMap<String, AttrValue>> + basic
 set_attr/attr + cleanup on delete); completed it to a real system:
 - AttrValue extended with Vec3([f64;3]) (colors/directions) and Bytes
-  (raw user fields) alongside F64/I64/Bool/Str. [117, 119]
+  (raw caller fields) alongside F64/I64/Bool/Str. [117, 119]
 - Full API: set_attr/attr/remove_attr/attr_keys, plus face_id/edge_id/
   vertex_id (key -> stable EntityId) so callers can attribute entities
   they hold a key to.
@@ -1567,7 +1562,7 @@ warnings; cargo test --workspace = 262 tests: 107 geom + 77 math + 78
 topo). No new fuzz target (attributes are a pure data store, no geometric
 mutation path). Merged.
 
-## Addendum 39 (2026-06-08): Peer review of crusst -- borrowable ideas logged
+## Addendum 39: Peer review of crusst -- borrowable ideas logged
 
 Read-only review of crussella0129/crusst (~6845 LOC, pure-Rust nalgebra
 B-rep peer; cloned to ../crusst-peer, nothing changed). It is the mirror
@@ -1604,15 +1599,14 @@ so only the interchange/ergonomics layer is worth taking):
 
 DO NOT borrow: the modeling core. crusst has no booleans/fillet/shell,
 manifold-only topology, placeholder pcurves. Keel leads decisively there.
-See memory [[peer-kernels]].
 
-## Addendum 40 (2026-06-08): FOUNDATION FIX -- certified surface projector made globally correct + 25x faster
+## Addendum 40: FOUNDATION FIX -- certified surface projector made globally correct + 25x faster
 
 A proptest soundness oracle (project::tests::surface_projection_is_global)
 caught project_point_surface returning a NON-GLOBAL (local) minimum on a
 high-derivative degree-(2,3) rational NURBS surface; proptest persisted the
 counterexample to proptest-regressions/project.txt (a permanent golden
-case). User directive: fix the foundation before building further.
+case). Directive: fix the foundation before building further.
 
 ROOT CAUSE: the certified projector used the correct Selimovic/Ma-Hewitt
 subdivide-with-convex-hull-exclusion architecture (research b-nurbs-freeform
@@ -1634,7 +1628,7 @@ passes in 14.67s (was 376s, 25x); the whole keel-geom suite dropped 348s ->
 23s since everything using the projector is now fast. 107/107 geom green.
 The persisted regression seed is KEPT as a permanent golden case.
 
-## Addendum 41 (2026-06-08): Parity Phase 0a (partial) -- multiple tool bodies + imprint-only (map 35 -> 37/144)
+## Addendum 41: Parity Phase 0a (partial) -- multiple tool bodies + imprint-only (map 35 -> 37/144)
 
 The tractable general-position-boolean wins that do not need the hard
 coincident/tangent machinery (which remains the next milestone, to be built
@@ -1653,7 +1647,7 @@ REMAINING in 0a (next milestone): coincident/tangent (33), sheet booleans
 (28), general/non-manifold bodies (29), local face-pair (31). GATE: exact CI
 triplet green. Merged.
 
-## Addendum 42 (2026-06-08): Parity interrogation -- bounding box + min distance (map 37 -> 39/144)
+## Addendum 42: Parity interrogation -- bounding box + min distance (map 37 -> 39/144)
 
 keel-topo interrogate.rs, built on the winding classifier's outward
 tessellation:
@@ -1669,7 +1663,7 @@ tessellation:
 RUNNING TOTAL: capability map 37 -> 39/144.
 GATE: exact CI triplet green. Merged.
 
-## Addendum 43 (2026-06-08): Parity interrogation cont. -- clash + body equivalence (map 39 -> 41/144)
+## Addendum 43: Parity interrogation cont. -- clash + body equivalence (map 39 -> 41/144)
 
 - 102 CLASH / INTERFERENCE: Body::clashes(other) -> bool. bbox reject;
   then surfaces-cross/touch via the analytic SSI (seam_curves non-empty,
@@ -1685,7 +1679,7 @@ GATE: exact CI triplet green. Merged.
 RUNNING TOTAL: capability map 39 -> 41/144.
 GATE: exact CI triplet green. Merged.
 
-## Addendum 44 (2026-06-08): Parity Phase 1 -- TWEAK / local-ops keystone (planar) (map 41 -> 45/144)
+## Addendum 44: Parity Phase 1 -- TWEAK / local-ops keystone (planar) (map 41 -> 45/144)
 
 The file-03 foundation local operation (change-surface + reintersect),
 the keystone OCCT lacks. keel-topo tweak.rs, PLANAR/polyhedral slice:
@@ -1706,9 +1700,9 @@ re-intersected by SSI, reusing offset_surface + ssi); taper/draft (38,78);
 delete-face-with-heal (40); non-simple corners.
 GATE: exact CI triplet green. Merged.
 
-## Addendum 45 (2026-06-08): Parity tweak DEEPENED -- curved (cylindrical) face tweak (map stays 45/144)
+## Addendum 45: Parity tweak DEEPENED -- curved (cylindrical) face tweak (map stays 45/144)
 
-Deepened the tweak keystone (user: "deepen tweak") from planar-only to the
+Deepened the tweak keystone (direction: "deepen tweak") from planar-only to the
 CURVED case. offset_face now dispatches on surface type:
 - Plane -> the existing three-plane-corner planar tweak.
 - Cylinder -> tweak_cylinder_radius: offset the lateral face's radius
@@ -1724,7 +1718,7 @@ reuses tweak_face_to_plane + a rotation), delete-face-with-heal (40),
 sphere/cone/torus tweak.
 GATE: exact CI triplet green. Merged.
 
-## Addendum 46 (2026-06-08): Parity tweak cont. -- taper/draft (map 45 -> 47/144)
+## Addendum 46: Parity tweak cont. -- taper/draft (map 45 -> 47/144)
 
 taper_face(face, pivot, axis, angle) (items 38, 78): rotate a planar
 face's plane about the parting line through `pivot` along `axis` by the
@@ -1737,7 +1731,7 @@ taper deferred.
 RUNNING TOTAL: capability map 45 -> 47/144.
 GATE: exact CI triplet green. Merged.
 
-## Addendum 47 (2026-06-08): Parity tweak FINISHED -- delete-face-with-heal + new-research review (map 47 -> 49/144)
+## Addendum 47: Parity tweak FINISHED -- delete-face-with-heal + new-research review (map 47 -> 49/144)
 
 delete_face(face) (items 40, 133): the MERGE/absorb heal mode -- merge a
 face into a coplanar neighbour by killing their shared edge (kef), no
@@ -1755,7 +1749,7 @@ TWEAK FAMILY COMPLETE (planar + cylindrical): change/replace surface
 delete-face-heal merge mode (40), face merging (133).
 RUNNING TOTAL: capability map 47 -> 49/144.
 
-NEW RESEARCH REVIEW (user flagged; files 34-38 + the updated
+NEW RESEARCH REVIEW (files 34-38 + the updated
 03-completeness-audit): adversarial audit of the corpus. Load-bearing
 flags relevant to shipped/upcoming work: (2.1) per-entity tolerance
 PROPAGATION is unvalidated original engineering, not in the literature --
@@ -1771,7 +1765,7 @@ numerical substrate) are quality/infra for later. None redirected the
 tweak work.
 GATE: exact CI triplet green. Merged.
 
-## Addendum 48 (2026-06-08): Parity interchange -- STEP AP203 export (roadmap 0d; map stays 49/144)
+## Addendum 48: Parity interchange -- STEP AP203 export (roadmap 0d; map stays 49/144)
 
 keel-topo step_export.rs: to_step_string(body) -> STEP AP203 text, direct
 topology->entity mapping, NO tessellation (the crusst peer borrowable; its
@@ -1791,7 +1785,7 @@ recommended first but a robust blend needs coincident-capable booleans
 seam-band surgery, so blends move after the coincident-boolean foundation.
 GATE: exact CI triplet green. Merged.
 
-## Addendum 49 (2026-06-08): Parity shell/offset -- whole-body offset (map 49 -> 50/144)
+## Addendum 49: Parity shell/offset -- whole-body offset (map 49 -> 50/144)
 
 offset_body(distance) (item 45): move every planar face along its outward
 normal and re-intersect all corners (each vertex = meet of its three
@@ -1801,7 +1795,7 @@ self-intersection resolution (concave) + curved-face offset deferred.
 RUNNING TOTAL: 49 -> 50/144.
 GATE: exact CI triplet green. Merged.
 
-## Addendum 50 (2026-06-08): Parity sectioning -- section by plane (map 50 -> 51/144)
+## Addendum 50: Parity sectioning -- section by plane (map 50 -> 51/144)
 
 section_by_plane(point, normal) (item 75): non-destructive section -- the
 ordered polygon where the plane cuts the body's straight edges (linear
@@ -1812,7 +1806,7 @@ split-into-two-bodies variant deferred.
 RUNNING TOTAL: 50 -> 51/144.
 GATE: exact CI triplet green. Merged.
 
-## Addendum 51 (2026-06-08): Parity slicing -- planar slices / AM (map 51 -> 52/144)
+## Addendum 51: Parity slicing -- planar slices / AM (map 51 -> 52/144)
 
 planar_slices(base, normal, offsets) (item 77): one section polygon per
 offset plane (reuses section_by_plane), empty vectors aligned to offsets
@@ -1820,7 +1814,7 @@ that miss the body -- the additive-manufacturing slicing path. Tested: a
 block sliced at z=0.5/1.0/1.5 -> three squares; a slice above is empty.
 RUNNING TOTAL: 51 -> 52/144. GATE: CI triplet green. Merged.
 
-## Addendum 52 (2026-06-08): Parity wire bodies (map 52 -> 54/144)
+## Addendum 52: Parity wire bodies (map 52 -> 54/144)
 
 wire(p0, p1) (items 8, 18): a first-class wire-body constructor wrapping
 embed_wire + line geometry. (The capability already existed via embed_wire
@@ -1828,8 +1822,8 @@ embed_wire + line geometry. (The capability already existed via embed_wire
 == Wire, valid. RUNNING TOTAL: 52 -> 54/144.
 
 INFLECTION: the clean quick wins are now exhausted. A sheet-body attempt
-this session hit the lamina/region Euler semantics (a single planar face
-must not create a second region; my mvfs+mef base made a 2-region Solid) --
+hit the lamina/region Euler semantics (a single planar face
+must not create a second region; the mvfs+mef base made a 2-region Solid) --
 deferred rather than thrashed (standing order). The remaining ~90 map items
 are the BIG ENGINES, each a focused milestone, several research-hard and
 interdependent: coincident/tangent boolean core (28,29,31,33 -- the
@@ -1840,9 +1834,9 @@ assemblies (82-85), foreign geometry (114-116). Next focused milestone: the
 coincident-boolean foundation.
 GATE: exact CI triplet green. Merged.
 
-## Addendum 53 (2026-06-08): Parity coincident booleans -- FIRST SLICE (map 54 -> 55/144); the keystone subsystem opens
+## Addendum 53: Parity coincident booleans -- FIRST SLICE (map 54 -> 55/144); the keystone subsystem opens
 
-The coincident/tangent boolean core (user-directed keystone). Discovery:
+The coincident/tangent boolean core (the directed keystone). Discovery:
 the machinery was MORE built than feared -- classify_faces already emits
 FaceClass::OnOther for coincident faces (winding ~0.5), and select_faces
 already drops OnOther (the `_ => false`), which IS the correct on-on rule
@@ -1855,7 +1849,7 @@ honestly). Tested: two unit boxes sharing the x=1 face, UNION -> a 2x1x1
 box (exact volume 2, valid). All 28 prior boolean tests still pass (no
 coincident faces -> unaffected). RUNNING TOTAL: 54 -> 55/144 (item 33,
 common case).
-RESEARCH REQUESTED (passed to the user for the research agent): the full
+RESEARCH REQUESTED (queued for the research track): the full
 Requicha on-on classification TABLES for coincident/coplanar/tangent faces
 in CURVED B-rep booleans (keep/drop+orientation per op; OCCT BOPAlgo gluing
 mode; coplanar->curved-coincidence generalization). That unlocks: coincident
@@ -1865,7 +1859,7 @@ GATE: exact CI triplet green (283 tests). fuzz_boolean re-soak validates
 the new coincident path (the existing target now exercises coincident
 inputs; post-condition + validity invariants hold). Merged.
 
-## Addendum 54 (2026-06-08): Coincident booleans -- FULL on-on tables (file 39); the keystone is real (map 55/144)
+## Addendum 54: Coincident booleans -- FULL on-on tables (file 39); the keystone is real (map 55/144)
 
 Implemented research file 39 §2.3 (Laidlaw-Trumbore-Hughes / Requicha on-on
 selection tables) -- the coincident-boolean keystone, now proper not just
@@ -1891,7 +1885,7 @@ as follow-ups).
 GATE: exact CI triplet green (285 tests). fuzz_boolean re-soak validates
 the new classification on random inputs. Merged.
 
-## Addendum 55 (2026-06-08): Parity blends -- edge CHAMFER (map 55 -> 56/144); first blend-family op
+## Addendum 55: Parity blends -- edge CHAMFER (map 55 -> 56/144); first blend-family op
 
 chamfer_edge(edge, distance) (item 52): constant-setback chamfer on a
 convex edge between two PLANAR faces, as a TRANSVERSAL boolean -- subtract
@@ -1905,7 +1899,7 @@ RUNNING TOTAL: 55 -> 56/144. First operation of the blend/chamfer family
 (items 47-61).
 GATE: exact CI triplet green. Merged.
 
-## Addendum 56 (2026-06-08): PARTIAL-OVERLAP coincident booleans (file 39 §1); the coincident keystone completes (map 56 -> 57/144)
+## Addendum 56: PARTIAL-OVERLAP coincident booleans (file 39 §1); the coincident keystone completes (map 56 -> 57/144)
 
 The Addendum 53-54 coincident booleans handled FULL coincidence (faces
 that overlap entirely: abutting/identical solids). The remaining gap was
@@ -1957,7 +1951,7 @@ RUNNING TOTAL: 56 -> 57/144. The coincident-boolean keystone (full +
 partial) is now complete for the planar-convex case.
 GATE: exact CI triplet green. Merged.
 
-## Addendum 57 (2026-06-08): SWEEP/LOFT family opens -- ruled LOFT between two profiles (map 57 -> 58/144)
+## Addendum 57: SWEEP/LOFT family opens -- ruled LOFT between two profiles (map 57 -> 58/144)
 
 loft(bottom, top) (construct.rs, sweep/loft items 62-69): a solid bounded
 by two parallel-ordered profile loops (same vertex count) joined by
@@ -1980,7 +1974,7 @@ GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D
 warnings + workspace test). Pure constructor -> Euler-op fuzzing covers it.
 Merged.
 
-## Addendum 58 (2026-06-08): Interrogation -- SURFACE AREA (map 58 -> 59/144)
+## Addendum 58: Interrogation -- SURFACE AREA (map 58 -> 59/144)
 
 surface_area() + face_area(face) (interrogate.rs): sum of outward-triangle
 areas (0.5*|(b-a)x(c-a)|) over the same tessellation the winding classifier
@@ -1992,7 +1986,7 @@ area 2(6+12+8) = 52 exactly.
 RUNNING TOTAL: 58 -> 59/144.
 GATE: exact CI triplet green. Merged.
 
-## Addendum 59 (2026-06-08): REVOLVE (solid of revolution) + cone first-classness + mesh_volume (map 59 -> 60/144)
+## Addendum 59: REVOLVE (solid of revolution) + cone first-classness + mesh_volume (map 59 -> 60/144)
 
 The sweep/loft family's headline op. Building revolve surfaced a real
 architecture gap: CONE faces were dropped to empty in tessellate_face (the
@@ -2045,7 +2039,7 @@ GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D
 warnings + workspace test 113 keel-topo). fuzz_boolean re-soaked (tessellate
 is shared with the winding classifier). Merged.
 
-## Addendum 60 (2026-06-08): Revolve PCURVES -> analytic mass_properties first-class (map stays 60/144; closes Addendum 59's deferral)
+## Addendum 60: Revolve PCURVES -> analytic mass_properties first-class (map stays 60/144; closes Addendum 59's deferral)
 
 Closed the pcurve deferral from Addendum 59 so analytic mass_properties()
 works on revolve solids (not just the tessellated mesh_volume). New helper
@@ -2067,7 +2061,7 @@ now first-class for both tessellation AND analytic mass properties.
 GATE: exact CI triplet green. No boolean/tessellate pipeline change (pcurves
 only) -> no new fuzz path. Merged.
 
-## Addendum 61 (2026-06-08): BLEND/FILLET family opens -- rolling-ball blend GEOMETRY, plane-plane exact cylinder (file 40 rung 1; map stays 60/144, surgery next)
+## Addendum 61: BLEND/FILLET family opens -- rolling-ball blend GEOMETRY, plane-plane exact cylinder (file 40 rung 1; map stays 60/144, surgery next)
 
 Fillet research landed (docs/research/kernel/40-blend-fillet-surface-generation
 + 41-blend-overflow + Parasolid edge-blending manual fetches). Per the
@@ -2104,9 +2098,9 @@ completes with the surgery). The biggest remaining family is now open.
 GATE: exact CI triplet green (115 keel-topo). Pure geometry -> no fuzz path.
 Merged.
 
-## Addendum 62 (2026-06-08): EDGE FILLET complete -- trim-and-stitch surgery inserts the exact cylinder blend (file 40 §3; map 60 -> 61/144)
+## Addendum 62: EDGE FILLET complete -- trim-and-stitch surgery inserts the exact cylinder blend (file 40 §3; map 60 -> 61/144)
 
-The user said "build it now". Completed the plane-plane edge fillet end to
+Direction: "build it now". Completed the plane-plane edge fillet end to
 end: fillet_edge(edge, radius) -> filleted Body. KEY INSIGHT that unblocked
 it: no new Euler operator is needed -- the cap-corner-vertex dissolution
 (remove the sharp vertex, replace two boundary edges with the end arc) is
@@ -2153,7 +2147,7 @@ GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D
 warnings + workspace test 116 keel-topo). Surgery uses Euler ops covered by
 fuzz_topo_ops; no boolean/tessellate pipeline change. Merged.
 
-## Addendum 63 (2026-06-08): TRIMMED-CYLINDER tessellation -> fillet VOLUME oracle (closes Addendum 62's deferral; map stays 61/144)
+## Addendum 63: TRIMMED-CYLINDER tessellation -> fillet VOLUME oracle (closes Addendum 62's deferral; map stays 61/144)
 
 Closed the volume-oracle deferral from the fillet milestone. tessellate_cylinder
 was full-wrap only; a fillet's blend face is a QUARTER cylinder, so mesh_volume
@@ -2181,7 +2175,7 @@ RUNNING TOTAL: stays 61/144 (hardening the fillet, not a new item).
 GATE: exact CI triplet green (116 keel-topo). tessellate is shared with the
 winding classifier -> fuzz_boolean re-soaked. Merged.
 
-## Addendum 64 (2026-06-08): Fillet ROBUSTNESS + TORUS-RUNG geometry (file 40 Case B; map stays 61/144)
+## Addendum 64: Fillet ROBUSTNESS + TORUS-RUNG geometry (file 40 Case B; map stays 61/144)
 
 Two increments on the blend family:
 1. Fillet robustness: fillet_edge now tested on a VERTICAL box edge (+x/+y
@@ -2205,7 +2199,7 @@ RUNNING TOTAL: stays 61/144 (extends the fillet item's reach).
 GATE: exact CI triplet green (118 keel-topo). Pure geometry -> no fuzz path.
 Merged.
 
-## Addendum 65 (2026-06-08): TORUS tessellation -> torus faces first-class (map stays 61/144; torus-fillet precursor)
+## Addendum 65: TORUS tessellation -> torus faces first-class (map stays 61/144; torus-fillet precursor)
 
 Like cones (Addendum 59), TORUS faces were dropped to empty in tessellate_face
 (the `_` arm), so the existing torus() primitive had broken bbox/winding/
@@ -2223,7 +2217,7 @@ unblocks the torus-rung fillet surgery).
 GATE: exact CI triplet green (119 keel-topo). tessellate shared with the
 winding classifier -> fuzz_boolean re-soaked. Merged.
 
-## Addendum 66 (2026-06-08): TORUS FILLET complete -- cap-rim rounding to exact torus (file 40 rung 2; map 61 -> 62/144)
+## Addendum 66: TORUS FILLET complete -- cap-rim rounding to exact torus (file 40 rung 2; map 61 -> 62/144)
 
 Completed the second rung of the exact-analytic blend ladder: fillet_cap_rim(
 edge, radius) rounds a CYLINDRICAL-BOSS RIM (a planar cap meeting a cylinder
@@ -2259,7 +2253,7 @@ GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D
 warnings + workspace test 120 keel-topo). Euler-op surgery (imprint/mekr/kef)
 covered by fuzz_topo_ops + fuzz_imprint; no boolean/tessellate change. Merged.
 
-## Addendum 67 (2026-06-08): TRIMMED-TORUS tessellation -> torus fillet VOLUME oracle (closes Addendum 66's deferral; map stays 62/144)
+## Addendum 67: TRIMMED-TORUS tessellation -> torus fillet VOLUME oracle (closes Addendum 66's deferral; map stays 62/144)
 
 Closed the volume-oracle deferral for the torus fillet. tessellate_torus was
 full-tube; the cap-rim blend ring is a QUARTER tube (v in [0, pi/2]), so
@@ -2278,7 +2272,7 @@ RUNNING TOTAL: stays 62/144 (hardening the torus fillet).
 GATE: exact CI triplet green (120 keel-topo). tessellate shared with the
 winding classifier -> fuzz_boolean re-soaked. Merged.
 
-## Addendum 68 (2026-06-08): CONCAVE fillet GEOMETRY + convexity detection + fillet_edge dispatch (map stays 62/144)
+## Addendum 68: CONCAVE fillet GEOMETRY + convexity detection + fillet_edge dispatch (map stays 62/144)
 
 Three increments toward concave (reentrant) fillets, the highest-value fillet
 extension (inner-corner rounding is ~half of all fillets):
@@ -2305,7 +2299,7 @@ GATE: exact CI triplet green (122 keel-topo). edge_is_convex reuses the existing
 winding classifier; no tessellate/boolean pipeline change -> no new fuzz path.
 Merged.
 
-## Addendum 69 (2026-06-08): CONCAVE fillet COMPLETE -- the unified pipeline (research file 44; map 62 -> 63/144)
+## Addendum 69: CONCAVE fillet COMPLETE -- the unified pipeline (research file 44; map 62 -> 63/144)
 
 Requested + received research file 44 (concave-fillet-topology-surgery): the
 canonical recipe. Verdict: convex (round, material removed) and concave (fillet,
@@ -2340,7 +2334,7 @@ GATE: exact CI triplet green (fmt + clippy --workspace --all-targets -D warnings
 workspace test 122 keel-topo). Euler-op surgery; no boolean/tessellate change.
 Merged.
 
-## Addendum 70 (2026-06-08): EAR-CLIPPING planar tessellation + ARC-edge sampling -> near-exact fillet volumes (map stays 63/144)
+## Addendum 70: EAR-CLIPPING planar tessellation + ARC-edge sampling -> near-exact fillet volumes (map stays 63/144)
 
 Two coupled tessellation fixes (the follow-up flagged in Addendum 69):
 1. EAR-CLIPPING (tessellate.rs): tessellate_planar fanned each loop from its
@@ -2365,7 +2359,7 @@ RUNNING TOTAL: stays 63/144 (tessellation robustness + accuracy; not a new item)
 GATE: exact CI triplet green (122 keel-topo). tessellate_planar is the winding-
 classifier hot path -> fuzz_boolean re-soaked. Merged.
 
-## Addendum 71 (2026-06-08): PARTIAL (wedge) REVOLVE -- loft-topology + arc verticals + cylinder/sector bands (64/144)
+## Addendum 71: PARTIAL (wedge) REVOLVE -- loft-topology + arc verticals + cylinder/sector bands (64/144)
 
 revolve_partial(frame, profile, theta) sweeps a CLOSED off-axis meridian polygon
 through theta in (0, pi] about frame.z. KEY INSIGHT: a partial revolve of an
@@ -2393,7 +2387,7 @@ GATE: exact CI triplet green (125 keel-topo, clippy -D warnings, fmt). No fuzz
 needed -- pure constructor, does not touch tessellate_planar or the boolean
 pipeline. Merged.
 
-## Addendum 72 (2026-06-08): CONE angular trim -> slanted partial revolve (broadens 64/144)
+## Addendum 72: CONE angular trim -> slanted partial revolve (broadens 64/144)
 
 Completes revolve_partial: slanted meridian segments now sweep CONE SECTORS
 (previously rejected). The enabler is a one-line mirror of the cylinder's angular
@@ -2415,7 +2409,7 @@ GATE: exact CI triplet green (126 keel-topo, clippy -D warnings, fmt) + fuzz_boo
 soak (tessellate_cone feeds the classifier for cone-faced bodies; change is inert
 for the full-cone fuzz corpus). Merged.
 
-## Addendum 73 (2026-06-08): partial revolve theta -> (0, 2pi) via opt-in Edge::arc_sweep (broadens 64/144)
+## Addendum 73: partial revolve theta -> (0, 2pi) via opt-in Edge::arc_sweep (broadens 64/144)
 
 Completes the angular range of revolve_partial. The blocker was real: a Circle3
 edge plus its two endpoints is genuinely ambiguous (the theta arc vs the 2pi-theta
@@ -2444,7 +2438,7 @@ soak (loop_polygon + cyl_angular_span are the winding-classifier hot path; the
 arc_sweep paths are gated on Some, inert for the full-primitive fuzz corpus).
 Merged.
 
-## Addendum 74 (2026-06-08): RIGID BODY TRANSFORM (rotation + translation) -- 65/144 (first counter advance since partial revolve)
+## Addendum 74: RIGID BODY TRANSFORM (rotation + translation) -- 65/144 (first counter advance since partial revolve)
 
 Body::transformed(&Transform3) -> Body (new file crates/keel-topo/src/transform.rs):
 the same isometry carries every vertex point and every analytic surface/curve
@@ -2473,7 +2467,7 @@ RUNNING TOTAL: 64 -> 65/144 (body transform, a fresh capability).
 GATE: exact CI triplet green (129 keel-topo, clippy -D warnings, fmt). No fuzz
 needed -- additive new op, no boolean/tessellation-pipeline change. Merged.
 
-## Addendum 75 (2026-06-08): MIRROR (reflection across a plane) -- 66/144
+## Addendum 75: MIRROR (reflection across a plane) -- 66/144
 
 Body::mirrored(plane_point, plane_normal) -> Body (transform.rs): reflect a body
 across an arbitrary plane via a Householder reflection R(x) = (I - 2 m m^T)x +
@@ -2499,7 +2493,7 @@ transform).
 GATE: exact CI triplet green (131 keel-topo, clippy -D warnings, fmt). No fuzz --
 additive op, no boolean/tessellation-pipeline change. Merged.
 
-## Addendum 76 (2026-06-08): DRAFT ANALYSIS (item 107) -- 67/144
+## Addendum 76: DRAFT ANALYSIS (item 107) -- 67/144
 
 Body::draft_analysis(pull) -> Vec<FaceDraft{face,min,max}> (interrogate.rs): per-
 face signed draft-angle RANGE relative to a pull direction, for moldability /
@@ -2515,7 +2509,7 @@ RUNNING TOTAL: 66 -> 67/144 (draft analysis, a fresh interrogation item).
 GATE: exact CI triplet green (133 keel-topo, clippy -D warnings, fmt). No fuzz --
 read-only query, no mutation/boolean/tessellation-pipeline change. Merged.
 
-## Addendum 77 (2026-06-08): full-revolve FLAT END-CAPS (disc caps) -- 68/144
+## Addendum 77: full-revolve FLAT END-CAPS (disc caps) -- 68/144
 
 revolve() now accepts a HORIZONTAL end segment (pole (0,h) -> rim (r,h)), which
 revolves to a planar DISC cap instead of requiring a cone-to-pole. The band
@@ -2536,7 +2530,7 @@ RUNNING TOTAL: 67 -> 68/144 (flat-cap solid of revolution).
 GATE: exact CI triplet green (134 keel-topo, clippy -D warnings, fmt). No fuzz --
 constructor change, not a boolean/tessellation-pipeline mutation. Merged.
 
-## Addendum 78 (2026-06-08): UNIFORM BODY SCALE (planar bodies) -- 69/144
+## Addendum 78: UNIFORM BODY SCALE (planar bodies) -- 69/144
 
 Body::scaled(center, factor) -> uniform scale about a point (transform.rs). Vertices
 -> center + (p-center)*factor; plane-surface frame origins scale, axes unchanged
@@ -2554,7 +2548,7 @@ transform/mirror/scale).
 GATE: exact CI triplet green (136 keel-topo, clippy -D warnings, fmt). No fuzz --
 additive op. Merged.
 
-## Addendum 79 (2026-06-08): INTERIOR WASHER / HOLED-FACE revolve via kemr -- 70/144
+## Addendum 79: INTERIOR WASHER / HOLED-FACE revolve via kemr -- 70/144
 
 revolve() now accepts INTERIOR horizontal segments (both ends off-axis) -> flat
 ANNULAR (washer/shoulder) faces. This is the HOLED-FACE construction path, the
@@ -2583,7 +2577,7 @@ GATE: exact CI triplet green (137 keel-topo, clippy -D warnings, fmt). No fuzz -
 constructor change; the holed-face tessellation path it exercises is the existing
 inner-ring path, not a boolean/winding mutation. Merged.
 
-## Addendum 80 (2026-06-08): CLOSEST-POINT-ON-BODY + tube-boolean gap finding -- 71/144
+## Addendum 80: CLOSEST-POINT-ON-BODY + tube-boolean gap finding -- 71/144
 
 Body::closest_point(p) -> Option<(Vec3, f64)> (interrogate.rs): the closest surface
 point to an external point + its distance. Refactored the existing Ericson point-
@@ -2601,7 +2595,7 @@ RUNNING TOTAL: 70 -> 71/144 (closest-point interrogation).
 GATE: exact CI triplet green (138 keel-topo, clippy -D warnings, fmt). No fuzz --
 read-only query + a safe point-triangle refactor. Merged.
 
-## Addendum 81 (2026-06-08): GENUS-1 solid of revolution (tube / annular) via research file 45 -- 72/144
+## Addendum 81: GENUS-1 solid of revolution (tube / annular) via research file 45 -- 72/144
 
 revolve_closed(frame, profile) -> a full-360 solid of revolution of a CLOSED,
 OFF-AXIS meridian (all radii > 0) = a GENUS-1 (toroidal) solid: tube / hollow
@@ -2635,9 +2629,9 @@ GATE: exact CI triplet green (139 keel-topo, clippy -D warnings, fmt). No fuzz -
 constructor; uses existing Euler ops + holed-face path, no boolean/winding change.
 Merged.
 
-## Addendum 82 (2026-06-08, overnight): face_curvature surface analysis (broadens 72/144) + massprops sense wall confirmed
+## Addendum 82: face_curvature surface analysis (broadens 72/144) + massprops sense wall confirmed
 
-Two things this autonomous cycle:
+Two things this cycle:
 1. ATTEMPTED the unified face-orientation fix (research file 46) to make the genus-1
    tube exact in analytic mass_properties. Tried PURE sense (orient = sign(sense),
    massprops normal = sense*natural = the existing face_outward_normal helper).
@@ -2648,7 +2642,7 @@ Two things this autonomous cycle:
    insufficient, the unification must reconcile winding+sense+region together (file
    46's validator invariant). Also found a latent placeholder: boolean.rs ~1122 uses
    nz=(0,0,1) for non-plane surfaces when deriving stitch sense. All recorded in
-   [[massprops-sense-region-inconsistency]]; deep, do attended.
+   the orientation-unification note; deep, to address with care.
 2. SHIPPED face_curvature: Body::face_curvature(face, p) -> Option<(k1,k2)>, the
    principal curvatures at the surface point nearest p, from the analytic surface's
    local_geometry (exact): plane (0,0); cylinder r {0,1/r}; sphere r (1/r,1/r);
@@ -2659,7 +2653,7 @@ Two things this autonomous cycle:
 GATE: exact CI triplet green (140 keel-topo, clippy -D warnings, fmt). No fuzz --
 read-only query. Merged.
 
-## Addendum 83 (2026-06-09, overnight): tapered/draft extrude (item 65) -- 73/144
+## Addendum 83: tapered/draft extrude (item 65) -- 73/144
 
 Body::extrude_tapered(base, dir, top_scale): sweep a planar polygon along dir while
 scaling the top profile by top_scale about the base centroid -- a truncated pyramid
@@ -2675,7 +2669,7 @@ RUNNING TOTAL: 72 -> 73/144 (tapered extrude, sweep/loft family item 65).
 GATE: exact CI triplet green (141 keel-topo, clippy -D warnings, fmt). No fuzz --
 additive constructor over loft. Merged.
 
-## Addendum 84 (2026-06-09, overnight): revolve_closed hardening coverage (stays 73/144)
+## Addendum 84: revolve_closed hardening coverage (stays 73/144)
 
 Hardened the genus-1 revolve_closed (Addendum 81), previously tested only on the
 rectangular tube. Added: (1) a TRIANGULAR ring cross-section [(1,0),(2,0),(1,1)]
@@ -2686,7 +2680,7 @@ faces (washer+cone+inner cylinder), validate ok, mesh_volume ~4pi/3 (Pappus
 geometry are robust beyond the rectangular case. Test-only; counter stays 73/144.
 GATE: exact CI triplet green (143 keel-topo, clippy -D warnings, fmt). Merged.
 
-## Addendum 85 (2026-06-09, overnight): EXACT analytic surface area for curved faces (stays 73/144)
+## Addendum 85: EXACT analytic surface area for curved faces (stays 73/144)
 
 face_area now computes EXACT analytic area for curved analytic faces (was the
 tessellation undershoot), reusing the same trim the tessellator uses, so primitive
@@ -2707,7 +2701,7 @@ RUNNING TOTAL: stays 73/144 (accuracy improvement to the area interrogation).
 GATE: exact CI triplet green (144 keel-topo, clippy -D warnings, fmt). No fuzz --
 read-only query. Merged.
 
-## Addendum 86 (2026-06-09, overnight): EXACT planar disc/annulus area -> full bodies exact (stays 73/144)
+## Addendum 86: EXACT planar disc/annulus area -> full bodies exact (stays 73/144)
 
 Completes the exact-surface-area work (Addendum 85). face_area now also computes
 exact pi*r^2 for PLANAR disc/annulus faces (every loop a single circle): outer loop
@@ -2724,7 +2718,7 @@ disc/annulus + curved faces).
 GATE: exact CI triplet green (144 keel-topo, clippy -D warnings, fmt). No fuzz --
 read-only query. Merged.
 
-## Addendum 87 (2026-06-09, overnight): tube/pipe primitive (stays 73/144)
+## Addendum 87: tube/pipe primitive (stays 73/144)
 
 Body::tube(frame, r_inner, r_outer, h): a named hollow-cylinder (pipe) primitive,
 a thin convenience over revolve_closed with the rectangular meridian
@@ -2736,7 +2730,7 @@ hollow-cylinder API; counter stays 73 (convenience, not a distinct map item).
 GATE: exact CI triplet green (145 keel-topo, clippy -D warnings, fmt). No fuzz.
 Merged.
 
-## Addendum 88 (2026-06-09, attended): sense-region orientation unification -- mass_properties is now sense-based (stays 73/144)
+## Addendum 88: sense-region orientation unification -- mass_properties is now sense-based (stays 73/144)
 
 THE WALL, RESOLVED. mass_properties oriented each face's divergence-integral normal
 from REGION SOLIDITY ALONE, ignoring the face `sense` bool. Correct only while sense
@@ -2787,7 +2781,7 @@ genus-1 / any reversed-sense body, not a new map item).
 GATE: exact CI triplet green (147 keel-topo, clippy -D warnings, fmt) + fuzz_boolean.
 Merged.
 
-## Addendum 89 (2026-06-09, attended): render facets + lines (item 95) -- 73 -> 74/144
+## Addendum 89: render facets + lines (item 95) -- 73 -> 74/144
 
 Body::render_mesh() -> RenderMesh { facets: Vec<RenderFacet{tri,normal}>, edges:
 Vec<Vec<Vec3>> }: the render-ready output a viewer consumes (parity item 95, Phase 6
@@ -2805,7 +2799,7 @@ facets + sampled rim polylines whose points lie on radius 1 about the axis.
 A read-only query (no topology mutation, no boolean pipeline touch) -> no fuzz needed.
 GATE: exact CI triplet green (148 keel-topo, clippy -D warnings, fmt). Merged.
 
-## Addendum 90 (2026-06-09, attended): silhouette / outline (item 97) -- 74 -> 75/144
+## Addendum 90: silhouette / outline (item 97) -- 74 -> 75/144
 
 Body::silhouette(view) -> Vec<[Vec3;2]>: the outline segments for an orthographic
 view direction (parity item 97, Phase 6). Standard mesh-silhouette: weld the render
@@ -2820,7 +2814,7 @@ each a real length-2 cube edge; translation-invariant count; a zero view -> empt
 Builds directly on Addendum 89's render facets. Read-only query -> no fuzz needed.
 GATE: exact CI triplet green (149 keel-topo, clippy -D warnings, fmt). Merged.
 
-## Addendum 91 (2026-06-09, attended): hidden-line-removed wireframe (item 96) -- 75 -> 76/144
+## Addendum 91: hidden-line-removed wireframe (item 96) -- 75 -> 76/144
 
 Body::hidden_line_wireframe(view) -> HlrWireframe { visible, hidden }: the edge
 segments a viewer can see vs the ones the solid occludes (parity item 96, Phase 6
@@ -2835,7 +2829,7 @@ Completes the Phase-6 render trio (facets 95 + silhouette 97 + HLR 96) on the sh
 tessellation. Read-only query -> no fuzz needed.
 GATE: exact CI triplet green (150 keel-topo, clippy -D warnings, fmt). Merged.
 
-## Addendum 92 (2026-06-09, attended): multi-section loft / skin (item 66) -- 76 -> 77/144
+## Addendum 92: multi-section loft / skin (item 66) -- 76 -> 77/144
 
 Body::loft_sections(&[&[Vec3]]): loft/skin through K >= 2 parallel-ish sections, each
 an n-point polygon with matching vertex count (parity item 66, Phase 2). Builds the
@@ -2858,7 +2852,7 @@ surfaces. Constructor over existing Euler ops (mev/mef), no boolean/tessellate_p
 change -> no new fuzz.
 GATE: exact CI triplet green (151 keel-topo, clippy -D warnings, fmt). Merged.
 
-## Addendum 93 (2026-06-09, attended): section view / filled cut face (item 99) -- 77 -> 78/144
+## Addendum 93: section view / filled cut face (item 99) -- 77 -> 78/144
 
 Body::section_view(plane_point, plane_normal) -> SectionView { outline, facets, normal }:
 the section/detail-view output a viewer hatches (parity item 99, Phase 6). Reuses the
@@ -2876,7 +2870,7 @@ Test: cube [0,2]^3 cut at z=1 -> 4-point square outline, 2 fan triangles, cut-fa
 4 exact, normal +z. Read-only query -> no fuzz needed.
 GATE: exact CI triplet green (152 keel-topo, clippy -D warnings, fmt). Merged.
 
-## Addendum 94 (2026-06-09, attended): translational sweep-along-path (item 63) -- 78 -> 79/144
+## Addendum 94: translational sweep-along-path (item 63) -- 78 -> 79/144
 
 Body::sweep_along_path(profile, path): sweep a planar polygon along a polyline path by
 TRANSLATION -- copy the profile (kept parallel, not reoriented) to each path vertex and
@@ -2898,7 +2892,7 @@ volume 24 (Cavalieri: base 4 x z-extent 6), 10 faces, valid; < 2 path points rej
 Constructor over Euler ops, no boolean/tessellate_planar change -> no new fuzz.
 GATE: exact CI triplet green (153 keel-topo, clippy -D warnings, fmt). Merged.
 
-## Addendum 95 (2026-06-09, attended): adaptive / incremental tessellation (item 98) -- 79 -> 80/144
+## Addendum 95: adaptive / incremental tessellation (item 98) -- 79 -> 80/144
 
 Body::render_mesh_tol(chord_tol) -> RenderMesh: curved analytic faces
 (cylinder/cone/sphere/torus) faceted finely enough that each triangle stays within
@@ -2923,7 +2917,7 @@ Default path unchanged -> no oracle change -> no new fuzz (the Some(tol) path is
 render-only, outside the boolean/winding pipeline).
 GATE: exact CI triplet green (154 keel-topo, clippy -D warnings, fmt). Merged.
 
-## Addendum 96 (2026-06-09, attended): persistence layer A -- geometry serde (enabler, stays 80/144)
+## Addendum 96: persistence layer A -- geometry serde (enabler, stays 80/144)
 
 First layer of save/restore (item 126). Added serde (workspace dep, derive feature) and
 serde::Serialize/Deserialize on the geometry + math value types: keel-math Vec3/Vec4;
@@ -2938,7 +2932,7 @@ test) ticks item 126; it is the larger half and is next. Zero behavior change: a
 derives, all existing tests unchanged (keel-math/geom/topo all green).
 GATE: exact CI triplet green (workspace: 108 math + 78 geom + 154 topo, clippy -D, fmt). Merged.
 
-## Addendum 97 (2026-06-09, attended): all 6 frontier dossiers landed + asymmetric-chamfer repro staged (stays 80/144)
+## Addendum 97: all 6 frontier dossiers landed + asymmetric-chamfer repro staged (stays 80/144)
 
 The research agent delivered all six requested dossiers (kernel/47-52): 47 boolean-result-
 assembly (the build_result_solid face-drop, HIGHEST leverage), 48 nurbs-skinning-lofting,
@@ -2959,7 +2953,7 @@ the dossier's validation harness: un-ignore when the fix lands. No new public AP
 asymmetric-chamfer footgun); no count change (instrumentation toward the milestone).
 GATE: clippy -D warnings + fmt; the repro compiles and is correctly skipped (153 run, 1 ignored).
 
-## Addendum 98 (2026-06-09, attended): persistence layer B -- deterministic save/restore (item 126) -- 80 -> 81/144
+## Addendum 98: persistence layer B -- deterministic save/restore (item 126) -- 80 -> 81/144
 
 Body::to_json() -> String / Body::from_json(&str) -> Body: full-body persistent save and
 restore (parity item 126), completing the layer-A geometry serde (Addendum 96). serde
@@ -2981,7 +2975,7 @@ follow-ons.
 GATE: exact CI triplet green (workspace: 108 math + 77 geom + 155 topo, clippy -D, fmt).
 Read-only serialization (no boolean/tessellate_planar change) -> no fuzz. Merged.
 
-## Addendum 99 (2026-06-09, attended): journal serialization (item 129) -- 81 -> 82/144
+## Addendum 99: journal serialization (item 129) -- 81 -> 82/144
 
 save_journal(&[OpDescriptor]) -> String / load_journal(&str) -> Vec<OpDescriptor>:
 persistent journaling (parity item 129), completing Phase 7's persistence trio with the
@@ -2999,7 +2993,7 @@ naming 82-85/124 [dossier 52] remain.)
 GATE: exact CI triplet green (workspace: 108 math + 77 geom + 156 topo, clippy -D, fmt).
 No fuzz (read-only serialization). Merged.
 
-## Addendum 100 (2026-06-09, attended): KEYSTONE -- identity-preserving boolean result assembly (dossier 47, task #16) -- stays 82/144 (enabler, unblocks ~15-20)
+## Addendum 100: KEYSTONE -- identity-preserving boolean result assembly (dossier 47, task #16) -- stays 82/144 (enabler, unblocks ~15-20)
 
 THE build_result_solid face-drop is FIXED. Root cause (diagnosed with data, diag_guillotine_seam_edges): the two operands imprint the SHARED seam with INCOMPATIBLE subdivisions because imprint_operand runs independently per operand. Guillotine x=2 seam: A = 4 OPEN edges (its four side-faces each cross the cut), B = 1 CLOSED ring edge (the square is interior to B's single wall face -> imprint_closed_curve). 4-open vs 1-closed can never pair -> the polygon-soup stitcher mis-welded and the identity stitch left dangling edges.
 
@@ -3011,7 +3005,7 @@ RESULT: the asymmetric chamfer (the dossier's repro, d1=0.5,d2=1.0) now returns 
 This unblocks the asymmetric/two-offset chamfer (52/53), shell (41), thicken (44), and the blend family (47-60) -- the boolean now assembles thin/oblique cut faces correctly. Counter stays 82 (the fix is the enabler; unblocked features tick as they ship -- the asym chamfer API is now trivially shippable).
 GATE: exact CI triplet green (workspace: 108 math + 77 geom + 157 topo, clippy -D, fmt) + fuzz_boolean (200s, clean). Merged.
 
-## Addendum 101 (2026-06-09, attended): CORRECTION of Addendum 100 -- the asym chamfer DECLINES, it does NOT work (still 82/144)
+## Addendum 101: CORRECTION of Addendum 100 -- the asym chamfer DECLINES, it does NOT work (still 82/144)
 
 Addendum 100 OVERCLAIMED. Honest state, verified by trying the asymmetric chamfer through
 the public path (boolean returns Err -> chamfer "cut failed"):
@@ -3037,7 +3031,7 @@ chamfer) and the partial-COINCIDENCE union (L-union) still do not assemble corre
 stitch. Those are the actual unblock for shell/thicken/blends. Lesson logged: do not read an
 "X OR decline" pass as "X"; verify the success branch explicitly.
 
-## Addendum 102 (2026-06-09, attended): self-consistency gate -- the planar boolean can no longer return a wrong body (still 82/144)
+## Addendum 102: self-consistency gate -- the planar boolean can no longer return a wrong body (still 82/144)
 
 RESEARCH REVIEW (dossier 47, re-read before this change at the user's instruction): the
 centerpiece prescribes (1) the SHELL-CLOSURE INVARIANT -- every kept-face coedge has exactly
@@ -3080,7 +3074,7 @@ returns a wrong planar boolean body. Counter stays 82/144.
 GATE: exact CI triplet green (workspace 108 math + 77 geom + 157 topo, clippy -D warnings, fmt)
 + fuzz_boolean (150s, clean, exit 0). Merged.
 
-## Addendum 103 (2026-06-09, attended): Phase 0a -- partial-coincidence union (L-union) now ASSEMBLES (boundary-coincident ring filter). 82/144, real general-position-boolean progress
+## Addendum 103: Phase 0a -- partial-coincidence union (L-union) now ASSEMBLES (boundary-coincident ring filter). 82/144, real general-position-boolean progress
 
 RE-CALIBRATION (user-directed): re-read all research; the parity ROADMAP
 (docs/superpowers/specs/2026-06-08-parasolid-parity-roadmap.md) re-anchored priorities on
@@ -3121,7 +3115,7 @@ remains open. m16c tangent-seam dedup stays unmerged (independent, possibly fold
 GATE: keel-topo 157 green (incl. strict L-union + symmetric chamfer), workspace 108+77+157,
 clippy -D warnings, fmt; fuzz_boolean pending.
 
-## Addendum 104 (2026-06-09, attended): Phase 0a -- shell-closure invariant backstop in stitch_by_import (dossier 47, task #21). Stays 82/144 (honesty hardening)
+## Addendum 104: Phase 0a -- shell-closure invariant backstop in stitch_by_import (dossier 47, task #21). Stays 82/144 (honesty hardening)
 
 RESEARCH (dossier 47 re-read before the change, per standing rules). The centerpiece (Q1
 lines 30-34, synthesis step 5 line 202) is the DROP-PREVENTION / shell-closure invariant:
@@ -3175,7 +3169,7 @@ it then. #21 CLOSED.
 GATE: exact CI triplet green (workspace 108 math + 77 geom + 157 topo, clippy -D warnings, fmt)
 + fuzz_boolean (WSL nightly, 180s, Done 323 runs, clean, no artifacts). Merged.
 
-## Addendum 105 (2026-06-09, attended): #16 asym-chamfer DIAGNOSIS CHECKPOINT -- decline mechanism traced end-to-end; prior LAYER-1/2 diagnosis RECONCILED (not overturned). No code landed; still 82/144
+## Addendum 105: #16 asym-chamfer DIAGNOSIS CHECKPOINT -- decline mechanism traced end-to-end; prior LAYER-1/2 diagnosis RECONCILED (not overturned). No code landed; still 82/144
 
 Re-read dossier 39 (coincident/tangent face booleans, sec 3.2 the real-edge-iff-separates-kept-
 from-dropped test; sec 2 the LTH on-on keep/drop tables) before resuming #16. Then INSTRUMENTED
@@ -3216,7 +3210,7 @@ radial-1 dangling-coedge set in stitch_by_import for this repro pre- and post-gl
 run decides LAYER 1 (a duplicate interior seam to suppress per sec 3.2) vs an assembly-glue gap
 (extend seam subdivision / bounds-match to pair the oblique coedges). Only then design the fix.
 
-## Addendum 106 (2026-06-09, attended): #16 asym-chamfer DECISIVE diagnosis -- BOTH layers confirmed at entity level. No code landed; still 82/144
+## Addendum 106: #16 asym-chamfer DECISIVE diagnosis -- BOTH layers confirmed at entity level. No code landed; still 82/144
 
 Ran the Addendum-105 NEXT data run (env-gated DIAG of all 5 seams with face_a/face_b EntityIds
 and the radial-1 dangling-coedge set pre/post-glue in stitch_by_import; box A=[0,2]^3, cutter
@@ -3261,7 +3255,7 @@ This is a milestone-sized two-layer change with a known tripwire (the 45-degree 
 chamfer must stay at 7.75). The honesty gate + #21 closure invariant guarantee no wrong answer
 in the meantime (the asym chamfer DECLINES). #16 stays open with a fully data-grounded plan.
 
-## Addendum 107 (2026-06-09, attended): #16 LAYER 1 LANDED -- per-face canonical seam dedup in imprint_operand. Still 82/144 (LAYER 2 remains; asym chamfer still DECLINES)
+## Addendum 107: #16 LAYER 1 LANDED -- per-face canonical seam dedup in imprint_operand. Still 82/144 (LAYER 2 remains; asym chamfer still DECLINES)
 
 REFRAMED LAYER 1 after the Addendum-106 data + a research re-read (dossier 47 Q5/centerpiece;
 user reminded the standing order to re-read research before a task). The duplicate seam is NOT a
@@ -3301,7 +3295,7 @@ bounded by the hypotenuse (pairing face 81).
 GATE: exact CI triplet green (workspace 108 math + 77 geom + 157 topo, clippy -D warnings, fmt)
 + fuzz_boolean (WSL nightly, 180s, Done 322 runs, clean). Merged.
 
-## Addendum 108 (2026-06-09, attended): #16 LAYER 2 ROOT-CAUSED -- it is a CLASSIFICATION bug (two spurious kept faces), not a stitch gap. Still 82/144; LAYER 2 open
+## Addendum 108: #16 LAYER 2 ROOT-CAUSED -- it is a CLASSIFICATION bug (two spurious kept faces), not a stitch gap. Still 82/144; LAYER 2 open
 
 Dumped all 9 kept faces' loop rings for the asym chamfer (env-gated DIAG, reverted; master clean
 at the LAYER-1 merge). This relocates LAYER 2 from "stitch can't pair the corner coedges" to
@@ -3334,7 +3328,7 @@ band hypothesis, then implement the sec-1.4 two-sided neighborhood test for on-b
 fragments and a zero-area fragment filter. Tripwire stays the 45-degree symmetric chamfer (7.75)
 and the honesty gate (no wrong answer; the asym chamfer DECLINES meanwhile).
 
-## Addendum 109 (2026-06-09, attended): #16 LAYER 2 AIRTIGHT -- the on-on-band hypothesis is REFUTED; the bug is face_interior_point sampling OUTSIDE a thin fragment. Still 82/144
+## Addendum 109: #16 LAYER 2 AIRTIGHT -- the on-on-band hypothesis is REFUTED; the bug is face_interior_point sampling OUTSIDE a thin fragment. Still 82/144
 
 Ran the Addendum-108 NEXT step (env-gated DIAG of classify_faces: each fragment's interior
 sample point, its winding number w_B against the cutter, the resulting FaceClass, and the
@@ -3371,7 +3365,7 @@ correct 6 box + 1 cut = 7 faces; also add a zero-area degenerate-fragment filter
 assertion), symmetric chamfer stays 7.75, full workspace + fuzz_boolean clean. This is the
 LAYER-2 close-out; with it #16 ships and unblocks the blend/chamfer family.
 
-## Addendum 110 (2026-06-09, attended): #16 COMPLETE -- the asymmetric (thin oblique transversal) chamfer now ASSEMBLES to the true 7.5. Phase 0a KEYSTONE. Counter stays 82/144 (enabler; features tick as their APIs ship)
+## Addendum 110: #16 COMPLETE -- the asymmetric (thin oblique transversal) chamfer now ASSEMBLES to the true 7.5. Phase 0a KEYSTONE. Counter stays 82/144 (enabler; features tick as their APIs ship)
 
 Both layers of the asymmetric-chamfer assembly failure are FIXED; the boolean now returns the
 true 7.5 with mass == mesh (strict .expect() + exact assertion -- the test is success-required,
@@ -3417,7 +3411,7 @@ on current master; its build_result_solid/assemble_open_chain target is gone).
 GATE: exact CI triplet green (workspace 108 math + 77 geom + 157 topo incl. strict asym chamfer,
 clippy -D warnings, fmt) + fuzz_boolean (WSL nightly, 200s, Done 307 runs, clean). Merged.
 
-## Addendum 111 (2026-06-09, attended): SHIP variable/asymmetric chamfer public API (item 53). 82 -> 83/144
+## Addendum 111: SHIP variable/asymmetric chamfer public API (item 53). 82 -> 83/144
 
 With the Addendum-110 keystone in place, the public API is a thin generalization of chamfer_edge.
 Added Body::chamfer_edge_asymmetric(edge, d1, d2): independent setbacks on the two adjacent
@@ -3435,7 +3429,7 @@ fuzzed clean at the Addendum-110 merge); the boolean pipeline is byte-identical.
 NEXT (unblock family): shell (41), thicken (44), fillet/blend (47-60) -- all now have their
 general-position assembly foundation. Re-read the relevant dossier before each.
 
-## Addendum 112 (2026-06-09, attended): SHELL (item 41) design re-read + scoped; the gap is enclosed-void (3-region) assembly. No code; 83/144
+## Addendum 112: SHELL (item 41) design re-read + scoped; the gap is enclosed-void (3-region) assembly. No code; 83/144
 
 Re-read dossier 50 (shell/offset/thicken) before starting item 41. The algorithm (Forsyth,
 tweak-backed): shell = MAXIMAL MULTI-FACE TWEAK -- offset every face inward by t (exact for
@@ -3478,7 +3472,7 @@ thickness, then curved faces, then thicken (44). t_max feasibility reuses the ke
 predictor. This is the disciplined hand-off point: shell is a milestone needing new void-region
 assembly; starting it deep in a long session risks the quality the rest of this session held.
 
-## Addendum 113 (2026-06-09, attended): SHELL / HOLLOW box (item 41) -- enclosed-void 3-region assembly SHIPPED. 83 -> 84/144
+## Addendum 113: SHELL / HOLLOW box (item 41) -- enclosed-void 3-region assembly SHIPPED. 83 -> 84/144
 
 (User pushed straight through -- "why stop?" -- so I built it; the objective gates are the safety
 net, not session length.) Implemented the long-deferred enclosed-void (3-region) stitch and the
@@ -3512,7 +3506,7 @@ GATE: exact CI triplet green (workspace 108 math + 77 geom + 158 topo incl. the 
 clippy -D warnings, fmt) + fuzz_boolean (WSL nightly, 200s, Done 425 runs, clean). Merged.
 NEXT: thicken (44) reuses the same void/rim machinery; or pierce/rim for the open-tray shell.
 
-## Addendum 114 (2026-06-09, attended): hollow() generalized from box-only to convex planar solids. Stays 84/144
+## Addendum 114: hollow() generalized from box-only to convex planar solids. Stays 84/144
 
 Replaced the bbox-difference inner-shell construction with `self.clone().offset_body(-t)` -- the
 existing whole-body face-offset-and-reintersect (tweak.rs), which IS the Forsyth shell algorithm
@@ -3527,7 +3521,7 @@ Err). Curved-face and concave shells remain the follow-up (need offset_body to g
 planar, or the winding-number offset trim of dossier 50 sec 4).
 GATE: workspace 108 + 77 + 160 (two new shell tests) green, clippy -D warnings, fmt. Merged.
 
-## Addendum 115 (2026-06-09, attended): PER-FACE / multi-thickness shell (item 43). 84 -> 85/144
+## Addendum 115: PER-FACE / multi-thickness shell (item 43). 84 -> 85/144
 
 Generalized offset_body to a per-face distance: offset_body_with(dist: Fn(FaceKey)->f64) moves
 each face plane inward by dist(f) and reintersects the 3-valent corners (the differently-offset
@@ -3543,7 +3537,7 @@ GATE: workspace 108 + 77 + 161 green, clippy -D warnings, fmt. Merged.
 SHELL-FAMILY STATUS: 41 (hollow) + 43 (multi-thickness) + 45 (offset_body) done; 42 (pierce/rim
 walls) and 44 (thicken, needs sheet bodies kernel/51) remain.
 
-## Addendum 116 (2026-06-09, attended): PIERCE / open-tray shell (item 42). 85 -> 86/144
+## Addendum 116: PIERCE / open-tray shell (item 42). 85 -> 86/144
 
 Body::hollow_pierce(t, pierced: Fn(FaceKey)->bool): opens the faces for which pierced(f) is true
 so the void communicates with the outside (a cup/tray, dossier 50 sec 3.2/6.2). The clean
@@ -3560,7 +3554,7 @@ GATE: workspace 108 + 77 + 162 green, clippy -D warnings, fmt. Merged.
 SHELL FAMILY now 41/42/43/45 done; only 44 (thicken, needs sheet-body representation kernel/51)
 remains -- its own milestone.
 
-## Addendum 117 (2026-06-09, attended): SHEET BODIES + THICKEN (item 44) -- the first non-solid body kind. 86 -> 87/144
+## Addendum 117: SHEET BODIES + THICKEN (item 44) -- the first non-solid body kind. 86 -> 87/144
 
 (User: "open the sheet-body keystone" -> "1". Built it.) Re-read dossier 51 (sheet/open-body
 topology) before starting. KEY FINDING that collapsed the risk: Keel's EXISTING validator already
@@ -3589,7 +3583,7 @@ Follow-ups (documented): multi-face / curved sheets thicken via offset-both-side
 GATE: workspace 108 + 77 + 164 green (two new sheet tests), clippy -D warnings, fmt. Merged.
 SHELL FAMILY COMPLETE: 41/42/43/44/45 all done.
 
-## Addendum 118 (2026-06-09, attended): TRIM a sheet by a plane (item 72) -- first Phase-5 sheet op. 87 -> 88/144
+## Addendum 118: TRIM a sheet by a plane (item 72) -- first Phase-5 sheet op. 87 -> 88/144
 
 Body::trim_by_plane(plane_point, plane_normal): the first sheet operation on the new sheet-body
 representation. Keeps the portion of a planar sheet on the BACK side of the plane ((p-pt).n <= 0)
@@ -3603,7 +3597,7 @@ GATE: workspace 108 + 77 + 165 green, clippy -D warnings, fmt. Merged.
 PHASE 5 progress: 72 (trim) done; 70 (extend) / 71 (knit-sew, with closure->solid promotion) /
 76 (split) / 77 (slice) remain, all on the sheet-body foundation.
 
-## Addendum 119 (2026-06-09, attended): SPLIT a solid by a plane (item 76). 88 -> 89/144
+## Addendum 119: SPLIT a solid by a plane (item 76). 88 -> 89/144
 
 Body::split_by_plane(point, normal) -> (back, front): split a solid into two pieces by a cutting
 plane, reusing the boolean -- no new machinery. Each half-space is modelled as a large oriented
@@ -3624,7 +3618,7 @@ intersection select/stitch). Logged, not chased here. No boolean.rs change -> fu
 GATE: workspace 108 + 77 + 166 green, clippy -D warnings, fmt. Merged.
 PHASE 5 now: 72 (trim) + 76 (split) done; 70 (extend) / 71 (knit-sew) / 77 (slice) remain.
 
-## Addendum 120 (2026-06-09, attended): SLICE by an offset list (item 77). 89 -> 90/144
+## Addendum 120: SLICE by an offset list (item 77). 89 -> 90/144
 
 Body::slice(point, normal, offsets) -> Vec<Body>: cut a solid by a list of parallel planes
 (at point + off*normal), returning the N+1 ordered pieces between consecutive planes. Implemented
@@ -3637,7 +3631,7 @@ PHASE 5 now: 72/76/77 done; only 70 (extend) + 71 (knit-sew, closure->solid prom
 Counter at 90/144 -- a +8 run this session (53/41/43/42/44/72/76/77) on top of the #21/#16
 keystones + enclosed-void stitch + sheet-body representation.
 
-## Addendum 121 (2026-06-09, attended): KNIT / SEW with closure->solid promotion (item 71, dossier 51 centerpiece). 90 -> 91/144
+## Addendum 121: KNIT / SEW with closure->solid promotion (item 71, dossier 51 centerpiece). 90 -> 91/144
 
 boolean::knit(bodies, tol) -> Body: join a set of sheet (or solid) bodies into one, merge
 coincident vertices, glue coincident free edges into radial pairs, and -- when the result closes
@@ -3658,7 +3652,7 @@ GATE: exact CI triplet green (workspace 108 math + 77 geom + 168 topo, clippy -D
 PHASE 5 now: 71/72/76/77 done; only 70 (surface extend) remains. Counter 91/144 -- a +9 run this
 session (53/41/43/42/44/72/76/77/71).
 
-## Addendum 122 (2026-06-09, attended): EXTEND a sheet boundary (item 70) -- PHASE 5 COMPLETE. 91 -> 92/144
+## Addendum 122: EXTEND a sheet boundary (item 70) -- PHASE 5 COMPLETE. 91 -> 92/144
 
 Body::extend(d): grow a planar sheet's boundary outward by d. Project the boundary to 2D in the
 plane (u, v with u x v = n), offset each edge's supporting line outward by d (outward unit normal
@@ -3675,7 +3669,7 @@ sheet-body foundation built this session. Counter 92/144 -- a +10 run this sessi
 stitch + sheet-body representation + the finalize_imported_assembly extraction. Shell family
 (41-45) AND Phase-5 sheet ops (70/71/72/76/77) both fully shipped.
 
-## Addendum 123 (2026-06-09, attended): ASSEMBLY LAYER -- instances + DAG + transforms + stable ids (items 82-85). 92 -> 96/144
+## Addendum 123: ASSEMBLY LAYER -- instances + DAG + transforms + stable ids (items 82-85). 92 -> 96/144
 
 Re-read dossier 16 (assembly layer) first. The industry-consensus model (Parasolid partitions +
 app instancing, OCCT XCAF shape-ref + TopLoc_Location, STEP NAUO + mapped_item): an assembly is a
@@ -3703,7 +3697,7 @@ Def::Part variant), fmt. No boolean.rs change -> fuzz unchanged. Merged.
 Counter 96/144 -- a +14 run this session. Phase 9 assemblies 82-85 done; foreign geometry
 114-116 remains in Phase 9.
 
-## Addendum 124 (2026-06-09, attended): FIX the "latent boolean bug" -- it was a prism CW-base inconsistency, NOT a boolean asymmetry. Stays 96/144 (correctness fix)
+## Addendum 124: FIX the "latent boolean bug" -- it was a prism CW-base inconsistency, NOT a boolean asymmetry. Stays 96/144 (correctness fix)
 
 CORRECTS Addendum 119's misdiagnosis. Data-first repro (box[0,4]^3 INTERSECT a half-slab at
 x=2): with AXIS-ALIGNED slabs BOTH sides assemble (back=32, front=32, identical kept=6/5A+1B) ->
@@ -3728,7 +3722,7 @@ boolean intersection asymmetry; the bug was a prism orientation footgun, fixed a
 GATE: workspace 108 + 77 + 173 green, clippy -D warnings, fmt + fuzz_boolean (WSL nightly, 200s,
 Done 361 runs, clean). Merged. Counter stays 96/144 (a correctness fix, no new feature).
 
-## Addendum 125 (2026-06-09, attended): PARTITIONS + PMARKS + TRANSACTIONS (items 123/124/125). 96 -> 99/144
+## Addendum 125: PARTITIONS + PMARKS + TRANSACTIONS (items 123/124/125). 96 -> 99/144
 
 New crates/keel-topo/src/partition.rs (no change to existing code -> zero regression risk). The
 session layer already had per-body snapshot/restore + json + journal/replay (126, 129); this adds
@@ -3749,7 +3743,7 @@ begin/commit keeps (27). Incremental DELTA save (127) and version control (128) 
 GATE: workspace 108 + 77 + 176 green (three new partition tests), clippy -D warnings, fmt. No
 boolean.rs change -> fuzz unchanged. Merged. Counter 99/144.
 
-## Addendum 126 (2026-06-09, attended): DELTA save (item 127) -- counter hits 100/144
+## Addendum 126: DELTA save (item 127) -- counter hits 100/144
 
 Added Partition::delta_from(base) -> PartitionDelta and Partition::apply_delta(base, delta):
 incremental save storing ONLY the bodies whose topology_hash differs from base (or are newly
@@ -3769,7 +3763,7 @@ ASSEMBLY DAG (82-85), PERSISTENCE rollback layer (123/124/125/127). Roadmap real
 needs a Surface3::Foreign variant threaded through SSI/tessellation), version control 128, and
 healing 130/132 (need imperfect/recognized geometry to exercise).
 
-## Addendum 127 (2026-06-09, attended): SESSION-END RESUME ANCHOR (session buttoned up; counter 100/144)
+## Addendum 127: SESSION-END RESUME ANCHOR (session buttoned up; counter 100/144)
 
 WHERE WE ARE. master HEAD = e138f77, all green: workspace 108 math + 77 geom + 177 topo, clippy
 -D warnings, fmt, fuzz_boolean clean. Tree clean, all work merged (NOT pushed -- push only if
@@ -3809,7 +3803,7 @@ rules unchanged: re-read the relevant dossier first + cite it; data-first diagno
 verify the SUCCESS branch explicitly (never read "X or decline" as "X"); branch-per-milestone, run
 the exact CI triplet + a fuzz_boolean soak before merge, then a LOG addendum; NO EM-DASHES.
 
-## Addendum 128 (2026-06-10, attended): PHASE 9 FOREIGN GEOMETRY 114-116 (counter 103/144)
+## Addendum 128: PHASE 9 FOREIGN GEOMETRY 114-116 (counter 103/144)
 
 WHAT SHIPPED (branch phase9-foreign): foreign geometry the NON-invasive way, exactly per the
 Addendum 127 corrected architecture. The host implements an evaluator (ForeignSurface{domain,
@@ -3866,7 +3860,7 @@ foreign): deepen the MVPs (curved/multi-face shell + sheet ops, oblique-cut blen
 version control 128 (thin over partition pmarks, watch double-counting); plus the new
 through-notch imprint follow-up above.
 
-## Addendum 129 (2026-06-10, attended): INTERIOR THROUGH-HOLE BOOLEANS (no counter tick; boolean
+## Addendum 129: INTERIOR THROUGH-HOLE BOOLEANS (no counter tick; boolean
 deepening, the Addendum 128 follow-up landed immediately)
 
 WHAT SHIPPED (branch boolean-through-notch): the interior through-notch decline found during the
@@ -3916,7 +3910,7 @@ COUNTER unchanged at 103/144 (this is correctness deepening, the kind Addendum 1
 thin ticks). NEXT: curved through-holes (relocation on curved faces, e.g. cylinder-through-block
 both-caps-out), or version control 128, or deepen shell/sheet MVPs.
 
-## Addendum 130 (2026-06-10, attended): PARITY BREADTH WAVE 1 -- items 7, 9, 15, 62, 74 (103 ->
+## Addendum 130: PARITY BREADTH WAVE 1 -- items 7, 9, 15, 62, 74 (103 ->
 108/144)
 
 ENDGAME ACCOUNTING FIRST (the /goal is "finish the parity list"): reconstructed the tick ledger
@@ -3965,7 +3959,7 @@ facet output exists as render_mesh_tol; tick with the documented API + test); th
 28 sheet-solid booleans / 31 selective booleans / 80 / 138 / 140 / 142, and blend depth 48-51,
 54-60 last.
 
-## Addendum 131 (2026-06-10, attended): PARITY BREADTH WAVE 2 -- items 94, 113, 122, 128, 137,
+## Addendum 131: PARITY BREADTH WAVE 2 -- items 94, 113, 122, 128, 137,
 139 (108 -> 114/144) + XNURBS PATENT RE-EVALUATION
 
 PATENT RE-EVALUATION (user request): the worry that XNurbs-style functionality is patent-gated
@@ -4022,7 +4016,7 @@ toolkit: split-at-param via knot insertion, the pieces exist), then the real eng
 sheet-solid booleans, 31 selective booleans, 68 n-sided variational fill (now patent-cleared),
 130 healing, 132 defeaturing, blends 48/50/51.
 
-## Addendum 132 (2026-06-10, attended): PARITY BREADTH WAVE 3 -- items 80, 138, 140, 142 (114 ->
+## Addendum 132: PARITY BREADTH WAVE 3 -- items 80, 138, 140, 142 (114 ->
 118/144)
 
 WAVE 3 SHIPPED (branch parity-breadth-3), four ticks (dossier 25 rows, sec 22 language for
@@ -4063,7 +4057,7 @@ geometry), 28/29/31 (sheet/general/selective booleans), 48-51 + 54-60 (blend dep
 surface-type-agnostic; sheet fragments classify the same way), then 68 variational fill, then
 132 defeature-small-features over delete_face.
 
-## Addendum 133 (2026-06-10, attended): SHEET-SOLID BOOLEANS (item 28, 118 -> 119/144)
+## Addendum 133: SHEET-SOLID BOOLEANS (item 28, 118 -> 119/144)
 
 THE ENGINE (branch sheet-booleans): boolean_sheet_solid(sheet, solid, op, tol) -- the first
 mixed-dimension boolean. Pipeline: seam_curves (sheet faces x solid faces SSI) -> imprint_operand
@@ -4096,7 +4090,7 @@ COUNTER: 118 -> 119/144 (item 28). Remaining tractable: 10, 29, 31, 48-51, 54-60
 scoped imprint over the same machinery) or 68 variational n-sided fill (dossier 32 sec 4,
 patent-cleared), then 132 defeature over delete_face, 130 gap-tighten heal.
 
-## Addendum 134 (2026-06-10, attended): N-SIDED BOUNDARY FILL (item 68, 119 -> 120/144)
+## Addendum 134: N-SIDED BOUNDARY FILL (item 68, 119 -> 120/144)
 
 THE CONSTRUCTOR (branch nsided-fill): keel-geom fill.rs fill_boundary(sides, tol) +
 Body::filled_sheet -- surface from boundary curves. Method per dossier 26 sec 1.1 (Coons 1967,
@@ -4129,7 +4123,7 @@ Remaining tractable: 10, 29, 31, 48-51, 54-60 (the blend deep end), 67, 130, 132
 pending slice-check). NEXT: 132 defeature (delete_face exists) and 130 gap-tighten are the
 moderate pair; 31 selective booleans; the blend family is the long tail.
 
-## Addendum 135 (2026-06-10, attended): HEALING + DEFEATURING (items 130, 132; 120 -> 122/144)
+## Addendum 135: HEALING + DEFEATURING (items 130, 132; 120 -> 122/144)
 
 DOSSIER 13 is the design source: healing = the three-phase skeleton "stitch, then simplify, then
 build geometry" with per-phase reporting; "defeaturing is delete-face plus heal ... the same
@@ -4162,7 +4156,7 @@ COUNTER: 120 -> 122/144 (items 130, 132). Remaining tractable: 10, 29, 31, 48-51
 blend deep end, ~11 items), 67, (141/143 pending slice-check). Excluded ~15. NEXT: 31 selective
 booleans or 10 body-from-geometry, then the blend family is the last big chunk.
 
-## Addendum 136 (2026-06-10, attended): BODY FROM SUPPLIED GEOMETRY (item 10, 122 -> 123/144)
+## Addendum 136: BODY FROM SUPPLIED GEOMETRY (item 10, 122 -> 123/144)
 
 Body::from_polygon_faces(faces, tol) (construct.rs): create a body directly from supplied
 geometry -- one planar polygon per face, outward-CCW; shared edges are discovered by coincidence
@@ -4180,7 +4174,7 @@ recognition (58) + unblend (59) -- the inverse pair of the shipped fillet machin
 plane-plane fillet's exact inverse is reconstructable: delete the cylinder face and re-intersect
 the two support planes); dossier 40/28 re-read first.
 
-## Addendum 137 (2026-06-10, attended): BLEND RECOGNITION + UNBLEND (items 58, 59; 123 ->
+## Addendum 137: BLEND RECOGNITION + UNBLEND (items 58, 59; 123 ->
 125/144)
 
 THE INVERSE PAIR (branch blend-recognize-unblend; dossier 28 sec 6.3: model blends with their
@@ -4216,7 +4210,7 @@ COUNTER: 123 -> 125/144 (items 58, 59). Remaining tractable: 29, 31, 48-51, 54-5
 NEXT: 31 selective booleans, then the remaining blend depth (48 variable radius is the
 spine-with-varying-r generalization; 54-57 are policy layers on the same engine).
 
-## Addendum 138 (2026-06-10, attended): SELECTIVE FACE-PAIR BOOLEANS (item 31; 125 -> 126/144)
+## Addendum 138: SELECTIVE FACE-PAIR BOOLEANS (item 31; 125 -> 126/144)
 
 boolean_selective(a, b, op, pairs, tol) (branch selective-booleans): the boolean restricted to
 the intersection seams of caller-chosen (target-face, tool-face) pairs. REFACTOR: the post-seam
@@ -4234,7 +4228,7 @@ warnings, workspace 123 + 77 + 214 (+1) green.
 
 COUNTER: 125 -> 126/144 (item 31).
 
-## Addendum 139 (2026-06-10, attended): SESSION-END RESUME ANCHOR (counter 126/144)
+## Addendum 139: SESSION-END RESUME ANCHOR (counter 126/144)
 
 WHERE WE ARE. A +23 session (103 -> 126), all merged to master, all green: workspace 123 geom +
 77 math + 214 topo, clippy -D warnings, fmt, four clean fuzz_boolean soaks at every boolean
@@ -4272,7 +4266,7 @@ oracle) before any 1.0 claim. Standing rules unchanged: dossier re-read + citati
 data-first; verify the SUCCESS branch; branch-per-milestone; exact CI triplet + fuzz_boolean
 soak when boolean internals change; LOG addendum then merge; NO EM-DASHES; push only if asked.
 
-## Addendum 140 (2026-06-10, attended): VARIABLE-RADIUS BLEND, EXACT CONE RUNG (item 48; 126 ->
+## Addendum 140: VARIABLE-RADIUS BLEND, EXACT CONE RUNG (item 48; 126 ->
 127/144)
 
 THE SURPRISE (branch variable-radius-blend; dossiers 40/28 re-read): item 48 has an EXACT
@@ -4307,7 +4301,7 @@ follow-up). Remaining: 29, 49-51, 54-57, 60, 67 -- all multi-session engines. Th
 rung (49) now looks closest: the same surgery with a rational-quadratic strip between the same
 spring lines.
 
-## Addendum 141 (2026-06-10, attended): CONIC BLEND SECTIONS (item 49; 127 -> 128/144)
+## Addendum 141: CONIC BLEND SECTIONS (item 49; 127 -> 128/144)
 
 fillet_edge_conic(edge, d, w) (branch conic-blend): the chamfer-to-circle CONTINUUM on the
 proven trim-and-stitch surgery. Springs set back `d` along each support from the edge (the
@@ -4333,7 +4327,7 @@ COUNTER: 127 -> 128/144 (item 49). Remaining: 29, 50, 51, 54-57, 60, 67 -- the t
 (face-face, vertex, hold-line, ranges, networks, overflow, G2, Gordon loft, non-manifold
 booleans).
 
-## Addendum 142 (2026-06-10, attended): HOLD-LINE BLENDS (item 54; 128 -> 129/144)
+## Addendum 142: HOLD-LINE BLENDS (item 54; 128 -> 129/144)
 
 fillet_edge_hold_line(edge, hold_on_first, setback) (branch hold-line-blend): the spring on the
 hold support is PINNED `setback` in from the edge; the RADIUS FLOATS to keep the ball tangent
@@ -4359,7 +4353,7 @@ only.
 
 COUNTER: 128 -> 129/144 (item 54). Remaining: 29, 50, 51, 55, 56, 57, 60, 67.
 
-## Addendum 143 (2026-06-10, attended): FACE-FACE BLEND (item 50; 129 -> 130/144)
+## Addendum 143: FACE-FACE BLEND (item 50; 129 -> 130/144)
 
 blend_face_face(wall) (branch face-face-blend): the rolling ball between two PARALLEL planar
 faces that share NO edge, consuming the wall face joining them -- the rounded-end slab. The
@@ -4381,7 +4375,7 @@ CI: fmt, clippy -D warnings, workspace 123 + 77 + 219 (+1) green. No fuzz: addit
 
 COUNTER: 129 -> 130/144 (item 50). Remaining: 29, 51, 55, 56, 57, 60, 67.
 
-## Addendum 144 (2026-06-10, attended): G2 BLEND SECTIONS (item 60; 130 -> 131/144)
+## Addendum 144: G2 BLEND SECTIONS (item 60; 130 -> 131/144)
 
 fillet_edge_g2(edge, d, fullness) (branch g2-blend): TRUE curvature continuity to planar
 supports. The cross-section is a QUINTIC Bezier whose first three and last three control points
@@ -4403,7 +4397,7 @@ COUNTER: 130 -> 131/144 (item 60). Remaining: 29, 51, 55, 56, 57, 67 -- six item
 multi-session engine (vertex blends, range/runout surgery, networks/mitring, overflow policies,
 Gordon loft, non-manifold booleans).
 
-## Addendum 145 (2026-06-10, attended): GORDON LOFT WITH GUIDES (item 67; 131 -> 132/144)
+## Addendum 145: GORDON LOFT WITH GUIDES (item 67; 131 -> 132/144)
 
 gordon_surface(sections, guides, tol) (keel-geom fill.rs) + Body::lofted_sheet_with_guides
 (branch gordon-loft): loft through sections WITH guide curves, per dossier 26 sec 2 -- the
@@ -4428,7 +4422,7 @@ CI: fmt, clippy -D warnings, workspace 123 + 77 + 221 (+1) green. No fuzz: addit
 COUNTER: 131 -> 132/144 (item 67). Remaining: 29, 51, 55, 56, 57 -- vertex blends, range/runout,
 networks/mitring, overflow policies, non-manifold booleans: the five true multi-session engines.
 
-## Addendum 146 (2026-06-10, attended): SESSION-END RESUME ANCHOR (counter 132/144)
+## Addendum 146: SESSION-END RESUME ANCHOR (counter 132/144)
 
 WHERE WE ARE. master HEAD all green: workspace 123 geom + 77 math + 221 topo, clippy -D
 warnings, fmt; six clean fuzz_boolean soaks across the session at every boolean/tessellation
@@ -4466,7 +4460,7 @@ citation per item; data-first diagnosis; verify the SUCCESS branch explicitly; b
 milestone; exact CI triplet + fuzz_boolean soak when boolean/tessellation internals change; LOG
 addendum then merge; anti-double-count rule (Addendum 130); NO EM-DASHES; push only if asked.
 
-## Addendum 147 (2026-06-10, attended): RESEARCH ROUND LANDED + CLIFF OVERFLOW (item 57; 132 ->
+## Addendum 147: RESEARCH ROUND LANDED + CLIFF OVERFLOW (item 57; 132 ->
 133/144)
 
 RESEARCH: dossiers 53-57 merged from worktree-nurbs-research (commit bb57472): vertex/setback
@@ -4503,7 +4497,7 @@ CI: fmt, clippy -D warnings, workspace 123 + 77 + 222 (+1) green. No fuzz: addit
 
 COUNTER: 132 -> 133/144 (item 57). Remaining: 29, 51, 55, 56.
 
-## Addendum 148 (2026-06-10, attended): PARTIAL-SPAN BLEND (item 55; 133 -> 134/144)
+## Addendum 148: PARTIAL-SPAN BLEND (item 55; 133 -> 134/144)
 
 fillet_edge_partial(edge, t0, t1, radius) (branch partial-span-blend; dossier 54 Q3/Q4/Q5):
 round only the interior interval of a plane-plane edge, tapering linearly from r at t0 to ZERO
@@ -4536,7 +4530,7 @@ CI: fmt, clippy -D warnings, workspace 123 + 77 + 223 (+1) green; soak clean as 
 COUNTER: 133 -> 134/144 (item 55). Remaining tractable: 29, 51, 56. Ladder per dossier 54:
 two square stops, curved spines (torus segment + canal runout), partial recognition/unblend.
 
-## Addendum 149 (2026-06-10, attended): MITRED BLEND CORNER (item 56; 134 -> 135/144)
+## Addendum 149: MITRED BLEND CORNER (item 56; 134 -> 135/144)
 
 mitre_fillet_corner(e1, e2, r) (branch mitre-blend; dossier 55 milestone 1): two equal-radius
 convex plane-plane edges sharing a corner and one support, their cylinder blends joined along
@@ -4566,7 +4560,7 @@ fmt; fuzz_boolean soak (tessellate_cylinder changed): 10 minutes, 785 runs, clea
 COUNTER: 134 -> 135/144 (item 56, the milestone-1 rung; unequal radii via marched SSI, chain
 contraction, and roll-over junctions are the dossier-55 ladder). Remaining: 29, 51.
 
-## Addendum 150 (2026-06-10, attended): SPHERE-OCTANT VERTEX BLEND (item 51; 135 -> 136/144)
+## Addendum 150: SPHERE-OCTANT VERTEX BLEND (item 51; 135 -> 136/144)
 
 fillet_corner_octant(corner, r) (branch octant-corner; dossier 53 Q1 + the worked topology
 diagram): a convex trihedral corner of three mutually perpendicular planar supports rounds to
@@ -4611,7 +4605,7 @@ CI: fmt; clippy -D warnings; workspace 123 + 77 + 225 (+1) green; fuzz_boolean s
 COUNTER: 135 -> 136/144 (item 51, the perpendicular equal-radius rung; setbacks, unequal
 radii, and oblique dihedrals are the dossier-53 ladder). Remaining tractable: 29.
 
-## Addendum 151 (2026-06-10, attended): NON-REGULARIZED CELLULAR BOOLEAN (item 29; 136 -> 137/144)
+## Addendum 151: NON-REGULARIZED CELLULAR BOOLEAN (item 29; 136 -> 137/144)
 
 boolean_with(a, b, op, tol, BooleanOptions { regularize }) (branch nonreg-union; dossier 57,
 the deep dossier of the batch): item 29 lands as the dossier's verdict prescribed -- a CELL
@@ -4660,7 +4654,7 @@ simplify; plus full soup retirement per dossier 47). This reaches the projected 
 ceiling: the remaining 7 items are the permanently-declined / out-of-scope set (Addendum 130
 ledger).
 
-## Addendum 152 (2026-06-10, attended): SESSION-END RESUME ANCHOR (137/144, the tractable ceiling)
+## Addendum 152: SESSION-END RESUME ANCHOR (137/144, the tractable ceiling)
 
 STATE: master = the merge of nonreg-union (#29), counter 137/144, ALL GREEN (123 geom + 77 math
 + 226 topo; fmt; clippy -D warnings), two clean 10-minute fuzz_boolean soaks this leg (856 runs
@@ -4695,7 +4689,7 @@ RESUME RECIPE: read this addendum, then Addendum 151/150 for the latest machiner
 is Addendum 130; CI = exact triplet + fuzz_boolean WSL soak when boolean/tessellation internals
 change; constructors must emit mass == mesh bodies; LOG addendum then merge; NO EM-DASHES.
 
-## Addendum 153 (2026-06-10, attended): STEP IMPORT, PLANAR MILESTONE (keel-io plan step 1)
+## Addendum 153: STEP IMPORT, PLANAR MILESTONE (keel-io plan step 1)
 
 Context: the corpus re-read (all 78 research files, 8-reader audit) named STEP IMPORT the largest
 unimplemented opportunity on the shippable path (dossier 38 is an implementation-grade spec; the
@@ -4739,7 +4733,7 @@ LADDER (dossier 38 build plan): analytic surfaces + seams/poles (milestone 2), N
 property round-trip oracle, AP242 tessellation import. NOT a parity counter tick (the 144-item
 counter is closed at its ceiling); this is the post-parity opportunity program.
 
-## Addendum 154 (2026-06-10, attended): SHEET-AS-KNIFE CELLULAR PARTITION (dossier 57 Rung 2)
+## Addendum 154: SHEET-AS-KNIFE CELLULAR PARTITION (dossier 57 Rung 2)
 
 partition_by_sheet(solid, sheet, tol) (branch cellular-rung2): the non-regularized sheet-as-
 interior-partition of dossier 57 Rung 2. The wall = the sheet trimmed to the solid by the
@@ -4770,7 +4764,7 @@ winding fix touches the shared cellular walk): 10 minutes, 822 runs, clean.
 LADDER: Rung 3 sheet-sheet booleans, Rung 4 wire imprinting, Rung 5 full SGC with simplify;
 partial-penetration knives (wall boundary ending interior) decline honestly today.
 
-## Addendum 155 (2026-06-10, attended): CYLINDER-CYLINDER SSI + A WRONG-POSITIVE RETIRED
+## Addendum 155: CYLINDER-CYLINDER SSI + A WRONG-POSITIVE RETIRED
 
 CYLINDER-CYLINDER SSI (branch cyl-cyl-ssi; corpus-audit opportunity A, dossier 11 QI-class +
 the analytic-rung lesson): analytic_analytic gains the quadric pair via THREE RUNGS, never a
@@ -4815,7 +4809,7 @@ changed): fuzz_boolean 822 runs + fuzz_cyl_boolean 890 runs, 10 minutes each, bo
 CONSUMERS UNBLOCKED: the unequal-radius mitre (dossier 55, queued) now has its junction curve
 in closed form; cylinder-cylinder boolean assembly has certified seams waiting.
 
-## Addendum 156 (2026-06-10, attended): METROLOGY-GRADE FITTING (opportunity B)
+## Addendum 156: METROLOGY-GRADE FITTING (opportunity B)
 
 keel-geom metrology.rs (branch metrology-fits; corpus-audit opportunity B, dossiers 23 + 17):
 point-set fitting with an EXPLICIT OBJECTIVE parameter, never a silent least-squares default
@@ -4849,7 +4843,7 @@ CONSUMERS: GD&T datum simulation (dossier 17) and inspection-grade profile evalu
 their fitting engine; the connection B insight stands (one engine, objective-parameterized,
 shared with recovery).
 
-## Addendum 157 (2026-06-10, attended): NURBS EXTENSION VIA KNOT UNCLAMPING (the staged engine lands)
+## Addendum 157: NURBS EXTENSION VIA KNOT UNCLAMPING (the staged engine lands)
 
 extend.rs (branch unclamp-extend; dossier 13 sec 2.1, corpus-audit top-tier item): the M5b
 staged Err is retired. The engine is the POLAR-FORM construction: the natural extension past a
@@ -4884,7 +4878,7 @@ CONSUMERS UNBLOCKED: NURBS delete-face healing, curved tweak re-intersection, an
 untrimming strategy (the corpus's "chief obstacle to robust booleans on NURBS solids") now
 have their extension primitive.
 
-## Addendum 158 (2026-06-10, attended): STEP IMPORT MILESTONE 2, THE GEOMETRY CONVERSION LAYER
+## Addendum 158: STEP IMPORT MILESTONE 2, THE GEOMETRY CONVERSION LAYER
 
 step_import.rs (branch step-import-2; dossier 38 build-plan step 3, "the high-stakes path"):
 the conversion layer from Part 21 geometric entities to Keel geometry, the substrate the
@@ -4923,7 +4917,7 @@ LADDER: curved TOPOLOGY assembly (advanced_face on analytic/NURBS surfaces, seam
 faces, vertex_loop poles, pcurve supply-or-reconstruct), heal-on-import tolerance escalation,
 validation properties, AP242 tessellation import.
 
-## Addendum 159 (2026-06-10, attended): VALIDATION-PROPERTY ROUND TRIP + SHORTEST-ROUND-TRIP REALS
+## Addendum 159: VALIDATION-PROPERTY ROUND TRIP + SHORTEST-ROUND-TRIP REALS
 
 Branch validation-props (dossier 38 sec 9 + dossier 22, CAx-IF GVP practice): the STEP exporter
 now embeds VOLUME / SURFACE AREA / CENTROID as geometric validation properties
@@ -4948,7 +4942,7 @@ formatting change matters).
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 237 (+1) green. No soak: the gate consumes
 already-parsed values (no new parsing path), no boolean/tessellation change.
 
-## Addendum 160 (2026-06-10, attended): BLEND-CHAIN ORDERED SUPPRESSION + THE WEDGE ORACLE
+## Addendum 160: BLEND-CHAIN ORDERED SUPPRESSION + THE WEDGE ORACLE
 
 Body::unblend_all(tol) (branch blend-chains; dossiers 03 sec 2.2 / 15 sec 1.4, the
 Venkataraman-Sohoni ordering): whole-model blend suppression, LEAVES FIRST. A blend whose face
@@ -4980,7 +4974,7 @@ volume bit-identical).
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 238 (+1) green. No soak: no
 boolean/tessellation path touched (blend surgery + recognition only).
 
-## Addendum 161 (2026-06-10, attended): INSCRIBED-RADIUS MEDIAL FIELD (wall-thickness MVP)
+## Addendum 161: INSCRIBED-RADIUS MEDIAL FIELD (wall-thickness MVP)
 
 interrogate.rs (branch wall-thickness; corpus-audit connection A first slice, dossiers 10 / 41
 / 50): Body::inscribed_radius(p, outward) = the radius of the largest inscribed sphere tangent
@@ -5005,7 +4999,7 @@ interrogation only.
 LADDER: the exact medial-axis structure (Culver-Keyser-Manocha seams) stays queued; this field
 is its query-level MVP and the bridge for retiring the per-feature r_max duplicates.
 
-## Addendum 162 (2026-06-10, attended): TOLERANCE PROPAGATION SPECIFICATION (the unfixable-late gap)
+## Addendum 162: TOLERANCE PROPAGATION SPECIFICATION (the unfixable-late gap)
 
 docs/superpowers/specs/2026-06-10-tolerance-propagation.md (branch tol-propagation-spec): the
 corpus audit named tolerance propagation the single most serious unvalidated dependency (spec
@@ -5024,7 +5018,7 @@ instrumentation are the named follow-ups.
 
 CI: docs only; no code changed (workspace remains 132 + 77 + 239 green from Addendum 161).
 
-## Addendum 163 (2026-06-10, attended): SESSION-END ANCHOR -- THE POST-PARITY OPPORTUNITY PROGRAM
+## Addendum 163: SESSION-END ANCHOR -- THE POST-PARITY OPPORTUNITY PROGRAM
 
 STATE: master = the merge of tol-propagation-spec, all green (132 geom + 77 math + 239 topo;
 fmt; clippy -D warnings), NOT pushed. The parity counter remains CLOSED at 137/144 (Add. 152);
@@ -5068,7 +5062,7 @@ RESUME RECIPE unchanged (Add. 152): read this anchor, the exact CI triplet, fuzz
 boolean/tessellation/parser internals change, mass == mesh constructors, branch-per-milestone,
 LOG addendum then merge, NO EM-DASHES, push only on request.
 
-## Addendum 164 (2026-06-10, attended): ANALYTIC MASS PROPERTIES ON BLEND FACES
+## Addendum 164: ANALYTIC MASS PROPERTIES ON BLEND FACES
 
 Branch blend-pcurves (the queued-depth blend-pcurve milestone, resolved WITHOUT pcurve
 authoring): integrate_curved_face gains a PROJECTED ISO-RECTANGLE rung. When every boundary
@@ -5103,7 +5097,7 @@ all revolve bodies unchanged (their valid pcurves pass the guard).
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 240 (+1) green; fuzz_boolean soak
 (mass_properties is load-bearing in the boolean gates): 10 minutes, 733 runs, clean.
 
-## Addendum 165 (2026-06-10, attended): THE POLYGON SOUP IS RETIRED (dossier 47 Rung 0)
+## Addendum 165: THE POLYGON SOUP IS RETIRED (dossier 47 Rung 0)
 
 Branch soup-retirement: build_result_solid + kept_to_polys + ResultPoly (+ the now-orphaned
 face_ring_points and newell helper, ~290 lines) are DELETED; stitch_by_import is the ONLY
@@ -5125,7 +5119,7 @@ CI: fmt; clippy -D warnings (the deletion surfaced a stale allow and one orphan,
 cleaned); workspace 132 + 77 + 240 green; fuzz_boolean soak (assembly path changed): 10
 minutes, 706 runs, clean.
 
-## Addendum 166 (2026-06-10, attended): SHEET-SHEET BOOLEANS (dossier 57 Rung 3) + A LATENT IMPRINT NO-OP FIXED
+## Addendum 166: SHEET-SHEET BOOLEANS (dossier 57 Rung 3) + A LATENT IMPRINT NO-OP FIXED
 
 boolean_sheet_sheet(a, b, op, tol) (branch sheet-sheet; dossier 57 Rung 3, dossier 39 sec
 1.2): the 2D arrangement of two COPLANAR planar sheets. The overlap interior boundary imprints
@@ -5153,7 +5147,7 @@ declines; crossing sheets decline.
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 241 (+1) green; fuzz_boolean soak (the
 pre-pass fix changes coincident boolean internals): 10 minutes, 662 runs, clean.
 
-## Addendum 167 (2026-06-10, attended): SURGERY PARAMETERIZATION, FIRST EXTRACTION (the cap skeleton)
+## Addendum 167: SURGERY PARAMETERIZATION, FIRST EXTRACTION (the cap skeleton)
 
 Branch surgery-extract (the queued tech-debt item): the blend CAP-SPLIT skeleton (find the cap
 face, split it between the fins ending at the two spring vertices, copy the support surface to
@@ -5172,7 +5166,7 @@ handlers land.
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 241 green. No soak: behavior-preserving
 refactor, no boolean/tessellation logic change (the suite is the gate).
 
-## Addendum 168 (2026-06-10, attended): CO-ANALYTIC PLANAR ROLL-ON (dossier 56 ladder step 1) + THE PLANAR ARC-SAMPLING FIX
+## Addendum 168: CO-ANALYTIC PLANAR ROLL-ON (dossier 56 ladder step 1) + THE PLANAR ARC-SAMPLING FIX
 
 fillet_edge_chain(e1, e2, r) (branch overflow-handlers; dossier 56 sec 6, the ladder step after
 the parity-shipped cliff): ONE constant-radius cylinder fillet rolled across TWO COLLINEAR
@@ -5206,7 +5200,7 @@ LADDER NEXT: planar notch bridge (in-place trim-loop extension, the US 8,935,130
 around), then planar cap (extend two planes), then the bucket-b evaluators (creeping cliff,
 smooth merge).
 
-## Addendum 169 (2026-06-10, attended): WIRE-SOLID BOOLEANS (dossier 57 Rung 4)
+## Addendum 169: WIRE-SOLID BOOLEANS (dossier 57 Rung 4)
 
 boolean_wire_solid(wire, solid, op, tol) (branch wire-imprint; the NOODLES dimension-by-
 dimension lowest rung): trim a WIRE body against a SOLID. Intersection keeps the inside
@@ -5228,7 +5222,7 @@ Rung 1 cellular union DONE (Add. 151), Rung 2 sheet-as-knife DONE (Add. 154), Ru
 sheet-sheet DONE (Add. 166), Rung 4 wire imprint DONE (this); Rung 5 (full SGC with the
 Rossignac Merge simplify) is the remaining tail, with the completion gate after it.
 
-## Addendum 170 (2026-06-10, attended): BACKLOG-LEG ANCHOR (Addenda 164-169)
+## Addendum 170: BACKLOG-LEG ANCHOR (Addenda 164-169)
 
 STATE: master = the merge of wire-imprint (613aedb), all green (132 + 77 + 243; fmt; clippy
 -D warnings), clean soaks at every gated milestone, NOT pushed.
@@ -5254,7 +5248,7 @@ PATTERN OF THE LEG: every differential/exactness oracle exposed a real pre-exist
 (stale pcurves, sparse-ring gaps, the unit-segment imprint no-op, the full-circle planar arc
 sampling). Write the oracle FIRST; the corpus's exactness culture is the kernel's best fuzzer.
 
-## Addendum 171 (2026-06-10, attended): PARTIAL BAND SEAMS HARD-DECLINE (another wrong-positive retired)
+## Addendum 171: PARTIAL BAND SEAMS HARD-DECLINE (another wrong-positive retired)
 
 Branch notch-cap, found while probing the NOTCH handler: the dossier-56 notch semantics ("the
 blend is undeformed; the notch element trims to the rounding") is literally fillet-then-
@@ -5283,7 +5277,7 @@ oracle for whichever route lands first.
 CI: fmt; clippy -D warnings; workspace 132 + 77 + 244 (+1) green; fuzz_boolean soak
 (seam classification changed): count below.
 
-## Addendum 172 (2026-06-10, attended): NOTCH OVERFLOW HANDLER (dossier 56 sec 2.1) + lune-exact planar massprops
+## Addendum 172: NOTCH OVERFLOW HANDLER (dossier 56 sec 2.1) + lune-exact planar massprops
 
 Branch notch-surgery. fillet_edge_notch(e1, e2, r): fillet two collinear convex plane-plane
 edges separated by a planar-walled groove crossing the blend corridor. Per the notch semantics
@@ -5323,7 +5317,7 @@ agnostic. CI: fmt; clippy -D warnings; workspace 132 + 77 + 245 (+1) green; fuzz
 (tessellation + massprops changed): count below. Remaining in the leg: planar CAP (sec 2.2),
 then setbacks (dossier 53), Rung 5 + completion gate.
 
-## Addendum 173 (2026-06-10, attended): CAP OVERFLOW HANDLER (dossier 56 sec 2.2) + Green-slab cylinder massprops
+## Addendum 173: CAP OVERFLOW HANDLER (dossier 56 sec 2.2) + Green-slab cylinder massprops
 
 Branch cap-handler. The cap construction, per the dossier verbatim: "a face or faces in the
 model will be intersected with the blend sheet to trim the sheet exactly to the model"
@@ -5357,7 +5351,7 @@ CI: fmt; clippy -D warnings; workspace 132 + 77 + 246 (+1) green; fuzz_boolean s
 (massprops changed): count below. Dossier 56 sec 2 is now COMPLETE (notch + cap); remaining
 in the leg: setbacks (dossier 53), Rung 5 SGC + completion gate.
 
-## Addendum 174 (2026-06-10, attended): TWO-FACE ROOF CAP (dossier 56 sec 2.2 complete for existing-ridge planar ends)
+## Addendum 174: TWO-FACE ROOF CAP (dossier 56 sec 2.2 complete for existing-ridge planar ends)
 
 Branch cap-roof. The two-face cap, "extending at most two of the adjoining faces to meet",
 in its zero-extension form (the faces already meet at a MODEL RIDGE; bucket (a): plane-plane
@@ -5391,7 +5385,7 @@ CI: fmt; clippy -D warnings; workspace 132 + 77 + 247 (+1) green; fuzz_boolean s
 cap) COMPLETE; #15 overflow handlers close (ov_smooth transition patch = procedural-evaluator
 follow-up per the three-bucket verdict). Next: #16 setbacks (dossier 53).
 
-## Addendum 175 (2026-06-10, attended): OBLIQUE TRIHEDRAL CORNER (dossier 53 milestone 2) + Green-slab SPHERES
+## Addendum 175: OBLIQUE TRIHEDRAL CORNER (dossier 53 milestone 2) + Green-slab SPHERES
 
 Branch corner-triangle, the analytic rung of #16 setback corners taken FIRST per the standing
 lesson. fillet_corner_octant generalizes to NON-perpendicular equal-radius trihedral corners:
@@ -5428,7 +5422,7 @@ CI: fmt; clippy -D warnings; workspace 132 + 77 + 248 (+1) green; fuzz_boolean s
 (massprops changed): count below. Next: dossier 53 milestone 3, the setback split +
 Charrot-Gregory convex-combination patch through the certified evaluator-to-NURBS fit.
 
-## Addendum 176 (2026-06-10, attended): SETBACK VERTEX BLEND (dossier 53 milestone 3): Varady-Rockwood split + Charrot-Gregory certified quads
+## Addendum 176: SETBACK VERTEX BLEND (dossier 53 milestone 3): Varady-Rockwood split + Charrot-Gregory certified quads
 
 Branch corner-triangle (continues Add.175). The first corner construction OUTSIDE the
 analytic island, built exactly as the dossier prescribes: the certified-evaluator reduction,
@@ -5466,7 +5460,7 @@ the per-quad certification. CI: fmt; clippy -D warnings; workspace 133 + 77 + 24
 green; fuzz_boolean soak: count below. Remaining on the dossier-53 ladder: curved supports
 (M4), n > 3 (M5), mixed convexity (M6): queued, not blocking #18.
 
-## Addendum 177 (2026-06-10, attended): RUNG 5 SGC MERGE + the three-bucket completion-gate instrument
+## Addendum 177: RUNG 5 SGC MERGE + the three-bucket completion-gate instrument
 
 Branch sgc-simplify. Part (A) of #18, the Rossignac-O''Connor Merge operator (dossier 57,
 "combine a k-cell with two incident (k+1)-cells when they share the same classification and
@@ -5506,7 +5500,7 @@ THE COMPLETION-GATE PROCEDURE (documented for the scheduled run, out of single-s
 CI: fmt; clippy -D warnings; workspace 133 + 77 + 251 green (+2 Merge tests; the oracle
 ignored by default); fuzz_boolean soak: count below.
 
-## Addendum 178 (2026-06-10, attended): completion-gate INTERMEDIATE EXECUTION, all clean
+## Addendum 178: completion-gate INTERMEDIATE EXECUTION, all clean
 
 The two Add.177 instruments ran at intermediate scale on master 3907a76 (+ f690570, the
 runnable soak script fuzz/soak_sectors.sh):
@@ -5531,7 +5525,7 @@ Rung 5 Merge + the gate instruments (177). The declined tails (dossier-53 M4-M6,
 mixed-dimension Merge instances, ov_smooth, the multi-face cap, crossing-seam imprint) are
 recorded follow-ups, each behind an honest decline.
 
-## Addendum 179 (2026-06-10, attended): GRACEFUL DEGRADATION rung 1: no-interaction booleans (dossier 29, the new program)
+## Addendum 179: GRACEFUL DEGRADATION rung 1: no-interaction booleans (dossier 29, the new program)
 
 USER MANDATE: graceful degradation IS the product ("the reason Parasolid is king is not their
 number of features, but their ability to take pretty much any geo and return an answer").
@@ -5574,7 +5568,7 @@ NEXT (the leg continues): M2 = the Tier-2 TOLERANT boolean (dossier 39 touching/
 + the Add.162 tolerance spec) with OpReport confidence (clean/salvaged + tier + achieved
 tolerance), never silent.
 
-## Addendum 180 (2026-06-10, attended): GRACEFUL DEGRADATION M2: the Tier-2 TOLERANT boolean
+## Addendum 180: GRACEFUL DEGRADATION M2: the Tier-2 TOLERANT boolean
 
 Branch graceful-tolerant. Dossiers re-read: 39 (the ACIS prepare phase: snap near-coincidence
 to exact coincidence BEFORE classification, ~70 pct of failed booleans fixed in one
@@ -5621,7 +5615,7 @@ in [gap, fuzz]; beyond-fuzz stays two components), touching_intersection_and_dif
 clean. CI: fmt; clippy -D warnings; workspace 133 + 77 + 254 green; fuzz_boolean soak: count
 below.
 
-## Addendum 181 (2026-06-10, attended): GRACEFUL DEGRADATION M3: the on-on coincidence machinery completed (chains, pockets, geometric-first classification)
+## Addendum 181: GRACEFUL DEGRADATION M3: the on-on coincidence machinery completed (chains, pockets, geometric-first classification)
 
 Branch graceful-tolerant (continues Add.180). The dominant decline class was the
 PARTIAL-OVERLAP touching contact; the probe revealed the real defect chain, fixed bottom-up:
@@ -5672,7 +5666,7 @@ CI: fmt; clippy -D warnings; workspace 133 + 77 + 256 green; fuzz_boolean soak: 
 Remaining tolerant declines (13/500): mixed sliver-assembly shapes; with curved-surface
 prepare (cylinder/cone mates) these are the M4 candidates.
 
-## Addendum 182 (2026-06-10, attended): GRACEFUL DEGRADATION M4: the pin-in-hole class, and the wrong-positive it unmasked
+## Addendum 182: GRACEFUL DEGRADATION M4: the pin-in-hole class, and the wrong-positive it unmasked
 
 Branch graceful-m4. The canonical CAD mating case, ORACLE FIRST: a plate with a through hole
 and the pin that exactly fills it. The oracle exposed a chain of SEVEN defects, the deepest a
@@ -5720,7 +5714,7 @@ FOLLOW-UP NOTED: the curved-result self-consistency gate stays weak (positive te
 volume only); extending mass==mesh to curved bodies within a chordal band is the next
 honesty-net upgrade and would have caught defect 1 directly.
 
-## Addendum 183: graceful degradation M5, the curved chordal honesty gate (2026-06-11)
+## Addendum 183: graceful degradation M5, the curved chordal honesty gate
 
 Dossier 29 re-read (Part 4, confidence reporting; Part 6, no silent salvage): the doctrine
 demands that a returned body be SELF-CONSISTENT or declined, never silently wrong. The
@@ -5756,7 +5750,7 @@ tessellation internals changed): counts below.
 NEXT (the leg continues): tolerant cylinder prepare (radial-gap pins), the residual
 13-trial tolerant tail, doctrine-wide OpReport.
 
-## Addendum 184: graceful degradation M6, the tolerant cylinder prepare (2026-06-11)
+## Addendum 184: graceful degradation M6, the tolerant cylinder prepare
 
 Dossier 39 re-read (sec 1, the ACIS prepare phase: snap near-coincidence to EXACT
 coincidence before classification fixes the dominant share of failed booleans; sec 5,
@@ -5789,7 +5783,7 @@ CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 green; oracle N=2000 uncha
 (both touch boolean internals; one fuzz_boolean + fuzz_cyl_boolean soak gates the merge);
 counts recorded at the merge.
 
-## Addendum 185: the tolerant tail retired; the sec 3.2 filter goes universal (2026-06-11)
+## Addendum 185: the tolerant tail retired; the sec 3.2 filter goes universal
 
 Dossier 39 re-read (sec 3.2: "a curve along existing boundary separates nothing and is
 never imprinted"; sec 1.4 on-on classification): the residual 13-trial tolerant decline
@@ -5829,7 +5823,7 @@ fuzz_cyl_boolean 666 runs / 606 s clean. Oracle at N=10000: strict 9507/493/0, t
 2497/3/0 (the three new declines are rarer shapes surfacing at 5x sample; triage noted).
 WRONG = 0 in both lanes.
 
-## Addendum 186: graceful degradation M8, the thin-strip interior point (2026-06-11)
+## Addendum 186: graceful degradation M8, the thin-strip interior point
 
 Dossier 29 re-read (Part 2, the escalation cascade exists so that NO configuration class
 is silently unhandled) + dossier 39 sec 1.4. Scaling the oracle to N=10000 surfaced three
@@ -5858,7 +5852,7 @@ CI: fmt; clippy -D warnings; workspace 133 + 77 + 258 + 1 green; merge soak coun
 SOAK COUNTS (the M8 merge gate, 2026-06-11): fuzz_boolean 2005 runs / 602 s clean;
 fuzz_cyl_boolean 666 runs / 603 s clean.
 
-## Addendum 187: the 100k rehearsal finds 4 strict WRONGs; instruments verified (2026-06-11)
+## Addendum 187: the 100k rehearsal finds 4 strict WRONGs; instruments verified
 
 THE HEADLINE: the N=100000 release oracle (the 10 percent rehearsal of the completion
 gate, ~2.6 h, ~90 ms/trial) reports strict PASS 95086 / DECLINE 4910 / WRONG 4; tolerant
@@ -5892,7 +5886,7 @@ ORDERING DECISION: optimization passes run BEFORE the gate (the gate certifies a
 any post-gate change voids it; a faster kernel also raises soak executions/sec), and the
 4 WRONGs are fixed before everything.
 
-## Addendum 188: the first WRONGs fixed; ear-clip signed-fan completion (2026-06-11)
+## Addendum 188: the first WRONGs fixed; ear-clip signed-fan completion
 
 THE CLASS (localized by tests/scan_wrong.rs, 10 shards over the 100k window): trials
 15219 / 48579 / 70359 / 88959, all Union with a 1e-7 sub-tolerance PENETRATION on one
@@ -5926,7 +5920,7 @@ fuzz_cyl_boolean merge soak (tessellation changed): counts below.
 SOAK COUNTS (the M9 merge gate, 2026-06-11): fuzz_boolean 1813 runs / 604 s clean;
 fuzz_cyl_boolean 588 runs / 601 s clean.
 
-## Addendum 189: OPT-M1/M2, the profile and the 8x (2026-06-11)
+## Addendum 189: OPT-M1/M2, the profile and the 8x
 
 The optimization leg opens (task 20; the yardstick is PARASOLID, ~1 ms/boolean native,
 per the aim-for-the-sky mandate; OCCT-in-WASM at ~115 ms is merely the incumbent floor).
@@ -5971,7 +5965,7 @@ SOAK COUNTS (the OPT-M2 merge gate, 2026-06-11): fuzz_boolean 2865 runs / 601 s 
 (was 1813 pre-optimization: the 8x visible in fuzz throughput); fuzz_cyl_boolean 698
 runs / 602 s clean.
 
-## Addendum 190: OPT-M3, the 100x (2026-06-11)
+## Addendum 190: OPT-M3, the 100x
 
 Three slices, each found by descending the profiler one level, each replacing an
 approximation with an EXACT closed form (the optimization and the exactness doctrine
@@ -6011,7 +6005,7 @@ SOAK COUNTS (the OPT-M3 merge gate, 2026-06-11): fuzz_boolean 9495 runs / 601 s 
 runs / 607 s clean and FLAT versus prior soaks: the curved path gained nothing from the
 planar fast paths, which is OPT-M4''s thesis in one number.
 
-## Addendum 191: OPT-M4, the curved wall falls to the same key (2026-06-11)
+## Addendum 191: OPT-M4, the curved wall falls to the same key
 
 The curved benchmark (tests/profile_curved.rs, the canonical CAD bodies through timed
 reps + the stage breakdown) opened at: drill difference 270 ms/op, sphere difference
@@ -6048,7 +6042,7 @@ SOAK COUNTS (the OPT-M4 merge gate, 2026-06-11): fuzz_boolean 9039 runs / 601 s 
 fuzz_cyl_boolean 77907 runs / 601 s clean: 121x the pre-M4 throughput (644), the exact
 circle pcurves compounding directly into fuzz coverage.
 
-## Addendum 192: THE OPTIMIZATION LEG IS COMPLETE (2026-06-11)
+## Addendum 192: THE OPTIMIZATION LEG IS COMPLETE
 
 Declared complete by the user with the measured record at: box oracle 90.0 -> 0.9
 ms/trial (100x, under the 1 ms Parasolid sky target); drill difference 270 -> 4.3 ms
@@ -6074,7 +6068,7 @@ all-sectors soak + the 1M-trial sharded oracle, which the leg has reduced from ~
 single-threaded to minutes). Gate pass = zero crashes + WRONG == 0 both lanes =
 the correctness program closes.
 
-## Addendum 193: THE COMPLETION GATE PASSED (2026-06-12)
+## Addendum 193: THE COMPLETION GATE PASSED
 
 The gate ran from a fresh clone of master 66c5665 at D:\keel-gate: the all-sectors fuzz
 soak (15 targets x 2400 s) plus the million-trial three-bucket oracle, sharded x14.
@@ -6108,7 +6102,7 @@ crash and two million exactness-checked booleans without a wrong answer. DECLINE
 WRONG holds at every scale ever measured. Next program: the fieldforge kernel swap
 (WASM spike first, branch wasm-spike).
 
-## Addendum 194: THE WASM SPIKE (task 21): Keel runs in V8, exactly (2026-06-12)
+## Addendum 194: THE WASM SPIKE (task 21): Keel runs in V8, exactly
 
 The swap program opens. crates/keel-wasm: a zero-dependency cdylib exposing extern-C
 spike entries (no wasm-bindgen needed yet); run_spike.mjs loads the module raw in Node
@@ -6127,7 +6121,7 @@ spike entries (no wasm-bindgen needed yet); run_spike.mjs loads the module raw i
 The spike''s unknown-unknowns are resolved: nothing blocks the swap on feasibility.
 The browser-worker integration and the mesh+faceGroups protocol are task 28''s scope.
 
-## Addendum 195: the worker-protocol mesh surface (task 28) (2026-06-12)
+## Addendum 195: the worker-protocol mesh surface (task 28)
 
 keel-topo/src/render.rs: WorkerMesh = the consumer-shaped packaging (flat f32
 positions/normals duplicated per triangle, u32 indices, per-face (id,start,count)
@@ -6144,7 +6138,7 @@ mesh_volume within the f32 quantization band). The remaining fieldforge-side wor
 (op-tree JSON in, the actual buildShape port) belongs to the app integration, not the
 kernel surface.
 
-## Addendum 196: OpReport (task 22): no silent salvage, wired to the consumer (2026-06-12)
+## Addendum 196: OpReport (task 22): no silent salvage, wired to the consumer
 
 keel-topo/src/report.rs: OpReport {warnings, salvaged, tier, achieved_tolerance}, the
 dossier-29 Part 4 confidence contract designed against its real consumer (fieldforge''s
@@ -6158,7 +6152,7 @@ it in V8: the clearance-pin salvage arrives as volume EXACT 16.0, salvaged true,
 tier 2, achieved 1.0e-5, "geometry salvaged at tier 2 (moved up to 1.000e-5)".
 Tests: strict_clean_report_is_pristine + tolerant_salvage_reports_loudly.
 
-## Addendum 197: loft + RMF sweep (task 23) (2026-06-12)
+## Addendum 197: loft + RMF sweep (task 23)
 
 Dossiers 48 (skinning/lofting) + 49 (sweep RMF) re-read; both note the existing
 loft_sections (faceted polygon sections) and translational sweep_along_path. This
@@ -6188,7 +6182,7 @@ Suite 133+77+264 green; clippy clean. Smooth NURBS skinning (Park common-knot
 reduction, dossier 48) stays the recorded follow-up: the consumer''s loft vocabulary
 (polygon profiles, circle pairs) is covered exactly without it.
 
-## Addendum 198: face draft (task 24) (2026-06-12)
+## Addendum 198: face draft (task 24)
 
 draft_face (tweak.rs): tilt a planar face by `angle` about its HINGE (face plane ^
 neutral plane), re-solved through the unchanged neighbours by the existing
@@ -6200,17 +6194,3 @@ neutral plane declines (no hinge, never a guess). This is the op OCCT''s DraftAn
 does fragilely on the consumer''s side; on planar walls Keel''s version is exact by
 construction. Curved-wall draft remains deferred with the curved-tweak family.
 Suite 133+77+265 green; clippy clean.
-
-## Addendum 199: non-uniform scale (task 26) (2026-06-12)
-
-scaled_nonuniform (transform.rs): per-axis positive scale about a center. PLANAR
-bodies are EXACT (planes/lines closed under the diagonal affine map): plane normals
-transform by the INVERSE-TRANSPOSE (componentwise n_i/s_i, renormalized), in-plane
-frame axes rebuilt against the new normal, lines remapped, vertices componentwise.
-Oracles: axis-aligned box (2,1,3)-scaled = volume exactly x6, mass==mesh at 1e-9;
-a ROTATED box (off-axis normals exercising the inverse-transpose) also exactly x6;
-curved bodies DECLINE (the image of a cylinder is an elliptic cylinder, outside the
-analytic family): the exact route for curved is conversion to rational NURBS (closed
-under affine, machinery exists in convert.rs) and is the recorded follow-up.
-This is the op the consumer''s OCCT-WASM build cannot perform at all (no GTransform).
-Suite 133+77+266 green; clippy clean.

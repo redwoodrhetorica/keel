@@ -117,6 +117,103 @@ impl Body {
         Ok(out)
     }
 
+    /// NON-UNIFORM scale about `center` by per-axis `factors` (> 0)
+    /// (swap task 26: the op the consumer's OCCT WASM cannot do at
+    /// all). PLANAR bodies are EXACT: planes and lines are closed
+    /// under a positive diagonal affine map, with plane normals
+    /// transforming by the INVERSE-TRANSPOSE (componentwise n_i / s_i,
+    /// renormalized) and in-plane frame axes rebuilt against the new
+    /// normal. Curved analytic surfaces map OUT of the analytic family
+    /// (a cylinder becomes an elliptic cylinder), so curved bodies
+    /// decline; the exact rational-NURBS conversion route is the
+    /// recorded follow-up.
+    pub fn scaled_nonuniform(&self, center: Vec3, factors: Vec3) -> Result<Body, TopoError> {
+        let s = factors;
+        if !(s.x.is_finite() && s.y.is_finite() && s.z.is_finite())
+            || s.x <= 0.0
+            || s.y <= 0.0
+            || s.z <= 0.0
+        {
+            return Err(TopoError::Precondition(
+                "scale: factors must be finite and > 0",
+            ));
+        }
+        let map_p = |p: Vec3| {
+            center
+                + Vec3::new(
+                    (p.x - center.x) * s.x,
+                    (p.y - center.y) * s.y,
+                    (p.z - center.z) * s.z,
+                )
+        };
+        let map_v = |v: Vec3| Vec3::new(v.x * s.x, v.y * s.y, v.z * s.z);
+        let map_n = |n: Vec3| Vec3::new(n.x / s.x, n.y / s.y, n.z / s.z);
+        let mut out = self.clone();
+        let vkeys: Vec<_> = out.vertices.iter().map(|(k, _)| k).collect();
+        for k in vkeys {
+            if let Some(v) = out.vertices.get_mut(k) {
+                v.point = map_p(v.point);
+            }
+        }
+        let skeys: HashSet<_> = out
+            .faces
+            .iter()
+            .filter_map(|(_, f)| f.surface.map(|(sk, _)| sk))
+            .collect();
+        for k in skeys {
+            let Some(SurfaceGeom::Analytic(Surface3::Plane(p))) = out.surfaces.get(k).cloned()
+            else {
+                return Err(TopoError::Precondition(
+                    "scale: curved/NURBS surfaces under non-uniform scale are a follow-up",
+                ));
+            };
+            // Normal by inverse-transpose; in-plane axes by the map,
+            // re-orthonormalized (the plane frame stays right-handed
+            // with z = the new normal).
+            let nz = map_n(p.frame.z)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("scale: degenerate plane normal"))?;
+            let nx = {
+                let cand = map_v(p.frame.x);
+                (cand - nz * cand.dot(nz))
+                    .try_normalize()
+                    .ok_or(TopoError::Precondition("scale: degenerate plane frame"))?
+            };
+            let frame = Frame3 {
+                origin: map_p(p.frame.origin),
+                x: nx,
+                y: nz.cross(nx),
+                z: nz,
+            };
+            if let Some(slot) = out.surfaces.get_mut(k) {
+                *slot = SurfaceGeom::Analytic(Surface3::Plane(Plane3 { frame }));
+            }
+        }
+        let ckeys: HashSet<_> = out
+            .edges
+            .iter()
+            .filter_map(|(_, e)| e.curve.map(|(ck, _)| ck))
+            .collect();
+        for k in ckeys {
+            let Some(Curve3::Line(l)) = out.curves.get(k).cloned() else {
+                return Err(TopoError::Precondition(
+                    "scale: curved edges under non-uniform scale are a follow-up",
+                ));
+            };
+            let dir = map_v(l.dir)
+                .try_normalize()
+                .ok_or(TopoError::Precondition("scale: degenerate edge"))?;
+            let nl = Line3 {
+                origin: map_p(l.origin),
+                dir,
+            };
+            if let Some(slot) = out.curves.get_mut(k) {
+                *slot = Curve3::Line(nl);
+            }
+        }
+        Ok(out)
+    }
+
     /// Classify a transform's linear part. Errors on scale/shear (non-
     /// orthonormal), where radii would not be preserved.
     fn isometry_kind(t: &Transform3) -> Result<IsometryKind, TopoError> {
@@ -393,6 +490,63 @@ mod tests {
             "scaled bbox [{:?},{:?}]",
             bb.min,
             bb.max
+        );
+    }
+
+    #[test]
+    fn nonuniform_scale_exact_volumes() {
+        // Axis-aligned: [0,2]^3 scaled (2,1,3) -> volume 8*6 = 48,
+        // bbox [0,4]x[0,2]x[0,6], exact, valid, mass == mesh.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let s = b
+            .scaled_nonuniform(Vec3::ZERO, Vec3::new(2.0, 1.0, 3.0))
+            .unwrap();
+        assert!(s.validate().is_ok(), "nonuniform scaled box invalid");
+        let v = s.mass_properties().unwrap().volume;
+        assert!((v - 48.0).abs() < 1e-9 * 49.0, "volume {v} != 48");
+        let mesh = s.mesh_volume();
+        assert!(
+            (mesh - v).abs() < 1e-9 * (1.0 + v),
+            "mass {v} != mesh {mesh}"
+        );
+        let bb = s.bounding_box();
+        assert!(
+            (bb.max - Vec3::new(4.0, 2.0, 6.0)).norm() < 1e-9,
+            "bbox max {:?}",
+            bb.max
+        );
+
+        // ROTATED box: normals off-axis exercise the inverse-transpose.
+        // Volume still multiplies by det = 6 exactly.
+        let mut b2 = Body::new();
+        b2.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let t = Transform3::from_rotation(Vec3::new(1.0, 1.0, 0.3).try_normalize().unwrap(), 0.6)
+            .unwrap();
+        let r = b2.transformed(&t).unwrap();
+        let s2 = r
+            .scaled_nonuniform(Vec3::new(0.5, -1.0, 2.0), Vec3::new(2.0, 1.0, 3.0))
+            .unwrap();
+        assert!(s2.validate().is_ok(), "rotated nonuniform scale invalid");
+        let v2 = s2.mass_properties().unwrap().volume;
+        assert!(
+            (v2 - 48.0).abs() < 1e-9 * 49.0,
+            "rotated nonuniform volume {v2} != 48"
+        );
+        let mesh2 = s2.mesh_volume();
+        assert!(
+            (mesh2 - v2).abs() < 1e-9 * (1.0 + v2),
+            "rotated: mass {v2} != mesh {mesh2}"
+        );
+
+        // Curved bodies decline (the elliptic-cylinder family is not
+        // in the analytic set; NURBS conversion is the follow-up).
+        let frame = Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut cyl = Body::new();
+        cyl.cylinder(frame, 1.0, 2.0).unwrap();
+        assert!(
+            cyl.scaled_nonuniform(Vec3::ZERO, Vec3::new(2.0, 1.0, 1.0))
+                .is_err()
         );
     }
 
