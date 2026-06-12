@@ -6187,3 +6187,16 @@ guarantees: the heuristic class is gone for every loft consumer, not just sweeps
 Suite 133+77+264 green; clippy clean. Smooth NURBS skinning (Park common-knot
 reduction, dossier 48) stays the recorded follow-up: the consumer''s loft vocabulary
 (polygon profiles, circle pairs) is covered exactly without it.
+
+## Addendum 198: face draft (task 24) (2026-06-12)
+
+draft_face (tweak.rs): tilt a planar face by `angle` about its HINGE (face plane ^
+neutral plane), re-solved through the unchanged neighbours by the existing
+tweak_face_to_plane (the items-35/39 machinery; taper was the recorded items-38/78
+deferral). The hinge is exactly invariant. Sign convention documented and ORACLE-PINNED:
+block 2x2x2, +x wall drafted atan(1/4) about the bottom plane: volume EXACTLY 7
+(leaning in) / 9 (leaning out), mass == mesh at 1e-9, valid; a face parallel to the
+neutral plane declines (no hinge, never a guess). This is the op OCCT''s DraftAngle
+does fragilely on the consumer''s side; on planar walls Keel''s version is exact by
+construction. Curved-wall draft remains deferred with the curved-tweak family.
+Suite 133+77+265 green; clippy clean.

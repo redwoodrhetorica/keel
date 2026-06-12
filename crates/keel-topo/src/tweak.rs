@@ -161,6 +161,64 @@ impl Body {
         Ok(())
     }
 
+    /// DRAFT a planar face (swap task 24; the mold-release taper,
+    /// parity items 38/78 deferred from the tweak slices): tilt the
+    /// face's plane by `angle` about its HINGE line, the intersection
+    /// of the face plane with the `neutral` plane, then re-solve the
+    /// boundary through the unchanged neighbours (tweak_face_to_plane).
+    /// The hinge stays exactly put: geometry on the neutral plane is
+    /// invariant, the face leans by `angle`.
+    ///
+    /// Sign convention: a POSITIVE angle rotates the outward normal
+    /// about `axis = normalize(n_outward x n_neutral)` by `angle`,
+    /// which tilts the wall so material is REMOVED on the far side of
+    /// the neutral plane (the standard pull-direction draft when
+    /// `neutral.frame.z` is the pull direction).
+    ///
+    /// Declines (never wrong): non-planar faces, faces parallel to the
+    /// neutral plane (no hinge), and every tweak_face_to_plane
+    /// precondition (non-planar neighbours, non-simple corners).
+    pub fn draft_face(
+        &mut self,
+        face: FaceKey,
+        neutral: &Plane3,
+        angle: f64,
+    ) -> Result<(), TopoError> {
+        if !angle.is_finite() || angle.abs() >= core::f64::consts::FRAC_PI_2 {
+            return Err(TopoError::Precondition("draft: bad angle"));
+        }
+        let (pl, sense) = self
+            .face_plane(face)
+            .ok_or(TopoError::Precondition("draft: face not planar"))?;
+        let nw = self
+            .face_outward_normal(face)
+            .ok_or(TopoError::Precondition("draft: no outward normal"))?;
+        let np = neutral.frame.z;
+        let axis = nw
+            .cross(np)
+            .try_normalize()
+            .ok_or(TopoError::Precondition("draft: face parallel to neutral"))?;
+        // A point on the hinge line (face plane ^ neutral plane):
+        // solve the 2-plane system, third constraint along the hinge.
+        let d_f = nw.dot(pl.frame.origin);
+        let d_n = np.dot(neutral.frame.origin);
+        let h = three_plane_point(nw, d_f, np, d_n, axis, 0.0)
+            .or_else(|| three_plane_point(nw, d_f, np, d_n, axis, 1.0))
+            .ok_or(TopoError::Precondition("draft: degenerate hinge"))?;
+        // Rodrigues rotation of the outward normal about the hinge axis.
+        let (s, c) = angle.sin_cos();
+        let rot = |v: Vec3| v * c + axis.cross(v) * s + axis * (axis.dot(v) * (1.0 - c));
+        let nw_new = rot(nw);
+        // The tilted plane passes through the hinge with the rotated
+        // normal; preserve the face's plane-vs-outward sense.
+        let frame_z = if sense { nw_new } else { nw_new * -1.0 };
+        let new_plane = Plane3::new(
+            keel_geom::surface::Frame3::from_z(h, frame_z)
+                .map_err(|_| TopoError::Precondition("draft: degenerate tilted frame"))?,
+        );
+        self.tweak_face_to_plane(face, new_plane, sense)
+    }
+
     /// Offset a face outward by `distance` (item 37), re-intersecting its
     /// boundary. Planar faces shift along the outward normal; cylindrical
     /// faces change radius (the curved slice). Negative moves inward.
@@ -417,6 +475,56 @@ impl Body {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Swap task 24: face draft about a neutral plane, the exact
+    /// oracle. Block 2x2x2, draft the +x wall by atan(1/4) about the
+    /// bottom plane (pull +z): the hinge (bottom edge) stays put, the
+    /// wall leans inward, and the volume is EXACTLY
+    /// 2 * integral_0^2 (2 - z/4) dz = 7. The negative angle leans
+    /// outward: exactly 9. Both mass == mesh at 1e-9, valid.
+    #[test]
+    fn draft_face_exact_volumes() {
+        use keel_geom::surface::Frame3;
+        let neutral = Plane3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap());
+        let angle = 0.25f64.atan();
+        for (sign, expect) in [(1.0, 7.0), (-1.0, 9.0)] {
+            let mut b = Body::new();
+            b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+            let face = b
+                .face_keys()
+                .into_iter()
+                .find(|&f| {
+                    b.face_outward_normal(f)
+                        .is_some_and(|n| (n - Vec3::new(1.0, 0.0, 0.0)).norm() < 1e-9)
+                })
+                .expect("+x face");
+            b.draft_face(face, &neutral, sign * angle).unwrap();
+            assert!(b.validate().is_ok(), "draft invalid: {:?}", b.validate());
+            let v = b.mass_properties().unwrap().volume;
+            assert!(
+                (v - expect).abs() < 1e-9 * (1.0 + expect),
+                "draft sign {sign}: {v} != {expect}"
+            );
+            let mesh = b.mesh_volume();
+            assert!(
+                (mesh - v).abs() < 1e-9 * (1.0 + v),
+                "draft sign {sign}: mass {v} != mesh {mesh}"
+            );
+        }
+        // The decline rails: a face PARALLEL to the neutral plane has
+        // no hinge and must decline, not guess.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let top = b
+            .face_keys()
+            .into_iter()
+            .find(|&f| {
+                b.face_outward_normal(f)
+                    .is_some_and(|n| (n - Vec3::new(0.0, 0.0, 1.0)).norm() < 1e-9)
+            })
+            .expect("+z face");
+        assert!(b.draft_face(top, &neutral, angle).is_err());
+    }
 
     /// Item 80: surface/face geometry DEFORMATION as the composed
     /// tweak/offset/taper workflow (the capability-map row is the
