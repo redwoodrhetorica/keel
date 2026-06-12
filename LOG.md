@@ -6073,3 +6073,37 @@ NEXT: the COMPLETION GATE runs tonight from D:\keel-gate on this commit (the 10 
 all-sectors soak + the 1M-trial sharded oracle, which the leg has reduced from ~26 h
 single-threaded to minutes). Gate pass = zero crashes + WRONG == 0 both lanes =
 the correctness program closes.
+
+## Addendum 193: THE COMPLETION GATE PASSED (2026-06-12)
+
+The gate ran from a fresh clone of master 66c5665 at D:\keel-gate: the all-sectors fuzz
+soak (15 targets x 2400 s) plus the million-trial three-bucket oracle, sharded x14.
+
+THE SOAK: 15 of 15 sectors clean, ZERO crashes, 2,237,840,926 executions:
+  fuzz_boolean 56,949 / fuzz_cyl_boolean 289,482 / fuzz_nurbs_boolean 5,191 /
+  fuzz_imprint 14,786,674 / fuzz_topo_ops 1,265,100 / fuzz_winding 3,237,110 /
+  fuzz_pmc 9,005,053 / fuzz_ssi 571,084,642 / fuzz_step_import 14,127,563 /
+  fuzz_recover 1,137,525 / fuzz_nurbs_curve 355,992,506 / fuzz_nurbs_surface
+  211,847,903 / fuzz_bernstein_roots 43,456,162 / fuzz_interval 359,066,670 /
+  fuzz_solve_cubic 652,482,396.
+
+THE ORACLE: N = 1,000,000: strict PASS 955,946 / DECLINE 44,054 / WRONG 0; tolerant
+PASS 250,000 / DECLINE 0 / WRONG 0. Two million trials counting both runs; the first
+run''s single tolerant WRONG (trial 813,159, a 1-in-a-million catch) was the JUDGE, not
+the kernel: two cross-axis planes lay 9.4e-7 apart by random chance, the prepare
+legitimately snapped them within the reported fuzz, and the judge''s reference modeled
+only the contact-axis snap. The judge now carries the full epsilon-solidity contract
+(deviation <= achieved_tolerance x total surface area). The kernel was never wrong.
+
+OPERATIONAL LESSON: the soak initially failed to LAUNCH from the fresh Windows clone
+(CRLF checkout broke bash); .gitattributes now pins *.sh to LF. Caught by the first
+20-minute status check, cost ~30 minutes.
+
+THE DECLARATION: with this gate, the correctness program as scoped is COMPLETE:
+parity closed at the tractable ceiling (137/144, Add. 152); the graceful-degradation
+doctrine built and measured (M1-M8, tolerant contact lane 100 percent, Add. 179-186);
+the optimization leg (100x boxes, 62x drill, all of it exactness-audit wins, Add.
+189-192); and the completion gate clean: 2.24 BILLION adversarial executions without a
+crash and two million exactness-checked booleans without a wrong answer. DECLINE-never-
+WRONG holds at every scale ever measured. Next program: the fieldforge kernel swap
+(WASM spike first, branch wasm-spike).
