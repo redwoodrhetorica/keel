@@ -554,6 +554,46 @@ impl Body {
             if partial_ellipse {
                 return None;
             }
+            // A TILTED partial circle arc disqualifies the formula the
+            // same way (task 44: the partial fillet's runout cone is
+            // stopped by a quarter arc whose plane is perpendicular to
+            // the EDGE, not the cone axis; its center height is a
+            // phantom band bound and the analytic area read 35 percent
+            // high). Axis-perpendicular partial arcs (the fillet band
+            // end arcs) keep their exact heights.
+            let tilted_partial = self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default()
+                .into_iter()
+                .any(|lk| {
+                    let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                        return false;
+                    };
+                    let mut cur = entry;
+                    while let Some(fin) = self.fins.get(cur) {
+                        if let Some(e) = self.edges.get(fin.edge)
+                            && e.bounds.0 != e.bounds.1
+                            && let Some(keel_geom::curve::Curve3::Circle(ci)) =
+                                e.curve.and_then(|(ck, _)| self.curves.get(ck))
+                            && e.arc_sweep
+                                .map(|s| s.abs() < core::f64::consts::TAU - 1e-9)
+                                .unwrap_or(true)
+                            && ci.x_axis.cross(ci.y_axis).dot(ez).abs() < 1.0 - 1e-9
+                        {
+                            return true;
+                        }
+                        cur = fin.next;
+                        if cur == entry {
+                            break;
+                        }
+                    }
+                    false
+                });
+            if tilted_partial {
+                return None;
+            }
             let mut h = self.cyl_circle_heights(face, o, ez);
             // DISTINCT heights only: one rim seen from both fins is
             // [h, h], a zero band that integrated curved areas to 0.

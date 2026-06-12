@@ -6929,3 +6929,27 @@ signature (analytic vs tess area off 1.5-3 percent, trials
 15/158/236/470/548 pinned in the task). The instrument is #[ignore]d
 (red while task 44 is open, by design: it becomes the regression net
 the moment the fin dies). Suite green, clippy clean.
+
+## Addendum 228: task 44 RESOLVED: the partial-fillet area phantom (2026-06-12)
+
+The op gym''s numeric oracle was the decisive instrument. Per-face
+probing of fillet_edge_partial''s result: the runout-cone blend face
+read analytic 0.58168 vs tessellated 0.42912, and a FINE chord-
+tolerance tessellation (2e-4) summed to exactly the tess-side total:
+the TESSELLATION was right and face_area''s analytic cone formula was
+35 percent HIGH. Same family as the Addendum-221 phantom: the runout
+cone is stopped by a quarter arc whose plane is perpendicular to the
+EDGE, not the cone axis, and the rectangle formula read the arc''s
+center height as a band bound. Fix: height_range gains a TILTED
+PARTIAL CIRCLE guard (mirroring the partial-ellipse guard): a
+non-axis-perpendicular partial circle boundary routes the face to
+tessellation; axis-perpendicular partial arcs (the fillet band end
+arcs) keep their exact heights.
+
+The VISUAL "fin" exonerated on inspection: the zoomed frame shows the
+intended runout taper seen through the transparent top face (painter
+transparency), so the demo was honest; the area phantom was the real
+defect underneath it. Verification: suite green, op gym now CLEAN
+(N=650: OK 647 / DECLINE 3 / VIOLATIONS 0: the instrument flips to a
+regression net), the 100k box oracle BIT-IDENTICAL again
+(95604/4396/0; tolerant 25000/0/0).
