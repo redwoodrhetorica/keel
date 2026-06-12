@@ -46,6 +46,19 @@ impl Body {
     /// reference (sub-interval bounding is the trimming work of
     /// M4/M5).
     pub fn split_edge(&mut self, edge: EdgeKey, p: Vec3) -> Result<SplitEdgeOut, TopoError> {
+        let out = self.split_edge_raw(edge, p)?;
+        self.debug_validate();
+        Ok(out)
+    }
+
+    /// split_edge without the trailing debug validation: for callers
+    /// operating on a body that is legitimately mid-assembly (the
+    /// boolean stitch aligns operand subdivisions before shells exist).
+    pub(crate) fn split_edge_raw(
+        &mut self,
+        edge: EdgeKey,
+        p: Vec3,
+    ) -> Result<SplitEdgeOut, TopoError> {
         let e = self.edges.get(edge).ok_or(TopoError::StaleKey)?;
         let (v0, v1) = e.bounds;
         let curve = e.curve;
@@ -201,7 +214,6 @@ impl Body {
         self.unregister(&mut rec, parent_id);
         self.edges.remove(edge);
         let report = rec.finish();
-        self.debug_validate();
         Ok(SplitEdgeOut {
             edge_a: ea,
             edge_b: eb,

@@ -641,6 +641,66 @@ impl Body {
             out_edges.push(split.edge_b);
             xverts.push(split.vertex);
         }
+        // 2b. Dissolve the synthesized seam BEFORE the c2 arcs land: the
+        // rim-to-rim seam line crosses EVERY closed wrap curve once per
+        // azimuth pass, so it also crosses c2 at one interior point, and
+        // an unsplit crossing poisons the arrangement (task 29: the x>0
+        // bowtie paired with the x<0 quarters because the seam excursion
+        // hung between the x>0 quarters). After c1's split each band
+        // loop closes through c1 alone: the seam is a redundant bridge,
+        // and kemr turns the rim it reached into the band's inner ring.
+        for &bf in &rep1.faces {
+            let loops = self
+                .faces
+                .get(bf)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default();
+            let mut seam_edges: Vec<EdgeKey> = Vec::new();
+            for lk in loops {
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                while let Some(fin) = self.fins.get(cur) {
+                    let ek = fin.edge;
+                    let next = fin.next;
+                    let is_line = self
+                        .edges
+                        .get(ek)
+                        .and_then(|e| e.curve)
+                        .and_then(|(ck, _)| self.curves.get(ck))
+                        .map(|c| matches!(c, Curve3::Line(_)))
+                        .unwrap_or(false);
+                    if is_line
+                        && !seam_edges.contains(&ek)
+                        && self
+                            .edges
+                            .get(ek)
+                            .map(|e| {
+                                e.radial.len() == 2
+                                    && e.radial
+                                        .iter()
+                                        .all(|&fk| self.fins.get(fk).map(|f| f.owner) == Some(lk))
+                            })
+                            .unwrap_or(false)
+                    {
+                        seam_edges.push(ek);
+                    }
+                    cur = next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+            }
+            for ek in seam_edges {
+                if let Some(&fk) = self.edges.get(ek).and_then(|e| e.radial.first()) {
+                    // Best effort: a seam that fails the bridge
+                    // preconditions simply stays (the pre-dissolve
+                    // behavior).
+                    let _ = self.kemr(fk);
+                }
+            }
+        }
         // 3. Curve 2 as two exact rational arcs between the crossings.
         let ta =
             ang_on(c2, xs[0]).ok_or(TopoError::Precondition("crossing pair: non-conic curve 2"))?;
@@ -739,6 +799,20 @@ impl Body {
                     let Some(lk) = self.fins.get(rf).map(|f| f.owner) else {
                         continue;
                     };
+                    // A BAND face is conic-only too once the seam is
+                    // dissolved (kemr leaves its outer loop pure c1/c2),
+                    // and its e1 half legitimately lies on the OPPOSITE
+                    // azimuth side of its c2 arc: only the ringless
+                    // child (the bowtie) obeys the same-side rule.
+                    let has_ring = self
+                        .loops
+                        .get(lk)
+                        .and_then(|l| self.faces.get(l.face))
+                        .map(|f| f.loops.len() > 1)
+                        .unwrap_or(true);
+                    if has_ring {
+                        continue;
+                    }
                     let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
                         continue;
                     };
@@ -805,8 +879,17 @@ impl Body {
                                     in_ccw(a1, a2, az(mid_of(alt))),
                                 );
                             }
-                            if in_ccw(a1, a2, az(mid_of(s_cur))) != want {
-                                let alt = -(tau - s_cur.abs()) * s_cur.signum();
+                            // Only a HALF declaration (|s| = pi) is
+                            // ambiguous (both halves share endpoints, the
+                            // wrap split picks one blindly). A sweep that
+                            // came out of an actual split (quarter arcs
+                            // etc.) IS the edge's true geometry: flipping
+                            // it to the complement corrupts arc identity
+                            // (task 29: the stitch glue pairs edges by
+                            // declared midpoints).
+                            let ambiguous = (s_cur.abs() - core::f64::consts::PI).abs() < 1e-9;
+                            if ambiguous && in_ccw(a1, a2, az(mid_of(s_cur))) != want {
+                                let alt = -s_cur;
                                 if in_ccw(a1, a2, az(mid_of(alt))) == want {
                                     fixes.push((ek, alt));
                                 }
@@ -820,6 +903,29 @@ impl Body {
                     for (ek, alt) in fixes {
                         self.set_edge_arc_sweep(ek, alt);
                     }
+                }
+            }
+        }
+        if std::env::var("KEEL_STEINMETZ_DEBUG").is_ok() {
+            for (fk, f) in self.faces.iter() {
+                for &lk in &f.loops {
+                    let mut edges = Vec::new();
+                    if let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) {
+                        let mut cur = entry;
+                        while let Some(fin) = self.fins.get(cur) {
+                            let mid = self.edges.get(fin.edge).and_then(|e| {
+                                let a = self.vertices.get(e.bounds.0)?.point;
+                                let b = self.vertices.get(e.bounds.1)?.point;
+                                Some((a + b) * 0.5)
+                            });
+                            edges.push((fin.edge, mid));
+                            cur = fin.next;
+                            if cur == entry {
+                                break;
+                            }
+                        }
+                    }
+                    eprintln!("  xpair face {fk:?} loop {lk:?}: {edges:?}");
                 }
             }
         }
@@ -961,6 +1067,93 @@ impl Body {
         let fin_b = self.fin_ending_at_vertex(lp, vb)?;
         let split = self.split_face(fin_a, fin_b, None)?;
         let new_edge = split.edge;
+        // Ring reassignment (task 29): split_face leaves inner rings with
+        // the surviving face. When an open arc cuts a bowtie out of a
+        // periodic band, only ONE child's outer loop still wraps the
+        // lateral azimuthally, and a full rim ring can only live inside
+        // that wrapping child: move the rings if they sit on the
+        // non-wrapping side.
+        if let keel_geom::surface::Surface3::Cylinder(cyl) = &surf {
+            let arc_mid = match curve {
+                Curve3::Nurbs(n) => {
+                    let (d0, d1) = n.domain();
+                    Some((new_edge, n.point(0.5 * (d0 + d1))))
+                }
+                _ => None,
+            };
+            let owner_of = |s: &Self, fk: crate::entity::FinKey| s.fins.get(fk).map(|f| f.owner);
+            let radial = self
+                .edges
+                .get(new_edge)
+                .map(|e| e.radial.clone())
+                .unwrap_or_default();
+            let mut lp_old = None;
+            let mut lp_new = None;
+            for fk in radial {
+                let Some(lk) = owner_of(self, fk) else {
+                    continue;
+                };
+                match self.loops.get(lk).map(|l| l.face) {
+                    Some(f) if f == split.face_old => lp_old = Some(lk),
+                    Some(f) if f == split.face_new => lp_new = Some(lk),
+                    _ => {}
+                }
+            }
+            if std::env::var("KEEL_STEINMETZ_DEBUG").is_ok() {
+                eprintln!(
+                    "  ringfix: lp_old {lp_old:?} lp_new {lp_new:?} wraps_old {:?} wraps_new {:?}",
+                    lp_old.map(|l| self.loop_wraps_azimuth(l, cyl, arc_mid)),
+                    lp_new.map(|l| self.loop_wraps_azimuth(l, cyl, arc_mid)),
+                );
+            }
+            if let (Some(lo), Some(ln)) = (lp_old, lp_new)
+                && !self.loop_wraps_azimuth(lo, cyl, arc_mid)
+                && self.loop_wraps_azimuth(ln, cyl, arc_mid)
+            {
+                let rings: Vec<crate::entity::LoopKey> = self
+                    .faces
+                    .get(split.face_old)
+                    .map(|f| f.loops.iter().copied().filter(|&lk| lk != lo).collect())
+                    .unwrap_or_default();
+                for rk in rings {
+                    if let Some(f) = self.faces.get_mut(split.face_old) {
+                        f.loops.retain(|&lk| lk != rk);
+                    }
+                    if let Some(f) = self.faces.get_mut(split.face_new) {
+                        f.loops.push(rk);
+                    }
+                    if let Some(l) = self.loops.get_mut(rk) {
+                        l.face = split.face_new;
+                        // Moved loops ride as rings of the band child.
+                        l.kind = crate::entity::LoopKind::Inner;
+                    }
+                }
+                // Outer/inner is conventional on a periodic band; after
+                // the move each child's remaining split loop is its
+                // outer.
+                if let Some(l) = self.loops.get_mut(lo) {
+                    l.kind = crate::entity::LoopKind::Outer;
+                }
+                if let Some(l) = self.loops.get_mut(ln) {
+                    l.kind = crate::entity::LoopKind::Outer;
+                }
+                if std::env::var("KEEL_STEINMETZ_DEBUG").is_ok() {
+                    for fk in [split.face_old, split.face_new] {
+                        let kinds: Vec<_> = self
+                            .faces
+                            .get(fk)
+                            .map(|f| {
+                                f.loops
+                                    .iter()
+                                    .map(|&lk| (lk, self.loops.get(lk).map(|l| l.kind)))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        eprintln!("  ringfix moved: face {fk:?} loops {kinds:?}");
+                    }
+                }
+            }
+        }
         let ckey = self.add_curve(curve.clone());
         if let Some(e) = self.edges.get_mut(new_edge) {
             e.curve = Some((ckey, true));
@@ -983,6 +1176,119 @@ impl Body {
         }
         self.debug_validate();
         Ok(new_edge)
+    }
+
+    /// Does loop `lk` wrap the cylinder's full azimuth? Accumulates the
+    /// wrapped azimuth delta over each fin's start / declared-arc-mid /
+    /// end samples (the declared mid keeps half arcs unambiguous) plus
+    /// the closing delta: a wrapping loop sums to ±tau, a patch loop to
+    /// zero.
+    /// `mid_override`: the geometric arc midpoint for an edge whose
+    /// conic carrier is not yet installed (the just-split open arc).
+    fn loop_wraps_azimuth(
+        &self,
+        lk: crate::entity::LoopKey,
+        cyl: &keel_geom::surface::Cylinder3,
+        mid_override: Option<(crate::entity::EdgeKey, Vec3)>,
+    ) -> bool {
+        let tau = core::f64::consts::TAU;
+        let az = |p: Vec3| -> f64 {
+            let w = p - cyl.frame.origin;
+            let w = w - cyl.frame.z * w.dot(cyl.frame.z);
+            w.dot(cyl.frame.y).atan2(w.dot(cyl.frame.x))
+        };
+        let wrap = |d: f64| {
+            let mut d = d;
+            while d <= -core::f64::consts::PI {
+                d += tau;
+            }
+            while d > core::f64::consts::PI {
+                d -= tau;
+            }
+            d
+        };
+        let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+            return false;
+        };
+        let mut total = 0.0;
+        let mut first: Option<f64> = None;
+        let mut prev: Option<f64> = None;
+        let mut cur = entry;
+        while let Some(fin) = self.fins.get(cur) {
+            let mut pts: Vec<Vec3> = Vec::new();
+            if let Some(e) = self.edges.get(fin.edge) {
+                let p0 = self.vertices.get(e.bounds.0).map(|v| v.point);
+                let p1 = self.vertices.get(e.bounds.1).map(|v| v.point);
+                if let (Some(p0), Some(p1)) = (p0, p1) {
+                    let overridden = mid_override.and_then(|(mk, m)| (mk == fin.edge).then_some(m));
+                    let mid = overridden.or_else(|| {
+                        e.curve
+                            .and_then(|(ck, _)| self.curves.get(ck))
+                            .and_then(|cv| {
+                                let (a0, pt): (f64, Vec3) = match cv {
+                                    Curve3::Circle(c) => {
+                                        let ang = (p0 - c.center)
+                                            .dot(c.y_axis)
+                                            .atan2((p0 - c.center).dot(c.x_axis));
+                                        let s = e.arc_sweep.unwrap_or_else(|| {
+                                            let a1 = (p1 - c.center)
+                                                .dot(c.y_axis)
+                                                .atan2((p1 - c.center).dot(c.x_axis));
+                                            wrap(a1 - ang)
+                                        });
+                                        (ang + 0.5 * s, c.point(ang + 0.5 * s))
+                                    }
+                                    Curve3::Ellipse(el) => {
+                                        let w0 = p0 - el.center;
+                                        let ang = (w0.dot(el.y_axis) / el.b)
+                                            .atan2(w0.dot(el.x_axis) / el.a);
+                                        let s = e.arc_sweep.unwrap_or_else(|| {
+                                            let w1 = p1 - el.center;
+                                            let a1 = (w1.dot(el.y_axis) / el.b)
+                                                .atan2(w1.dot(el.x_axis) / el.a);
+                                            wrap(a1 - ang)
+                                        });
+                                        (ang + 0.5 * s, el.point(ang + 0.5 * s))
+                                    }
+                                    _ => return None,
+                                };
+                                let _ = a0;
+                                Some(pt)
+                            })
+                    });
+                    if fin.forward {
+                        pts.push(p0);
+                        if let Some(m) = mid {
+                            pts.push(m);
+                        }
+                        pts.push(p1);
+                    } else {
+                        pts.push(p1);
+                        if let Some(m) = mid {
+                            pts.push(m);
+                        }
+                        pts.push(p0);
+                    }
+                }
+            }
+            for p in pts {
+                let a = az(p);
+                if let Some(pa) = prev {
+                    total += wrap(a - pa);
+                } else {
+                    first = Some(a);
+                }
+                prev = Some(a);
+            }
+            cur = fin.next;
+            if cur == entry {
+                break;
+            }
+        }
+        if let (Some(f), Some(p)) = (first, prev) {
+            total += wrap(f - p);
+        }
+        total.abs() > core::f64::consts::PI
     }
 
     /// All fins of loop `lp` whose end vertex is `v` (in loop order).

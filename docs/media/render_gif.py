@@ -1,12 +1,19 @@
-"""Render kernel-dumped mesh frames into a small looping GIF (task 34).
+"""Render kernel-dumped mesh frames into a small looping animation (task 34).
 
-Usage: python render_gif.py <framesdir> <out.gif>
+Usage: python render_gif.py <framesdir> <out.webp|out.gif>
 
 Frames come from the kernel's own worker_mesh tessellation (see
 crates/keel-topo/examples/gif_frames.rs). Rendering is a tiny painter's
 software rasterizer over matplotlib polygons: flat shading from the
 per-triangle normals, fixed isometric-ish camera, feature lines drawn
 from the kernel's edge polylines. Target: 250x250, well under 1.5 MB.
+
+Encoding notes (the artifact fixes): every frame is rendered at 2x and
+Lanczos-downscaled (kills polygon aliasing); animated WebP is the
+preferred container (24-bit color, no palette, so none of GIF's
+per-frame palette shimmer or delta-frame ghosting). A .gif output uses
+ONE shared global palette plus full-frame disposal so nothing carries
+across frames.
 """
 
 import json
@@ -19,7 +26,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.collections import PolyCollection, LineCollection
-import imageio.v2 as imageio
+from PIL import Image
+
+SS = 2  # supersample factor
 
 # Fixed camera: rotate about z by AZ, tilt by EL, orthographic.
 AZ = np.deg2rad(-35.0)
@@ -61,7 +70,9 @@ def render_frame(data, bounds, size=250):
     shade = np.clip(tn @ LIGHT, 0.0, 1.0)
     colors = np.clip(BASE[None, :] * (0.30 + 1.15 * shade[:, None]), 0, 1)
 
-    fig = plt.figure(figsize=(size / 100, size / 100), dpi=100)
+    # Supersample via dpi (point-based sizes -- fonts, linewidths --
+    # keep their proportions), downscale with Lanczos below.
+    fig = plt.figure(figsize=(size / 100, size / 100), dpi=100 * SS)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_facecolor(BG)
     fig.set_facecolor(BG)
@@ -125,7 +136,10 @@ def render_frame(data, bounds, size=250):
     fig.canvas.draw()
     buf = np.asarray(fig.canvas.buffer_rgba())[:, :, :3].copy()
     plt.close(fig)
-    return buf
+    img = Image.fromarray(buf)
+    if SS != 1:
+        img = img.resize((size, size), Image.LANCZOS)
+    return img
 
 
 def main():
@@ -150,9 +164,34 @@ def main():
 
     images = [render_frame(d, bounds) for d in datas]
     # Hold the final state so the payoff reads before the loop restarts.
-    durations = [0.09] * len(images)
-    durations[-1] = 1.4
-    imageio.mimsave(out, images, format="GIF", duration=durations, loop=0)
+    durations_ms = [90] * len(images)
+    durations_ms[-1] = 1400
+    if out.suffix.lower() == ".webp":
+        images[0].save(
+            out,
+            save_all=True,
+            append_images=images[1:],
+            duration=durations_ms,
+            loop=0,
+            lossless=False,
+            quality=90,
+            method=6,
+        )
+    else:
+        # GIF fallback: quantize EVERY frame against one shared global
+        # palette (no per-frame palette shimmer) and restore-to-
+        # background disposal (nothing carries across frames).
+        ref = images[0].convert("RGB").quantize(colors=255, method=Image.MEDIANCUT)
+        quantized = [im.convert("RGB").quantize(palette=ref) for im in images]
+        quantized[0].save(
+            out,
+            save_all=True,
+            append_images=quantized[1:],
+            duration=durations_ms,
+            loop=0,
+            disposal=2,
+            optimize=False,
+        )
     print(f"{out}: {len(images)} frames, {out.stat().st_size / 1024:.0f} KiB")
 
 
