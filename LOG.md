@@ -6417,3 +6417,12 @@ progress (this addendum), #36 sphere strict-boolean milestone (read
 memory/sphere-split-integration-trap.md FIRST). The cone story (tasks 30,
 Addenda 201-202) is complete end to end and verified; oracle buckets stayed
 bit-identical through every change this session.
+
+## Addendum 207: the honest-DECLINE oddball gif (task 34) (2026-06-12)
+
+honest-decline.gif (227 KiB): a ball sinks toward a block socket; the strict
+kernel cannot yet assemble this carve (the sphere milestone, task 36), and
+instead of emitting a plausible-but-wrong body it refuses ON CAMERA: the
+amber "DECLINED (never a wrong body)" badge is the doctrine made visible.
+The dumper asserts honesty both ways: if the kernel ever starts carving this,
+the frame relabels rather than keep claiming a decline. Six gifs total now.

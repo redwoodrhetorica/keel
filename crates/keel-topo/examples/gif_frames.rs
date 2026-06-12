@@ -287,6 +287,53 @@ fn corner(dir: &Path) {
     println!("corner: {frames} frames");
 }
 
+/// The honest-DECLINE oddball: a ball sinks toward a block socket; the
+/// strict kernel cannot yet assemble this carve, and instead of
+/// emitting a plausible-but-wrong body it DECLINES, on camera. The
+/// frames show the approach as two honest bodies; the finale labels
+/// the refusal. (When task 36 lands this gif becomes a success story
+/// and moves to the regular set.)
+fn decline(dir: &Path) {
+    let frames = 36usize;
+    let mut block = Body::new();
+    block.block(Vec3::ZERO, 4.0, 4.0, 2.0).unwrap();
+    for i in 0..frames {
+        let approach = 28usize;
+        let zc = if i < approach {
+            let t = i as f64 / (approach - 1) as f64;
+            3.2 - (3.2 - 1.5) * t * t
+        } else {
+            1.5
+        };
+        let mut ball = Body::new();
+        ball.sphere(
+            Frame3::from_z(Vec3::new(2.0, 2.0, zc), Vec3::new(0.0, 0.0, 1.0)).unwrap(),
+            1.0,
+        )
+        .unwrap();
+        let attempted = i >= approach;
+        let declined = attempted && boolean(&block, &ball, BoolOp::Difference, 1e-7).is_err();
+        let mut mesh = block.worker_mesh();
+        let bm = ball.worker_mesh();
+        let base = (mesh.positions.len() / 3) as u32;
+        mesh.positions.extend_from_slice(&bm.positions);
+        mesh.normals.extend_from_slice(&bm.normals);
+        mesh.indices.extend(bm.indices.iter().map(|&k| k + base));
+        mesh.lines.extend_from_slice(&bm.lines);
+        let meta = if declined {
+            "\"declined\":true".to_string()
+        } else if attempted {
+            // If the kernel ever starts succeeding here, the gif must
+            // not keep claiming a decline.
+            "\"label\":\"carved\"".to_string()
+        } else {
+            String::new()
+        };
+        write_frame(dir, i, &mesh, &meta);
+    }
+    println!("decline: {frames} frames");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let op = args.get(1).map(String::as_str).unwrap_or("drill");
@@ -303,6 +350,7 @@ fn main() {
         "fillet" => fillet(dir),
         "corner" => corner(dir),
         "cellular" => cellular(dir),
+        "decline" => decline(dir),
         other => {
             eprintln!("unknown op {other}; available: drill, trio, pin, fillet, corner");
             std::process::exit(1);

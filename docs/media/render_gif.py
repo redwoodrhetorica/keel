@@ -100,6 +100,12 @@ def render_frame(data, bounds, size=250):
             0.05, 0.05, f"gap {meta['gap']:.0e}", transform=ax.transAxes,
             color="#8b98a8", fontsize=8, family="monospace",
         )
+    if meta.get("declined"):
+        ax.text(
+            0.05, 0.05, "DECLINED (never a wrong body)",
+            transform=ax.transAxes, color="#e3b341", fontsize=8,
+            family="monospace", weight="bold",
+        )
     if meta.get("salvaged"):
         ax.text(
             0.05, 0.05, f"salvaged @ {meta['achieved']:.0e}",
