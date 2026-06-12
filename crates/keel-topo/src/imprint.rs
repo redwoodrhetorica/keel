@@ -677,7 +677,15 @@ impl Body {
             let arc = mk_arc(start, sweep)?;
             let (d0, d1) = arc.domain();
             let mid = arc.point(0.5 * (d0 + d1));
-            let host = crate::boolean::curved_face_containing(self, mid, tol.max(1e-7))
+            // DECLARATION-INDEPENDENT hosting (the circularity fix,
+            // Addendum 219): the two bands partition the lateral by z
+            // versus c1, which is a GRAPH over azimuth on its own
+            // lateral (one z per azimuth): the band holding the higher
+            // rim hosts arcs above the graph. Falls back to the generic
+            // containment when the band/rim structure is absent.
+            let host = self
+                .crossing_band_host(face, &rep1.faces, c1, mid)
+                .or_else(|| crate::boolean::curved_face_containing(self, mid, tol.max(1e-7)))
                 .ok_or(TopoError::Precondition("crossing pair: unlocated arc host"))?;
             let e = self.imprint_open_arc_between(host, &Curve3::Nurbs(arc), va, vb, tol)?;
             // The edge's CARRIER is the conic itself with its recorded
@@ -817,6 +825,105 @@ impl Body {
         }
         self.debug_validate();
         Ok(out_edges)
+    }
+
+    /// Which of the two crossing-pair BAND faces hosts a point: the
+    /// bands partition their lateral by axial height versus the c1
+    /// seam curve, which is a GRAPH over azimuth there (one z per
+    /// azimuth); each band is identified by the rim it kept. Pure
+    /// geometry: no dependence on the declared arc halves (the
+    /// Addendum-219 circularity). `None` when the structure is absent
+    /// (no rims, or c1's z at the azimuth cannot be solved).
+    fn crossing_band_host(
+        &self,
+        face: FaceKey,
+        bands: &[FaceKey],
+        c1: &Curve3,
+        p: Vec3,
+    ) -> Option<FaceKey> {
+        let cyl = match self.face_surface3(face) {
+            Some(keel_geom::surface::Surface3::Cylinder(c)) => c,
+            _ => return None,
+        };
+        let (o, ez) = (cyl.frame.origin, cyl.frame.z);
+        let az = |q: Vec3| -> f64 {
+            let w = q - o;
+            let w = w - ez * w.dot(ez);
+            w.dot(cyl.frame.y).atan2(w.dot(cyl.frame.x))
+        };
+        let eval = |t: f64| -> Option<Vec3> {
+            match c1 {
+                Curve3::Circle(ci) => Some(ci.point(t)),
+                Curve3::Ellipse(el) => Some(el.point(t)),
+                _ => None,
+            }
+        };
+        // Solve c1's parameter whose azimuth matches p's (the curve is
+        // a monotone graph over azimuth on its own lateral): coarse
+        // scan + bisection on the wrapped angular difference.
+        let target = az(p);
+        let diff = |t: f64| -> f64 {
+            let d = az(eval(t).unwrap_or(p)) - target;
+            (d + core::f64::consts::PI).rem_euclid(core::f64::consts::TAU) - core::f64::consts::PI
+        };
+        let tau = core::f64::consts::TAU;
+        let n = 64usize;
+        let mut bracket = None;
+        let mut prev_t = 0.0f64;
+        let mut prev_d = diff(0.0);
+        for i in 1..=n {
+            let t = tau * i as f64 / n as f64;
+            let d = diff(t);
+            if prev_d == 0.0 || (prev_d < 0.0) != (d < 0.0) && (d - prev_d).abs() < 1.0 {
+                bracket = Some((prev_t, t));
+                break;
+            }
+            prev_t = t;
+            prev_d = d;
+        }
+        let (mut lo, mut hi) = bracket?;
+        for _ in 0..60 {
+            let m = 0.5 * (lo + hi);
+            if (diff(lo) < 0.0) != (diff(m) < 0.0) {
+                hi = m;
+            } else {
+                lo = m;
+            }
+        }
+        let z_curve = (eval(0.5 * (lo + hi))? - o).dot(ez);
+        let z_p = (p - o).dot(ez);
+        let above = z_p > z_curve;
+        // The band keeping the HIGHER rim is the above-band.
+        let mut best: Option<(f64, FaceKey)> = None;
+        for &b in bands {
+            for lk in self
+                .faces
+                .get(b)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default()
+            {
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                while let Some(fin) = self.fins.get(cur) {
+                    if self.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true)
+                        && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                        && let Some(Curve3::Circle(ci)) = self.curves.get(ck)
+                    {
+                        let zr = (ci.center - o).dot(ez);
+                        if best.is_none_or(|(bz, _)| if above { zr > bz } else { zr < bz }) {
+                            best = Some((zr, b));
+                        }
+                    }
+                    cur = fin.next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+            }
+        }
+        best.map(|(_, b)| b)
     }
 
     /// Imprint an OPEN on-surface curve between two EXISTING boundary

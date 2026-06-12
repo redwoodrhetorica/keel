@@ -6630,3 +6630,20 @@ hosting follows the same declaration; the fix is declaration-driven hosting
 (or topology-driven arc placement), after which the step-5 post-fix pass
 dissolves. Full fix direction in the task notes. Gate closed; suite 16/16
 green; this is the cleanest re-entry point the milestone has had.
+
+## Addendum 220: task-29 hosting circularity BROKEN: both bowties exact (2026-06-12)
+
+crossing_band_host (imprint.rs): the two band faces partition their lateral
+by axial height versus c1, which is a GRAPH over azimuth on its own lateral
+(one z per azimuth); the band is identified by the rim it kept, and the
+curve''s z at the query azimuth comes from a bisection on the wrapped
+azimuth difference. Hosting the c2 arcs through this PURE GEOMETRY (instead
+of curved_face_containing, whose judgement ran through the declared arc
+geometry mid-surgery) breaks the Addendum-219 circularity: BOTH BOWTIES NOW
+READ EXACT (~4.0 each, correct interiors and spans). Also: the tessellation
+side-witness now picks the max-plane-clearance candidate among the interior
+point and the boundary fin samples (a band''s interior fallback can land
+exactly ON a bounding curve). Remaining: the band pieces still tessellate
+unclipped on one side (one of the two ellipse planes is not engaging:
+cap_planes coverage is the next probe), then Green on the bowties, then the
+stitch alignment. Gate closed; suite 16/16 green; canary green.

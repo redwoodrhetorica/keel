@@ -558,12 +558,52 @@ impl Body {
         let pt = |phi: f64, v: f64| -> Vec3 {
             origin + (ex * phi.cos() + ey * phi.sin()) * radius + ez * v
         };
-        // Which side of each clipping plane the FACE lives on, from its
-        // interior point (task 29 metric layer): the closest-extreme
-        // heuristic mis-assigned planes near their crossings (the
-        // Steinmetz bowtie pinch), tessellating bands the face does not
-        // own. Falls back to the heuristic when no interior is known.
-        let p_int = self.face_interior_point(face);
+        // Which side of each clipping plane the FACE lives on (task 29
+        // metric layer): the closest-extreme heuristic mis-assigned
+        // planes near their crossings (the Steinmetz bowtie pinch).
+        // The side WITNESS is whichever candidate point (the interior
+        // point, or any boundary fin sample) sits FARTHEST from the
+        // planes: a band's interior fallback can land exactly ON a
+        // bounding curve, but its rim samples have full clearance;
+        // the bowtie's rim-less boundary hugs the planes, but its
+        // interior point has clearance.
+        let p_int = {
+            let mut candidates: Vec<Vec3> = Vec::new();
+            if let Some(p) = self.face_interior_point(face) {
+                candidates.push(p);
+            }
+            if !cap_planes.is_empty() {
+                for lk in self
+                    .faces
+                    .get(face)
+                    .map(|f| f.loops.clone())
+                    .unwrap_or_default()
+                {
+                    let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                        continue;
+                    };
+                    let mut cur = entry;
+                    while let Some(fin) = self.fins.get(cur) {
+                        candidates.extend(self.fin_curve_samples(cur, 6).unwrap_or_default());
+                        cur = fin.next;
+                        if cur == entry {
+                            break;
+                        }
+                    }
+                }
+            }
+            let clearance = |p: &Vec3| -> f64 {
+                cap_planes
+                    .iter()
+                    .map(|(q, n)| ((*p - *q).dot(*n)).abs())
+                    .fold(f64::INFINITY, f64::min)
+            };
+            candidates.into_iter().max_by(|a, b| {
+                clearance(a)
+                    .partial_cmp(&clearance(b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+        };
         let ruling_band = |phi: f64| -> (f64, f64) {
             if cap_planes.is_empty() {
                 return (hlo, hhi);
