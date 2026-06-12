@@ -604,6 +604,16 @@ impl Body {
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
         };
+        if std::env::var("KEEL_TESS_DEBUG").is_ok() {
+            eprintln!(
+                "  tess_cyl {face:?}: {} cap planes {:?} witness {p_int:?}",
+                cap_planes.len(),
+                cap_planes
+                    .iter()
+                    .map(|(_, n)| (n.x, n.y, n.z))
+                    .collect::<Vec<_>>()
+            );
+        }
         let ruling_band = |phi: f64| -> (f64, f64) {
             if cap_planes.is_empty() {
                 return (hlo, hhi);

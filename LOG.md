@@ -6647,3 +6647,12 @@ exactly ON a bounding curve). Remaining: the band pieces still tessellate
 unclipped on one side (one of the two ellipse planes is not engaging:
 cap_planes coverage is the next probe), then Green on the bowties, then the
 stitch alignment. Gate closed; suite 16/16 green; canary green.
+
+## Addendum 221: task-29: the bands read EXACT 4pi: the analytic-area phantom (2026-06-12)
+
+The band pieces'' 12.566370614359172 is 4pi to machine precision: an ANALYTIC
+r*span*height value, not a tessellated one (the exact-on-paper cap-plane
+clipping may already be fine): analytic_curved_area is engaging for the
+bands with a phantom 2-unit height range despite the single-rim dedup.
+Instrument height_range next (probe details in the task notes). Gate closed;
+suite green.
