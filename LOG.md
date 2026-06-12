@@ -6451,3 +6451,10 @@ corner re-solved each frame: offsetting, not scaling. Nine gifs shipped
 extrude-revolve, shell-cutaway, offset). Remaining shortlist: wire imprint +
 face push, SGC merge walls, GWN cloud, corner blend (parked on the
 spring-edge arc identity).
+
+## Addendum 211: winding-cloud gif (task 34) (2026-06-12)
+
+winding-cloud.gif (376 KiB): a 14x14 probe sheet sweeps through the drilled
+plate, every point colored by the body's generalized winding number (green
+inside, grey outside): the bore reads correctly hollow all the way through.
+The classifier the boolean pipeline trusts, made visible. Ten gifs shipped.

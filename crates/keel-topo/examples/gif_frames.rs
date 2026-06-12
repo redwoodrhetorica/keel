@@ -426,6 +426,57 @@ fn offset(dir: &Path) {
     println!("offset: {frames} frames");
 }
 
+/// The GWN classification cloud: a sheet of probe points sweeps up
+/// through a drilled plate, each point colored by the body's
+/// generalized winding number (green inside, grey outside): the bore
+/// reads correctly hollow, on-boundary noise nowhere in sight: the
+/// classifier the boolean pipeline trusts, made visible.
+fn gwn(dir: &Path) {
+    let frames = 36usize;
+    let mut plate = Body::new();
+    plate.block(Vec3::ZERO, 4.0, 4.0, 1.2).unwrap();
+    let f = Frame3::from_z(Vec3::new(2.0, 2.0, -0.5), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+    let mut tool = Body::new();
+    tool.cylinder(f, 1.0, 2.5).unwrap();
+    let body = boolean(&plate, &tool, BoolOp::Difference, 1e-7)
+        .expect("gwn base declined")
+        .body;
+    let mesh = body.worker_mesh();
+    for i in 0..frames {
+        let t = i as f64 / frames as f64;
+        let w01 = 1.0 - (2.0 * t - 1.0).abs();
+        let z = -0.35 + (1.55 + 0.35) * w01;
+        let n = 14usize;
+        let mut pts = String::from("[");
+        let mut ws = String::from("[");
+        for iy in 0..n {
+            for ix in 0..n {
+                let p = Vec3::new(
+                    0.15 + 3.7 * ix as f64 / (n - 1) as f64,
+                    0.15 + 3.7 * iy as f64 / (n - 1) as f64,
+                    z,
+                );
+                let w = body.generalized_winding_number(p);
+                if pts.len() > 1 {
+                    pts.push(',');
+                    ws.push(',');
+                }
+                let _ = write!(pts, "{},{},{}", p.x, p.y, p.z);
+                let _ = write!(ws, "{w:.3}");
+            }
+        }
+        pts.push(']');
+        ws.push(']');
+        write_frame(
+            dir,
+            i,
+            &mesh,
+            &format!("\"label\":\"winding number\",\"points\":{pts},\"winding\":{ws}"),
+        );
+    }
+    println!("gwn: {frames} frames");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let op = args.get(1).map(String::as_str).unwrap_or("drill");
@@ -446,6 +497,7 @@ fn main() {
         "construct" => construct(dir),
         "shell" => shell(dir),
         "offset" => offset(dir),
+        "gwn" => gwn(dir),
         other => {
             eprintln!("unknown op {other}; available: drill, trio, pin, fillet, corner");
             std::process::exit(1);

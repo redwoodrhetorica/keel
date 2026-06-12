@@ -90,6 +90,16 @@ def render_frame(data, bounds, size=250):
     ax.axis("off")
 
     meta = data.get("meta", {})
+    if "points" in meta:
+        pts = np.array(meta["points"], dtype=np.float64).reshape(-1, 3) @ cam.T
+        wn = np.array(meta["winding"], dtype=np.float64)
+        inside = wn > 0.5
+        ax.scatter(
+            pts[~inside, 0], pts[~inside, 2], s=4, c="#4d5866", alpha=0.65, zorder=5
+        )
+        ax.scatter(
+            pts[inside, 0], pts[inside, 2], s=7, c="#56d364", alpha=0.95, zorder=6
+        )
     if meta.get("label"):
         ax.text(
             0.05, 0.05, meta["label"], transform=ax.transAxes,
