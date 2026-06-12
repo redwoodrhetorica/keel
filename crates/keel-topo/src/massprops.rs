@@ -1164,6 +1164,20 @@ impl Body {
         // PASS 2: choose the slab base by the total winding, then turn
         // each boundary node into an inner v-slab of samples.
         let winding = (net_du / tau).round();
+        if std::env::var("KEEL_MASS_DEBUG").is_ok() {
+            eprintln!(
+                "  green-pass1 {fk:?} net_du {net_du:.4} winding {winding} v [{v_min:.3}, {v_max:.3}] fins {}",
+                fins_c.len()
+            );
+            for (i, fc) in fins_c.iter().enumerate() {
+                let d = match fc {
+                    FinCurve::Seg(..) => "seg".to_string(),
+                    FinCurve::Circ(_, a, b) => format!("circ {a:.3}..{b:.3}"),
+                    FinCurve::Ell(_, a, b) => format!("ell {a:.3}..{b:.3}"),
+                };
+                eprintln!("    fin {i}: {d}");
+            }
+        }
         let v_base = if winding.abs() < 0.5 {
             v_min
         } else if is_sphere && (winding.abs() - 1.0).abs() < 0.25 {
