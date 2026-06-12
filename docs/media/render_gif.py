@@ -88,6 +88,24 @@ def render_frame(data, bounds, size=250):
     ax.set_ylim(z0, z1)
     ax.set_aspect("equal")
     ax.axis("off")
+
+    meta = data.get("meta", {})
+    if meta.get("label"):
+        ax.text(
+            0.05, 0.05, meta["label"], transform=ax.transAxes,
+            color="#dce6f0", fontsize=9, family="monospace",
+        )
+    if "gap" in meta:
+        ax.text(
+            0.05, 0.05, f"gap {meta['gap']:.0e}", transform=ax.transAxes,
+            color="#8b98a8", fontsize=8, family="monospace",
+        )
+    if meta.get("salvaged"):
+        ax.text(
+            0.05, 0.05, f"salvaged @ {meta['achieved']:.0e}",
+            transform=ax.transAxes, color="#56d364", fontsize=8,
+            family="monospace", weight="bold",
+        )
     fig.canvas.draw()
     buf = np.asarray(fig.canvas.buffer_rgba())[:, :, :3].copy()
     plt.close(fig)
@@ -115,7 +133,10 @@ def main():
     bounds = ((lo[0] - pad, hi[0] + pad), (lo[1] - pad, hi[1] + pad))
 
     images = [render_frame(d, bounds) for d in datas]
-    imageio.mimsave(out, images, format="GIF", duration=0.09, loop=0)
+    # Hold the final state so the payoff reads before the loop restarts.
+    durations = [0.09] * len(images)
+    durations[-1] = 1.4
+    imageio.mimsave(out, images, format="GIF", duration=durations, loop=0)
     print(f"{out}: {len(images)} frames, {out.stat().st_size / 1024:.0f} KiB")
 
 

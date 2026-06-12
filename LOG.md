@@ -6353,3 +6353,19 @@ bore + chordal volume agreement). Suite 16/16 green.
 VERIFICATION: 100k oracle buckets identical (strict 95604/4396/WRONG 0,
 tolerant 25000/0/WRONG 0); fuzz soak clean (fuzz_boolean 5189 runs,
 fuzz_cyl_boolean 31418 runs, zero crashes).
+
+## Addendum 204: the boolean trio and the clearance-pin thesis gif (task 34) (2026-06-12)
+
+Two more gifs on the proven pipeline. boolean-trio.gif (406 KiB): a cylinder
+slides through a block while the op cycles union/intersection/difference (12
+frames each), labeled, every frame a real boolean. clearance-pin.gif (225 KiB),
+THE THESIS GIF: a pin grows toward the hole across 26 frames as honestly TWO
+bodies (the strict kernel does not pretend a gap is a mate), then the TOLERANT
+boolean snaps the 1e-5 clearance onto the hole's exact carrier and the parts
+fuse seamlessly, with the green "salvaged @ 1e-05" badge straight from the
+Confidence report (the dossier-29 graceful-degradation story in one loop).
+Renderer additions: meta-driven overlays (op label / gap readout / salvaged
+badge) and a 1.4 s hold on the final frame so the payoff reads. Example +
+Python only (no kernel paths): triplet green, no soak needed. Remaining
+shortlist (fillet overflow ladder, cellular wall, octant corner blend, T2 set,
+honest-DECLINE oddball) continues on this pipeline.

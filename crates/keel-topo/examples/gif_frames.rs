@@ -77,6 +77,94 @@ fn drill(dir: &Path) {
     println!("drill: {frames} frames");
 }
 
+/// Boolean trio: a block and a fat cylinder sliding through it while
+/// the operation cycles union -> intersection -> difference (12 frames
+/// each). Every frame is a real boolean.
+fn trio(dir: &Path) {
+    let frames = 36usize;
+    for i in 0..frames {
+        let seg = i / 12; // 0 union, 1 intersection, 2 difference
+        let t = (i % 12) as f64 / 12.0;
+        // The tool slides diagonally across the block within each
+        // segment, staying clear of the side walls (the interior
+        // bore family).
+        let cx = 1.4 + 1.2 * t;
+        let mut block = Body::new();
+        block.block(Vec3::ZERO, 4.0, 4.0, 2.0).unwrap();
+        let f = Frame3::from_z(Vec3::new(cx, cx, -0.75), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        let mut tool = Body::new();
+        tool.cylinder(f, 1.3, 3.5).unwrap();
+        let (op, name) = match seg {
+            0 => (BoolOp::Union, "union"),
+            1 => (BoolOp::Intersection, "intersection"),
+            _ => (BoolOp::Difference, "difference"),
+        };
+        let body = boolean(&block, &tool, op, 1e-7)
+            .expect("trio frame declined")
+            .body;
+        let mesh = body.worker_mesh();
+        write_frame(dir, i, &mesh, &format!("\"label\":\"{name}\""));
+    }
+    println!("trio: {frames} frames");
+}
+
+/// THE thesis gif: the clearance pin. A pin visibly smaller than the
+/// hole grows toward the real-world export gap (1e-5), the strict
+/// kernel honestly shows two parts, then the TOLERANT boolean snaps the
+/// pin onto the hole's exact carrier and the parts fuse seamlessly
+/// (salvaged tier 2, surfaced in the badge).
+fn pin(dir: &Path) {
+    use keel_topo::boolean::boolean_tolerant;
+    let frames = 36usize;
+    let mut plate = Body::new();
+    plate.block(Vec3::ZERO, 4.0, 4.0, 1.0).unwrap();
+    let df = Frame3::from_z(Vec3::new(2.0, 2.0, -0.5), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+    let mut tool = Body::new();
+    tool.cylinder(df, 1.0, 2.0).unwrap();
+    let holed = boolean(&plate, &tool, BoolOp::Difference, 1e-7)
+        .expect("holed plate")
+        .body;
+    for i in 0..frames {
+        let approach = 26usize;
+        if i < approach {
+            // The pin grows toward the fit: honestly TWO bodies (the
+            // strict kernel will not pretend a gap is a mate). Frames
+            // are the two worker meshes concatenated.
+            let t = i as f64 / (approach - 1) as f64;
+            let r = 0.55 + (1.0 - 1e-5 - 0.55) * t * t;
+            let pf = Frame3::from_z(Vec3::new(2.0, 2.0, 0.0), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+            let mut pin = Body::new();
+            pin.cylinder(pf, r, 1.0).unwrap();
+            let mut mesh = holed.worker_mesh();
+            let pm = pin.worker_mesh();
+            let base = (mesh.positions.len() / 3) as u32;
+            mesh.positions.extend_from_slice(&pm.positions);
+            mesh.normals.extend_from_slice(&pm.normals);
+            mesh.indices.extend(pm.indices.iter().map(|&k| k + base));
+            mesh.lines.extend_from_slice(&pm.lines);
+            write_frame(dir, i, &mesh, &format!("\"gap\":{:.6}", 1.0 - r));
+        } else {
+            // The tolerant snap: ONE exact body, gap salvaged.
+            let pf = Frame3::from_z(Vec3::new(2.0, 2.0, 0.0), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+            let mut pin = Body::new();
+            pin.cylinder(pf, 1.0 - 1e-5, 1.0).unwrap();
+            let (r, conf) = boolean_tolerant(&holed, &pin, BoolOp::Union, 1e-7, 1e-4)
+                .expect("tolerant pin declined");
+            let mesh = r.body.worker_mesh();
+            write_frame(
+                dir,
+                i,
+                &mesh,
+                &format!(
+                    "\"salvaged\":{},\"tier\":{},\"achieved\":{:e}",
+                    conf.salvaged, conf.tier, conf.achieved_tolerance
+                ),
+            );
+        }
+    }
+    println!("pin: {frames} frames");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let op = args.get(1).map(String::as_str).unwrap_or("drill");
@@ -88,8 +176,10 @@ fn main() {
     std::fs::create_dir_all(dir).unwrap();
     match op {
         "drill" => drill(dir),
+        "trio" => trio(dir),
+        "pin" => pin(dir),
         other => {
-            eprintln!("unknown op {other}; available: drill");
+            eprintln!("unknown op {other}; available: drill, trio, pin");
             std::process::exit(1);
         }
     }
