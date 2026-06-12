@@ -6819,3 +6819,41 @@ completion-gate soak. NOTE: the full gate currently running (task 39)
 certifies the pre-m36 commit; m36 lands with the standard cascade, and
 a follow-up full-gate run on the merged head is the user''s call (the
 instruments are one command).
+
+## Addendum 225: tasks 32/33: the Tier-1 exact algebraic layer (2026-06-12)
+
+keel-math gains the dossier-11 Tier-1 machinery, scope stated plainly:
+
+- bigint.rs: a minimal arbitrary-precision signed integer (add, sub,
+  mul, shl, Ord; NO division anywhere: one-root comparisons clear
+  denominators by cross-multiplication). Property-tested against i128
+  plus multilimb carry-chain pins.
+- algebraic.rs: ONE-ROOT real numbers (a + b sqrt(c)) / d over exact
+  integers with the Devillers-Fronville-Mourrain-Teillaud recipe:
+  comparisons and sign evaluations reduce to squaring sign batteries
+  (one-radical and two-radical cases; the same-radicand fast path for
+  roots of a shared quadratic), no square root is ever evaluated.
+  Every public predicate runs the standard cascade: floating filter
+  with a conservative error bound first, exact battery only on
+  inconclusive. The API is shaped after CGAL''s Ak_1 (Quadratic::roots
+  = isolate, sign_at, OneRoot::compare, approx) so higher tiers slot
+  behind the same interface.
+- The dossier 3.1 predicate, end to end: circle_circle_x_quadratic
+  builds the intersection-abscissa quadratic from EXACT dyadic f64
+  input (every finite f64 IS a dyadic rational; dyadic_ints converts
+  losslessly with a shared power-of-two scale, and the quadratic is
+  unscaled back to original coordinates), including the vertical-
+  radical-line and concentric degeneracies. Pinned: external tangency
+  compares EQUAL exactly (the case f64 jitter wobbles), crossing
+  abscissae at exactly 1/2, scaled quadratics share roots, filter
+  agrees with the exact battery over 4,000 randoms.
+
+BOUNDARY (under-claimed on purpose): this is AlgebraicReal restricted
+to degree-2 one-root numbers: circles complete, conic intersections
+covered when the abscissae reduce to a shared quadratic family. The
+degree-4 conic-conic tier (CONIX-class two-root numbers) and the QI
+quadric pencil consumer are NOT built; they are the next slice behind
+the same Ak_1-shaped interface, triggered when a kernel consumer
+(2D UV arrangements / sketch booleans / Tier-2 escalation) lands. No
+existing kernel call path was rerouted: the layer is additive, so the
+certified corpus is untouched (suite green 135/87/271/4, clippy clean).
