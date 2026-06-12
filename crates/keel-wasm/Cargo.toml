@@ -1,0 +1,12 @@
+[package]
+name = "keel-wasm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+keel-topo = { path = "../keel-topo" }
+keel-geom = { path = "../keel-geom" }
+keel-math = { path = "../keel-math" }

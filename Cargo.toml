@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/keel-math", "crates/keel-geom", "crates/keel-topo"]
+members = [
+    "crates/keel-math",
+    "crates/keel-geom",
+    "crates/keel-topo",
+    "crates/keel-wasm",
+]
 exclude = ["fuzz"]
 
 [workspace.package]
