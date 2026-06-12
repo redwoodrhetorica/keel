@@ -77,6 +77,38 @@ fn drill(dir: &Path) {
     println!("drill: {frames} frames");
 }
 
+/// Cellular (non-regularized) union: two blocks overlap and the shared
+/// interface survives as a DOUBLE-SIDED interior partition wall (item
+/// 29 rung 1): the result is a cellular solid, not a soup. The blocks
+/// slide together through the loop; the renderer draws the wall's
+/// edges through the glass body.
+fn cellular(dir: &Path) {
+    use keel_topo::boolean::{BooleanOptions, boolean_with};
+    let frames = 36usize;
+    for i in 0..frames {
+        let t = i as f64 / frames as f64;
+        let w = 1.0 - (2.0 * t - 1.0).abs();
+        // B slides from barely-touching to half-overlapped and back.
+        let x = 2.0 - 1.0 * w;
+        let mut a = Body::new();
+        a.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let mut b = Body::new();
+        b.block(Vec3::new(x, 0.0, 0.0), 2.0, 2.0, 2.0).unwrap();
+        let body = boolean_with(
+            &a,
+            &b,
+            BoolOp::Union,
+            1e-7,
+            BooleanOptions { regularize: false },
+        )
+        .expect("cellular frame declined")
+        .body;
+        let mesh = body.worker_mesh();
+        write_frame(dir, i, &mesh, "\"label\":\"non-regularized: wall kept\"");
+    }
+    println!("cellular: {frames} frames");
+}
+
 /// Boolean trio: a block and a fat cylinder sliding through it while
 /// the operation cycles union -> intersection -> difference (12 frames
 /// each). Every frame is a real boolean.
@@ -215,6 +247,46 @@ fn fillet(dir: &Path) {
     println!("fillet: {frames} frames");
 }
 
+/// The octant corner blend: a sphere patch closing the three fillets
+/// meeting at a cube corner, radius breathing through a loop.
+/// KNOWN ISSUE (do not ship the gif yet): the blend spring edges'
+/// wireframes draw ghost full circles: their endpoint projections onto
+/// the stored carrier circle coincide, so the span reads as a full
+/// revolution (a different arc-identity case than true_arc_span's).
+fn corner(dir: &Path) {
+    let frames = 36usize;
+    for i in 0..frames {
+        let t = i as f64 / frames as f64;
+        let w = 1.0 - (2.0 * t - 1.0).abs();
+        let r = 0.25 + 0.65 * w;
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let corner = b
+            .entity_ids()
+            .filter_map(|id| match b.lookup(id) {
+                Some(keel_topo::entity::AnyKey::Vertex(k)) => Some(k),
+                _ => None,
+            })
+            .find(|&k| {
+                b.vertex(k)
+                    .map(|v| (v.point - Vec3::new(2.0, 2.0, 2.0)).norm() < 1e-9)
+                    .unwrap_or(false)
+            })
+            .expect("cube corner");
+        let body = b
+            .fillet_corner_octant(corner, r)
+            .expect("corner frame declined");
+        let mesh = body.worker_mesh();
+        write_frame(
+            dir,
+            i,
+            &mesh,
+            &format!("\"label\":\"corner blend r={r:.2}\""),
+        );
+    }
+    println!("corner: {frames} frames");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let op = args.get(1).map(String::as_str).unwrap_or("drill");
@@ -229,8 +301,10 @@ fn main() {
         "trio" => trio(dir),
         "pin" => pin(dir),
         "fillet" => fillet(dir),
+        "corner" => corner(dir),
+        "cellular" => cellular(dir),
         other => {
-            eprintln!("unknown op {other}; available: drill, trio, pin, fillet");
+            eprintln!("unknown op {other}; available: drill, trio, pin, fillet, corner");
             std::process::exit(1);
         }
     }

@@ -6388,3 +6388,32 @@ trim-aware: true_arc_span tests both candidate midpoints against the adjacent
 faces' tessellation and keeps the one ON the trimmed region. Render-only path
 (render_mesh wireframes; mass/winding/boolean untouched, so no soak per the
 CI rule's scope); suite 16/16 green, clippy clean.
+
+## Addendum 206: cellular-union gif; corner blend parked (task 34) (2026-06-12)
+
+cellular-union.gif (228 KiB): two blocks slide together under the NON-
+REGULARIZED union (item 29 rung 1) and the shared interface survives as a
+double-sided interior partition wall, its edges visible through the glass
+look: the result is a cellular solid, not a soup. Planar machinery only;
+every frame a real boolean_with{regularize:false}.
+
+The octant corner-blend sweep is COMMITTED BUT ITS GIF IS PARKED: the blend
+spring edges wireframe as ghost FULL circles because their endpoint
+projections onto the stored carrier circle coincide, so the span reads as a
+full revolution: a SECOND arc-identity case (true_arc_span fixed the
+wrong-side case, this is the degenerate-projection case). Recorded in the
+dumper comment; the gif re-renders once the spring-edge carriers store usable
+spans (the same arc-identity family as the sphere map).
+
+Gif set so far: drill, boolean-trio, clearance-pin (the thesis), fillet-
+overflow, cellular-union: five shipped, all 228-607 KiB at 250x250.
+Remaining shortlist: corner blend (parked), the T2 set, the honest-DECLINE
+oddball.
+
+SESSION-END RESUME ANCHOR: master at the swap-m13 merge; working branch
+swap-m13. Backlog state: #29 partial-arc band imprint (big, read dossier 47
++ the QI section of dossier 11 first), #32/#33 algebraic kernel, #34 in
+progress (this addendum), #36 sphere strict-boolean milestone (read
+memory/sphere-split-integration-trap.md FIRST). The cone story (tasks 30,
+Addenda 201-202) is complete end to end and verified; oracle buckets stayed
+bit-identical through every change this session.
