@@ -7311,3 +7311,44 @@ rests on mass==mesh self-consistency and here both AGREE on the wrong value;
 the explorer's INDEPENDENT bound (mesh vs the AABB-union volume) is what caught
 it. Lesson, restated concretely: mass==mesh and validate() are necessary, not
 sufficient. The evolve genome is recorded in evolve-out/failures.jsonl.
+
+## Addendum 239: oracle hardening + the sweep: a SPHERE-boolean robustness cluster (task 49) (2026-06-13)
+
+Directive after #48: add an independent bound to the oracle and re-sweep to
+find ALL self-consistent wrongs before patching. First a correction to the
+#48 framing: BOTH three-bucket gate lanes already use an EXACT independent
+reference (interval arithmetic for boxes, the closed-form frustum for cones),
+so their WRONG check is not weak. #48 escaped on COVERAGE: the oracle only
+generates box/box and block/frustum pairs and has never tested a sphere.
+
+THE HARDENING went into the explorer's independent check (the broad-coverage
+instrument). Its loose AABB-union bound is replaced by TIGHT op-specific
+volume bounds from the EXACT primitive volumes: union in [max(vA,vB), vA+vB],
+intersection in [0, min(vA,vB)], difference in [max(0,vA-vB), vA], checked
+against BOTH the authoritative analytic mass and the tessellated mesh. Two
+severities are now separated:
+- wrong: mass is authoritative AND outside the op bounds (mass==mesh both
+  outside is the #48 silent self-consistent class).
+- malformed: mass HONESTLY declines, but the boolean returned Ok and the mesh
+  is a confident value outside the bounds (validate passed, mass cannot
+  integrate the body, mesh lies) -- a body the boolean should have declined.
+
+THE SWEEP (4 seeds x 1500 = 6000 evals): 20 failures, ~0.33%. 15 malformed +
+5 wrong. By shape pair: sph/sph 13, block/sph 5, block/cone 2 -- 18 of 20
+involve a SPHERE, and all 5 true (wrong) silent WRONGs are sphere (block/sph
+x3, sph/sph x2). Verified real, not false positives: Monte-Carlo point-
+membership ground truth on four representative cases showed the kernel mesh
+grossly off (I sph/sph mesh 37.3 vs MC 7.5; U sph/sph 43.3 vs 90.6; D sph/sph
+0.018 vs 12.2; U cone/block 28.9 vs 19.1) and mass declined on all four.
+
+#49 (sphere-boolean robustness): arbitrary sphere booleans (sph/sph and
+sph/block, the periodic-seam / sphere-split-integration-trap territory)
+produce malformed-or-wrong results at ~0.3% under random placement; #48 is the
+first recorded instance, and the cone/block residue (2 of 20) is the #47
+leftover slow path's twin. mass_properties stays honest throughout; the
+contract gap is that boolean() returns Ok and mesh_volume() reports a confident
+wrong number on the same body. The gate's WRONG=0 holds for its covered
+distribution (box/box, block/frustum, axis-aligned, NO spheres); the broad
+sphere space is outside it. Stated plainly per the under-claim posture: the
+1M-trial WRONG=0 certificate is a statement about the oracle's distribution,
+not about every shape pair the kernel will accept.

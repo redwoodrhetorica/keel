@@ -160,10 +160,15 @@ fn build(p: &Prim) -> Option<Body> {
     if ok { Some(b) } else { None }
 }
 
-fn aabb_vol(b: &Body) -> f64 {
-    let bb = b.bounding_box();
-    let d = bb.max - bb.min;
-    (d.x.max(0.0)) * (d.y.max(0.0)) * (d.z.max(0.0))
+/// EXACT analytic volume of a primitive (matches build()'s a/b/c mapping).
+fn prim_vol(p: &Prim) -> f64 {
+    let pi = std::f64::consts::PI;
+    match p.shape {
+        Shape::Block => p.a * p.b * p.c,
+        Shape::Cylinder => pi * p.a * p.a * p.b,
+        Shape::Cone => pi / 3.0 * p.a * p.a * p.b,
+        Shape::Sphere => 4.0 / 3.0 * pi * p.a * p.a * p.a,
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -193,7 +198,18 @@ fn classify(g: &Genome) -> Eval {
     let op = [BoolOp::Union, BoolOp::Intersection, BoolOp::Difference][g.op % 3];
     let op_tag = ["U", "I", "D"][g.op % 3];
     let shapes = format!("{}/{}", g.p[0].shape.tag(), g.p[1].shape.tag());
-    let bound = aabb_vol(&a) + aabb_vol(&b);
+    // Independent op-volume bounds from the EXACT primitive volumes (tighter
+    // than the AABB sum): a clean result must satisfy vol(A op B) in
+    // [vlo, vhi] regardless of geometry, so a violation is a WRONG even when
+    // mass==mesh agree (the #48 disjoint-union class). Generous slack absorbs
+    // curved chordal error so only gross violations flag.
+    let (vp0, vp1) = (prim_vol(&g.p[0]), prim_vol(&g.p[1]));
+    let (vlo, vhi) = match op {
+        BoolOp::Union => (vp0.max(vp1), vp0 + vp1),
+        BoolOp::Intersection => (0.0, vp0.min(vp1)),
+        BoolOp::Difference => ((vp0 - vp1).max(0.0), vp0),
+    };
+    let vslack = 5e-2 * (1.0 + vhi);
 
     let res = std::panic::catch_unwind(AssertUnwindSafe(|| boolean(&a, &b, op, 1e-7)));
     match res {
@@ -239,26 +255,46 @@ fn classify(g: &Genome) -> Eval {
                     risk: 1.0,
                 };
             }
-            if mesh > bound + 1e-3 * (1.0 + bound) {
-                return Eval {
-                    class: Class::Fail("unbounded".to_string()),
-                    signature: format!("FAIL:unbounded {op_tag} {shapes}"),
-                    risk: 1.0,
-                };
-            }
-            // mass==mesh self-consistency (necessary, not sufficient).
+            // Independent op-volume bound, two severities. mass is the
+            // kernel's AUTHORITATIVE (exact analytic) volume; mesh is the
+            // tessellated net.
+            let oob = |x: f64| x > vhi + vslack || x < vlo - vslack;
             let mut risk = 0.0;
-            if let Ok(m) = r.body.mass_properties() {
-                let band = 2e-2 * (1.0 + m.volume.abs());
-                let gap = (m.volume - mesh).abs();
-                risk = (gap / band).min(2.0);
-                if m.volume > 0.0 && gap > band {
+            match r.body.mass_properties().map(|m| m.volume) {
+                Ok(m) => {
+                    // mass==mesh self-consistency (necessary, not sufficient).
+                    let band = 2e-2 * (1.0 + m.abs());
+                    let gap = (m - mesh).abs();
+                    risk = (gap / band).min(2.0);
+                    if m > 0.0 && gap > band {
+                        return Eval {
+                            class: Class::Fail("mass!=mesh".to_string()),
+                            signature: format!("FAIL:mass-mesh {op_tag} {shapes}"),
+                            risk: 1.0,
+                        };
+                    }
+                    // WRONG: the authoritative volume is impossible for this
+                    // op (mass==mesh both outside is the #48 silent class).
+                    if oob(m) {
+                        return Eval {
+                            class: Class::Fail("wrong".to_string()),
+                            signature: format!("FAIL:wrong {op_tag} {shapes}"),
+                            risk: 1.0,
+                        };
+                    }
+                }
+                // mass HONESTLY declined, but the boolean returned Ok and the
+                // mesh is a confident value outside the op bounds: a MALFORMED
+                // body (validate passed, mass cannot integrate it, mesh lies)
+                // the boolean should have declined.
+                Err(_) if oob(mesh) => {
                     return Eval {
-                        class: Class::Fail("mass!=mesh".to_string()),
-                        signature: format!("FAIL:mass-mesh {op_tag} {shapes}"),
+                        class: Class::Fail("malformed".to_string()),
+                        signature: format!("FAIL:malformed {op_tag} {shapes}"),
                         risk: 1.0,
                     };
                 }
+                Err(_) => {}
             }
             let c = r.body.counts();
             let fbucket = bucket(c.f);
