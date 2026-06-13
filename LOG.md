@@ -7207,3 +7207,58 @@ Task 43 (curved non-uniform scale) landed AFTER on the working head
 is not a fuzz target; verified by the 100k bit-identical oracle, the
 op gym at 1300, and exact-volume tests). The whole swap program, the
 bug-hunt program, and the completion-gate re-run are now complete.
+
+## Addendum 237: the evolutionary explorer (novelty-search fuzzer): zero failures in 1500 evals, a block/cone perf cliff (task 47) (2026-06-13)
+
+User idea: a search that random-generates two primitives, runs a boolean,
+then keeps mutating the parameters that produce interesting behavior. Built
+as examples/evolve.rs, scoped first as a spike, now committed as a permanent
+capability-frontier probe. It is the active-search complement to the oracle:
+where the oracle samples a fixed distribution uniformly, this one SEEKS
+novelty and failure.
+
+THE GENOME is two primitives (block / cylinder / cone / sphere, each with a
+random center, three size scalars, and a free axis) plus an op (union /
+intersection / difference). NOVELTY SEARCH drives it: a population of 256,
+the top half by behavioral novelty mutated forward, a quarter refreshed as
+fresh randoms each generation, determinism from a seeded LCG. Each eval runs
+on a worker thread under a 20 s watchdog so a true hang is caught as a FAIL
+rather than wedging the run. Three output streams: failures.jsonl
+(panic / invalid body / non-finite or negative mesh / volume above the
+AABB-union bound / mass!=mesh beyond a 2% band / hang), novelties.jsonl
+(first-seen behavior signatures), slow.jsonl (anything that returned but took
+>= 250 ms).
+
+THE RESULT (seed 7, 1500 evals): PASS 40 / DECLINE 1460 / FAIL 0 / SKIP 0;
+84 distinct behaviors; 447 slow. failures.jsonl is EMPTY. The
+DECLINE-never-WRONG contract held under active novelty pressure, not just
+uniform sampling: across 1500 adversarially-mutated booleans nothing
+panicked, produced an invalid or unbounded body, or disagreed with its own
+mesh. (Taxonomy check: the "faulted" decline reason is a clean refusal where
+boolean() returns Ok carrying a self-reported non-Coincident fault, not a
+swallowed panic; panics route to FAIL and there were none.)
+
+THE CAPABILITY FRONTIER under arbitrary placement and tilt is narrow and
+consistent. PASS is reached only by block/block, block/cyl, cyl/cyl, and
+sph/sph: like-with-like plus planar-against-cylinder. Every cone-involved
+pair declines (no cone boolean passed in 1500 tries) and the sphere succeeds
+only against another sphere (cyl/sph, block/sph, sph/cone all decline). This
+is exact-or-decline behaving as designed: it refuses what it cannot do
+exactly rather than emitting a wrong body. The 60 distinct decline signatures
+split across AssemblyFailed, faulted, and UnassemblableSeam.
+
+#47 (perf + capability): the block/cone cliff. block/cone is 402 of 447 slow
+configs (90%), up to 1771 ms, median 550 ms, against the ~1.0 ms box
+baseline: roughly 1700x. Every slow block/cone case eventually declines
+cleanly (AssemblyFailed or faulted), so the kernel grinds for up to 1.77 s on
+a tilted plane-against-cone intersection and then correctly refuses. The
+configured cone instruments (op gym, parity, the cone fuzz sector) missed
+this because they exercise upright frustums only; arbitrary tilt plus offset
+is what drives the cost. No wrong answer is produced; the finding is latency
+plus a capability gap (cone booleans never succeed under random placement).
+The cone-plane SSI path runs an expensive search that terminates in
+AssemblyFailed rather than failing fast.
+
+The raw findings live in evolve-out/{failures,novelties,slow}.jsonl (run
+artifacts, gitignored); examples/evolve.rs is the reusable probe (cargo run
+--release -p keel-topo --example evolve -- [evals] [seed] [outdir]).
