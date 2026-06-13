@@ -6996,3 +6996,32 @@ handle accounting. Fix targets recorded in the task: genus-aware
 finalize for the difference, the cylinder winding anchor for the
 union mass. Exact-or-decline held throughout: every wrong-shaped
 assembly declined honestly.
+
+## Addendum 231: task 41, the union half RESOLVED: loop-orientation normalization in Green (2026-06-12)
+
+The per-loop winding rail settled it: the crossing-cylinder union''s
+upper band arrives with BOTH loops winding +1 (the crossing-curve
+outer +tau AND the top-rim ring +tau), and the defect predates the
+stitch (the imprinted OPERAND''s upper band already measures +2 tau).
+The representation does not enforce ring-vs-outer winding on curved
+faces anywhere: tessellation and validate never read it, and Green is
+the only orientation-sensitive consumer, so this was masked
+kernel-wide.
+
+Fix INSIDE Green rather than a global invariant change: any loop sign
+assignment achieving net winding 0 yields the correct integral after
+the existing area-sign normalization (flipping every loop plus the
+global sign is the identity), so cylinder trims now greedily flip RING
+loops that co-wind with the net until it vanishes; nodes carry loop
+tags for the flip. Spheres keep their pole logic; a net that will not
+normalize declines exactly as before.
+
+RESULT: the imprinted operand reads 4 pi to 5e-14, and the crossing-
+cylinder UNION is EXACT at every probed height (h=4 matches
+2 pi h - 16/3 to the last printed digit; h=6 and h=8 within 2e-13).
+Union joins intersection as exact; only the genus-1 DIFFERENCE half of
+task 41 remains. Verification: suite green, 100k box oracle
+BIT-IDENTICAL (95604/4396/0; 25000/0/0), cone oracle 1998/2/0, op gym
+violations all in the known open task-45 setback class (plus one
+boolean trial now declining honestly where mass previously could not
+compute).
