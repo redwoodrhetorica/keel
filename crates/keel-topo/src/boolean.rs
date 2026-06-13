@@ -3420,7 +3420,42 @@ pub fn boolean_with(
                 "no seams and no unambiguous containment probe",
             ));
         };
-        let done = |body: Body| {
+        let done = |body: Body| -> Result<BoolResult, BoolFault> {
+            // task 49: the no-seams shortcut trusts the containment probe, but
+            // a MISSING seam can mean "SSI failed to find a real intersection"
+            // (tilted cyl/cyl), not "disjoint/nested". For curved operands,
+            // bound the cloned result by the op-volume inequality from the
+            // operand volumes; a violation means the probe picked wrong (it
+            // dropped an operand), so DECLINE rather than return a silent WRONG
+            // (the soak's tilted cyl/cyl union, which returned b.clone()).
+            // Planar operands keep the exact probe (boxes are bit-identical).
+            let curved = |x: &Body| {
+                x.face_keys()
+                    .iter()
+                    .any(|&f| !matches!(x.face_surface3(f), Some(Surface3::Plane(_))))
+            };
+            if curved(a) || curved(b) {
+                let opvol =
+                    |x: &Body| x.mass_properties().map(|m| m.volume).unwrap_or_else(|_| x.mesh_volume());
+                let (va, vb) = (opvol(a), opvol(b));
+                if va.is_finite() && vb.is_finite() && va >= 0.0 && vb >= 0.0 {
+                    let (lo, hi) = match op {
+                        BoolOp::Union => (va.max(vb), va + vb),
+                        BoolOp::Intersection => (0.0, va.min(vb)),
+                        BoolOp::Difference => ((va - vb).max(0.0), va),
+                    };
+                    let slack = 5e-2 * (1.0 + hi);
+                    let rv = body
+                        .mass_properties()
+                        .map(|m| m.volume)
+                        .unwrap_or_else(|_| body.mesh_volume());
+                    if rv < lo - slack || rv > hi + slack {
+                        return Err(BoolFault::AssemblyFailed(
+                            "no-seam shortcut result violates op-volume bound (declined)",
+                        ));
+                    }
+                }
+            }
             // Coplanar-but-empty-overlap pairs flag Coincident even
             // though nothing interacts (the pre-pass found no overlap,
             // or it would have re-imprinted): noise here, dropped.

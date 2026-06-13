@@ -7380,3 +7380,51 @@ OK 999 / DECLINE 1 / VIOLATIONS 0, full keel-topo suite green, clippy clean.
 This is a contract BACKSTOP (decline, do not lie), not a sphere-boolean
 capability fix; making arbitrary sphere booleans actually assemble remains the
 sphere-split-integration milestone.
+
+## Addendum 241: the 2h soak found a non-sphere silent WRONG (tilted cyl/cyl union), shortcut-path backstop closes it (2026-06-13)
+
+User directive: a ~2h random-mutation soak logging EVERY failure and decline.
+The soak (examples evolve via evolve-out/soak.sh, batches of 3000 evals with
+an incrementing seed) ran 78,000 test cases over 106 min and then HALTED ITSELF
+on a hard failure at seed 1025, exactly as designed. Totals: 5 failures
+(4 soft `malformed` sph/sph near-tangent + 1 `wrong`), 75,553 declines logged
+(full genomes), 2,557 distinct signatures.
+
+THE WRONG: `FAIL:wrong U cyl/cyl`, a NON-sphere case the Add. 240 fix did not
+cover. Two TILTED cylinders (r 1.80 h 1.03; r 2.67 h 0.39, arbitrary axes) that
+partially overlap; the union returned mass 8.752 == cylinder B's volume
+verbatim (3 faces == B's faces), silently DROPPING cylinder A. Monte-Carlo
+ground-truth union 18.60. ROOT CAUSE: the tilted non-coaxial cyl/cyl SSI found
+no seam, so `seams.is_empty()` routed the op to the NO-SEAMS SHORTCUT
+(boolean_with), whose containment probe sampled A's first face-interior point,
+found it inside B, and concluded a_in_b == true -> Union returned b.clone().
+A missing seam (an SSI capability gap) was misread as "nested", and the
+shortcut's done() clone path BYPASSES assemble_boolean's op-volume
+post-condition (Add. 240), so the backstop never ran (KEEL_BOOL_DEBUG prints no
+"curved gate" line for this trial).
+
+THE FIX (boolean.rs, the shortcut done() closure): apply the SAME op-volume
+bound there. For curved operands, a cloned shortcut result must satisfy
+vol(A op B) in [lo, hi] from the operand volumes; a violation means the probe
+picked wrong (dropped an operand), so DECLINE. A correct nested/disjoint clone
+always satisfies the bound (union-of-nested == max, etc.), so legit shortcuts
+pass; only misjudgments decline. Scoped to curved operands, so all-planar (box)
+shortcuts are bit-identical. Verified: the cyl/cyl union now declines
+("no-seam shortcut result violates op-volume bound"); full keel-topo suite
+green; clippy clean; a 12,000-eval sweep INCLUDING the culprit seed 1025 -> 0
+failures (0 wrong, 0 malformed).
+
+The soak earned its keep: 78k adversarial cases surfaced one silent WRONG
+OUTSIDE the known sphere cluster (a cylinder-union shortcut), now closed
+alongside the sphere backstop. Both Add. 240 and Add. 241 are contract
+backstops (decline-never-wrong), not capability fixes.
+
+DECLINE FRONTIER (the minimize-declines worklist, from 75,553 soak declines):
+by reason AssemblyFailed 67% / faulted 23% / UnassemblableSeam 10%; by shape
+93% mixed-surface, with cylinder<->sphere (~17k) and cone<->block (~15k) about
+60% of all declines. Test cases run this soak + verification: 90,000 (running
+tally in evolve-out/total-test-cases.txt). PERSPECTIVE on the rate: the ~97%
+decline under this distribution is the WORST CASE (uniform-random shapes,
+positions, arbitrary tilt); on supported classes the gate measured box booleans
+95.6% and upright cone/block 99.8% (1M trials each). The frontier is curved-
+surface-meets-different-surface at arbitrary angle.
