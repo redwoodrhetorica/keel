@@ -7165,3 +7165,45 @@ With this, the swap backlog AND the bug-hunt program are complete; the
 only open item is the task-39 completion-gate SOAK (its 1M oracle
 already passed WRONG=0 on the current head; the 16-sector soak runs
 unattended, surviving session exits via WSL detachment).
+
+## Addendum 236: TASK 39 COMPLETE: the completion gate PASSED on the post-swap binary (2026-06-13)
+
+The full completion gate re-ran on the current head (b1c1c05: the
+swap program tasks 29/36/38/32/33 plus the bug-hunt fixes 41/44/45)
+and PASSED both halves.
+
+ORACLE (the WRONG=0 correctness certificate), 1,000,000 trials each
+lane, sharded 14 ways:
+- box three-bucket: strict PASS 955,946 / DECLINE 44,054 / WRONG 0;
+  tolerant PASS 250,000 / DECLINE 0 / WRONG 0.
+- cone sector: PASS 998,375 / DECLINE 1,625 / WRONG 0.
+WRONG == 0 in every lane at one million trials.
+
+SOAK (the crash-freedom certificate), all 16 sectors at 2400 s each,
+ZERO crashes and ZERO artifacts on disk. Per-sector executions:
+fuzz_boolean 78,434; fuzz_cyl_boolean 275,600; fuzz_cone_boolean
+659,159; fuzz_nurbs_boolean 4,522; fuzz_imprint 9,449,316;
+fuzz_topo_ops 1,173,294; fuzz_winding 4,706,396; fuzz_pmc 7,094,999;
+fuzz_ssi 611,311,584; fuzz_step_import 13,236,799; fuzz_recover
+976,620; fuzz_nurbs_curve 301,251,360; fuzz_nurbs_surface 423,981,804;
+fuzz_bernstein_roots 44,679,514; fuzz_interval 357,598,895;
+fuzz_solve_cubic 684,698,397. TOTAL ~2.46 billion executions.
+
+Operational note: the WSL soak process tree survived several Windows
+session exits over the multi-hour run (only the PowerShell
+orchestrator is session-bound; the detached fuzzers and their internal
+2400 s budgets are not), and an overnight machine idle stretched
+wall-clock without reducing per-sector fuzzer time. The cone sector
+(task 38, NEW vocabulary) is now gate-certified for the first time.
+
+PERF re-measure (current head, quiet machine): box-boolean workload
+1.0 ms/trial (the Parasolid sky target holds through the bug-hunt
+finalize/massprops changes); curved ops in line (drill ~5 ms, sphere
+~5.5 ms, holed mass_properties ~2.15 ms).
+
+SCOPE of this certificate: the gate clone is b1c1c05 (through task 45).
+Task 43 (curved non-uniform scale) landed AFTER on the working head
+(c41898c) and is soak-independent (it adds no boolean/stitch code and
+is not a fuzz target; verified by the 100k bit-identical oracle, the
+op gym at 1300, and exact-volume tests). The whole swap program, the
+bug-hunt program, and the completion-gate re-run are now complete.
