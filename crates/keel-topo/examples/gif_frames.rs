@@ -285,45 +285,57 @@ fn corner(dir: &Path) {
     println!("corner: {frames} frames");
 }
 
-/// The honest-DECLINE oddball: a ball sinks toward a block socket; the
-/// strict kernel cannot yet assemble this carve, and instead of
-/// emitting a plausible-but-wrong body it DECLINES, on camera. The
-/// frames show the approach as two honest bodies; the finale labels
-/// the refusal. (When task 36 lands this gif becomes a success story
-/// and moves to the regular set.)
+/// The honest-DECLINE oddball, the sibling of the steinmetz demo: a
+/// THIN cylinder slides across a FAT one until their axes cross. EQUAL
+/// radii give the exact bicylinder (the steinmetz demo); UNEQUAL radii
+/// produce asymmetric intersection ellipses the crossing-pair imprint
+/// does not yet assemble, so instead of emitting a plausible-but-wrong
+/// body the kernel DECLINES, on camera. The frames show the two honest
+/// input cylinders; the finale labels the refusal. (The original
+/// sphere-socket version became a success story when task 36 landed;
+/// this is a configuration that still genuinely declines.)
 fn decline(dir: &Path) {
     let frames = 36usize;
-    let mut block = Body::new();
-    block.block(Vec3::ZERO, 4.0, 4.0, 2.0).unwrap();
+    let h = 4.0;
+    let mut fat = Body::new();
+    fat.cylinder(
+        Frame3::from_z(Vec3::new(0.0, 0.0, -h * 0.5), Vec3::new(0.0, 0.0, 1.0)).unwrap(),
+        1.0,
+        h,
+    )
+    .unwrap();
     for i in 0..frames {
-        let approach = 28usize;
-        let zc = if i < approach {
+        // The thin cylinder slides in along x until its axis crosses
+        // the fat one's at the origin, then attempts the intersection.
+        let approach = 26usize;
+        let cx = if i < approach {
             let t = i as f64 / (approach - 1) as f64;
-            3.2 - (3.2 - 1.5) * t * t
+            -3.5 + 3.5 * t * t
         } else {
-            1.5
+            0.0
         };
-        let mut ball = Body::new();
-        ball.sphere(
-            Frame3::from_z(Vec3::new(2.0, 2.0, zc), Vec3::new(0.0, 0.0, 1.0)).unwrap(),
-            1.0,
+        let mut thin = Body::new();
+        thin.cylinder(
+            Frame3::from_z(Vec3::new(cx - h * 0.5, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)).unwrap(),
+            0.55,
+            h,
         )
         .unwrap();
         let attempted = i >= approach;
-        let declined = attempted && boolean(&block, &ball, BoolOp::Difference, 1e-7).is_err();
-        let mut mesh = block.worker_mesh();
-        let bm = ball.worker_mesh();
+        let declined = attempted && boolean(&fat, &thin, BoolOp::Intersection, 1e-7).is_err();
+        let mut mesh = fat.worker_mesh();
+        let tm = thin.worker_mesh();
         let base = (mesh.positions.len() / 3) as u32;
-        mesh.positions.extend_from_slice(&bm.positions);
-        mesh.normals.extend_from_slice(&bm.normals);
-        mesh.indices.extend(bm.indices.iter().map(|&k| k + base));
-        mesh.lines.extend_from_slice(&bm.lines);
+        mesh.positions.extend_from_slice(&tm.positions);
+        mesh.normals.extend_from_slice(&tm.normals);
+        mesh.indices.extend(tm.indices.iter().map(|&k| k + base));
+        mesh.lines.extend_from_slice(&tm.lines);
         let meta = if declined {
             "\"declined\":true".to_string()
         } else if attempted {
-            // If the kernel ever starts succeeding here, the gif must
-            // not keep claiming a decline.
-            "\"label\":\"carved\"".to_string()
+            // If the kernel ever assembles this, the gif must not keep
+            // claiming a decline (honest-output rule).
+            "\"label\":\"assembled\"".to_string()
         } else {
             String::new()
         };
