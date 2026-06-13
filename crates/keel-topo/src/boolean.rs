@@ -4219,22 +4219,50 @@ fn assemble_boolean(
         // to declined. Bodies whose mass legitimately declines (NURBS
         // corner patches) keep the positive-volume floor.
         let v = body.tessellated_volume();
+        let bm = body.mass_properties().map(|m| m.volume);
         if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
-            eprintln!(
-                "  curved gate: tess {v} mass {:?} mesh {}",
-                body.mass_properties().map(|m| m.volume),
-                body.mesh_volume()
-            );
+            eprintln!("  curved gate: tess {v} mass {bm:?} mesh {}", body.mesh_volume());
         }
-        match body.mass_properties() {
-            Ok(m) => {
-                m.volume.is_finite()
-                    && m.volume > 0.0
-                    && v.is_finite()
-                    && (m.volume - v).abs() <= 2e-2 * (1.0 + m.volume.abs())
+        let self_consistent = match bm {
+            Ok(mv) => {
+                mv.is_finite() && mv > 0.0 && v.is_finite() && (mv - v).abs() <= 2e-2 * (1.0 + mv.abs())
             }
             Err(_) => v.is_finite() && v > 1e-9 * (1.0 + v.abs()),
-        }
+        };
+        // INDEPENDENT op-volume bound (research file 47 / task 49, the sphere
+        // cluster the explorer surfaced): the self-consistency check above
+        // passes a SELF-CONSISTENT WRONG (mass==mesh agreeing on an impossible
+        // value, e.g. a disjoint union reading double) and the mass-declined
+        // floor passes a MALFORMED body whose tessellation is positive but
+        // wrong. A clean result must satisfy vol(A op B) in [lo, hi] from the
+        // EXACT operand volumes, regardless of geometry. Decline a violation
+        // (DECLINE-never-WRONG). Skipped only if an operand volume is itself
+        // undeterminable. Planar results keep the exact gate below (their mesh
+        // is exact, so a wrong there already fails self-consistency).
+        // Operand volumes for the bound: mass when available, else the
+        // tessellated mesh (a clean primitive operand's mesh is a good
+        // estimate). The fallback keeps the bound APPLICABLE even when an
+        // operand's OWN mass declines -- exactly the sphere case where an
+        // otherwise-malformed result would slip the gate.
+        let opvol =
+            |x: &Body| x.mass_properties().map(|m| m.volume).unwrap_or_else(|_| x.mesh_volume());
+        let (va, vb) = (opvol(a), opvol(b));
+        let bound_ok = if va.is_finite() && vb.is_finite() && va >= 0.0 && vb >= 0.0 {
+            let (lo, hi) = match op {
+                BoolOp::Union => (va.max(vb), va + vb),
+                BoolOp::Intersection => (0.0, va.min(vb)),
+                BoolOp::Difference => ((va - vb).max(0.0), va),
+            };
+            let slack = 5e-2 * (1.0 + hi);
+            let in_band = |x: f64| x >= lo - slack && x <= hi + slack;
+            // Both the authoritative volume (mass, or the tessellation when
+            // mass declines) AND the user-facing mesh must lie in band: a
+            // malformed body can pass one measure while the other lies.
+            in_band(bm.unwrap_or(v)) && in_band(body.mesh_volume())
+        } else {
+            true // operand volumes undeterminable: cannot bound
+        };
+        self_consistent && bound_ok
     } else if let Ok(m) = body.mass_properties() {
         // SELF-CONSISTENCY gate (research file 47): for a well-formed
         // all-planar body the sense-exact mass_properties and the

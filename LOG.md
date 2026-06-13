@@ -7352,3 +7352,31 @@ distribution (box/box, block/frustum, axis-aligned, NO spheres); the broad
 sphere space is outside it. Stated plainly per the under-claim posture: the
 1M-trial WRONG=0 certificate is a statement about the oracle's distribution,
 not about every shape pair the kernel will accept.
+
+## Addendum 240: task 49 mitigation: an op-volume post-condition in the boolean closes the silent WRONGs (2026-06-13)
+
+The fix locus is the EXISTING post-condition in assemble_boolean (boolean.rs):
+for a curved result it already checks mass-vs-tessellated self-consistency,
+which is exactly why the sphere cluster slipped -- a self-consistent WRONG
+(mass==mesh agreeing on an impossible value) passes the consistency check, and
+the mass-declined floor passes a malformed body with a positive-but-wrong
+tessellation. The curved branch now ALSO bounds the result by the independent
+op-volume inequality from the operand volumes (mass when available, else the
+operand's tessellated mesh, so the bound stays applicable even when a sphere
+operand's own mass declines): a clean result must satisfy vol(A op B) in
+[lo, hi], and BOTH the authoritative volume and the user-facing mesh must lie
+in band. A violation DECLINES (DECLINE-never-WRONG). Scoped to curved results,
+so all-planar (box) booleans are bit-identical and the sky-target perf is
+untouched; and it only ever declines a body that was already broken, so
+correct sphere booleans (in-bounds) pass unchanged.
+
+EFFECT (explorer sweep, 4 seeds x 1500): failures 20 -> 1. The 5 silent WRONGs
+are ELIMINATED; the lone residual is a near-TANGENT sphere/sphere difference
+(centre distance ~= rA+rB) that still returns a malformed-Ok body (mass
+declines HONESTLY there, so it is the soft class, not a silent wrong) -- left
+as a #49 follow-up. Verified no regression: cone three-bucket oracle 8k PASS
+7987 / DECLINE 13 / WRONG 0 (pass rate held, no false declines), op gym 1000
+OK 999 / DECLINE 1 / VIOLATIONS 0, full keel-topo suite green, clippy clean.
+This is a contract BACKSTOP (decline, do not lie), not a sphere-boolean
+capability fix; making arbitrary sphere booleans actually assemble remains the
+sphere-split-integration milestone.
