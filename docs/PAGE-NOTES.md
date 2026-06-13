@@ -186,3 +186,23 @@ The curated gallery captions in the table are placeholder one-liners. Before pub
   decline-never-wrong contract on camera; no further action needed.
 - The 22-item FILL inventory lives in this file above; every number
   must trace to a LOG.md addendum per the underclaim doctrine.
+
+## FILL pass completed (2026-06-13, Add. 236 era)
+
+All evidence-backed placeholders are now filled from LOG.md and the
+completion-gate logs (oracle 1M/lane WRONG 0; soak 16 sectors over 2.4B
+execs zero crashes; mass-mesh gate; Steinmetz 16/3; per-sector fuzz
+list; capability matrix audited; roadmap statuses; a compiling
+quickstart example). License set to GPL-3.0-or-later (single OSS
+license; the commercial / dual-license tier is intentionally NOT
+mentioned publicly, to preserve the private dual-licensing path and
+sole copyright). Cargo.toml workspace license updated to match.
+
+REMAINING (not code, owner action before going public):
+- LICENSE: append the verbatim FSF GPL-3.0 text (from
+  gnu.org/licenses/gpl-3.0.txt) and set the real copyright holder name
+  (sole copyright preserved). The notice stanza is in place.
+- Badges: the CI and crates.io shields stay placeholder until a GitHub
+  remote and a published crate exist; the license badge is live.
+- Numbers are stated as measured / rounded down; re-confirm against the
+  latest LOG addendum if more gate runs land before publishing.

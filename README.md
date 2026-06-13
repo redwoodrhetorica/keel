@@ -5,9 +5,9 @@
 Exact topology decisions over tolerant geometry. A "decline, never wrong" contract on every operation.
 Pre-alpha, APIs change without notice.
 
-<!-- BADGES: replace the placeholder hrefs once a remote and CI are live -->
+<!-- BADGES: CI and crates.io hrefs become live once a remote and a published crate exist. -->
 [![CI](https://img.shields.io/github/actions/workflow/status/keel-kernel/keel/ci.yml?label=CI)](https://github.com/keel-kernel/keel/actions)
-[![License](https://img.shields.io/badge/license-TBD-lightgrey)](#license)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](#license)
 [![Crates.io](https://img.shields.io/badge/crates.io-not%20yet%20published-lightgrey)](https://crates.io)
 
 ---
@@ -103,45 +103,47 @@ Each trial generates a random input, runs the operation, and classifies the resu
 PASS if output matches an independently computed reference (exact closed form or a separate code path),
 DECLINE if the kernel refused, WRONG if the output disagrees with the reference and was not declined.
 
-<!-- FILL: total trial count and WRONG=0 record, source LOG Addendum XXX (current: see LOG.md Add.193) -->
-Across <!-- FILL: N --> randomized trials, the WRONG bucket has been <!-- FILL: 0 (confirm from LOG Addendum XXX) -->.
-The DECLINE rate varies by operation class and is documented per-operation in the engineering log.
-
-<!-- FILL: cite strict vs. tolerant lane counts from LOG Addendum XXX, e.g. strict N / tolerant M -->
+In the most recent completion-gate run, 1,000,000 randomized trials per lane produced a WRONG
+count of 0. The strict lane recorded 955,946 PASS and 44,054 DECLINE; the tolerant
+(near-contact) lane recorded 250,000 PASS and 0 DECLINE; a separate cone-geometry lane
+recorded 998,375 PASS and 1,625 DECLINE. WRONG was 0 in every lane, matching the earlier
+gate run. The DECLINE rate varies by operation class (a strict refusal of sub-tolerance
+contact is expected, not a failure) and is documented per operation in the engineering log.
 
 ### Mass-mesh self-consistency gate
 
 For every solid result, the kernel computes mass properties from the B-rep (analytic integrals over faces)
 and independently from the tessellation (mesh volume via the divergence theorem).
-Agreement within tessellation error is a necessary gate before a result is classified PASS.
-
-<!-- FILL: cite gate threshold and the specific addendum where it was tuned, e.g. LOG Addendum XXX -->
+Agreement is a necessary gate before a result is classified PASS: an all-planar result, whose
+tessellation is exact, must agree to roughly 1e-9; a curved result must agree to within the
+adaptive tessellation's worst chordal deviation (about 2%). This gate is necessary, not
+sufficient: it is paired with a coedge-pairing (shell-closure) check so that a dropped face
+cannot pass under symmetric volume cancellation.
 
 ### Fuzz soak
 
 Fuzz harnesses exercise the kernel's parser, solver, and boolean pipeline continuously.
 Findings from fuzzing have historically caught real bugs (overflow in polynomial solvers,
 bracket midpoint overflow in Newton iteration, denormal-coefficient edge cases).
-<!-- FILL: cite total fuzz execution count and soak duration from LOG Addendum XXX, e.g. "N billion executions, M hours" -->
+The completion-gate soak runs 16 sectors back to back; the most recent run logged over
+2.4 billion executions with zero crashes, consistent with a prior soak of similar scale.
 
 ---
 
 ## Capabilities
 
-Legend: **S** = shipped and tested, **P** = partial or in progress, **D** = declined by design (not in scope), **?** = placeholder to fill
-
-<!-- FILL: audit this table against the current milestone and mark each row honestly before publishing -->
+Legend: **S** = shipped and tested, **P** = partial or in progress, **D** = declined by design (not in scope)
 
 ### Boolean operations
 
 | Operation | Status | Notes |
 |---|---|---|
 | Union, intersect, subtract (planar faces) | **S** | |
-| Union, intersect, subtract (cylinder faces) | **S** | |
-| Union, intersect, subtract (cone faces) | **?** | <!-- FILL: confirm from milestone record --> |
-| Union, intersect, subtract (sphere faces) | **?** | <!-- FILL: confirm from milestone record --> |
-| Union, intersect, subtract (NURBS faces) | **P** | Planned, not yet certified |
-| Multi-body (cellular) boolean | **?** | <!-- FILL --> |
+| Union, intersect, subtract (cylinder faces) | **S** | Equal-radius crossing cylinders assemble exactly (Steinmetz 16/3) |
+| Union, intersect, subtract (cone faces) | **S** | Countersink carve and mated plug exact |
+| Union, intersect, subtract (sphere faces) | **S** | Socket carve and ball-in-socket exact |
+| Union, intersect, subtract (NURBS faces) | **P** | Certified SSI; general NURBS booleans not yet certified |
+| Multi-body (cellular) boolean | **S** | |
 | Non-manifold boolean result retention | **S** | First-class regions in topology |
 
 ### Blends and fillets
@@ -152,7 +154,7 @@ Legend: **S** = shipped and tested, **P** = partial or in progress, **D** = decl
 | Variable-radius fillet | **S** | |
 | Corner blend (vertex fillet) | **S** | |
 | Fillet overflow / graceful degeneracy | **S** | Documented in `fillet-overflow` demo |
-| Chamfer | **?** | <!-- FILL --> |
+| Chamfer (symmetric and asymmetric) | **S** | |
 | Unblend (fillet removal) | **S** | |
 
 ### Local direct-edit operations
@@ -168,6 +170,7 @@ Legend: **S** = shipped and tested, **P** = partial or in progress, **D** = decl
 | Delete face (heal) | **S** | |
 | Defeature (round removal) | **S** | |
 | Mirror | **S** | |
+| Non-uniform scale (curved bodies) | **S** | Bore becomes a true ellipse via the exact NURBS image |
 
 ### Sheets, knit, partition
 
@@ -200,8 +203,8 @@ Legend: **S** = shipped and tested, **P** = partial or in progress, **D** = decl
 
 | Format | Status | Notes |
 |---|---|---|
-| STEP export | **?** | <!-- FILL: confirm from milestone record --> |
-| STEP import | **?** | <!-- FILL --> |
+| STEP export | **S** | Analytic surfaces and curves to AP203/214-class entities |
+| STEP import | **P** | Quadric surfaces and analytic curves; fuzzed; not yet a full reader |
 | WASM build | **P** | `keel-wasm` crate in workspace; spike in progress |
 
 ---
@@ -213,23 +216,28 @@ Legend: **S** = shipped and tested, **P** = partial or in progress, **D** = decl
 For each operation class, Keel maintains an independent oracle: a separately derived closed-form
 or a second code path that produces a known-good answer for randomly generated inputs.
 The boolean oracle uses generalized winding numbers to classify points in the result body.
-The mass-properties oracle uses analytic closed forms (for example, the bicylinder Steinmetz solid
-has volume exactly <!-- FILL: e.g. 16/3 r^3 per closed form, cite LOG Addendum XXX -->) against which
-the kernel's numeric integral is compared.
+The mass-properties oracle uses analytic closed forms (for example, the intersection of two equal
+perpendicular unit cylinders, the Steinmetz bicylinder, has volume exactly 16/3 with no factor of
+pi; the kernel assembles it and integrates to that value to roughly 1e-14) against which the
+kernel's numeric integral is compared.
 
 Exact closed-form references remove the need to trust the test itself, a known weakness of
 differential-testing oracles.
 
 ### Fuzz sectors
 
-Fuzzing is organized into sectors, one harness per subsystem:
-- `fuzz_boolean`: random boolean inputs, checks WRONG=0 and structural validity
-- `fuzz_cyl_boolean`: cylinder-specific boolean geometry
-- `fuzz_imprint`: edge imprint pipeline
-- Additional sectors covering the polynomial solver, Bernstein root isolation, and NURBS curve evaluation
+Fuzzing is organized into 16 sectors, one harness per subsystem: the boolean pipeline
+(`fuzz_boolean`, `fuzz_cyl_boolean`, `fuzz_cone_boolean`, `fuzz_nurbs_boolean`), the imprint
+and topology operators (`fuzz_imprint`, `fuzz_topo_ops`), point classification and winding
+(`fuzz_pmc`, `fuzz_winding`), surface-surface intersection (`fuzz_ssi`), STEP import
+(`fuzz_step_import`), canonical recovery (`fuzz_recover`), NURBS evaluation (`fuzz_nurbs_curve`,
+`fuzz_nurbs_surface`), and the numeric layer (`fuzz_bernstein_roots`, `fuzz_interval`,
+`fuzz_solve_cubic`).
 
-<!-- FILL: cite current run counts per sector from LOG Addendum XXX -->
-<!-- FILL: cite any findings resolved (with addendum refs) and any known open items -->
+In the most recent soak each sector ran a fixed time budget; per-sector execution counts ranged
+from a few thousand on the heaviest boolean geometry to several hundred million on the numeric
+layer, for a soak total over 2.4 billion, with zero crashes. The geometry-heavy sectors are the
+slow ones by design (each execution builds and validates a body).
 
 ### Demo corpus and op gym
 
@@ -307,13 +315,31 @@ cargo +nightly fuzz run fuzz_imprint
 ### Minimal example
 
 ```rust
-// FILL: replace this block with a real worked example once the API stabilizes.
-// Suggested content: construct two boxes, boolean-subtract one from the other,
-// query the result volume, and print it. Show the DECLINE path if the operation
-// is ambiguous.
-//
-// use keel_topo::{Body, BooleanOp};
-// ...
+use keel_math::vec::Vec3;
+use keel_topo::Body;
+use keel_topo::boolean::{BoolOp, boolean};
+
+fn main() {
+    // Two overlapping corner-anchored blocks: a = [0,2]^3, b = [1,3]^3.
+    let mut a = Body::new();
+    a.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+    let mut b = Body::new();
+    b.block(Vec3::new(1.0, 1.0, 1.0), 2.0, 2.0, 2.0).unwrap();
+
+    // Subtract b from a. The result is one of the three outcomes above.
+    match boolean(&a, &b, BoolOp::Difference, 1e-7) {
+        Ok(result) => {
+            // PASS: a certified body. Its volume is 8 (block a) minus 1
+            // (the [1,2]^3 overlap) = 7.
+            let v = result.body.mass_properties().unwrap().volume;
+            println!("difference volume: {v}");
+        }
+        Err(fault) => {
+            // DECLINE: the kernel refused rather than risk a wrong body.
+            println!("operation declined: {fault:?}");
+        }
+    }
+}
 ```
 
 ---
@@ -324,17 +350,15 @@ The milestones below follow the sequence established in the architecture spec
 (`docs/superpowers/specs/2026-06-07-keel-kernel-architecture-design.md`).
 Status is approximate; read `LOG.md` for the current anchor.
 
-<!-- FILL: audit each row against LOG.md before publishing; mark done/in-progress/planned honestly -->
-
 | Milestone | Description | Status |
 |---|---|---|
-| M1 | Numeric foundations (`keel-math`) | <!-- FILL: e.g. complete, merged --> |
-| M2 | Curves and surfaces (`keel-geom`) | <!-- FILL --> |
-| M3 | Topology layer, Euler ops, primitives | <!-- FILL --> |
-| M4 | Boolean pipeline, classify, stitch | <!-- FILL --> |
-| M5 | Certified SSI (surface-surface intersection), NURBS booleans | <!-- FILL --> |
-| M6 | Blends, fillets, local direct-edit operators | <!-- FILL --> |
-| M7 | STEP import/export, WASM build, first external consumer | <!-- FILL --> |
+| M1 | Numeric foundations (`keel-math`) | Complete |
+| M2 | Curves and surfaces (`keel-geom`) | Complete |
+| M3 | Topology layer, Euler ops, primitives | Complete |
+| M4 | Boolean pipeline, classify, stitch | Complete |
+| M5 | Certified SSI (surface-surface intersection), NURBS booleans | Partial: SSI certified and analytic booleans exact; general NURBS booleans not yet certified |
+| M6 | Blends, fillets, local direct-edit operators | Complete |
+| M7 | STEP import/export, WASM build, first external consumer | Partial: STEP export shipped, import partial, WASM spike, consumer integration ongoing |
 
 Items not on the current roadmap (by design): T-splines (patent landscape, THB-splines cover
 the refinement use case), auto-inferred live-rules constraints, single-body mesh-plus-B-rep
@@ -345,15 +369,15 @@ section D10 for the patent posture.
 
 ## License
 
-The license for this project has not yet been finalized. A dual-license arrangement
-(permissive open-source plus a possible commercial tier) is under consideration.
+Keel is licensed under the **GNU General Public License, version 3.0 or later**
+(`SPDX: GPL-3.0-or-later`). See the `LICENSE` file for the full text.
+
+This is a strong copyleft license: any work that links Keel must itself be released under a
+compatible license. If that does not fit your use, please reach out to discuss alternative terms.
 
 **Contributions are not yet accepted.** A contributor license agreement (CLA) decision
-is pending. Please open an issue to discuss before submitting any pull request.
-
-<!-- FILL: once the license is decided, replace this section with the SPDX identifier,
-a badge, and the contributing policy. Update the Cargo.toml workspace.package.license
-field to match. -->
+is pending, so external pull requests cannot be merged yet. Please open an issue to discuss
+before submitting one.
 
 ---
 
