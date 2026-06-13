@@ -969,10 +969,11 @@ impl Body {
         };
         let tau = core::f64::consts::TAU;
         let face = self.faces.get(fk).ok_or(TopoError::StaleKey)?;
-        let mut fins_c: Vec<FinCurve> = Vec::new();
+        // Each entry tagged with its LOOP ordinal (debug attribution).
+        let mut fins_c: Vec<(usize, FinCurve)> = Vec::new();
         let mut v_min = f64::INFINITY;
         let mut v_max = f64::NEG_INFINITY;
-        for &lk in &face.loops {
+        for (li, &lk) in face.loops.iter().enumerate() {
             let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
                 continue;
             };
@@ -1062,10 +1063,10 @@ impl Body {
                         if b0 == b1 {
                             let a0 = ang(p0);
                             let s = if fin.forward { tau } else { -tau };
-                            fins_c.push(FinCurve::Circ(*c, a0, a0 + s));
+                            fins_c.push((li, FinCurve::Circ(*c, a0, a0 + s)));
                         } else {
                             let (t0, t1) = range(ang(p0), ang(p1));
-                            fins_c.push(FinCurve::Circ(*c, t0, t1));
+                            fins_c.push((li, FinCurve::Circ(*c, t0, t1)));
                         }
                     }
                     Some(Curve3::Ellipse(el)) => {
@@ -1076,10 +1077,10 @@ impl Body {
                         if b0 == b1 {
                             let a0 = ang(p0);
                             let s = if fin.forward { tau } else { -tau };
-                            fins_c.push(FinCurve::Ell(*el, a0, a0 + s));
+                            fins_c.push((li, FinCurve::Ell(*el, a0, a0 + s)));
                         } else {
                             let (t0, t1) = range(ang(p0), ang(p1));
-                            fins_c.push(FinCurve::Ell(*el, t0, t1));
+                            fins_c.push((li, FinCurve::Ell(*el, t0, t1)));
                         }
                     }
                     Some(Curve3::Nurbs(n)) if n.degree() > 1 => {
@@ -1096,7 +1097,7 @@ impl Body {
                             ));
                         }
                         let (ps, pe) = if fin.forward { (p0, p1) } else { (p1, p0) };
-                        fins_c.push(FinCurve::Seg(ps, pe));
+                        fins_c.push((li, FinCurve::Seg(ps, pe)));
                     }
                 }
             }
@@ -1110,6 +1111,11 @@ impl Body {
         // radius on a cylinder and R cos(lat) on a sphere.
         let mut nodes: Vec<(f64, f64, f64)> = Vec::new();
         let mut net_du = 0.0;
+        // Per-loop winding attribution (the orientation normalization
+        // below and the debug rail).
+        let cur_li = core::cell::Cell::new(0usize);
+        let mut loop_du: Vec<f64> = vec![0.0; face.loops.len()];
+        let mut node_li: Vec<usize> = Vec::new();
         let mut node = |p: Vec3, dp: Vec3, wt: f64| {
             let w = p - o;
             let (x, y) = (w.dot(ex), w.dot(ey));
@@ -1121,9 +1127,12 @@ impl Body {
             let theta_hat = ey * cu - ex * su;
             let wu = wt * dp.dot(theta_hat) / nrm;
             net_du += wu;
+            loop_du[cur_li.get()] += wu;
+            node_li.push(cur_li.get());
             nodes.push((su.atan2(cu), vmap(w), wu));
         };
-        for fc in &fins_c {
+        for (li, fc) in &fins_c {
+            cur_li.set(*li);
             match fc {
                 FinCurve::Seg(a, b2) => {
                     for (xj, wj) in GL8_X.iter().zip(GL8_W) {
@@ -1161,9 +1170,61 @@ impl Body {
                 }
             }
         }
+        // ORIENTATION NORMALIZATION (task 41): the rep does not enforce
+        // ring-vs-outer loop winding on curved faces (tessellation and
+        // validate never read it), so a band can arrive with both loops
+        // winding the SAME way (the crossing-cylinder union's upper
+        // band measured +2 tau). Green needs net winding 0 on a
+        // cylinder trim, and ANY sign assignment achieving it gives the
+        // correct integral after the area-sign normalization below
+        // (flipping every loop plus the global sign is the identity):
+        // greedily flip RING loops that co-wind with the net until the
+        // net vanishes. Spheres keep their pole logic untouched; a net
+        // that will not normalize declines exactly as before.
+        if !is_sphere {
+            let mut net = (net_du / tau).round() as i64;
+            let mut flip = vec![false; loop_du.len()];
+            for li in 1..loop_du.len() {
+                if net == 0 {
+                    break;
+                }
+                let w = (loop_du[li] / tau).round() as i64;
+                if w != 0 && w.signum() == net.signum() {
+                    flip[li] = true;
+                    net -= 2 * w;
+                }
+            }
+            if flip.iter().any(|&f| f) {
+                net_du = 0.0;
+                for (i, n) in nodes.iter_mut().enumerate() {
+                    if flip[node_li[i]] {
+                        n.2 = -n.2;
+                    }
+                    net_du += n.2;
+                }
+            }
+        }
         // PASS 2: choose the slab base by the total winding, then turn
         // each boundary node into an inner v-slab of samples.
         let winding = (net_du / tau).round();
+        if std::env::var("KEEL_MASS_DEBUG").is_ok() {
+            eprintln!(
+                "  green-pass1 {fk:?} net_du {net_du:.4} winding {winding} v [{v_min:.3}, {v_max:.3}] fins {} loop_du {:?}",
+                fins_c.len(),
+                loop_du
+                    .iter()
+                    .map(|d| (d / tau * 100.0).round() / 100.0)
+                    .collect::<Vec<_>>()
+            );
+            for (i, (li, fc)) in fins_c.iter().enumerate() {
+                let d = match fc {
+                    FinCurve::Seg(..) => "seg".to_string(),
+                    FinCurve::Circ(_, a, b) => format!("circ {a:.3}..{b:.3}"),
+                    FinCurve::Ell(_, a, b) => format!("ell {a:.3}..{b:.3}"),
+                };
+                eprintln!("    fin {i} (loop {li}): {d}");
+            }
+        }
         let v_base = if winding.abs() < 0.5 {
             v_min
         } else if is_sphere && (winding.abs() - 1.0).abs() < 0.25 {

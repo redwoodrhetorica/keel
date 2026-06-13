@@ -6857,3 +6857,353 @@ the same Ak_1-shaped interface, triggered when a kernel consumer
 (2D UV arrangements / sketch booleans / Tier-2 escalation) lands. No
 existing kernel call path was rerouted: the layer is additive, so the
 certified corpus is untouched (suite green 135/87/271/4, clippy clean).
+
+## Addendum 226: the per-op demo corpus (task 40): 26 new animations, 4 kernel bugs surfaced (2026-06-12)
+
+User directive: an animation for EVERY kernel operation, saved under
+docs/media, primary purpose BUG HUNTING (the visual oracle catches what
+mass==mesh forgives). 26 new ops join the existing 13 (39 total .webp):
+socket (the task-36 success story: carve + seated ball), steinmetz
+(op-cycling crossing cylinders), countersink (+ mated plug), primitives
+(torus/tube/cone), helix (sweep_along_path), vfillet, draft, moveface,
+nonuniform (planar scope), revolve_partial, loft (loft_sections),
+wiretrim (wire-solid booleans), blendzoo (g2 / conic / hold-line /
+partial / chain roll-on / notch), corners2 (mitre + setback), unblend,
+sheets (trim_by_plane + thicken), partition (partition_by_sheet tilt
+sweep), multitool (boolean_multi), slicestack (slice + exploded wafers),
+defeature (defeature_small_holes threshold sweep), pierce
+(hollow_pierce), mirror, taperface, deleteface (the coplanar-merge
+heal), knit (five sheets to a solid pyramid), hlr (the hidden-line
+wireframe AS the product). Every frame is real kernel output
+(honest-output rule); declining frames show the inputs + the DECLINED
+flag.
+
+KERNEL BUGS SURFACED (tasks filed):
+- #41: crossing-cylinder UNION/DIFFERENCE decline at height 4
+  ("stitched (curved) body invalid") while height 6 assembles: the
+  task-29 machinery's band/cap assembly is configuration-sensitive.
+- #42: fillet_edge_variable renders the blend as a FLAT TRIANGLE at
+  large r1 (the item-48 ellipse-bounded cone tessellation).
+- #43 (capability): scaled_nonuniform declines all curved surfaces:
+  the bore-to-ellipse differentiator story is unimplemented.
+- #44: fillet_edge_partial raises a spurious triangular fin above the
+  top face.
+- #45: fillet_corner_setback draws a dark jagged fin (flipped or
+  degenerate band) on the vertical edge plus a stray full circle.
+
+Exonerated by inspection: delete_face''s boss-wall decline (documented
+coplanar-merge scope), unblend_all (the demo misread the (removed,
+remaining) contract; the op heals correctly), chain/notch/g2/partition/
+knit first-run failures (demo parameter contract errors against
+documented preconditions), HLR rim over-visibility (the documented
+midpoint-classification approximation). Observation, no task: slice/
+split caps carry a diameter split edge from the revolve seam plane
+(benign topology, visible as chords in wireframes); declined-overlay
+frames z-fight (painter renderer, no depth buffer).
+
+Pipeline hardening on the way: lines-only frames (HLR) get camera
+bounds from segments; labels stay JSON-safe. Clippy clean; the corpus
+re-renders with two commands per op.
+
+## Addendum 227: the OP GYM (task 46): the demo corpus as a numeric instrument (2026-06-12)
+
+tests/op_gym.rs: the per-op demo families re-run with RANDOM LCG-drawn
+parameters and no images (KEEL_OPGYM_N / KEEL_OPGYM_START scaling, the
+three_bucket conventions). Thirteen families: fillet (cliff fallback),
+variable fillet, partial fillet, octant/setback corners, draft/taper,
+move_face (exact prismatic differential), hollow/pierce, partition,
+curved booleans (drill / countersink / sphere socket / crossing
+cylinders, op-cycled), slice (wafers partition the mesh volume to
+1e-6), constructors (helix sweep / multi-section loft / partial
+revolve), unblend (restores the parent block to 1e-9), uniform scale
+(cubes the volume). Per Ok body: validate, finite mesh, mass==mesh
+chordal band, and the NUMERIC VISUAL ORACLE: analytic-preferred
+surface_area vs the tessellation''s own summed area within the same
+band. Blind spot stated in the file: the area gate only bites where an
+analytic area reads; tess-only faces compare trivially equal, so the
+visual corpus stays complementary.
+
+FIRST RUN (N=650): OK 647 / DECLINE 3 / VIOLATIONS 5, and all five
+violations are the task-44 partial-fillet fin, now with a numeric
+signature (analytic vs tess area off 1.5-3 percent, trials
+15/158/236/470/548 pinned in the task). The instrument is #[ignore]d
+(red while task 44 is open, by design: it becomes the regression net
+the moment the fin dies). Suite green, clippy clean.
+
+## Addendum 228: task 44 RESOLVED: the partial-fillet area phantom (2026-06-12)
+
+The op gym''s numeric oracle was the decisive instrument. Per-face
+probing of fillet_edge_partial''s result: the runout-cone blend face
+read analytic 0.58168 vs tessellated 0.42912, and a FINE chord-
+tolerance tessellation (2e-4) summed to exactly the tess-side total:
+the TESSELLATION was right and face_area''s analytic cone formula was
+35 percent HIGH. Same family as the Addendum-221 phantom: the runout
+cone is stopped by a quarter arc whose plane is perpendicular to the
+EDGE, not the cone axis, and the rectangle formula read the arc''s
+center height as a band bound. Fix: height_range gains a TILTED
+PARTIAL CIRCLE guard (mirroring the partial-ellipse guard): a
+non-axis-perpendicular partial circle boundary routes the face to
+tessellation; axis-perpendicular partial arcs (the fillet band end
+arcs) keep their exact heights.
+
+The VISUAL "fin" exonerated on inspection: the zoomed frame shows the
+intended runout taper seen through the transparent top face (painter
+transparency), so the demo was honest; the area phantom was the real
+defect underneath it. Verification: suite green, op gym now CLEAN
+(N=650: OK 647 / DECLINE 3 / VIOLATIONS 0: the instrument flips to a
+regression net), the 100k box oracle BIT-IDENTICAL again
+(95604/4396/0; tolerant 25000/0/0).
+
+## Addendum 229: bug-hunt triage: task 42 exonerated, task 45 confirmed and pinned (2026-06-12)
+
+Task 42 (the variable-fillet "flat triangle") is NOT a defect: the
+fine-tolerance arbitration (2e-4) matches the coarse per-face areas to
+four decimals at r1 in {0.3, 0.6, 0.9}, and the 500px zoom shows a
+smooth, correctly shaded tapered cone band; the 250px contact sheet''s
+flat look was downscale shading and the diagonal is the real spring
+edge. Closed without a change.
+
+Task 45 (the setback corner) is REAL and broad. The probe battery:
+validate Ok, areas consistent at fine tolerance, winding consistent,
+but the MESH VOLUME violates the op''s OWN rigorous lower bound
+(dossier 53): cube 2.0 with equal r 0.2, d 0.6 reads 6.925 against a
+7.436 floor: the corner patch removes roughly a (d+r)-box too much.
+The op gym''s setback arm now carries the dossier bounds as its
+differential and flags 10+ violations per 650 trials, every one UNDER
+the lower bound; the in-tree test config (distinct radii, d 0.8) sits
+inside its loose bounds, which is how this shipped. The zoom also
+shows the corner NURBS patch erupting as a dark polyhedral blob (real
+geometry: fine tessellation agrees) plus a stray full-circle wireframe
+(the arc-identity ghost class: the setback arcs never record
+arc_sweep). Fix target: the six-quad corner patch builder in
+fillet_corner_setback. The gym stays red while the task is open, by
+design: mass cannot cross-check these bodies (NURBS faces decline,
+the documented M5 line), so the bounds differential is the only
+numeric gate this class has.
+
+## Addendum 230: task 41 diagnosed: the crossing-pair difference is a GENUS problem (2026-06-12)
+
+The height sweep (h in {4, 5, 6, 8}) kills the configuration-
+sensitivity theory: intersection is EXACT everywhere (16/3 to 2e-14);
+union ASSEMBLES everywhere (mesh inside the band of 2 pi h - 16/3)
+with mass declining at "green-slab: unsupported boundary winding"
+(the union bands wind u by one and Green''s winding anchor is
+sphere-only: a rim-height anchor for cylinders is the extension);
+difference declines at EVERY height with EulerPoincareViolated
+{ lhs: 4, rhs: 6 }: cylinder B tunnels through A, the result is
+genus 1, and the stitch finalize''s shell/genus bookkeeping has no
+handle accounting. Fix targets recorded in the task: genus-aware
+finalize for the difference, the cylinder winding anchor for the
+union mass. Exact-or-decline held throughout: every wrong-shaped
+assembly declined honestly.
+
+## Addendum 231: task 41, the union half RESOLVED: loop-orientation normalization in Green (2026-06-12)
+
+The per-loop winding rail settled it: the crossing-cylinder union''s
+upper band arrives with BOTH loops winding +1 (the crossing-curve
+outer +tau AND the top-rim ring +tau), and the defect predates the
+stitch (the imprinted OPERAND''s upper band already measures +2 tau).
+The representation does not enforce ring-vs-outer winding on curved
+faces anywhere: tessellation and validate never read it, and Green is
+the only orientation-sensitive consumer, so this was masked
+kernel-wide.
+
+Fix INSIDE Green rather than a global invariant change: any loop sign
+assignment achieving net winding 0 yields the correct integral after
+the existing area-sign normalization (flipping every loop plus the
+global sign is the identity), so cylinder trims now greedily flip RING
+loops that co-wind with the net until it vanishes; nodes carry loop
+tags for the flip. Spheres keep their pole logic; a net that will not
+normalize declines exactly as before.
+
+RESULT: the imprinted operand reads 4 pi to 5e-14, and the crossing-
+cylinder UNION is EXACT at every probed height (h=4 matches
+2 pi h - 16/3 to the last printed digit; h=6 and h=8 within 2e-13).
+Union joins intersection as exact; only the genus-1 DIFFERENCE half of
+task 41 remains. Verification: suite green, 100k box oracle
+BIT-IDENTICAL (95604/4396/0; 25000/0/0), cone oracle 1998/2/0, op gym
+violations all in the known open task-45 setback class (plus one
+boolean trial now declining honestly where mass previously could not
+compute).
+
+## Addendum 232: TASK 41 RESOLVED: vertex-pinch detection: ALL crossing-cylinder ops EXACT (2026-06-12)
+
+The Euler-Poincare decline was the validator being RIGHT about the
+wrong thing. Decoding the counts (V6 E8 F6 rings 2): the difference''s
+boundary is genuinely TWO sphere-like shells PINCHED at vertices, not
+a torus: the tunnel''s side openings are the removed lateral bowties,
+so the upper shell (band + cap + tunnel ceiling) and the lower shell
+meet only at isolated pinch vertices on the crossing curves. That is
+the correct geometry of this difference; the defect was that the
+stitch left the pinch vertices without umbrella GROUPS, so the
+validator applied the manifold Euler identity to a legitimately
+non-manifold body.
+
+Fix: PINCH DETECTION in finalize_imported_assembly: per vertex, the
+face corners (fins leaving the vertex) partition into UMBRELLAS by
+union-find over shared incident edges; more than one umbrella records
+the extras in the vertex''s `groups` (the PES mechanism merge_vertices
+already uses), which routes validation to the structural +
+boundary-chain oracles exactly as the gate design intends. Manifold
+vertices are untouched.
+
+RESULT: the crossing-cylinder DIFFERENCE assembles and is EXACT
+(pi h - 16/3 to 3e-14 at h=4, 2e-13 at h=8); with Addendum 231''s union
+and the task-29 intersection, ALL THREE OPS on the Steinmetz pair are
+now exact, and the steinmetz demo shows three assembled segments (no
+declined frames). Verification: suite green, the 100k box oracle
+BIT-IDENTICAL, cone oracle 1998/2/0, op gym violations all in the open
+task-45 setback class with three previously-declining boolean trials
+now assembling AND passing the judge, 10-minute fuzz soak on the
+boolean targets clean (alongside the still-running completion-gate
+soak).
+
+## Addendum 233: TASK 45 RESOLVED: setback corner sense flip + arc identity (2026-06-12)
+
+The per-face inventory settled it: every face of the setback result
+had EXACT analytic == tessellated area (no mis-tessellation), yet the
+mesh volume removed roughly twice the corner pocket while the surface
+stayed inside the cube envelope (max-outside 1e-4). The signal: areas
+right, flux wrong, volume off by a constant factor. Root cause: the
+six NURBS corner-patch quads attached with an INVERTED outward sense.
+The patch separates the material from the REMOVED corner pocket, so
+outward points TOWARD the old corner vertex; the predicate read
+`normal . (point - corner) > 0` (away), flipping all six patch
+normals. Mesh volume (sense-tessellated) then under-counted the patch
+flux and the body read far too small; the in-tree test's loose volume
+bounds (a wide lo..hi band) let it ship. Fix: the sense predicate now
+reads `normal . (corner - point) > 0`.
+
+Also recorded the short-arc sweeps on the setback far-cap and cross
+arcs (and re-recorded the split halves of each hexagon side), killing
+the stray full-circle wireframe ghost (the arc-identity class, same
+as the corner-octant fix).
+
+The op gym is the proof: its setback arm carries the dossier-53 volume
+bounds as a differential, and with the sense fix it goes CLEAN at 1300
+trials (1298 OK / 2 DECLINE / 0 VIOLATIONS), up from 16 violations.
+The bug-hunt program (tasks 40-46, addenda 226-233) is complete: of
+five surfaced issues, four were real kernel defects now fixed (44
+partial-fillet area phantom, 41 union winding + difference genus, 45
+setback sense), one was exonerated (42 variable-fillet), and one is a
+scoped capability gap (43 curved non-uniform scale). Verification:
+suite green, clippy clean, op gym clean at 1300, the 100k box oracle
+BIT-IDENTICAL (95604/4396/0; 25000/0/0), cone oracle 1998/2/0.
+
+## Addendum 234: completion-gate status, baseline + current-head relaunch (2026-06-12)
+
+The task-39 gate launched on commit 5f6af39 (task-38 head: Steinmetz +
+cone coverage, BEFORE the sphere milestone, the algebraic layer, and
+the bug-hunt fixes). Key operational finding: the WSL soak process
+tree SURVIVES Windows session exits (only the PowerShell orchestrator
+dies), so the gate ran unattended across several /exit interruptions.
+
+5f6af39 BASELINE RESULT (recorded, valid for that commit):
+- 1M three-bucket oracle: box strict 955,946 PASS / 44,054 DECLINE /
+  WRONG 0, tolerant 250,000 / 0 / WRONG 0; cone 998,375 / 1,625 /
+  WRONG 0. Both lanes WRONG 0 at one million trials.
+- Soak: 9 of 16 sectors completed crash-free at 2400 s each
+  (fuzz_boolean 85k, cyl 241k, cone 578k, nurbs_boolean 4.3k, imprint
+  6.95M, topo_ops 1.14M, winding 6.66M, pmc 9.76M, ssi 666M); sectors
+  10-16 in progress when superseded.
+
+The 1M oracle TRANSFERS to the current head with certainty: the 100k
+box buckets are bit-identical across every fix since (verified 8+
+times: 95604/4396/0; 25000/0/0) and the cone sector held 1998/2/0, so
+the deterministic per-trial outcomes are unchanged. For the canonical
+current-binary certificate the full gate is relaunched on the current
+head (all of tasks 29/36/38/32/33/41/44/45 included); the bug-hunt
+fixes touch finalize (pinch detection), massprops (Green
+normalization + guards), interrogate (area guards), and blend
+(setback sense), so a fresh soak over those paths is the honest stamp.
+
+## Addendum 235: TASK 43 LANDED: non-uniform scale of curved bodies (the bore-ellipse differentiator) (2026-06-12)
+
+The op the consumer's OCCT-WASM cannot do, now real. scaled_nonuniform
+maps curved bodies by the exact RATIONAL route (dossier 25 sec 22):
+every analytic surface has an exact NURBS form (convert.rs), and a
+NURBS is closed under the diagonal affine map (each homogeneous control
+point P' = S P + w t, t = center - S center, weight unchanged), so a
+scaled cylinder becomes its exact elliptic-cylinder NURBS image, a
+sphere an ellipsoid. Circular/elliptic EDGES map to their exact image
+ELLIPSE: principal axes from the conjugate semi-diameters
+u = map(x_axis*semi), v = map(y_axis*semi) via the 2x2 metric
+eigenproblem (image_ellipse).
+
+Three supporting fixes the build surfaced:
+1. nurbs_cap_trim now trims ONLY when a face has exactly ONE closed
+   circular rim (a true cap); two rims is a TUBE and must grid fully
+   (the old code trimmed on the first closed circle, halving a scaled
+   bore lateral).
+2. loop_polygon gained a closed-ELLIPSE rim fallback (mirroring the
+   closed-circle one): a scaled cap disc has an ellipse boundary and
+   would otherwise tessellate to its degenerate seam vertex.
+3. PCURVES on planar faces map too (not just edge curves): a cap rim's
+   pcurve is a 3D circle that single_circle_disc and the planar mass
+   integrator read, so it must become the image ellipse; pcurves on
+   faces converted to NURBS stay untouched (the pcurve-free tessellator
+   ignores them, NURBS mass declines).
+
+SCOPE (honest): curved faces must be FULL surfaces of revolution (full
+cylinders/cones/bores, full spheres/tori). A PARTIAL curved patch (a
+fillet band) maps to a NURBS surface whose trim the pcurve-free
+tessellator cannot honor, so such bodies DECLINE rather than mis-render
+(detected by the full-2pi azimuth span, robust to the boolean splitting
+bore rims into arcs). Mass on the resulting NURBS faces degrades
+gracefully (the documented M5 line); tessellation and rendering are
+exact.
+
+Verification (SOAK-INDEPENDENT: scale touches no boolean/stitch code
+and is not a fuzz target): exact-volume tests (elliptic cylinder
+4 pi, drilled bore 32 - 2 pi, ellipsoid (4/3) pi a b c, fillet
+declines); the 100k box oracle BIT-IDENTICAL after the loop_polygon /
+cap_trim changes (95604/4396/0; 25000/0/0); the op gym CLEAN at 1300
+with a new scale_curved family (cylinder -> elliptic, mesh vs pi a b h);
+suite green, clippy clean.
+
+With this, the swap backlog AND the bug-hunt program are complete; the
+only open item is the task-39 completion-gate SOAK (its 1M oracle
+already passed WRONG=0 on the current head; the 16-sector soak runs
+unattended, surviving session exits via WSL detachment).
+
+## Addendum 236: TASK 39 COMPLETE: the completion gate PASSED on the post-swap binary (2026-06-13)
+
+The full completion gate re-ran on the current head (b1c1c05: the
+swap program tasks 29/36/38/32/33 plus the bug-hunt fixes 41/44/45)
+and PASSED both halves.
+
+ORACLE (the WRONG=0 correctness certificate), 1,000,000 trials each
+lane, sharded 14 ways:
+- box three-bucket: strict PASS 955,946 / DECLINE 44,054 / WRONG 0;
+  tolerant PASS 250,000 / DECLINE 0 / WRONG 0.
+- cone sector: PASS 998,375 / DECLINE 1,625 / WRONG 0.
+WRONG == 0 in every lane at one million trials.
+
+SOAK (the crash-freedom certificate), all 16 sectors at 2400 s each,
+ZERO crashes and ZERO artifacts on disk. Per-sector executions:
+fuzz_boolean 78,434; fuzz_cyl_boolean 275,600; fuzz_cone_boolean
+659,159; fuzz_nurbs_boolean 4,522; fuzz_imprint 9,449,316;
+fuzz_topo_ops 1,173,294; fuzz_winding 4,706,396; fuzz_pmc 7,094,999;
+fuzz_ssi 611,311,584; fuzz_step_import 13,236,799; fuzz_recover
+976,620; fuzz_nurbs_curve 301,251,360; fuzz_nurbs_surface 423,981,804;
+fuzz_bernstein_roots 44,679,514; fuzz_interval 357,598,895;
+fuzz_solve_cubic 684,698,397. TOTAL ~2.46 billion executions.
+
+Operational note: the WSL soak process tree survived several Windows
+session exits over the multi-hour run (only the PowerShell
+orchestrator is session-bound; the detached fuzzers and their internal
+2400 s budgets are not), and an overnight machine idle stretched
+wall-clock without reducing per-sector fuzzer time. The cone sector
+(task 38, NEW vocabulary) is now gate-certified for the first time.
+
+PERF re-measure (current head, quiet machine): box-boolean workload
+1.0 ms/trial (the Parasolid sky target holds through the bug-hunt
+finalize/massprops changes); curved ops in line (drill ~5 ms, sphere
+~5.5 ms, holed mass_properties ~2.15 ms).
+
+SCOPE of this certificate: the gate clone is b1c1c05 (through task 45).
+Task 43 (curved non-uniform scale) landed AFTER on the working head
+(c41898c) and is soak-independent (it adds no boolean/stitch code and
+is not a fuzz target; verified by the 100k bit-identical oracle, the
+op gym at 1300, and exact-volume tests). The whole swap program, the
+bug-hunt program, and the completion-gate re-run are now complete.

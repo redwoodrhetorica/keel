@@ -3891,7 +3891,9 @@ impl Body {
                 .ok_or(TopoError::Precondition("setback: arc axis"))?;
             let arc = keel_geom::curve::Circle3::new(cc, ex, spine.dir.cross(ex), r)
                 .map_err(|_| TopoError::Precondition("setback: bad far arc"))?;
-            b.split_blend_cap(cap, t_end, s_end, Curve3::Circle(arc))?;
+            let cap_edge = b.split_blend_cap(cap, t_end, s_end, Curve3::Circle(arc))?;
+            // Arc identity (the wireframe ghost-circle class).
+            b.record_short_arc_sweep(cap_edge, &arc);
         }
         // Dissolve: the sharps merge the strips into wings, two corner
         // spurs merge the wings, the third collapses with the corner;
@@ -3943,6 +3945,8 @@ impl Body {
             let arc = keel_geom::curve::Circle3::new(centre[j], n[ia], ey, specs[j].1)
                 .map_err(|_| TopoError::Precondition("setback: bad cross arc"))?;
             b.attach_edge_curve(split.edge, Curve3::Circle(arc), true);
+            // Arc identity for the cross arc.
+            b.record_short_arc_sweep(split.edge, &arc);
             let band = if b.face_has_edge(split.face_new, spring_edge[ia][sa]) {
                 split.face_new
             } else {
@@ -4089,7 +4093,22 @@ impl Body {
                     (p0 + p1) * 0.5
                 }
             };
-            mid_v[s] = b.split_edge(side_edges[s], mp)?.vertex;
+            let split = b.split_edge(side_edges[s], mp)?;
+            mid_v[s] = split.vertex;
+            // split_edge children keep the parent's carrier but not its
+            // sweep: re-record the halves' short arcs.
+            if let Some(Curve3::Circle(c)) = b
+                .edges
+                .get(split.edge_a)
+                .and_then(|e| e.curve)
+                .and_then(|(ck, _)| b.curves.get(ck))
+                .cloned()
+                .map(Some)
+                .unwrap_or(None)
+            {
+                b.record_short_arc_sweep(split.edge_a, &c);
+                b.record_short_arc_sweep(split.edge_b, &c);
+            }
         }
         let centre_pt = patch.eval(0.0, 0.0);
         let lp_hex = b
@@ -4160,12 +4179,17 @@ impl Body {
                     "setback: quad fit beyond tolerance (decline)",
                 ));
             }
-            // Outward sense: away from the material corner.
+            // Outward sense: the patch separates the material from the
+            // REMOVED corner pocket, so outward points TOWARD the old
+            // corner (task 45: the inverted predicate read every quad
+            // inward: areas exact, flux sign flipped, mesh volume ~2x
+            // the quads' flux too low, the dark sawtooth rendering; the
+            // in-tree config's loose volume bounds hid it).
             let lg = fit
                 .surface
                 .local_geometry(0.5, 0.5)
                 .map_err(|_| TopoError::Precondition("setback: quad geometry"))?;
-            let sense = lg.normal.dot(lg.point - corner_pt) > 0.0;
+            let sense = lg.normal.dot(corner_pt - lg.point) > 0.0;
             b.attach_face_surface(quad_face, SurfaceGeom::Nurbs(fit.surface), sense);
         }
         b.validate()
