@@ -7057,3 +7057,35 @@ task-45 setback class with three previously-declining boolean trials
 now assembling AND passing the judge, 10-minute fuzz soak on the
 boolean targets clean (alongside the still-running completion-gate
 soak).
+
+## Addendum 233: TASK 45 RESOLVED: setback corner sense flip + arc identity (2026-06-12)
+
+The per-face inventory settled it: every face of the setback result
+had EXACT analytic == tessellated area (no mis-tessellation), yet the
+mesh volume removed roughly twice the corner pocket while the surface
+stayed inside the cube envelope (max-outside 1e-4). The signal: areas
+right, flux wrong, volume off by a constant factor. Root cause: the
+six NURBS corner-patch quads attached with an INVERTED outward sense.
+The patch separates the material from the REMOVED corner pocket, so
+outward points TOWARD the old corner vertex; the predicate read
+`normal . (point - corner) > 0` (away), flipping all six patch
+normals. Mesh volume (sense-tessellated) then under-counted the patch
+flux and the body read far too small; the in-tree test's loose volume
+bounds (a wide lo..hi band) let it ship. Fix: the sense predicate now
+reads `normal . (corner - point) > 0`.
+
+Also recorded the short-arc sweeps on the setback far-cap and cross
+arcs (and re-recorded the split halves of each hexagon side), killing
+the stray full-circle wireframe ghost (the arc-identity class, same
+as the corner-octant fix).
+
+The op gym is the proof: its setback arm carries the dossier-53 volume
+bounds as a differential, and with the sense fix it goes CLEAN at 1300
+trials (1298 OK / 2 DECLINE / 0 VIOLATIONS), up from 16 violations.
+The bug-hunt program (tasks 40-46, addenda 226-233) is complete: of
+five surfaced issues, four were real kernel defects now fixed (44
+partial-fillet area phantom, 41 union winding + difference genus, 45
+setback sense), one was exonerated (42 variable-fillet), and one is a
+scoped capability gap (43 curved non-uniform scale). Verification:
+suite green, clippy clean, op gym clean at 1300, the 100k box oracle
+BIT-IDENTICAL (95604/4396/0; 25000/0/0), cone oracle 1998/2/0.
