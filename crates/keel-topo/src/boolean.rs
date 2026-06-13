@@ -5509,13 +5509,13 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 faults.push(BoolFault::Coincident(id_a, id_b));
                 continue;
             }
-            // CERTIFIED-DISJOINT plane/cone rung (task 38): a plane
-            // PARALLEL to the cone axis meets the infinite cone in a
-            // hyperbola, which SSI has no section rung for; but when
-            // the plane's distance from the axis exceeds the trimmed
-            // lateral's largest radius the faces provably never meet,
-            // and attempting SSI only records a spurious
-            // IntersectionFailed (every countersink carried four).
+            // PLANE/CONE shared setup (tasks 38, 47): the analytic section
+            // rung works on the INFINITE cone, so the only thing that tells a
+            // real seam from a phantom one on the far nappe is the cone FACE's
+            // finite axial band [zlo, zhi]. Sample it once for any plane/cone
+            // pair; task 38 uses it for the parallel-axis disjoint skip, and
+            // task 47 carries it to the seam arm to bound the tilted ellipse.
+            let mut cone_band: Option<(keel_geom::surface::Cone3, f64, f64)> = None;
             {
                 let plane_cone = match (&ref_a, &ref_b) {
                     (
@@ -5528,9 +5528,7 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                     ) => Some((p.clone(), c.clone(), fa, true)),
                     _ => None,
                 };
-                if let Some((p, c, cone_face, cone_is_a)) = plane_cone
-                    && p.frame.z.dot(c.frame.z).abs() < 1e-9
-                {
+                if let Some((p, c, cone_face, cone_is_a)) = plane_cone {
                     let body = if cone_is_a { a } else { b };
                     let mut zlo = f64::INFINITY;
                     let mut zhi = f64::NEG_INFINITY;
@@ -5567,12 +5565,20 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                         }
                     }
                     if sampled && zlo.is_finite() {
-                        let r_at = |z: f64| (c.radius + z * c.half_angle.tan()).abs();
-                        let rmax = r_at(zlo).max(r_at(zhi));
-                        let dist = (c.frame.origin - p.frame.origin).dot(p.frame.z).abs();
-                        if dist > rmax + tol.max(1e-9) + 1e-9 {
-                            continue; // provably disjoint: no SSI, no fault
+                        // task 38: a plane PARALLEL to the cone axis meets the
+                        // infinite cone in a hyperbola (no section rung); when
+                        // the plane clears the trimmed lateral's largest radius
+                        // the faces provably never meet, so skip without the
+                        // spurious IntersectionFailed every countersink carried.
+                        if p.frame.z.dot(c.frame.z).abs() < 1e-9 {
+                            let r_at = |z: f64| (c.radius + z * c.half_angle.tan()).abs();
+                            let rmax = r_at(zlo).max(r_at(zhi));
+                            let dist = (c.frame.origin - p.frame.origin).dot(p.frame.z).abs();
+                            if dist > rmax + tol.max(1e-9) + 1e-9 {
+                                continue; // provably disjoint: no SSI, no fault
+                            }
                         }
+                        cone_band = Some((c.clone(), zlo, zhi));
                     }
                 }
             }
@@ -5609,6 +5615,38 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                         if c.tangential {
                             faults.push(BoolFault::Tangent(id_a, id_b));
                             continue;
+                        }
+                        // task 47: a plane/cone analytic section is the ellipse
+                        // of the plane with the INFINITE cone. A slice near-
+                        // parallel to a ruling runs the major axis tens of units
+                        // up the nappe, far past the finite face. Such an
+                        // ellipse cannot be a real seam, and sampling it in the
+                        // overlap test below is the perf cliff. Decide it here
+                        // by axial extent vs the sampled face band. A genuine
+                        // on-face section is never taller than its own cone
+                        // face, so this never trips a case that would assemble.
+                        if let Some((cone, zlo, zhi)) = &cone_band
+                            && let keel_geom::curve::Curve3::Ellipse(e) = &c.curve
+                        {
+                            let ax = cone.frame.z;
+                            let half = ((e.a * e.x_axis.dot(ax)).powi(2)
+                                + (e.b * e.y_axis.dot(ax)).powi(2))
+                            .sqrt();
+                            let cz = (e.center - cone.frame.origin).dot(ax);
+                            let (eh_lo, eh_hi) = (cz - half, cz + half);
+                            let band = *zhi - *zlo;
+                            let m = band.max(cone.radius.abs()).max(tol) + 1e-9;
+                            if eh_hi - eh_lo > band + m {
+                                if eh_lo >= *zhi - m || eh_hi <= *zlo + m {
+                                    continue; // ellipse off the finite band: no seam
+                                }
+                                // straddles a rim: the true section is an open
+                                // arc exiting the base/top, which the imprint
+                                // cannot assemble -> decline (fast, not after a
+                                // giant-ellipse sampling pass).
+                                faults.push(BoolFault::UnassemblableSeam(id_a, id_b));
+                                continue;
+                            }
                         }
                         // Plane-plane SSI is an UNBOUNDED line; clip it
                         // to both trimmed faces to get the real seam

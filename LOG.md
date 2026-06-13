@@ -7262,3 +7262,52 @@ AssemblyFailed rather than failing fast.
 The raw findings live in evolve-out/{failures,novelties,slow}.jsonl (run
 artifacts, gitignored); examples/evolve.rs is the reusable probe (cargo run
 --release -p keel-topo --example evolve -- [evals] [seed] [outdir]).
+
+## Addendum 238: task 47 phantom-ellipse cliff fixed; a disjoint sphere/block union WRONG surfaced (task 48) (2026-06-13)
+
+ROOT CAUSE of #47: the plane/cone section rung (ssi.rs plane_cone) returns
+the analytic ellipse of the plane with the INFINITE cone. It already declines
+true parabola and hyperbola slices, but a tilted plane near-parallel to a
+cone ruling yields a VALID but enormous ellipse whose major axis runs tens of
+units up the far nappe (the 1771 ms case had a fragment center at x=68 while
+both operands lived in a +-3 box). The seam imprint then samples that giant
+ellipse in the overlap classifier (curve_cylinder_face_overlap) to decide it
+is only partially on the finite face: ~1.3 s, ending in a spurious
+UnassemblableSeam fault. For the slowest case the operands' AABBs are in fact
+disjoint, so the whole section was phantom.
+
+THE FIX (boolean.rs, the plane/cone seam path): the existing parallel-axis
+disjoint rung's band sampling is lifted to run for ANY plane/cone pair, giving
+the cone FACE's finite axial band [zlo, zhi]. In the seam arm, an analytic
+ellipse whose axial extent exceeds that band (plus a generous margin) cannot
+be a real finite-cone section, so it is short-circuited: skipped if off the
+band, declined fast if it straddles a rim. A genuine on-face section is never
+taller than its own cone face, so a case that would assemble never trips the
+guard. The guard fires only for plane/cone pairs (cone_band None otherwise),
+so the box/cyl/sphere oracle lanes are bit-identical.
+
+EFFECT (evolve seed 7, 1500 evals, re-run): slow configs 447 -> 243, block/
+cone median 550 -> 288 ms, worst 1771 -> 1175 ms; the disjoint tilted block/
+cone cases now return the correct empty intersection (validates, mesh==mass==0)
+in ~1 ms instead of a false 1.7 s decline, and block/cone / block/sph appear
+in the PASS frontier for the first time. PARTIAL: 227 block/cone are still
+slow, so a SECOND slow path remains (not the phantom ellipse) -- #47 stays
+open for that residual. Verified no regression: cone three-bucket oracle 50k
+PASS 49925 / DECLINE 75 / WRONG 0; op gym 1000 OK 999 / DECLINE 1 /
+VIOLATIONS 0; clippy clean; regression test cone_boolean::tilted_cone_disjoint
+_block_is_fast_and_correct_task47.
+
+#48 (a WRONG, higher severity than #47): the re-run's changed novelty walk
+surfaced a pre-existing correctness bug. A DISJOINT sphere/block UNION (sphere
+vol 20.33 at y in [-5.4,-2.0], block vol 5.19 at y in [1.4,2.7], no overlap)
+assembles a validate-OK 8-face body reporting volume 45.4 (mesh 45.5713, mass
+45.3798) against a true maximum of 25.5: it roughly double-counts. Proven
+pre-existing (the fix stashed, baseline is byte-identical) and NOT caused by
+#47 (sphere/block never touches the cone path). It is NARROW: disjoint block/
+block unions are correct (2.0), and disjoint sphere/sphere and simple sphere/
+block unions DECLINE; only specific tilted/offset sphere/block configs
+assemble wrong. The completion-gate oracle missed it because its WRONG check
+rests on mass==mesh self-consistency and here both AGREE on the wrong value;
+the explorer's INDEPENDENT bound (mesh vs the AABB-union volume) is what caught
+it. Lesson, restated concretely: mass==mesh and validate() are necessary, not
+sufficient. The evolve genome is recorded in evolve-out/failures.jsonl.

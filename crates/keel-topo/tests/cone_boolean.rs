@@ -49,6 +49,60 @@ fn countersink_carve_and_mated_plug_are_exact() {
 }
 
 #[test]
+fn tilted_cone_disjoint_block_is_fast_and_correct_task47() {
+    // task 47: an axis-aligned block and a TILTED cone with disjoint AABBs.
+    // The plane/cone section rung works on the INFINITE cone, so a block
+    // plane near-parallel to a cone ruling yields an ellipse running tens of
+    // units up the far nappe. Before the finite-band bound, imprinting that
+    // phantom ellipse cost ~1.7 s and raised spurious faults (a false
+    // decline); now it is short-circuited by axial extent vs the cone face
+    // band. Intersection is the correct empty set; difference is the whole
+    // cone. (Found by the evolutionary explorer; LOG Addendum 238.)
+    let cone_frame = Frame3::from_z(
+        Vec3::new(-1.57665870351692, 2.8749586010410453, 1.7976305535677664),
+        Vec3::new(-0.5109344101770357, 0.4748539943223482, -0.4797740510998425),
+    )
+    .unwrap();
+    let mut cone = Body::new();
+    cone.cone(cone_frame, 1.7290277039162048, 2.761525492133425)
+        .unwrap();
+    let mut blk = Body::new();
+    blk.block(
+        Vec3::new(-0.15174651733833588, 0.8677412594822895, -2.3397407903158065),
+        2.7717690470589265,
+        2.2579544930304674,
+        1.576714175012244,
+    )
+    .unwrap();
+
+    let t = std::time::Instant::now();
+    let inter = boolean(&cone, &blk, BoolOp::Intersection, 1e-7).unwrap();
+    let dt = t.elapsed();
+    // Cliff guard: the phantom-ellipse path took ~1.7 s, the bound makes it
+    // ~1 ms. One second is a generous separator (1000x headroom) that still
+    // catches a regression back to the giant-ellipse sampling.
+    assert!(dt.as_secs_f64() < 1.0, "task47 perf cliff regressed: {dt:?}");
+    assert!(inter.body.validate().is_ok());
+    // Disjoint AABBs: the intersection is empty.
+    assert_eq!(
+        inter.body.counts().f,
+        0,
+        "disjoint cone^block must be empty"
+    );
+    assert!(inter.body.mesh_volume().abs() < 1e-9);
+
+    // Difference removes nothing: cone minus a disjoint block is the cone.
+    let diff = boolean(&cone, &blk, BoolOp::Difference, 1e-7).unwrap();
+    assert!(diff.body.validate().is_ok());
+    let v = diff.body.mass_properties().unwrap().volume;
+    let cone_alone = cone.mass_properties().unwrap().volume;
+    assert!(
+        (v - cone_alone).abs() < 1e-6,
+        "cone-minus-disjoint-block {v} vs cone {cone_alone}"
+    );
+}
+
+#[test]
 fn tolerant_countersink_plug_snaps_exact() {
     // The task-30 oracle (the M6 radial-gap pin's cone twin): a plug
     // whose radii sit 1e-5 UNDER the countersink (same taper: the
