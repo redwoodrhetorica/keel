@@ -179,11 +179,10 @@ The curated gallery captions in the table are placeholder one-liners. Before pub
 
 ## Maintainer addendum (post-scaffold)
 
-- `honest-decline.webp` predates the task-36 sphere milestone: the
-  ball-socket carve it shows declining now SUCCEEDS (see socket.webp).
-  Before publication, regenerate the decline demo from a configuration
-  that still genuinely declines (the unequal-radius or short crossing
-  cylinders of task 41 are candidates), or retire it in favor of the
-  declined frames inside steinmetz.webp.
+- RESOLVED (Add. 236 era): `honest-decline.webp` was regenerated from
+  unequal-radius crossing cylinders (UnassemblableSeam), the sibling of
+  steinmetz.webp (equal radii -> exact 16/3). It genuinely declines and
+  self-guards if the kernel ever assembles it. Caption it as the
+  decline-never-wrong contract on camera; no further action needed.
 - The 22-item FILL inventory lives in this file above; every number
   must trace to a LOG.md addendum per the underclaim doctrine.
