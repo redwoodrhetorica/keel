@@ -7428,3 +7428,39 @@ decline under this distribution is the WORST CASE (uniform-random shapes,
 positions, arbitrary tilt); on supported classes the gate measured box booleans
 95.6% and upright cone/block 99.8% (1M trials each). The frontier is curved-
 surface-meets-different-surface at arbitrary angle.
+
+## Addendum 242: a broad-phase overlap gate at the front door (2026-06-13)
+
+User directive: non-overlapping shapes should be a BASIC up-front check, not a
+full run that then mis-handles them. Added an AABB broad-phase at the top of
+boolean_with: when the operands' bounding boxes are provably separated the
+solids cannot meet, so intersection returns EMPTY and difference returns A
+unchanged immediately, skipping the SSI/seam machinery (faster, and no chance
+of the no-seam shortcut mis-probing them). Disjoint UNION is a disconnected
+body, so it falls through to the existing assembly (the planar two-shell case
+it supports; block/block disjoint union still assembles to vol 2). Nuance kept:
+non-overlap is HANDLED, not blanket-declined -- disjoint intersection is
+correctly empty and difference is correctly A; only the union is "not
+interesting" and even that assembles when it can.
+
+SOUNDNESS (the subtle part): bounding_box() is TESSELLATION-derived, so it
+UNDER-estimates a curved body's true extent by its chord sagitta (< ~1% of the
+diagonal at the kernel's tessellation density). A tolerance-sized margin would
+therefore be UNSOUND -- a grazing curved overlap could read as separated and
+get silently culled to empty. The margin is conservative (5% of the combined
+diagonals, comfortably above the chord error), so only CLEARLY-disjoint pairs
+cull and a grazing overlap always falls through. Exact (planar) AABBs are
+unaffected: culled and fall-through both return the same empty/clone, so the
+box oracle is bit-identical (6k: strict 5737 / DECLINE 263 / WRONG 0). Verified
+by a direct probe: disjoint sphere I -> empty; deep-overlap and grazing sphere
+I -> honest DECLINE (never a silent empty); block/block disjoint U -> vol 2.
+Suite green, clippy clean.
+
+LIMITATION + a surfaced pre-existing bug: an AABB gate cannot catch TILT-
+disjoint pairs (solids apart but their axis-aligned boxes overlap, e.g. a
+tilted cone vs a tilted cylinder ~7 apart). Those fall through to assembly, and
+the explorer's shifted trajectory surfaced a pre-existing `mass!=mesh` class on
+exactly such tilted-disjoint cone DIFFERENCES: the curved post-condition gate
+checks mass vs the TESSELLATED volume and so misses a body where
+tessellated==mass but mesh!=mass. That gate gap (decline when mesh disagrees
+too) is the next fix; it is caught and reported by the explorer, not silent.

@@ -3351,6 +3351,55 @@ pub fn boolean_with(
             ));
         }
     }
+    // BROAD PHASE (task 49, the basic overlap gate): if the operands' AABBs
+    // are provably separated, the solids cannot meet, so the boolean is
+    // TRIVIAL -- intersection is empty, difference is A unchanged. Handle those
+    // here and skip the SSI/seam machinery entirely, which (a) is far faster on
+    // non-overlapping pairs and (b) removes any chance of the no-seam shortcut
+    // mis-probing a pair that never touched. A disjoint UNION is a disconnected
+    // body, so it falls through to the existing assembly (the planar two-shell
+    // case it supports; curved disjoint declines via the post-condition). The
+    // margin is the op tolerance, so contact / near-contact pairs (gap <= tol)
+    // take the normal path; the tolerant snap is unaffected because it runs the
+    // strict pipeline on already-snapped (touching) geometry.
+    {
+        let (ba, bb) = (a.bounding_box(), b.bounding_box());
+        // CONSERVATIVE margin: bounding_box() is TESSELLATION-derived, so it
+        // under-estimates a curved body's true extent by up to its chord
+        // sagitta (< ~1% of the body diagonal at the kernel's >=16-seg/circle
+        // density). Cull only when the AABB gap exceeds a safe multiple of
+        // that (5% of the combined diagonals) so a grazing CURVED overlap is
+        // never mistaken for disjoint (which would silently drop a real
+        // sliver). For exact (planar) AABBs this is merely stricter than
+        // needed; the culled and the fall-through paths return the same
+        // empty/clone for those, so box results are unchanged either way.
+        let m = tol.max(0.05 * ((ba.max - ba.min).norm() + (bb.max - bb.min).norm()));
+        let separated = ba.min.x - bb.max.x > m
+            || bb.min.x - ba.max.x > m
+            || ba.min.y - bb.max.y > m
+            || bb.min.y - ba.max.y > m
+            || ba.min.z - bb.max.z > m
+            || bb.min.z - ba.max.z > m;
+        if separated {
+            match op {
+                BoolOp::Intersection => {
+                    return Ok(BoolResult {
+                        body: Body::new(),
+                        faults: Vec::new(),
+                        op,
+                    });
+                }
+                BoolOp::Difference => {
+                    return Ok(BoolResult {
+                        body: a.clone(),
+                        faults: Vec::new(),
+                        op,
+                    });
+                }
+                BoolOp::Union => {} // disconnected union: existing assembly path
+            }
+        }
+    }
     // Pre-pass (research file 39 §1): where two coplanar faces partially
     // overlap, imprint the overlap-boundary cuts onto the operands so each
     // resulting fragment is uniformly inside/outside/on the other body --
