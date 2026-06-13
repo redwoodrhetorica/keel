@@ -2757,6 +2757,63 @@ pub(crate) fn finalize_imported_assembly(
             r.shells.push(front_shell);
         }
     }
+    // PINCH DETECTION (task 41): a valid assembly may touch itself at
+    // isolated VERTICES: the crossing-cylinder difference's boundary
+    // is two sphere-like shells pinched at the ellipse crossings (the
+    // tunnel's side openings are holes in the lateral, so that IS the
+    // geometric truth, not a defect). Such a vertex carries more than
+    // one UMBRELLA (cyclic fan of face corners), the manifold
+    // Euler-Poincare identity does not apply, and the validator's
+    // non-manifold route (structural checks + the boundary-chain
+    // oracle) is the correct contract. Record the extra umbrellas in
+    // the vertex's `groups` (the PES mechanism merge_vertices uses).
+    let vkeys: Vec<crate::entity::VertexKey> = dst.vertices.iter().map(|(k, _)| k).collect();
+    for vk in vkeys {
+        // One corner per face sector: the fin LEAVING vk.
+        let corners: Vec<crate::entity::FinKey> = dst
+            .fins
+            .iter()
+            .map(|(k, _)| k)
+            .filter(|&fk| dst.fin_start_vertex(fk) == Some(vk))
+            .collect();
+        if corners.len() < 2 {
+            continue;
+        }
+        // A corner enters vk on its loop-previous fin's edge and
+        // leaves on its own; corners sharing an incident edge are
+        // umbrella-adjacent. Union-find over corners keyed by edge.
+        let mut parent: Vec<usize> = (0..corners.len()).collect();
+        let mut by_edge: std::collections::BTreeMap<crate::entity::EdgeKey, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (ci, &fk) in corners.iter().enumerate() {
+            let Some(fin) = dst.fins.get(fk) else {
+                continue;
+            };
+            by_edge.entry(fin.edge).or_default().push(ci);
+            if let Some(prev) = dst.fins.get(fin.prev) {
+                by_edge.entry(prev.edge).or_default().push(ci);
+            }
+        }
+        for cs in by_edge.values() {
+            for w in cs.windows(2) {
+                uf_union(&mut parent, w[0], w[1]);
+            }
+        }
+        let mut roots: Vec<usize> = Vec::new();
+        for i in 0..corners.len() {
+            let r = uf_find(&mut parent, i);
+            if !roots.contains(&r) {
+                roots.push(r);
+            }
+        }
+        if roots.len() > 1 {
+            let extra: Vec<crate::entity::FinKey> =
+                roots[1..].iter().map(|&r| corners[r]).collect();
+            if let Some(v) = dst.vertices.get_mut(vk) {
+                v.groups = extra;
+            }
+        }
+    }
     let _ = rec.finish();
 
     let _prof = crate::profile::Scope::new(&crate::profile::VALIDATE_NS);
@@ -2764,7 +2821,7 @@ pub(crate) fn finalize_imported_assembly(
         Ok(()) => Ok(dst),
         Err(e) => {
             if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
-                eprintln!("assembly validate failed: {e:?}");
+                eprintln!("assembly validate failed: {e:?}; counts {:?}", dst.counts());
             }
             Err(BoolFault::AssemblyFailed("stitched (curved) body invalid"))
         }

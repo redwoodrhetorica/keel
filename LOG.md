@@ -7025,3 +7025,35 @@ BIT-IDENTICAL (95604/4396/0; 25000/0/0), cone oracle 1998/2/0, op gym
 violations all in the known open task-45 setback class (plus one
 boolean trial now declining honestly where mass previously could not
 compute).
+
+## Addendum 232: TASK 41 RESOLVED: vertex-pinch detection: ALL crossing-cylinder ops EXACT (2026-06-12)
+
+The Euler-Poincare decline was the validator being RIGHT about the
+wrong thing. Decoding the counts (V6 E8 F6 rings 2): the difference''s
+boundary is genuinely TWO sphere-like shells PINCHED at vertices, not
+a torus: the tunnel''s side openings are the removed lateral bowties,
+so the upper shell (band + cap + tunnel ceiling) and the lower shell
+meet only at isolated pinch vertices on the crossing curves. That is
+the correct geometry of this difference; the defect was that the
+stitch left the pinch vertices without umbrella GROUPS, so the
+validator applied the manifold Euler identity to a legitimately
+non-manifold body.
+
+Fix: PINCH DETECTION in finalize_imported_assembly: per vertex, the
+face corners (fins leaving the vertex) partition into UMBRELLAS by
+union-find over shared incident edges; more than one umbrella records
+the extras in the vertex''s `groups` (the PES mechanism merge_vertices
+already uses), which routes validation to the structural +
+boundary-chain oracles exactly as the gate design intends. Manifold
+vertices are untouched.
+
+RESULT: the crossing-cylinder DIFFERENCE assembles and is EXACT
+(pi h - 16/3 to 3e-14 at h=4, 2e-13 at h=8); with Addendum 231''s union
+and the task-29 intersection, ALL THREE OPS on the Steinmetz pair are
+now exact, and the steinmetz demo shows three assembled segments (no
+declined frames). Verification: suite green, the 100k box oracle
+BIT-IDENTICAL, cone oracle 1998/2/0, op gym violations all in the open
+task-45 setback class with three previously-declining boolean trials
+now assembling AND passing the judge, 10-minute fuzz soak on the
+boolean targets clean (alongside the still-running completion-gate
+soak).
