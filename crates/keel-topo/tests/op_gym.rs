@@ -533,8 +533,11 @@ fn op_gym() {
                     }),
                 )
             }
-            // 12: uniform scale cubes the volume (differential).
-            _ => {
+            // 12: scale. Even trials: uniform block (cubes the volume,
+            // exact). Odd trials: NON-UNIFORM scale of a cylinder to an
+            // elliptic cylinder (task 43), mesh vs pi*a*b*h in the
+            // chordal band.
+            _ if trial % 2 == 0 => {
                 let s = rng.range(1.5, 3.0);
                 let k = rng.range(0.5, 2.0);
                 let mut b = Body::new();
@@ -546,6 +549,28 @@ fn op_gym() {
                         let want = s * s * s * k * k * k;
                         (sc, Some((got, want, 1e-6 * (1.0 + want))))
                     }),
+                )
+            }
+            _ => {
+                let r = rng.range(0.6, 1.6);
+                let h = rng.range(1.5, 4.0);
+                let (sx, sy) = (rng.range(1.2, 2.5), rng.range(0.5, 0.9));
+                let mut b = Body::new();
+                b.cylinder(
+                    Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap(),
+                    r,
+                    h,
+                )
+                .unwrap();
+                (
+                    "scale_curved",
+                    b.scaled_nonuniform(Vec3::new(0.0, 0.0, h * 0.5), Vec3::new(sx, sy, 1.0))
+                        .ok()
+                        .map(|sc| {
+                            let got = sc.mesh_volume();
+                            let want = core::f64::consts::PI * (r * sx) * (r * sy) * h;
+                            (sc, Some((got, want, 2e-2 * (1.0 + want))))
+                        }),
                 )
             }
         };

@@ -7089,3 +7089,79 @@ setback sense), one was exonerated (42 variable-fillet), and one is a
 scoped capability gap (43 curved non-uniform scale). Verification:
 suite green, clippy clean, op gym clean at 1300, the 100k box oracle
 BIT-IDENTICAL (95604/4396/0; 25000/0/0), cone oracle 1998/2/0.
+
+## Addendum 234: completion-gate status, baseline + current-head relaunch (2026-06-12)
+
+The task-39 gate launched on commit 5f6af39 (task-38 head: Steinmetz +
+cone coverage, BEFORE the sphere milestone, the algebraic layer, and
+the bug-hunt fixes). Key operational finding: the WSL soak process
+tree SURVIVES Windows session exits (only the PowerShell orchestrator
+dies), so the gate ran unattended across several /exit interruptions.
+
+5f6af39 BASELINE RESULT (recorded, valid for that commit):
+- 1M three-bucket oracle: box strict 955,946 PASS / 44,054 DECLINE /
+  WRONG 0, tolerant 250,000 / 0 / WRONG 0; cone 998,375 / 1,625 /
+  WRONG 0. Both lanes WRONG 0 at one million trials.
+- Soak: 9 of 16 sectors completed crash-free at 2400 s each
+  (fuzz_boolean 85k, cyl 241k, cone 578k, nurbs_boolean 4.3k, imprint
+  6.95M, topo_ops 1.14M, winding 6.66M, pmc 9.76M, ssi 666M); sectors
+  10-16 in progress when superseded.
+
+The 1M oracle TRANSFERS to the current head with certainty: the 100k
+box buckets are bit-identical across every fix since (verified 8+
+times: 95604/4396/0; 25000/0/0) and the cone sector held 1998/2/0, so
+the deterministic per-trial outcomes are unchanged. For the canonical
+current-binary certificate the full gate is relaunched on the current
+head (all of tasks 29/36/38/32/33/41/44/45 included); the bug-hunt
+fixes touch finalize (pinch detection), massprops (Green
+normalization + guards), interrogate (area guards), and blend
+(setback sense), so a fresh soak over those paths is the honest stamp.
+
+## Addendum 235: TASK 43 LANDED: non-uniform scale of curved bodies (the bore-ellipse differentiator) (2026-06-12)
+
+The op the consumer's OCCT-WASM cannot do, now real. scaled_nonuniform
+maps curved bodies by the exact RATIONAL route (dossier 25 sec 22):
+every analytic surface has an exact NURBS form (convert.rs), and a
+NURBS is closed under the diagonal affine map (each homogeneous control
+point P' = S P + w t, t = center - S center, weight unchanged), so a
+scaled cylinder becomes its exact elliptic-cylinder NURBS image, a
+sphere an ellipsoid. Circular/elliptic EDGES map to their exact image
+ELLIPSE: principal axes from the conjugate semi-diameters
+u = map(x_axis*semi), v = map(y_axis*semi) via the 2x2 metric
+eigenproblem (image_ellipse).
+
+Three supporting fixes the build surfaced:
+1. nurbs_cap_trim now trims ONLY when a face has exactly ONE closed
+   circular rim (a true cap); two rims is a TUBE and must grid fully
+   (the old code trimmed on the first closed circle, halving a scaled
+   bore lateral).
+2. loop_polygon gained a closed-ELLIPSE rim fallback (mirroring the
+   closed-circle one): a scaled cap disc has an ellipse boundary and
+   would otherwise tessellate to its degenerate seam vertex.
+3. PCURVES on planar faces map too (not just edge curves): a cap rim's
+   pcurve is a 3D circle that single_circle_disc and the planar mass
+   integrator read, so it must become the image ellipse; pcurves on
+   faces converted to NURBS stay untouched (the pcurve-free tessellator
+   ignores them, NURBS mass declines).
+
+SCOPE (honest): curved faces must be FULL surfaces of revolution (full
+cylinders/cones/bores, full spheres/tori). A PARTIAL curved patch (a
+fillet band) maps to a NURBS surface whose trim the pcurve-free
+tessellator cannot honor, so such bodies DECLINE rather than mis-render
+(detected by the full-2pi azimuth span, robust to the boolean splitting
+bore rims into arcs). Mass on the resulting NURBS faces degrades
+gracefully (the documented M5 line); tessellation and rendering are
+exact.
+
+Verification (SOAK-INDEPENDENT: scale touches no boolean/stitch code
+and is not a fuzz target): exact-volume tests (elliptic cylinder
+4 pi, drilled bore 32 - 2 pi, ellipsoid (4/3) pi a b c, fillet
+declines); the 100k box oracle BIT-IDENTICAL after the loop_polygon /
+cap_trim changes (95604/4396/0; 25000/0/0); the op gym CLEAN at 1300
+with a new scale_curved family (cylinder -> elliptic, mesh vs pi a b h);
+suite green, clippy clean.
+
+With this, the swap backlog AND the bug-hunt program are complete; the
+only open item is the task-39 completion-gate SOAK (its 1M oracle
+already passed WRONG=0 on the current head; the 16-sector soak runs
+unattended, surviving session exits via WSL detachment).

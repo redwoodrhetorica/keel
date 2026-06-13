@@ -134,9 +134,14 @@ impl Body {
         tris
     }
 
-    /// If a NURBS `face` is a cap trimmed by a CLOSED SSI circle, return
-    /// the circle plane (point, unit normal) and the cap-side sign.
+    /// If a NURBS `face` is a CAP trimmed by a single CLOSED SSI circle,
+    /// return the circle plane (point, unit normal) and the cap-side
+    /// sign. A face bounded by TWO OR MORE closed circles is a TUBE or
+    /// band (a scaled cylinder/cone lateral, task 43), not a cap: its
+    /// whole parameter domain is the face, so it must NOT be cap-trimmed
+    /// (trimming to one rim's "apex side" would slice the tube in half).
     fn nurbs_cap_trim(&self, face: FaceKey) -> Option<(Vec3, Vec3, f64)> {
+        let mut found: Option<(Vec3, Vec3)> = None;
         for lk in self.faces.get(face).map(|f| f.loops.clone())? {
             let entry = self.loops.get(lk).and_then(|l| l.fin)?;
             let mut cur = entry;
@@ -148,13 +153,10 @@ impl Body {
                     && let Some(cv) = self.curves.get(ck)
                     && let Some((center_c, ax)) = crate::boolean::closed_curve_center_axis(cv)
                 {
-                    let apex = self.face_interior_point(face)?;
-                    let side = if (apex - center_c).dot(ax) >= 0.0 {
-                        1.0
-                    } else {
-                        -1.0
-                    };
-                    return Some((center_c, ax, side));
+                    if found.is_some() {
+                        return None; // two closed rims: a tube, not a cap
+                    }
+                    found = Some((center_c, ax));
                 }
                 cur = fin.next;
                 if cur == entry {
@@ -162,7 +164,14 @@ impl Body {
                 }
             }
         }
-        None
+        let (center_c, ax) = found?;
+        let apex = self.face_interior_point(face)?;
+        let side = if (apex - center_c).dot(ax) >= 0.0 {
+            1.0
+        } else {
+            -1.0
+        };
+        Some((center_c, ax, side))
     }
 
     /// The tube-angle [v_lo, v_hi] span a torus face occupies. The full
@@ -1029,6 +1038,7 @@ impl Body {
         };
         let mut cur = entry;
         let mut circle_edge = None;
+        let mut ellipse_edge = None;
         loop {
             if let Some(p) = self
                 .fin_start_vertex(cur)
@@ -1096,6 +1106,15 @@ impl Body {
                     }
                 }
             }
+            // A CLOSED ellipse rim (a scaled cap disc's boundary, task
+            // 43) records the carrier for the degenerate-loop fallback,
+            // mirroring the closed-circle case.
+            if let Some(fin) = self.fins.get(cur)
+                && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                && let Some(Curve3::Ellipse(el)) = self.curves.get(ck)
+            {
+                ellipse_edge = Some(*el);
+            }
             // Open ELLIPSE arc edges (the variable-radius fillet's cap
             // sections, item 48): sample the short span so the polygon
             // follows the conic, not its chord.
@@ -1112,6 +1131,7 @@ impl Body {
                         .map(|v| v.point),
                 )
             {
+                ellipse_edge = Some(*el);
                 let el = *el;
                 let ang = |p: Vec3| {
                     let w = p - el.center;
@@ -1188,6 +1208,13 @@ impl Body {
             const N: usize = 32;
             return (0..N)
                 .map(|i| c.point(core::f64::consts::TAU * i as f64 / N as f64))
+                .collect();
+        }
+        // A disc bounded by one closed ELLIPSE (a scaled cap, task 43).
+        if let Some(e) = ellipse_edge {
+            const N: usize = 48;
+            return (0..N)
+                .map(|i| e.point(core::f64::consts::TAU * i as f64 / N as f64))
                 .collect();
         }
         verts

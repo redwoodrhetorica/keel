@@ -855,42 +855,34 @@ fn moveface(dir: &Path) {
     println!("moveface: {frames} frames");
 }
 
-/// Non-uniform scale: an L-bracket squashes and stretches about its
-/// centroid (planar scope today: the curved case is the task-43 gap;
-/// when it lands, this demo upgrades to a drilled plate whose bore
-/// becomes a true ellipse).
+/// Non-uniform scale (task 43, the OCCT-WASM differentiator): a drilled
+/// plate squashes and stretches so its ROUND bore becomes a true
+/// ELLIPSE. The exact rational route maps the cylinder bore to its
+/// elliptic-cylinder NURBS image and the rim circles to ellipses; every
+/// frame is a real scaled body off one drilled plate.
 fn nonuniform(dir: &Path) {
     let frames = 36usize;
+    let mut plate = Body::new();
+    plate.block(Vec3::ZERO, 4.0, 4.0, 1.0).unwrap();
+    let bf = Frame3::from_z(Vec3::new(2.0, 2.0, -0.5), Vec3::new(0.0, 0.0, 1.0)).unwrap();
+    let mut tool = Body::new();
+    tool.cylinder(bf, 1.0, 2.0).unwrap();
+    let drilled = boolean(&plate, &tool, BoolOp::Difference, 1e-7)
+        .expect("nonuniform drill declined")
+        .body;
     for i in 0..frames {
         let t = i as f64 / frames as f64;
         let w = (core::f64::consts::TAU * t).sin();
-        let sx = 1.0 + 0.45 * w;
-        let base: Vec<Vec3> = [
-            (0.0, 0.0),
-            (3.0, 0.0),
-            (3.0, 1.0),
-            (1.0, 1.0),
-            (1.0, 3.0),
-            (0.0, 3.0),
-        ]
-        .iter()
-        .map(|&(x, y)| Vec3::new(x, y, 0.0))
-        .collect();
-        let mut b = Body::new();
-        b.prism(&base, Vec3::new(0.0, 0.0, 1.0))
-            .expect("nonuniform prism");
-        let scaled = b
-            .scaled_nonuniform(
-                Vec3::new(1.5, 1.5, 0.5),
-                Vec3::new(sx, 1.0 / sx.sqrt(), 1.0),
-            )
+        let sx = 1.0 + 0.5 * w;
+        let scaled = drilled
+            .scaled_nonuniform(Vec3::new(2.0, 2.0, 0.5), Vec3::new(sx, 1.0 / sx, 1.0))
             .expect("nonuniform frame");
         let mesh = scaled.worker_mesh();
         write_frame(
             dir,
             i,
             &mesh,
-            &format!("\"label\":\"nonuniform sx {sx:.2}\""),
+            &format!("\"label\":\"bore -> ellipse, sx {sx:.2}\""),
         );
     }
     println!("nonuniform: {frames} frames");
