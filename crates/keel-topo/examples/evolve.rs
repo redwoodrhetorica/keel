@@ -384,6 +384,12 @@ fn main() {
     // from a failure (the result is correct, just slow) and from a hang
     // (which never returns).
     let mut sfile = std::fs::File::create(Path::new(&outdir).join("slow.jsonl")).unwrap();
+    // Declines stream (the bulk: ~97% of evals). BUFFERED, not flushed per
+    // line: the volume makes per-line syscalls the bottleneck, so it flushes
+    // as the buffer fills and on the explicit flush at the end / process exit.
+    let mut dfile = std::io::BufWriter::new(
+        std::fs::File::create(Path::new(&outdir).join("declines.jsonl")).unwrap(),
+    );
     let slow_ms = 250u64;
     let (mut n_pass, mut n_decline, mut n_fail, mut n_skip, mut n_novel, mut n_slow) =
         (0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
@@ -450,7 +456,15 @@ fn main() {
             }
             match &e.class {
                 Class::Pass => n_pass += 1,
-                Class::Decline(_) => n_decline += 1,
+                Class::Decline(reason) => {
+                    n_decline += 1;
+                    let _ = writeln!(
+                        dfile,
+                        "{{\"reason\":\"{reason}\",\"sig\":\"{}\",\"genome\":{}}}",
+                        e.signature,
+                        genome_json(g)
+                    );
+                }
                 Class::Skip => n_skip += 1,
                 Class::Fail(reason) => {
                     n_fail += 1;
@@ -511,6 +525,7 @@ fn main() {
     let _ = ffile.flush();
     let _ = nfile.flush();
     let _ = sfile.flush();
+    let _ = dfile.flush();
     // Restore the default hook before printing the summary.
     let _ = std::panic::take_hook();
     println!(
@@ -520,5 +535,5 @@ fn main() {
         "  distinct behaviors {} ({n_novel} recorded), failures {n_fail} (of which {leaked} hangs), slow {n_slow}",
         seen.len()
     );
-    println!("  wrote {outdir}/{{failures,novelties,slow}}.jsonl");
+    println!("  wrote {outdir}/{{failures,declines,novelties,slow}}.jsonl");
 }
