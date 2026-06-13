@@ -7464,3 +7464,31 @@ exactly such tilted-disjoint cone DIFFERENCES: the curved post-condition gate
 checks mass vs the TESSELLATED volume and so misses a body where
 tessellated==mass but mesh!=mass. That gate gap (decline when mesh disagrees
 too) is the next fix; it is caught and reported by the explorer, not silent.
+
+## Addendum 243: the "mass!=mesh" class was a FALSE ALARM (cone primitive mesh coarseness), not a kernel bug (2026-06-13)
+
+Add. 242 flagged a `mass!=mesh` class as the next fix. Investigation: it is a
+FALSE ALARM. The broad-phase correctly returns a.clone() (the operand) for a
+disjoint DIFFERENCE. For a tilted CONE difference that operand is the cone, and
+the cone PRIMITIVE's mesh_volume runs ~3.8% UNDER its exact mass (coarse base-
+circle tessellation, versus the frustum's <2%). The explorer's 2% mass==mesh
+band then flags the perfectly valid cone as `mass!=mesh`. Before the broad-
+phase, disjoint cone differences DECLINED, so the cone was never returned and
+the discrepancy never showed. Probe proof: D returns faces=2 with
+mass == cone's own mass EXACTLY (2.5356) and mesh 2.4381 (3.8% under). The
+boolean did nothing wrong; mass_properties (the authoritative volume) is exact;
+only the tessellated mesh net is coarse.
+
+FIXES: (1) REVERTED the assemble_boolean gate change I had started -- a mesh-
+agreement check at the 2% band would FALSE-DECLINE valid coarse-mesh cones, a
+real regression. (2) recalibrated the EXPLORER's mass==mesh band 2% -> 6% to
+cover the cone primitive's legitimate mesh error; the vol-bound (5% slack) stays
+the primary correctness net and gross wrongs are far beyond 6%. Verified: the
+three false-positive seeds (3000-3002) now report 1/0/2 soft `malformed` and
+ZERO `mass!=mesh`; the broad-phase decline-rate gain stands (~22% pass / ~78%
+decline, was ~3% / ~97%); box oracle bit-identical; suite green; clippy clean.
+
+FOLLOW-UP #50 (a QUALITY item, not correctness): the cone PRIMITIVE meshes
+coarser than the frustum (~3.8% vs <2% mesh-volume error from the base-circle
+tessellation). Denser tessellation would tighten mesh_volume and render quality;
+mass_properties is already exact, so nothing downstream is wrong today.

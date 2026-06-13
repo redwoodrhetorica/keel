@@ -263,7 +263,13 @@ fn classify(g: &Genome) -> Eval {
             match r.body.mass_properties().map(|m| m.volume) {
                 Ok(m) => {
                     // mass==mesh self-consistency (necessary, not sufficient).
-                    let band = 2e-2 * (1.0 + m.abs());
+                    // Band = 6% to cover the coarsest legitimate mesh error:
+                    // the cone PRIMITIVE's mesh_volume runs ~3.8% under its
+                    // exact mass (coarse base-circle tessellation), so a 2%
+                    // band false-flagged every cone the broad-phase returns
+                    // for a disjoint difference. The vol-bound (5% slack) is
+                    // the primary correctness net; gross wrongs are far beyond.
+                    let band = 6e-2 * (1.0 + m.abs());
                     let gap = (m - mesh).abs();
                     risk = (gap / band).min(2.0);
                     if m > 0.0 && gap > band {
