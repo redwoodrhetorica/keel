@@ -7925,3 +7925,45 @@ the coaxial cone-sphere/cyl-sphere SSI rungs) + layer 2 (dossier 59 canonical
 seam identity + seam-aware periodic split) for the overlapping cone-curved
 families. The cone-apex anchor and area-witness are the reusable layer-3 base all
 of those land on.
+
+## Addendum 253: empirical blocker map -- the overlapping-cone frontier is LAYER 2 (classify / stitch), not layer 3 (mass) (2026-06-14)
+
+Before building gap (b), traced where REAL overlapping cone-block booleans
+actually decline (probe `examples/probe_oc.rs`, KEEL_BOOL_DEBUG + a finalize
+component dump). The result reorders the milestone: layer 3 (the mass gate) is
+shored up (Add.252) but it is DOWNSTREAM; every overlapping cone case dies at
+LAYER 2 (assembly), so the layer-3 foundations cannot yet show a pass.
+
+Cases and their actual blockers:
+- **cone - perpendicular slab (CIRCLE cuts, a disconnected result = bottom
+  frustum + top tip).** mass 7.611 = the frustum ALONE; the tip is missing.
+  mesh 6.391; truth 8.414. Finalize correctly finds 2 components but they are
+  [3 faces, 1 face]: the tip component has ONLY its cut-cap, because
+  `classify_faces` MIS-CLASSIFIES the tip's lateral fragment. The trace:
+  `class A Key(2) InsideOther ctr z=2.1` -- but z=2.1 is ABOVE the slab
+  (z in [0.8, 1.8]), so the tip lateral is actually OUTSIDE the slab and must be
+  KEPT for the difference; classed Inside, `select_faces` drops it, the tip
+  loses its lateral and is an open one-face shell -> mass / mesh wrong. This is
+  a generalized-winding-number classification error on a disconnected-difference
+  cone fragment (the probe point or its inward nudge on the trimmed tip lateral
+  lands wrong), NOT a mass-integration error. THIS is the first thing to fix.
+- **cone intersect side-block.** `AssemblyFailed("unmatched coedge: shell-closure
+  invariant violated")` -- a stitch failure (dossier 59 Q2 canonical seam
+  identity / Q4 drop-proof invariant).
+- **cone - side-block / corner-block (axis-PARALLEL cut faces).** The cut is a
+  HYPERBOLA, which `plane_cone` still DECLINES (it emits only circle / ellipse),
+  so there is no seam: the SSI gap (dossier 58 Path A: emit the parabola /
+  hyperbola arc as an exact degree-2 rational NURBS). Needs gap (b) to integrate
+  once produced.
+
+Revised worklist (layer 2 first, the actual blocker):
+1. The classify mis-classification of disconnected-difference cone fragments
+   (the dropped tip lateral). Highest leverage: it blocks even the clean
+   circle-cut case, and a correct classification + the existing finalize
+   (2 components) + the Add.252 mass base would make cone-minus-slab PASS.
+2. The curved stitch unmatched-coedge (dossier 59 canonical seam identity).
+3. `plane_cone` parabola / hyperbola emission (dossier 58 Path A) + gap (b)
+   generic boundary-arc arm, for the axis-parallel (notch) cuts.
+Layer 3's apex anchor + area-witness (Add.252) remain correct and are the base
+these land on; they simply cannot show a pass until layer 2 stops dropping the
+faces. Decline-safe throughout (every case above DECLINES, none WRONG).
