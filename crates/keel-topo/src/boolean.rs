@@ -6829,6 +6829,43 @@ mod tests {
     }
 
     #[test]
+    fn cone_minus_slab_is_two_solids_with_correct_mass() {
+        // The first overlapping-curved cone boolean: a cone cut by a
+        // perpendicular slab (two circle seams) leaves a DISCONNECTED result,
+        // a bottom frustum plus a top tip. Both pieces must assemble with the
+        // tip's lateral kept (apex-aware classify) AND tessellating (apex-aware
+        // tessellate_cone): mass == mesh == frustum + tip. (LOG Add. 255.)
+        let mut cone = Body::new();
+        cone.cone(
+            Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+            2.0,
+            3.0,
+        )
+        .unwrap();
+        let mut slab = Body::new();
+        slab.block(Vec3::new(-3.0, -3.0, 0.8), 6.0, 6.0, 1.0).unwrap();
+        let r = boolean(&cone, &slab, BoolOp::Difference, 1e-7).unwrap();
+        assert!(r.faults.is_empty(), "faults {:?}", r.faults);
+        assert!(r.body.validate().is_ok(), "invalid body");
+        let mass = r.body.mass_properties().unwrap().volume;
+        let mesh = r.body.mesh_volume();
+        // Truth: frustum z[0,0.8] + tip z[1.8,3] of a cone r=2 h=3.
+        let pi = core::f64::consts::PI;
+        let r08 = 2.0 * (1.0 - 0.8 / 3.0);
+        let frustum = pi / 3.0 * 0.8 * (4.0 + 2.0 * r08 + r08 * r08);
+        let tip = pi / 3.0 * 0.8 * 0.8 * 1.2;
+        let truth = frustum + tip;
+        assert!((mass - truth).abs() < 2e-2 * truth, "mass {mass} vs truth {truth}");
+        assert!(
+            (mass - mesh).abs() < 3e-2 * (1.0 + mass),
+            "mass {mass} mesh {mesh}"
+        );
+        // Two disconnected solid cells (frustum + tip).
+        let solids = r.body.regions.iter().filter(|(_, rg)| rg.solid).count();
+        assert_eq!(solids, 2, "expected 2 solid cells, got {solids}");
+    }
+
+    #[test]
     fn disjoint_operands_return_clean_answers() {
         // Dossier 29 (graceful degradation, the leg's first rung):
         // operands that do not touch are NOT an error class.

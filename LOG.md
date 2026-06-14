@@ -7995,3 +7995,39 @@ imported tip loop is missing its apex vertex or rim edge. That import/finalize
 fix for disconnected-curved components is the next item -- it would flip
 cone-minus-slab to the first overlapping-curved PASS and also lets the
 `combine_disjoint` bypass eventually retire.
+
+## Addendum 255: FIRST overlapping-curved cone PASS -- cone - slab assembles (tessellate_cone apex fallback) (2026-06-14)
+
+Found the Add.254 remaining mesh bug and it was NOT an import-mangled loop: it
+was the SAME apex-fallback gap as the classify fix, now in `tessellate_cone`.
+The imported tip's rim at z=1.8 is split into >= 2 arcs, each read as a "circle"
+by `cyl_circle_heights`, so it returned two heights BOTH at 1.8 (len 2). The
+apex fallback was gated on `heights.len() < 2`, so with len 2 it was SKIPPED,
+the band collapsed (hhi - hlo == 0), and `tessellate_cone` returned ZERO
+triangles (the WALL dump: the tip face had 4 edges, 0 tris, tetv ~0). Fix:
+trigger the raw-vertex / apex fallback whenever the circle heights do not SPAN a
+band (`cur_span <= 1e-9`), not only when there are fewer than two of them; the
+fallback then adds the apex height and the tip tessellates.
+
+RESULT -- the FIRST overlapping-curved cone boolean PASSES. `cone(r2,h3) -
+perpendicular slab z[0.8,1.8]` (two circle seams, a DISCONNECTED frustum + tip):
+mass 8.4148 == mesh 8.3984 == truth 8.413 (frustum 7.609 + tip 0.804), faults
+empty, validate ok, 2 solid cells. Regression test
+`cone_minus_slab_is_two_solids_with_correct_mass`. 276 lib tests pass, explorer
+seed 7001 FAIL = 0 (the aggregate PASS is flat -- disconnected-curved cone
+differences are a small random sub-population -- but the CAPABILITY is new and
+locked).
+
+Both apex fixes (Add.254 classify + this tessellate) are the same lesson: a cone
+TIP is bounded by a rim plus the degenerate APEX v-line, and any code deriving
+the v-band from circle edges alone collapses on it. The cone-apex anchor
+(Add.252, mass), the classify interior point (Add.254), and tessellate_cone (this)
+all needed the apex added when the circle heights do not span. This also explains
+why `combine_disjoint` was needed for disjoint UNIONS (the same tip-tessellation
+collapse on the disconnected second lump); with tessellate_cone fixed, retiring
+that bypass is now plausible (a follow-up to verify).
+
+Remaining overlapping-cone frontier (unchanged): hyperbola cuts (axis-parallel
+block faces) still need `plane_cone` to EMIT the conic arc (dossier 58 Path A)
+plus gap (b); and `cone intersect block` still hits the curved-stitch
+unmatched-coedge (dossier 59). Decline-safe throughout.

@@ -702,7 +702,16 @@ impl Body {
         // reaches it (only one circle edge -> the other end is the apex).
         let mut heights = self.cyl_circle_heights(face, origin, ez);
         let v_apex = -cone.radius / slope;
-        if heights.len() < 2 {
+        let cur_span = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+            - heights.iter().cloned().fold(f64::INFINITY, f64::min);
+        // A TIP reaches the APEX (a degenerate v-line, not a circle edge), so
+        // the circle heights collapse to the single rim height even when the
+        // rim is split into >= 2 arcs (each read as a circle), which leaves a
+        // zero-span band and a 0-triangle tessellation (the disconnected-
+        // difference cone-tip mesh bug, LOG Add. 254). Enter the raw-vertex /
+        // apex fallback whenever the circle heights do not SPAN a band, not
+        // only when there are fewer than two of them.
+        if heights.len() < 2 || cur_span <= 1e-9 {
             // No (or one) circle rim: take the band from the RAW
             // boundary vertex heights (a vertex-bounded cone patch like
             // the item-48 variable-radius blend face, or a pole-reaching
