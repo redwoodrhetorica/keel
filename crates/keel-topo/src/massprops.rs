@@ -861,7 +861,10 @@ impl Body {
                         // cap, the corner sphere triangle) integrate
                         // via the Green-slab boundary path; other
                         // surfaces keep declining.
-                        if matches!(surf, Surface3::Cylinder(_) | Surface3::Sphere(_)) {
+                        if matches!(
+                            surf,
+                            Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Cone(_)
+                        ) {
                             return self.integrate_face_green(fk, surf, sense_sign, m);
                         }
                         return Err(TopoError::Precondition("curved face without pcurve bounds"));
@@ -948,6 +951,10 @@ impl Body {
     ) -> Result<(), TopoError> {
         let (frame, is_sphere) = match surf {
             Surface3::Cylinder(c) => (&c.frame, false),
+            // The cone shares the cylinder's parameterization (u = azimuth,
+            // v = axial height); its v-dependent radius lives in
+            // local_geometry, which the generic flux integrand below samples.
+            Surface3::Cone(c) => (&c.frame, false),
             Surface3::Sphere(s) => (&s.frame, true),
             _ => return Err(TopoError::Precondition("green-slab: unsupported surface")),
         };

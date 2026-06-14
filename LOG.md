@@ -7645,3 +7645,33 @@ COORDINATED steps to turn block/cone declines into PASSES, in order:
 3. the curved stitch (correct loops / genus) for the cone-block fragments.
 These land together (then verified end-to-end with Monte-Carlo) so the family
 flips to correct passes without a silent-wrong window.
+
+## Addendum 248: task 51 step 2 -- the Green-slab mass integration grows a cone arm (2026-06-14)
+
+The "curved face without pcurve bounds" decline (Add. 247 step 1) was the mass
+side: integrate_face_green (the Green-slab boundary integration for non-iso
+curved trims) handled only Cylinder and Sphere; a non-iso CONE fragment fell to
+Err. The fix is small because the flux integrand is GENERIC -- it samples
+surf.local_geometry(u, v) for the point / tangents / normal, surface-agnostic.
+The cone shares the cylinder's parameterization (u = azimuth, v = axial height;
+the v-dependent radius lives inside local_geometry), so adding
+`Surface3::Cone(c) => (&c.frame, false)` to the routing (mass line 864) and to
+integrate_face_green's match is all that is needed; the winding < 0.5 -> v_min
+slab path (the cylinder path, not the sphere pole-anchor) carries it.
+
+EFFECT: block/cone's cone fragments now mass-integrate, so the mass==mesh gate
+becomes EFFECTIVE for them -- block/cone now declines via "mass != mesh" (the
+gate cross-checking the cone mass against the tessellation and catching the
+still-wrong assembly) instead of the mass simply declining. This is the SAFETY
+enabler for step 3: a wrong cone-block stitch is now caught by mass==mesh rather
+than slipping while mass declines. Verified: cone oracle 5k PASS 4993 / DECLINE
+7 / WRONG 0 (no regression), cone mass unit tests pass, and a 9,000-eval sweep
+(seeds 8000-8002) FAIL 0 -- the op-volume bound confirms NO wrong block/cone
+body slips the now-active mass gate (no silent wrongs introduced). Correctness
+of the cone Green-slab on a CORRECTLY-assembled non-iso fragment will be
+confirmed when step 3 lands one (it is the proven cylinder path + the verified
+cone local_geometry, and decline-safe meanwhile).
+
+STILL OPEN (step 3, the actual decline reduction): block/cone assembles a WRONG
+body (mass != mesh) -- the select / curved stitch for cone-block fragments is
+incorrect. That is the remaining piece to flip block/cone to passes.
