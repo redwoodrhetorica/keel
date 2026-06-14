@@ -7675,3 +7675,36 @@ cone local_geometry, and decline-safe meanwhile).
 STILL OPEN (step 3, the actual decline reduction): block/cone assembles a WRONG
 body (mass != mesh) -- the select / curved stitch for cone-block fragments is
 incorrect. That is the remaining piece to flip block/cone to passes.
+
+## Addendum 249: BREAKTHROUGH -- the multi-cut cone/block STITCH is correct; the blocker is cone-fragment MASS, not the stitch (2026-06-14)
+
+Isolated the cone/block decline to the MULTI-CUT case (a block slicing the cone
+with several planes -> several conic seams); the single-cut transversal case
+(the cone oracle, drilling/countersinks) already passes. Traced an UPRIGHT
+multi-cut cone/block D (so no tilt confound): mesh = 11.851, and the
+Monte-Carlo truth = 11.807. THE STITCH IS CORRECT -- the assembled body is
+geometrically right. It declines only because mass = 17.066 (> the FULL cone's
+12.566), so the mass==mesh gate fires. So step 3 (the stitch) is NOT the
+blocker for this class; the blocker is the cone-fragment MASS INTEGRATION.
+
+Localized via KEEL_MASS_DEBUG: cone fragment Key0 reports pcurve bounds
+u [0, 2pi] x v [0.3, 1.8] with non_iso = false -- it is integrated as a FULL-
+azimuth band, but it is a PARTIAL fragment with a block-cut notch. The iso-
+rectangle mass path (projected pcurve bounds) over-counts the notch because the
+non_iso detection does not see the block-cut (conic) boundary edges, so a
+notched cone band wrongly takes the full-rectangle path instead of the Green-
+slab. (Add. 248's cone Green-slab arm is hit only for the degenerate fragment
+Key2; the bulk over-count is the iso-rect path on Key0/Key3.) Net: mass 17.07
+vs true 11.85.
+
+REVISED worklist for block/cone (much closer than "the stitch is the blocker"):
+the geometry is correct; the remaining work is correct MASS INTEGRATION of
+multi-cut cone fragments -- (1) make non_iso detection flag a cone fragment
+whose boundary includes non-iso (conic / block-cut) edges so it routes to the
+Green-slab rather than the full-azimuth iso-rectangle, and (2) verify the cone
+Green-slab integrates a PARTIAL (notched / partial-azimuth) cone fragment
+correctly (against Monte-Carlo). Once the cone mass matches the (already
+correct) mesh, block/cone PASSES -- mass==mesh==truth -- and the ~40% of the
+frontier in cone families follows. This is a mass-integration fix, decline-safe
+throughout (a wrong mass still declines via mass!=mesh, as now), best done
+fresh rather than rushed.
