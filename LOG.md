@@ -7535,3 +7535,45 @@ decomposition of the sphere-split-integration trap's "three stacked defects":
 the SSI is not the hard part; the stitch and the integration are. The next grind
 on declines should target the stitch layer, since the SSI is ready to wire in
 behind it.
+
+## Addendum 245: task 51 stitch dive: the first concrete blocker is curved_face_containing handling only cylinders (2026-06-14)
+
+Took the coaxial cyl-sphere case (the cleanest entry: seams are exact CIRCLES,
+not NURBS quartics, so it sidesteps layer 3 / green-slab and isolates the
+stitch). Re-added the SSI scoped to coaxial-only (exact circle pair; general
+quartic still declines) and traced the bead (sphere(r2) minus a coaxial
+cylinder(r1), expected volume 21.77).
+
+ROOT CAUSE of the bead failure, found by the trace: the imprint NEVER SPLITS
+THE SPHERE. The classify shows "class A Key(0) Unknown ctr (0,0,0)" -- the
+sphere is still ONE face (centre = sphere centre, hence Unknown), while the
+cylinder split into five fragments. Mechanism: two circle seams land on one
+sphere face, so imprint_operand takes its MULTI-component path
+(seam_components -> two closed loops stand alone -> multi = true), which
+relocates each component's target via
+planar_face_containing(probe).or_else(curved_face_containing(probe)).
+curved_face_containing matches ONLY Surface3::Cylinder (returns false for
+sphere and cone), so both components return None -> the fault "unlocated seam
+component (non-planar multi-cut face)" -> the circles never imprint -> the
+sphere stays whole -> select/stitch then emit a garbage one-face body with a
+6-fin self-referencing loop ("stitched (curved) body invalid"; mass 10.88 !=
+mesh 7.24 != true 21.77). The same gap is the "unlocated seam component" fault
+seen on the offset (general) case in Add. 244.
+
+CONCRETE NEXT STEPS for #51 layer 2 (the stitch), in order:
+1. curved_face_containing: add Sphere and Cone arms (the cylinder arm uses a
+   height band along the axis from the loop vertices; the sphere arm needs the
+   cut axis from a loop circle + the cap interior point to bound the band).
+   This is what lets the two coaxial circles imprint and the sphere split.
+2. select_faces: keep the sphere band (outer) + the cylinder middle segment
+   (the hole wall) for the difference; verify the genus-1 selection.
+3. the curved STITCH: assemble the genus-1 bead (an annular sphere band + a
+   tube wall), the same family as the crossing-cylinder genus work (task 41).
+4. only THEN the general (non-coaxial) quartic, which additionally needs
+   green-slab mass integration for NURBS-bounded faces (layer 3).
+
+Reverted the SSI prototype again (cyl-sphere stays a CLEAN DECLINE -- a partial
+imprint+stitch would risk silent wrongs, and no correct cyl-sphere result is
+reachable yet). The milestone is now de-risked to a precise, ordered worklist;
+the SSI design (Add. 244) and this stitch entry point are recorded so the work
+resumes directly.
