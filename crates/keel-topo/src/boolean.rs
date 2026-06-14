@@ -4365,6 +4365,14 @@ fn assemble_boolean(
     } else {
         false
     };
+    // A valid solid never has a non-finite or NEGATIVE mesh volume. A NaN or
+    // negative mesh is a broken (inverted/degenerate) result that the volume
+    // gates above can miss for TINY bodies: the near-tangent sphere^sphere
+    // thin lens returned mass 6.3e-4 / mesh -8.3e-4 against a true 1.38e-2, and
+    // every gate band's (1 + vol) term dwarfed that gap. Reject it (a valid
+    // body, including the clean empty result, has mesh >= 0).
+    let mesh_vol = body.mesh_volume();
+    let ok = ok && mesh_vol.is_finite() && mesh_vol >= -tol.max(1e-9);
     if !ok {
         return Err(BoolFault::AssemblyFailed(
             "degenerate or self-inconsistent result (mass != mesh)",

@@ -7577,3 +7577,31 @@ imprint+stitch would risk silent wrongs, and no correct cyl-sphere result is
 reachable yet). The milestone is now de-risked to a precise, ordered worklist;
 the SSI design (Add. 244) and this stitch entry point are recorded so the work
 resumes directly.
+
+## Addendum 246: the 4h soak caught a sphere^sphere thin-lens silent WRONG; mesh-validity gate closes it (2026-06-14)
+
+A fresh 4h soak (seed 5000+, on the hardened kernel) HALTED at 21,000 evals
+(~21 min) on a hard failure: `bad-mesh I sph/sph` (plus 4 soft `malformed
+D sph/sph`, the known near-tangent residual). The bad-mesh is a near-tangent
+sphere ^ sphere: centres 2.82 apart, radii 2.446 + 0.478 = 2.924, so overlap
+depth ~0.10 -- a THIN LENS. The assembly returns Ok, validate-OK, faults empty,
+3 faces, mass 6.3e-4, mesh -8.3e-4, against a Monte-Carlo truth of 1.38e-2. So
+it is a SILENT WRONG (mass ~20x too small, mesh negative) that slipped every
+volume gate because the body is TINY: the op-bound min(vA,vB) = 0.458 and the
+self-consistency band 2%*(1+vol) ~ 0.02 both dwarf the ~1e-3 discrepancy. Only
+the NEGATIVE mesh betrayed it.
+
+FIX: a mesh-validity precondition in the assemble_boolean post-condition -- a
+valid solid never has a non-finite or negative mesh volume, so reject those
+(the clean empty result, mesh 0, still passes). This declines the thin lens ->
+DECLINE-never-WRONG restored. Verified: the lens declines; cone oracle 5k PASS
+4993 / DECLINE 7 / WRONG 0; box oracle 5k strict 4782 / DECLINE 218 / WRONG 0
+(rates held, no false declines); suite green; clippy clean.
+
+SCOPE: this closes the NEGATIVE/non-finite-mesh degenerate class. A thin lens
+whose tiny mesh happened to be positive-but-wrong would still slip the absolute-
+tolerance gates (the tiny-result blind spot: every band's (1 + vol) term swamps
+a sub-1e-2 error). The deeper fix is correct thin-lens cap assembly, or a
+relative-tolerance gate for near-zero-volume results -- a follow-up (#52). The
+soak halted exactly as designed; relaunching to continue the 4h iteration past
+this fix.
