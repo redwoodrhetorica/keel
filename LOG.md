@@ -7492,3 +7492,46 @@ FOLLOW-UP #50 (a QUALITY item, not correctness): the cone PRIMITIVE meshes
 coarser than the frustum (~3.8% vs <2% mesh-volume error from the base-circle
 tessellation). Denser tessellation would tighten mesh_volume and render quality;
 mass_properties is already exact, so nothing downstream is wrong today.
+
+## Addendum 244: cylinder-sphere is a 3-layer milestone; the SSI is the EASY layer, the stitch + mass-integration are the blockers (task 51) (2026-06-14)
+
+Grind target: the #1 decline family, cylinder<->sphere (~17k of the soak's
+declines, all AssemblyFailed). The SSI dispatch (analytic_analytic) has NO
+(Cylinder, Sphere) rung -- it falls to Err(Degenerate), so the boolean gets no
+seam, takes the no-seams shortcut, and declines "no unambiguous containment
+probe". The missing mixed-curved rungs are cyl-sphere, cone-sphere, cone-cyl,
+cone-cone.
+
+The SSI itself is TRACTABLE and was prototyped + verified: cyl ^ sphere is a
+quartic space curve computable by the SAME closed-form branch-field pattern as
+the existing cylinder_cylinder rung 3. Parameterize by the angle theta on the
+cylinder; each ruling meets the sphere where a quadratic in the ruling height v
+holds (q2 == 1, the axis being unit and the sphere isotropic), so v =
+(-q1 +- sqrt(D))/2; the COAXIAL case (sphere centre on the axis) is an exact
+circle pair. A shared branch_field_to_curves helper (extracted from cyl-cyl)
+served both rungs; keel-geom (135 tests) and the cyl-cyl Steinmetz
+certification stayed green.
+
+But the SSI is the EASY layer. With the rung wired, the cyl-sphere BOOLEAN still
+fails downstream at the TOPO: the stitch cannot assemble the new seams
+("unmatched coedge: shell-closure invariant violated", "stitched (curved) body
+invalid", "unlocated seam component: non-planar multi-cut face"), and the
+green-slab MASS integration cannot integrate cyl-sphere curved faces ("green-
+slab: curved NURBS boundary fin"). Worse, naive enabling RISKS a silent wrong:
+an offset sphere(r2) ^ cylinder(r1) assembled to a validate-OK body reading mesh
+17.22 against a Monte-Carlo truth of 10.41. It carried AssemblyFailed faults (so
+the explorer declines it), but because mass declines on the curved faces the
+mass==mesh gate cannot run, and the only general intersection bound
+[0, min(vA,vB)] = 18.8 does not catch 17.22.
+
+DECISION: cyl-sphere stays a CLEAN DECLINE; the SSI prototype is reverted (no
+correct cyl-sphere result is reachable today, so the rung buys no passes, only
+silent-wrong risk -- DECLINE-never-WRONG wins). #51 records the real shape of
+the work: cyl-sphere (and the other mixed-curved families) is a THREE-LAYER
+milestone -- (1) the SSI rung (designed here, the cyl-cyl pattern, ~tractable),
+(2) the topo STITCH for mixed curved-curved seams (the genuine blocker), and (3)
+green-slab MASS integration for NURBS-bounded curved faces. This is the concrete
+decomposition of the sphere-split-integration trap's "three stacked defects":
+the SSI is not the hard part; the stitch and the integration are. The next grind
+on declines should target the stitch layer, since the SSI is ready to wire in
+behind it.
