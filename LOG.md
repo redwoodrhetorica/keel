@@ -7967,3 +7967,31 @@ Revised worklist (layer 2 first, the actual blocker):
 Layer 3's apex anchor + area-witness (Add.252) remain correct and are the base
 these land on; they simply cannot show a pass until layer 2 stops dropping the
 faces. Decline-safe throughout (every case above DECLINES, none WRONG).
+
+## Addendum 254: worklist item 1 fixed -- cone tip classification (disconnected-difference MASS now correct); remaining blocker is the 2nd-component MESH (2026-06-14)
+
+Fixed the Add.253 worklist item 1, the classify mis-classification. Root cause:
+`cone_face_interior_point` built its probe point from `cyl_circle_heights`, which
+for a TIP fragment returns only the rim height (the apex is a degenerate v-line,
+not a circle edge), so `hlo == hhi` and the interior point landed ON the rim --
+which for a plane / slab cut sits exactly on the cutting boundary, so the GWN
+probe read w ~ 1 and classed the tip InsideOther. Fix (the same apex handling
+`tessellate_cone` already has): when the circle heights collapse, add the apex
+axial height `-r0/tan(alpha)` so the midpoint is strictly between rim and apex.
+
+Effect on `cone - perpendicular slab`: the tip lateral's probe point moved from
+(-0.8, 0, 1.8) [on the rim, w ~ 1, WRONG] to (-0.4, 0, 2.4) [w ~ 0, OutsideOther,
+CORRECT]. The tip is now kept, and the assembled MASS = 8.414 = the exact truth
+(frustum 7.61 + tip 0.80), where it was the frustum-only 7.61 before. 275 lib
+tests pass, explorer FAIL = 0 (decline-safe, no regression); `cone - corner
+block` now also returns a result.
+
+STILL DECLINES (mass != mesh): mass is now correct (8.414) but mesh stays 6.391
+-- the disconnected TIP's tessellation is broken (it contributes ~0). The tip's
+loop is mangled by the disconnected-curved IMPORT (the same family as the
+disjoint-union 2nd-lump tessellation break that `combine_disjoint` bypasses for
+unions); `tessellate_cone`'s own apex fallback would handle a clean tip, so the
+imported tip loop is missing its apex vertex or rim edge. That import/finalize
+fix for disconnected-curved components is the next item -- it would flip
+cone-minus-slab to the first overlapping-curved PASS and also lets the
+`combine_disjoint` bypass eventually retire.

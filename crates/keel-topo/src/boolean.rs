@@ -983,14 +983,32 @@ impl Body {
         cone: &keel_geom::surface::Cone3,
     ) -> Option<keel_math::vec::Vec3> {
         let (origin, ex, ez) = (cone.frame.origin, cone.frame.x, cone.frame.z);
-        let heights = self.cyl_circle_heights(face, origin, ez);
+        let mut heights = self.cyl_circle_heights(face, origin, ez);
+        // A TIP fragment has ONE rim circle and reaches the APEX (a degenerate
+        // v-line, not a circle edge), so cyl_circle_heights yields a single
+        // height and the midpoint would land ON the rim -- which, for a slab /
+        // plane cut, is exactly on the cutting boundary, so the winding probe
+        // mis-classifies the whole tip (the disconnected-difference dropped-tip
+        // bug, LOG Add. 253). Add the apex height so the midpoint sits strictly
+        // between rim and apex (the same apex handling tessellate_cone uses).
+        let slope = cone.half_angle.tan();
+        let (hlo0, hhi0) = (
+            heights.iter().cloned().fold(f64::INFINITY, f64::min),
+            heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+        );
+        if (heights.len() < 2 || hhi0 - hlo0 <= 1e-9) && slope.abs() > 1e-12 {
+            heights.push(-cone.radius / slope); // apex axial height
+        }
         if heights.len() < 2 {
             return None;
         }
         let hlo = heights.iter().cloned().fold(f64::INFINITY, f64::min);
         let hhi = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        if hhi - hlo <= 1e-12 {
+            return None;
+        }
         let hmid = 0.5 * (hlo + hhi);
-        let r = cone.radius + hmid * cone.half_angle.tan();
+        let r = cone.radius + hmid * slope;
         Some(origin + ex * (-r) + ez * hmid)
     }
 
