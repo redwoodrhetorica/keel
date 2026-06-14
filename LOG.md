@@ -7708,3 +7708,174 @@ correct) mesh, block/cone PASSES -- mass==mesh==truth -- and the ~40% of the
 frontier in cone families follows. This is a mass-integration fix, decline-safe
 throughout (a wrong mass still declines via mass!=mesh, as now), best done
 fresh rather than rushed.
+
+## Addendum 250: the DOMINANT cone decline is the disjoint UNION of curved bodies, not the notch mass -- fixed with a verbatim combine (2026-06-14)
+
+Grounding the cone work in the soak decline corpus (54,313 declines) RE-ORDERED
+the priority. The single biggest cone bucket is `AssemblyFailed U block/cone`
+(~8,000 across both operand orders), dwarfing the multi-cut difference of
+Add. 249. Replaying the first such genomes verbatim showed they are DISJOINT
+(block at x~+2.7, cone at x~-2.8, AABBs cleanly apart): the union of two
+NON-touching solids, a designed feature (test `disjoint_operands_return_clean_
+answers` expects a 2-solid-cell body for disjoint BLOCKS), that was broken for
+CURVED operands.
+
+Root cause (KEEL_WALL_DEBUG rail added to assemble_boolean + finalize): for a
+disjoint block U cone the assembled body read mass = 3.094 (= cone 2.094 + block
+1.0, CORRECT) but mesh = 2.308 (WRONG), so the mass==mesh post-condition
+correctly declined. The break: the full assembly's imprint -> classify ->
+stitch_by_import -> finalize path, run on two disconnected operands, (a) spawned
+SPURIOUS faces (10 for a 6-face block + 2-face cone, one extra cone face
+tessellating to ZERO), and (b) merged the two disconnected lumps into ONE
+face-component (`connected_face_components` returned 1 component of 10 faces),
+so finalize built a single shared solid region instead of one cell per lump.
+The cone's seam-slit + apex loop is what the disjoint import/finalize mishandles;
+the all-planar block case happens to survive it (hence the passing planar test).
+mass_properties integrates per-face analytically and was right; the tessellation
+(mesh) was the casualty -> a self-inconsistent body -> decline. This is the
+dossier-57 "disconnected union of curved bodies" follow-up made concrete.
+
+Fix (boolean.rs, `combine_disjoint`): a provably-separated union does not need
+imprint/SSI/seam-glue AT ALL. The broad-phase already proves separation (AABB
+gap > 5%-of-diagonals margin, sound for tessellation-derived boxes). In that
+branch (previously a no-op `{}` that fell through to the broken assembly), build
+the result by importing each ORIGINAL operand's faces verbatim through
+import_face (byte-faithful: loops, pcurves, arc_sweep, surface all preserved),
+then let finalize derive the cells. With clean imports the two operands share no
+edge, so `connected_face_components` correctly returns 2 components and finalize
+builds void + 2 solid regions. Each lump then tessellates exactly as it did
+standalone, so mass == mesh by construction. No gate is needed because AABB
+separation is a PROOF of non-intersection (so no missed-intersection wrong is
+possible).
+
+Verification (deterministic, seed 7001, 6000 evals, before/after with the fix
+git-stashed): PASS 1168 -> 1497 (+329), DECLINE 4832 -> 4501 (-331). The +329
+are disjoint unions across every shape pair (block/cone, cone/cone, block/cyl,
+block/sph -- the last two had been declining as spurious `Tangent` faults from
+the SSI path the combine now bypasses). All 274 keel-topo lib tests pass
+(including the planar `disjoint_operands_return_clean_answers`, now routed
+through the same combine). The two FAILs in the fixed run are sphere/sphere
+DIFFERENCE `malformed` (the pre-existing sphere-split trap, mass declines
+"non-positive volume" / mesh ~ 0); they are NOT from this change (Union-only,
+and replayed directly they fail identically), surfaced only because the explorer
+is a path-dependent novelty search whose trajectory diverges once unions pass.
+The headline numbers are at ONE seed; the corpus implies the disjoint-union
+class is a much larger absolute share, but only same-seed before/after is quoted
+here (every number traces to this run).
+
+### KNOWN LIMITATIONS (open, for later research -- 2026-06-14)
+
+Recorded so they can be researched offline. Ranked roughly by decline share.
+
+KL1 -- AABB-OVERLAPPING-but-disjoint unions. `combine_disjoint` only fires when
+the AABBs are provably apart. Pairs whose boxes overlap but whose SOLIDS do not
+touch (interleaved bounding boxes) still hit the no-seam shortcut's
+`(Union,false,false)` -> assemble_boolean (broken for curved). Extending the
+combine here is UNSAFE without a non-intersection PROOF: neither the op-volume
+bound nor mass==mesh catches a missed intersection (two overlapping closed
+surfaces both integrate/tessellate to their full v_a+v_b, the union's upper
+bound, so a double-counted overlap looks in-band). Research: a rigorous
+min-distance / separating-axis certificate between two B-rep solids (analytic,
+not tessellation-derived), OR proven SSI completeness so that "no seams + not
+nested" is itself a disjointness proof (today the tilted-cyl/cyl class shows SSI
+can miss a real intersection). ~part of the 1,180 residual `AssemblyFailed U`.
+
+KL2 -- GENUINELY-overlapping curved unions/intersections/differences that fail
+assembly (the curved-boolean-assembly milestone). Seams ARE found but the curved
+stitch/finalize cannot assemble them (cone/cyl `UnassemblableSeam`, faulted
+I/D cone/block). Decline-safe; the general curved-seam stitcher is the fix.
+
+KL3 -- cone Green-slab mass cannot integrate two boundary kinds: (a) a
+WINDING +-1 full-revolution cone-APEX face (the tip above a cut) -- it declines
+"unsupported boundary winding"; it needs an apex anchor analogous to the sphere
+POLE handling already in integrate_face_green. (b) a high-degree NURBS boundary
+arc -- a plane PARALLEL to the cone axis cuts a HYPERBOLA, and Curve3 has no
+Hyperbola variant so it is stored as a degree>1 NURBS, which the Green-slab
+rejects at the `Curve3::Nurbs(n) if n.degree() > 1` guard. The node() helper
+already takes an arbitrary (point, tangent, weight), so a GENERIC NURBS arm
+(GL quadrature sampling the arc) is feasible; alternatively add a Hyperbola
+variant to Curve3. Needed before KL4.
+
+KL4 -- iso-rectangle mass OVER-COUNT of a notched cone fragment (Add. 249). A
+cone band whose notch/cut edges carry no NURBS pcurve keeps the full-azimuth iso
+box and over-counts the removed wedge (synthetic cone-minus-block probe: mass
+17.07 vs true 11.85; the Add.249 case mass 17.066 vs mesh 11.851). The intended
+fix is a cone RECTANGLE-WITNESS (analytic band area = |du|*sqrt(1+slope^2)*
+integral_v r(v), compared to the face's tessellated area) routing the mismatch
+to the Green-slab -- but that only helps once KL3 lets the Green-slab integrate
+the notched boundary. Decline-safe today (mass!=mesh declines). A prototype
+witness was written and reverted this session pending KL3.
+
+KL5 -- sphere/sphere DIFFERENCE returns a MALFORMED body (the sphere-split
+integration trap): overlapping sph - sph yields mass declined ("non-positive
+volume, orientation conventions violated") with mesh ~ 0, yet boolean returns
+Ok -- a silent-malformed the assemble gate passes. Pre-existing; mapped in the
+sphere-split-integration-trap notes (three stacked defects). The 2 explorer
+FAILs above are this class.
+
+KL6 -- cone PRIMITIVE tessellation coarseness (~0.5-1.7% mass-vs-mesh, larger
+near the apex). Tight gates (the 2% curved self-consistency band) can
+false-decline correct cone results; denser cone tessellation (#50) would let
+more cone booleans clear tight gates and shrink mesh-vs-truth gaps. Lower risk
+than KL1-KL4 but broadly enabling.
+
+Probe for reproduction: `crates/keel-topo/examples/probe_cone_notch.rs`
+(disjoint unions all-pass + the two sphere-diff FAILs characterized).
+
+## Addendum 251: research round landed (files 58-63); SSI first-milestone is decline-safe but no-pass (reverted); the sphere-difference silent-malformed escape CLOSED (2026-06-14)
+
+The curved-frontier research (New_research_0002.md) landed on origin/master as
+commit 6f333eb (dossiers 58 SSI matrix, 59 curved assembly, 60 curved mass, 61
+disjointness certificate, 62 sphere-difference trap, 63 adaptive tessellation).
+Two outcomes this session.
+
+**(1) SSI first-milestone (dossier 58): implemented, decline-safe, NO net passes,
+reverted.** Added the COAXIAL cylinder-sphere and cone-sphere rungs to
+`analytic_analytic` (exact circles: a quadratic in the axial coordinate gives
+0/1/2 circles, the structural twin of plane-sphere/sphere-sphere). The rung is
+correct (exact circle seams) and decline-safe (explorer seed 7001: PASS 1497 /
+DECLINE 4501 / FAIL 2, byte-identical to the pre-rung baseline, the 2 FAILs being
+the unrelated sphere-diff). But it produced ZERO net passes: a probe of coaxial
+cyl/cone-sphere U/I/D showed the downstream curved STITCH is geometrically broken
+for these pairs (cyl U sph mesh 7.85 vs truth 18.43; cyl I sph mesh 18.77 >
+operand; cyl D sph mesh -6.24 negative), so every case still DECLINES, now at the
+assembly gate instead of the no-seam stage. This confirms the "3-layer milestone"
+(SSI done / curved stitch dossier 59 / curved mass dossier 60): the seam alone is
+necessary-not-sufficient, exactly the reason cyl-sphere SSI was reverted twice
+before. REVERTED the rung (premature without 59/60; it only routes configs into
+the broken stitch). Dossier 58 + this trace document the layer-1 approach for
+when 59/60 land. The cone-sphere stitch break is the same family as KL2.
+
+**(2) Sphere-difference silent-malformed escape CLOSED (dossier 62).** This was
+the ONE residual DECLINE-never-WRONG violation (KL5, the 2 explorer FAILs):
+overlapping sph - sph returned an `Ok` body that `mass_properties` declines
+("non-positive volume, orientation conventions violated") with mesh ~ 0. Traced
+the actual mechanism (KEEL_BOOL_DEBUG): the FAIL genomes are NEAR-TANGENT thin
+lenses (d = 4.21 vs R + r = 4.35), dossier-62 bucket (c). The tiny seam circle
+makes `classify_faces` mis-assign BOTH of big-sphere A's fragments to
+`InsideOther`, so `select_faces` keeps NOTHING and the `kept.is_empty()` arm of
+`assemble_boolean` returned an EMPTY body for the difference WITHOUT any
+op-volume check -- the empty result (volume 0, mesh ~ 0) bypassed the
+post-condition gate entirely. That bypass is the escape. FIX: the
+`kept.is_empty()` Intersection/Difference arm now verifies the empty result
+against the exact-operand op-volume bound; if the difference lower bound
+`max(0, vA - vB)` exceeds the slack (the operands REQUIRE positive result
+volume), the empty selection is a classification failure and it DECLINES
+("empty selection violates op-volume bound") rather than emit the malformed Ok.
+DECLINE-never-WRONG restored. (Intersection lower bound is 0, so a legitimately
+empty intersection is unaffected; the A-swallowed-by-B and A == B difference
+empties have lo == 0 and still return empty correctly.)
+
+Verification: the 2 sphere-diff cases now DECLINE; 274/274 keel-topo lib tests
+pass (the legitimate empty-result tests -- A inside BIG, A == B, disjoint
+intersection -- unchanged); explorer FAIL = 0 across two sweeps (seed 7001:
+PASS 1481 / DECLINE 4519 / FAIL 0; seed 8101, 9000 evals: PASS 2186 / DECLINE
+6814 / FAIL 0). The PASS shifts vs the pre-fix run are novelty-search trajectory
+divergence (the fix only converts a wrong-empty-Ok to a DECLINE; it cannot remove
+a legitimate pass), and the lib suite confirms no functional regression.
+
+Net: KL5 escape closed (silent-malformed -> honest DECLINE). KL2 (the curved
+stitch, now also implicated for cone-sphere) and the full SSI matrix (KL via
+dossier 58) remain the overlapping-curved frontier. The dossier-62 deeper Fix A
+(reverse the kept cap sense so sph - sph PASSES rather than declines) is the
+follow-up that turns the bucket-(a) clean cap-cut into a pass.

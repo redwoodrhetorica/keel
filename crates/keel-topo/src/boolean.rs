@@ -1759,6 +1759,42 @@ fn stitch_by_import(
     finalize_imported_assembly(dst, rec, faces, wall_faces, inf, solid, vtol)
 }
 
+/// Disjoint-UNION combine (the broad-phase provably-separated case): the
+/// operands' AABBs do not meet, so the union is exactly both lumps in one
+/// body. Importing each ORIGINAL operand's faces verbatim -- no imprint,
+/// no SSI, no seam glue -- keeps every face byte-faithful, so each lump
+/// tessellates exactly as it did standalone and finalize derives one solid
+/// cell per connected component. This is the curved-operand fix: the full
+/// assembly's imprint/finalize machinery spawned spurious faces and merged
+/// the disconnected curved components into a single broken region (a cone
+/// lump's lateral split with one half tessellating to zero -> mass != mesh,
+/// the dossier-57 disconnected-union-of-curved-bodies decline). Sound only
+/// when the operands are PROVABLY non-touching (the caller guarantees it
+/// from the AABB gap), so no missed-intersection guard is needed.
+fn combine_disjoint(a: &Body, b: &Body, tol: f64) -> Result<Body, BoolFault> {
+    use crate::entity::{EdgeKey, VertexKey};
+    use crate::lineage::Derivation;
+    use std::collections::BTreeMap;
+    let vtol = tol.max(1e-7);
+    let mut dst = Body::new();
+    let inf = dst.infinite_region();
+    let mut rec = dst.begin_op();
+    let solid = dst.new_region(&mut rec, true, Derivation::Created);
+    let mut vmap: BTreeMap<(Operand, u64), VertexKey> = BTreeMap::new();
+    let mut emap: BTreeMap<(Operand, u64), EdgeKey> = BTreeMap::new();
+    let mut faces = Vec::new();
+    for (operand, src) in [(Operand::A, a), (Operand::B, b)] {
+        for sf in src.face_keys() {
+            let f = import_face(
+                &mut dst, src, sf, operand, false, &mut rec, &mut vmap, &mut emap, inf, solid,
+            )
+            .ok_or(BoolFault::AssemblyFailed("disjoint-union import failed"))?;
+            faces.push(f);
+        }
+    }
+    finalize_imported_assembly(dst, rec, faces, Vec::new(), inf, solid, vtol)
+}
+
 /// Sheet-solid boolean (parity item 28, sheet-target MVP): trim the
 /// open SHEET against the SOLID tool. Intersection keeps the part of
 /// the sheet INSIDE the solid, Difference the part OUTSIDE (a tool
@@ -3396,7 +3432,17 @@ pub fn boolean_with(
                         op,
                     });
                 }
-                BoolOp::Union => {} // disconnected union: existing assembly path
+                BoolOp::Union => {
+                    // Disconnected union: both lumps, one body. The clean
+                    // verbatim combine (no imprint/SSI) is the curved-operand
+                    // fix -- the old fall-through to the full assembly merged
+                    // disconnected curved components into one broken region.
+                    return combine_disjoint(a, b, tol).map(|body| BoolResult {
+                        body,
+                        faults: Vec::new(),
+                        op,
+                    });
+                }
             }
         }
     }
@@ -4260,14 +4306,38 @@ fn assemble_boolean(
     // is the clean EMPTY result, not a stitch failure. An empty UNION
     // of solid operands is impossible: that stays a decline.
     if kept.is_empty() && walls.is_empty() {
-        return match op {
-            BoolOp::Intersection | BoolOp::Difference => Ok(BoolResult {
-                body: Body::new(),
-                faults,
-                op,
-            }),
-            BoolOp::Union => Err(BoolFault::AssemblyFailed("union selected no faces")),
+        if op == BoolOp::Union {
+            return Err(BoolFault::AssemblyFailed("union selected no faces"));
+        }
+        // An empty Intersection/Difference is only valid when the op truly
+        // yields nothing: disjoint intersection, or a difference whose A is
+        // swallowed by B (lo == 0). If the EXACT operand volumes REQUIRE a
+        // positive result (lo > 0), an empty selection means classification
+        // failed -- the near-tangent thin-lens sphere-difference mis-classes
+        // every A fragment to one side, so select keeps nothing and the old
+        // path returned a malformed EMPTY body whose mass declines and whose
+        // mesh is ~0, slipping the post-condition gate entirely (the one
+        // residual silent-malformed escape, dossier 62 bucket c). DECLINE it
+        // rather than emit the malformed Ok (DECLINE-never-WRONG).
+        let opvol =
+            |x: &Body| x.mass_properties().map(|m| m.volume).unwrap_or_else(|_| x.mesh_volume());
+        let (va, vb) = (opvol(a), opvol(b));
+        let lo = if op == BoolOp::Difference {
+            (va - vb).max(0.0)
+        } else {
+            0.0 // intersection lower bound is always 0
         };
+        let slack = 5e-2 * (1.0 + va.max(vb));
+        if va.is_finite() && vb.is_finite() && lo > slack {
+            return Err(BoolFault::AssemblyFailed(
+                "empty selection violates op-volume bound (declined)",
+            ));
+        }
+        return Ok(BoolResult {
+            body: Body::new(),
+            faults,
+            op,
+        });
     }
     // PRIMARY assembly: the identity-preserving import-and-glue (research
     // file 47). It imports each kept fragment carrying its operand's edge
