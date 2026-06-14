@@ -7605,3 +7605,43 @@ a sub-1e-2 error). The deeper fix is correct thin-lens cap assembly, or a
 relative-tolerance gate for near-zero-volume results -- a follow-up (#52). The
 soak halted exactly as designed; relaunching to continue the 4h iteration past
 this fix.
+
+## Addendum 247: decline-frontier grind begins; curved_face_containing for cone/sphere is the shared first fix (2026-06-14)
+
+Killed the 4h soak partway and aggregated its 54,313-decline corpus into a
+ranked frontier. By family (unordered): cyl/sph 20,537 (38%), block/cone 13,535
+(25%), cone/sph 4,431, cone/cyl 4,340, block/cyl 3,403, block/sph 3,345,
+cyl/cyl 1,701, sph/sph 1,598, cone/cone 1,423. By reason: AssemblyFailed 74%,
+faulted 13%, UnassemblableSeam 13%. So cyl/sph + block/cone = 63% of declines,
+both stitch-bound.
+
+Started with block/cone (its SSI -- plane/cone conics -- already exists, so the
+blocker is purely the stitch). Trace of a tilted block/cone showed the SAME
+gap as the sphere bead (Add. 245): the cone lateral stays ONE Unknown face
+while the block splits into 8 fragments. Root cause: the multi-cut imprint
+relocates each seam component via curved_face_containing, which handled ONLY
+cylinders -- it returned false for cone and sphere faces, so the curved operand
+never split.
+
+FIX: curved_face_containing now handles CONE (height band along the axis, with
+the height-dependent radius r(h) = |radius + h*tan(half_angle)|) and SPHERE
+(band along the latitude-cut axis from a loop circle, extended by the cap
+interior point); a shared face_height_band helper backs all three arms. EFFECT:
+block/cone now SPLITS the cone (4 fragments) and advances from "unmatched
+coedge" (the unsplit-cone stitch failure) to "assembled but declined"
+(mass != mesh / "curved face without pcurve bounds"). It still DECLINES (safe,
+not yet a pass). Verified no regression / no silent wrongs: a 9,000-eval sweep
+(seeds 7000-7002) FAIL 0; full suite green; cone oracle 5k PASS 4993 / DECLINE
+7 / WRONG 0; clippy clean.
+
+This is the SHARED prerequisite for the whole mixed-curved frontier (it also
+unblocks the cyl/sph sphere split, cone/sph, cone/cyl). The remaining
+COORDINATED steps to turn block/cone declines into PASSES, in order:
+1. attach pcurve bounds to the new curved fragments so mass_properties
+   integrates them -- this makes the mass==mesh gate effective, which is what
+   keeps the next steps SAFE (the gate catches a wrong assembly instead of it
+   slipping as a silent wrong while mass declines).
+2. fix the Unknown classification of the apex cone fragment (winding ambiguous).
+3. the curved stitch (correct loops / genus) for the cone-block fragments.
+These land together (then verified end-to-end with Monte-Carlo) so the family
+flips to correct passes without a silent-wrong window.

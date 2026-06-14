@@ -4622,50 +4622,137 @@ impl Body {
     }
 }
 
+/// Min/max height of a face's loop vertices along `axis` (relative to `org`).
+fn face_height_band(
+    body: &Body,
+    fk: FaceKey,
+    org: keel_math::vec::Vec3,
+    axis: keel_math::vec::Vec3,
+) -> Option<(f64, f64)> {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for lk in body
+        .faces
+        .get(fk)
+        .map(|f| f.loops.clone())
+        .unwrap_or_default()
+    {
+        let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
+            continue;
+        };
+        let mut cur = entry;
+        loop {
+            if let Some(v) = body.fin_start_vertex(cur)
+                && let Some(x) = body.vertices.get(v)
+            {
+                let hv = (x.point - org).dot(axis);
+                lo = lo.min(hv);
+                hi = hi.max(hv);
+            }
+            let Some(next) = body.fins.get(cur).map(|f| f.next) else {
+                break;
+            };
+            cur = next;
+            if cur == entry {
+                break;
+            }
+        }
+    }
+    if lo.is_finite() { Some((lo, hi)) } else { None }
+}
+
+/// The axis of the latitude circle(s) bounding a sphere face (the coaxial
+/// cut axis), from the first circular loop edge.
+fn sphere_face_cut_axis(body: &Body, fk: FaceKey) -> Option<keel_math::vec::Vec3> {
+    for lk in body
+        .faces
+        .get(fk)
+        .map(|f| f.loops.clone())
+        .unwrap_or_default()
+    {
+        let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
+            continue;
+        };
+        let mut cur = entry;
+        loop {
+            if let Some((ck, _)) = body
+                .fins
+                .get(cur)
+                .and_then(|x| body.edges.get(x.edge))
+                .and_then(|e| e.curve)
+                && let Some(cv) = body.curves.get(ck)
+                && let Some((_, ax)) = closed_curve_center_axis(cv)
+            {
+                return Some(ax);
+            }
+            let Some(next) = body.fins.get(cur).map(|f| f.next) else {
+                break;
+            };
+            cur = next;
+            if cur == entry {
+                break;
+            }
+        }
+    }
+    None
+}
+
+/// The curved face (cylinder / cone / sphere) whose trimmed extent contains
+/// `p`. Used to relocate a seam component onto the descendant fragment that
+/// now holds it after an earlier split (the multi-cut imprint path). Cylinder
+/// and cone use a height band along their axis; the sphere uses the band
+/// along its latitude-cut axis, extended by the cap interior point.
 pub(crate) fn curved_face_containing(
     body: &Body,
     p: keel_math::vec::Vec3,
     tol: f64,
 ) -> Option<FaceKey> {
+    let etol = tol.max(1e-7);
     body.face_keys().into_iter().find(|&fk| {
-        let Some(Surface3::Cylinder(c)) = body.face_surface3(fk) else {
-            return false;
-        };
-        let r = (p - c.frame.origin) - c.frame.z * (p - c.frame.origin).dot(c.frame.z);
-        if (r.norm() - c.radius).abs() > tol.max(1e-7) {
-            return false;
-        }
-        let h = (p - c.frame.origin).dot(c.frame.z);
-        let mut hmin = f64::INFINITY;
-        let mut hmax = f64::NEG_INFINITY;
-        for lk in body
-            .faces
-            .get(fk)
-            .map(|f| f.loops.clone())
-            .unwrap_or_default()
-        {
-            let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
-                continue;
-            };
-            let mut cur = entry;
-            loop {
-                if let Some(v) = body.fin_start_vertex(cur)
-                    && let Some(x) = body.vertices.get(v)
-                {
-                    let hv = (x.point - c.frame.origin).dot(c.frame.z);
-                    hmin = hmin.min(hv);
-                    hmax = hmax.max(hv);
+        match body.face_surface3(fk) {
+            Some(Surface3::Cylinder(c)) => {
+                let d = p - c.frame.origin;
+                let h = d.dot(c.frame.z);
+                if ((d - c.frame.z * h).norm() - c.radius).abs() > etol {
+                    return false;
                 }
-                let Some(next) = body.fins.get(cur).map(|f| f.next) else {
-                    break;
-                };
-                cur = next;
-                if cur == entry {
-                    break;
-                }
+                matches!(face_height_band(body, fk, c.frame.origin, c.frame.z),
+                    Some((lo, hi)) if h >= lo - tol && h <= hi + tol)
             }
+            Some(Surface3::Cone(c)) => {
+                let d = p - c.frame.origin;
+                let h = d.dot(c.frame.z);
+                let r_at = (c.radius + h * c.half_angle.tan()).abs();
+                if ((d - c.frame.z * h).norm() - r_at).abs() > etol {
+                    return false;
+                }
+                matches!(face_height_band(body, fk, c.frame.origin, c.frame.z),
+                    Some((lo, hi)) if h >= lo - tol && h <= hi + tol)
+            }
+            Some(Surface3::Sphere(sp)) => {
+                if ((p - sp.frame.origin).norm() - sp.radius).abs() > etol {
+                    return false;
+                }
+                let Some(axis) = sphere_face_cut_axis(body, fk) else {
+                    return false;
+                };
+                let mut lo = f64::INFINITY;
+                let mut hi = f64::NEG_INFINITY;
+                if let Some((a, b)) = face_height_band(body, fk, sp.frame.origin, axis) {
+                    lo = lo.min(a);
+                    hi = hi.max(b);
+                }
+                // The cap interior point bounds the pole side of a single-rim cap.
+                if let Some(q) = body.sphere_face_interior_point(fk) {
+                    let hq = (q - sp.frame.origin).dot(axis);
+                    lo = lo.min(hq);
+                    hi = hi.max(hq);
+                }
+                let h = (p - sp.frame.origin).dot(axis);
+                lo.is_finite() && h >= lo - tol && h <= hi + tol
+            }
+            _ => false,
         }
-        hmin.is_finite() && h >= hmin - tol && h <= hmax + tol
     })
 }
 
