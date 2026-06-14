@@ -8031,3 +8031,50 @@ Remaining overlapping-cone frontier (unchanged): hyperbola cuts (axis-parallel
 block faces) still need `plane_cone` to EMIT the conic arc (dossier 58 Path A)
 plus gap (b); and `cone intersect block` still hits the curved-stitch
 unmatched-coedge (dossier 59). Decline-safe throughout.
+
+## Addendum 256: the apex fix GENERALIZED -- disconnected/banded curved booleans now pass (cone + cyl); sphere band gap identified (2026-06-14)
+
+Swept the disconnected / banded curved class (cone/cyl/sphere cut by axis-
+perpendicular slabs, `examples/probe_disc.rs`) to see what Add.254/255 unlocked.
+All these now PASS (mass == mesh == analytic truth, faults empty, validate, the
+right number of solid cells):
+- `cone(r2,h3) - slab` -> frustum + tip (disconnected): 8.415 == 8.413.
+- `cone ∩ slab` -> middle frustum band: 4.152 == 4.153.
+- `cone - thin slab` -> groove (frustum + tip): 9.856, 0 faults.
+- `cyl(r1,h4) - slab` -> two cylinders (disconnected): 9.4248 == 3 pi, exact.
+- `cyl ∩ slab` -> middle cylinder: 3.1416 == pi, exact.
+The cone cases are the direct payoff of the apex-aware classify + tessellate; the
+cyl cases confirm the disconnected-difference assembly path is sound generally
+(it was only the cone TIP that collapsed it). So the apex fix was not a one-case
+patch: it opened the disconnected/banded cone family.
+
+ONE gap remains in the sweep: `sphere(r2) - slab` -> two caps (disconnected)
+DECLINES. mass reads 33.51 = the FULL sphere (truth 21.21), i.e. the removed
+MIDDLE band is kept. Root cause (same FAMILY as the cone tip, in sphere code):
+`sphere_face_interior_point` is built for a CAP (one rim circle + a pole) -- it
+finds the rim, takes an off-rim witness vertex, and returns the POLE on that side
+(line ~1113). A middle BAND has TWO rim circles and NO pole, so it returns a pole
+that lies OUTSIDE the band (beyond its rims); that pole is outside the slab, so
+the band classifies Outside and is kept -> full-sphere mass. The intended fix is
+the sphere analog of the cone classify fix: detect the two-rim band and return a
+MID-LATITUDE point between the rims (z = (z1+z2)/2 on the sphere), which lands in
+the slab and classifies the band correctly.
+
+ATTEMPTED and REVERTED: a first cut (return the mid-latitude point whenever the
+face has >= 2 distinct-latitude circle rims) REGRESSED 3 sphere cap lib tests --
+a cap legitimately carries >= 2 circle rims in some imprint topologies (the
+seam-crossing / ring cases the existing off-rim-witness logic handles), so the
+naive detector mis-dropped them. The proper fix must distinguish a true BAND
+(material on both axial sides of the face) from a CAP, not merely count rims.
+AND even with the classify corrected, the band test then surfaced a deeper
+blocker: the disconnected sphere caps hit the curved-stitch unmatched-coedge
+(dossier 59), so the full sphere - slab pass needs the stitch work too. So the
+sphere disconnected/banded case is a genuine sphere-specific sub-project (a
+band-vs-cap interior point + tessellate_sphere band handling + the curved
+stitch), deferred -- unlike the cone, where the same lesson was a one-line apex
+add. Decline-safe throughout (sphere - slab DECLINES, never WRONG).
+
+Next, in order: (1) the sphere two-rim-band interior point (this gap, a localized
+sphere-analog fix + a tessellate_sphere band check); (2) the hyperbola cuts
+(plane_cone Path A + gap b, dossier 58/60); (3) the curved stitch
+unmatched-coedge (dossier 59). All decline-safe today.
