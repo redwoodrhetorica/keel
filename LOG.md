@@ -7879,3 +7879,49 @@ stitch, now also implicated for cone-sphere) and the full SSI matrix (KL via
 dossier 58) remain the overlapping-curved frontier. The dossier-62 deeper Fix A
 (reverse the kept cap sense so sph - sph PASSES rather than declines) is the
 follow-up that turns the bucket-(a) clean cap-cut into a pass.
+
+## Addendum 252: overlapping-curved 3-layer milestone STARTED -- layer 3 (curved mass) part 1: cone-apex anchor + cone area-witness (branch curved-overlap-booleans) (2026-06-14)
+
+Started the overlapping-curved boolean milestone (dossier 58 SSI matrix / 59
+curved stitch / 60 curved mass) on branch `curved-overlap-booleans` off the
+committed publish-prep work. Began with layer 3 (the mass gate that guards every
+assembled curved result), per dossier 60's recommended first milestone (the
+narrowest fix with an exact oracle).
+
+**Gap (a): the cone-APEX anchor** in `integrate_face_green` (the exact dual of
+the sphere POLE anchor). A full-revolution cone-tip face (winding +-1, one rim
+circle) previously declined "unsupported boundary winding"; now it anchors the
+v-slab at the apex axial height `v_apex = -r0/tan(alpha)`. The apex Jacobian
+|P_u x P_v| = v cos(alpha) vanishes there (removable singularity) and the slab
+quadrature samples strictly between the apex and the rim, so the integrand is
+never evaluated at the apex. Validated to the EXACT cone volume (1/3) pi r^2 h to
+1e-9 (new regression test `cone_apex_anchor_green_matches_cone_volume`, which
+calls the boundary-flux path directly since the iso path handles a clean tip).
+
+**Gap (c): the cone area-WITNESS** in `integrate_curved_face` (the dual of the
+sphere rectangle-witness). A notched / partial-azimuth cone fragment whose cut
+edges carry no NURBS pcurve kept the full-azimuth iso box and the iso-rectangle
+integral OVER-counted the removed wedge (the block/cone 17.07-vs-11.85 over-
+count). The witness compares the analytic band lateral area |u1-u0| *
+sqrt(1+slope^2) * integral_v(r0 + v*slope) to the face's tessellation; on
+mismatch it routes to the Green-slab (now apex-anchored). A clean full band/tip
+matches within tessellation coarseness and stays on the exact iso path (verified:
+plain cones still integrate to the exact volume; the witness does not false-fire).
+
+Status: decline-safe foundations, NO decline-reduction yet, by design. 276/276
+keel-topo lib tests pass; explorer seed 7001 PASS 1474 / DECLINE 4526 / FAIL 0
+(the -7 PASS vs Add.251 is novelty-search trajectory noise; the witness fires
+only on already-declining area-mismatch cones, so no pass becomes a decline).
+The reason there is no PASS gain yet: clean cone tips already pass via the iso
+path, and the notched block/cone fragments now route to the Green-slab but
+DECLINE there on their HYPERBOLIC cut edges (a plane parallel to the cone axis
+cuts a hyperbola, stored as a deg>1 NURBS the boundary integrator rejects).
+
+NEXT (to turn the foundations into passes): gap (b), the generic boundary-arc
+arm (drop the `Curve3::Nurbs(n) if n.degree() > 1` guard; GL-sample any Curve3
+for (point, tangent), adaptive panels for rational conic arcs), which unblocks
+block/cone end-to-end (apex anchor + witness + generic arm). Then layer 1 (re-add
+the coaxial cone-sphere/cyl-sphere SSI rungs) + layer 2 (dossier 59 canonical
+seam identity + seam-aware periodic split) for the overlapping cone-curved
+families. The cone-apex anchor and area-witness are the reusable layer-3 base all
+of those land on.
