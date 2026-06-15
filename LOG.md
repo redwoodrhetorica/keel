@@ -8228,3 +8228,29 @@ vanishes from both operands together or from neither. Until then the offset
 coaxial cone-cylinder intersection / (cone - cyl) DECLINE (decline-safe); the
 committed rung (Add.259) and its union / (cyl - cone) clean passes stand. The
 contract HELD: the soak gate stopped the wrong from shipping. [[kernel-known-limitations]]
+
+## Addendum 261: the SYMMETRIC phantom-clip ALSO fails (166 wrongs) -- the containment-drop heuristic is unsound, not just asymmetric (2026-06-15)
+
+Tested the Add.260 "correct approach": the SYMMETRIC drop (filter the shared seam
+list at the top of `assemble_boolean`, dropping a seam from BOTH operands when it
+lies outside a PLANAR face of its pair, via the robust `planar_face_contains` on
+the ORIGINAL un-imprinted faces, biased hard toward keeping -- 24 samples,
+curved/unreadable faces kept). Offset coaxial cone-cylinder still 4/4 PASS, 278
+lib tests green -- but the 20k soak got WORSE: PASS 4986 / DECLINE 14848 /
+**FAIL 166** (vs baseline 4966/15034/0 and the asymmetric 5655/14231/114). REVERTED.
+
+Verdict: the asymmetry was NOT the root cause. Dropping a seam that the heuristic
+calls "outside a planar face" is unsound PERIOD -- symmetric removal destroys
+REAL topology (more wrongs, and it loses the +689 passes the asymmetric quirk had
+produced). Many seams my test flags exterior are genuinely needed (boundary-rim
+contacts, seams whose relevant arc the 24 samples miss, seams the face needs once
+RESHAPED by sibling seams). A plane-frame point-in-polygon containment cannot
+distinguish a true cap phantom (cone-lateral circle truly off the cyl cap) from a
+needed seam. The cone-cylinder cap case is genuinely special.
+
+Conclusion: do NOT re-attempt a containment-DROP. The real fix is to TRIM the seam
+CURVE to the trimmed face boundary (keep the in-face arc, discard the out-of-face
+arc) rather than drop-or-keep whole, which is effectively the imprint/classify
+problem and needs proper research. Net for the session: the cone-cylinder SSI rung
+(Add.259) stands committed (FAIL=0); offset inter / (cone-cyl) stay decline-safe.
+The honesty net (soak FAIL gate) did exactly its job twice. [[kernel-known-limitations]]
