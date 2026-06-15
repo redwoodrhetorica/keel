@@ -4770,7 +4770,7 @@ pub fn imprint(a: &Body, b: &Body, tol: f64) -> Result<(Body, Body), BoolFault> 
 
 /// Endpoints of a seam curve (sample at the parameter ends; closed
 /// curves return the seam point twice).
-fn curve_point(c: &keel_geom::curve::Curve3, t: f64) -> keel_math::vec::Vec3 {
+pub(crate) fn curve_point(c: &keel_geom::curve::Curve3, t: f64) -> keel_math::vec::Vec3 {
     use keel_geom::curve::Curve3;
     match c {
         Curve3::Nurbs(n) => {
@@ -4788,7 +4788,7 @@ fn curve_endpoints(c: &keel_geom::curve::Curve3) -> (keel_math::vec::Vec3, keel_
 }
 
 /// Distance from point `p` to the segment `a`-`b` in 3D.
-fn seg_dist3(p: keel_math::vec::Vec3, a: keel_math::vec::Vec3, b: keel_math::vec::Vec3) -> f64 {
+pub(crate) fn seg_dist3(p: keel_math::vec::Vec3, a: keel_math::vec::Vec3, b: keel_math::vec::Vec3) -> f64 {
     let ab = b - a;
     let len2 = ab.dot(ab);
     let t = if len2 < 1e-300 {
@@ -5840,7 +5840,14 @@ fn imprint_operand(
                     }
                     _ => false,
                 };
+                // A NON-planar encircling NURBS seam (the cyl/cyl quartic wrap)
+                // uses the dossier-64 periodic-domain band split (close each
+                // band through the seam-slit sub-edge), not the antipode spur
+                // that collapses it. Routed before the synthesize/spur path.
+                let wrap_nurbs =
+                    wraps && matches!(curve, keel_geom::curve::Curve3::Nurbs(_));
                 if wraps
+                    && !wrap_nurbs
                     && !working.closed_curve_crosses_boundary(target, curve, tol)
                     && let Err(e) = working.synthesize_lateral_seam(target)
                 {
@@ -5849,7 +5856,9 @@ fn imprint_operand(
                 }
                 let _prof = crate::profile::Scope::new(&crate::profile::IMPRINT_OPS_NS);
                 crate::profile::count(&crate::profile::IMPRINT_OPS_CALLS);
-                let res = if working.closed_curve_crosses_boundary(target, curve, tol) {
+                let res = if wrap_nurbs {
+                    working.imprint_cylinder_wrap_bands(target, curve, tol)
+                } else if working.closed_curve_crosses_boundary(target, curve, tol) {
                     working.imprint_closed_curve_crossing(target, curve, tol)
                 } else {
                     working.imprint_closed_curve(target, curve, tol)
@@ -6133,32 +6142,24 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 }
             }
             match intersect_surfaces(&ref_a, &ref_b, tol) {
-                // The crossing-pair imprint is LANDED (task 29): two
-                // exact closed conics on cylinder pairs assemble (the
-                // Steinmetz oracle pins 16/3 exactly). The decline arm
-                // below now guards only the residue: crossing-cylinder
-                // SSI that is NOT the exact two-closed-conic form
-                // (approximate curves, open branches) still has no
-                // assembly path.
+                // Cylinder/cylinder crossing pairs now ASSEMBLE through the
+                // imprint: exact two-closed-conic seams (Steinmetz, task 29) via
+                // the crossing imprint, and NON-planar encircling NURBS wraps
+                // (the unequal-radius quartic) via the dossier-64 periodic-domain
+                // band split (imprint_cylinder_wrap_bands). The former blanket
+                // decline is gone. Only a genuinely OPEN cyl/cyl seam (a
+                // degenerate / tangent branch that does not close) has no wrap to
+                // band-split and still declines; the mass==mesh gate + op-volume
+                // bound backstop any residue (soak FAIL=0 both seeds, guard off).
                 Ok(SsiResult::Curves(cs))
                     if both_cyl
-                        && !(cs.len() == 2
-                            && cs.iter().all(|c| {
-                                c.closed
-                                    && c.tol_achieved == 0.0
-                                    && matches!(
-                                        c.curve,
-                                        keel_geom::curve::Curve3::Circle(_)
-                                            | keel_geom::curve::Curve3::Ellipse(_)
-                                    )
-                            })) =>
+                        && !cs.is_empty()
+                        && !cs.iter().all(|c| c.closed)
+                        && cs
+                            .iter()
+                            .any(|c| a.curve_on_cylinder_face(fa, &c.curve, tol)) =>
                 {
-                    if cs
-                        .iter()
-                        .any(|c| a.curve_on_cylinder_face(fa, &c.curve, tol))
-                    {
-                        faults.push(BoolFault::UnassemblableSeam(id_a, id_b));
-                    }
+                    faults.push(BoolFault::UnassemblableSeam(id_a, id_b));
                 }
                 Ok(SsiResult::Curves(cs)) => {
                     for c in cs {

@@ -8681,3 +8681,42 @@ pass-NEUTRAL (decline counts 15206/15268 byte-identical to baseline -- dormant f
 current cases, exercised once dossier-64 banding produces the multi-loop wall).
 NEXT: dossier #64 banding (the gateway) on the curved-seam-split branch.
 [[kernel-known-limitations]]
+
+## Addendum 275: cyl/cyl BREAKTHROUGH -- the periodic-domain band split lands; 3 of 4 unequal-perpendicular ops PASS exact (2026-06-15)
+
+Dossier #64's periodic-domain seam split (the "only genuinely-new algorithm")
+is IMPLEMENTED and the unequal-radius perpendicular cylinder/cylinder boolean
+(probe_cc2: A z-cyl r1, B x-cyl r0.6) now ASSEMBLES. Three of four ops PASS with
+mass == mesh == truth (valid):
+- A n B: mass 2.15496 (== exact bicylinder), mesh 2.136 (~0.9% chord), valid.
+- A - B: mass 10.4114 (== exact), valid.
+- B - A: mass 2.3689 (== exact), valid.
+- A u B: mass ALSO exact (14.935) but one stub under-tessellates (the -x stub
+  meshes 477 tris vs the symmetric +x stub's 5618: the SSI loop's curve covers
+  only partial theta on B's wall in the (theta,h) stencil) -> mesh 14.12 -> the
+  op DECLINES SAFELY (exact mass != wrong mesh; never WRONG). One follow-up.
+
+THREE pieces, all on the curved-seam-split branch:
+1. `imprint_cylinder_wrap_bands` (imprint.rs, dossier 64 Q2.2): an encircling
+   NON-planar NURBS seam splits a cylinder lateral by splitting the seam slit at
+   the wrap crossing S and `mef`-ing the wrap edge between the TWO fins ENDING at
+   S, so each band closes THROUGH a slit sub-edge (BELOW = rim+slit+wrap, ABOVE =
+   wrap+slit+rim) -- a positive-area strip, NOT the antipode spur that collapsed
+   to zero area (Add.273). `find_curve_seam_line_crossing` locates S from the
+   curve (no plane); the wrap_nurbs dispatch routes non-planar wraps here.
+2. Mass winding normalization (massprops.rs): the barrel between two wraps nets
+   winding +-2 in u (the existing task-41 per-LOOP flip cannot fix a SINGLE loop
+   carrying two same-winding wrap fins). Added a PER-FIN fallback gated to
+   |net| >= 2 (the genuine multi-wrap band), flipping co-winding full-revolution
+   fins to net 0; the area-sign normalization absorbs the global sign. Gated to
+   >= 2 so a +-1 cone-tip / sphere-cap still anchors at the apex / pole (the
+   |net|>=2 gate fixed a block/cone union regression an earlier broader flip
+   caused: soak found 5 FAILs, now 0).
+3. The cylinder rectangle-witness (Add 274) routes the multi-loop wall to the
+   Green-slab; the per-fin flip makes its barrel integrate exactly.
+Guard finalized: cyl/cyl now assembles through the imprint; only a genuinely
+OPEN cyl/cyl seam (degenerate/tangent) still declines. Soak FAIL=0 both seeds
+(20k, guard off). The band split is the gateway prototype for ALL non-coaxial
+quadric quartics (cyl/sph, cone/sph). Remaining: the A u B stub-tessellation
+(partial-theta wrap sampling) and skew/tilted cyl/cyl (general quartic SSI).
+[[kernel-known-limitations]]

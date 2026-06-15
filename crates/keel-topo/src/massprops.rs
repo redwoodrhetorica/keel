@@ -1187,11 +1187,14 @@ impl Body {
         // radius on a cylinder and R cos(lat) on a sphere.
         let mut nodes: Vec<(f64, f64, f64)> = Vec::new();
         let mut net_du = 0.0;
-        // Per-loop winding attribution (the orientation normalization
-        // below and the debug rail).
+        // Per-loop AND per-fin winding attribution (the orientation
+        // normalization below and the debug rail).
         let cur_li = core::cell::Cell::new(0usize);
+        let cur_fin = core::cell::Cell::new(0usize);
         let mut loop_du: Vec<f64> = vec![0.0; face.loops.len()];
+        let mut fin_du: Vec<f64> = vec![0.0; fins_c.len()];
         let mut node_li: Vec<usize> = Vec::new();
+        let mut node_fin: Vec<usize> = Vec::new();
         let mut node = |p: Vec3, dp: Vec3, wt: f64| {
             let w = p - o;
             let (x, y) = (w.dot(ex), w.dot(ey));
@@ -1204,11 +1207,14 @@ impl Body {
             let wu = wt * dp.dot(theta_hat) / nrm;
             net_du += wu;
             loop_du[cur_li.get()] += wu;
+            fin_du[cur_fin.get()] += wu;
             node_li.push(cur_li.get());
+            node_fin.push(cur_fin.get());
             nodes.push((su.atan2(cu), vmap(w), wu));
         };
-        for (li, fc) in &fins_c {
+        for (fi, (li, fc)) in fins_c.iter().enumerate() {
             cur_li.set(*li);
+            cur_fin.set(fi);
             match fc {
                 FinCurve::Seg(a, b2) => {
                     for (xj, wj) in GL8_X.iter().zip(GL8_W) {
@@ -1293,6 +1299,44 @@ impl Body {
                         n.2 = -n.2;
                     }
                     net_du += n.2;
+                }
+            }
+        }
+        // PER-FIN fallback (the cyl/cyl barrel, dossier 64): when a SINGLE
+        // loop carries two same-winding full-revolution wrap fins (the band
+        // between two encircling seams), the per-loop flip above cannot fix it
+        // (no ring loop to flip), so the net stays +-2 tau and a cylinder
+        // declines. Flip individual co-winding full-revolution fins until the
+        // net vanishes; the area-sign normalization below absorbs the global
+        // sign, so any net-zeroing choice integrates correctly.
+        if !is_sphere {
+            let mut net = (net_du / tau).round() as i64;
+            // ONLY the genuine multi-wrap band (|net| >= 2: a cylinder/cone
+            // barrel bounded by two same-winding full-revolution wraps). A net
+            // of +-1 is a cone-tip / sphere-cap that the apex / pole anchor in
+            // PASS 2 handles; flipping a rim fin here would zero the net and
+            // STEAL that anchor case, mis-integrating it (the block/cone union
+            // regression). Leave +-1 to the anchors.
+            if net.abs() >= 2 {
+                let mut flipf = vec![false; fin_du.len()];
+                for fi in 0..fin_du.len() {
+                    if net == 0 {
+                        break;
+                    }
+                    let w = (fin_du[fi] / tau).round() as i64;
+                    if w != 0 && w.signum() == net.signum() {
+                        flipf[fi] = true;
+                        net -= 2 * w;
+                    }
+                }
+                if flipf.iter().any(|&f| f) {
+                    net_du = 0.0;
+                    for (i, n) in nodes.iter_mut().enumerate() {
+                        if flipf[node_fin[i]] {
+                            n.2 = -n.2;
+                        }
+                        net_du += n.2;
+                    }
                 }
             }
         }

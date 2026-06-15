@@ -722,7 +722,7 @@ impl Body {
                 let mut pts: Vec<(f64, f64)> = Vec::new();
                 let mut cur = entry;
                 while let Some(fin) = self.fins.get(cur) {
-                    for p in self.fin_curve_samples(cur, 24).unwrap_or_default() {
+                    for p in self.fin_curve_samples(cur, 32).unwrap_or_default() {
                         let w = p - origin;
                         let wp = w - ez * w.dot(ez);
                         pts.push((wp.dot(ey).atan2(wp.dot(ex)), w.dot(ez)));

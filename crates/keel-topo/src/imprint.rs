@@ -413,6 +413,140 @@ impl Body {
             .is_some()
     }
 
+    /// Where an encircling NON-planar seam (no single plane) crosses a
+    /// boundary LINE edge (the periodic seam generatrix) of `face`. Returns
+    /// (crossed line edge, the crossing projected onto that line, the curve
+    /// parameter t in [0,1) at the crossing). The non-planar dual of
+    /// `find_planar_seam_crossing`.
+    fn find_curve_seam_line_crossing(
+        &self,
+        face: FaceKey,
+        curve: &Curve3,
+        tol: f64,
+    ) -> Result<(crate::entity::EdgeKey, Vec3, f64), TopoError> {
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        const N: usize = 360;
+        let mut best: Option<(crate::entity::EdgeKey, Vec3, f64, f64)> = None;
+        for lk in loops {
+            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            loop {
+                if let Some(ek) = self.fins.get(cur).map(|f| f.edge)
+                    && let Some(e) = self.edges.get(ek)
+                {
+                    let is_line = matches!(
+                        e.curve.and_then(|(ck, _)| self.curves.get(ck)),
+                        Some(Curve3::Line(_)) | None
+                    );
+                    let a = self.vertices.get(e.bounds.0).map(|v| v.point);
+                    let b = self.vertices.get(e.bounds.1).map(|v| v.point);
+                    if is_line
+                        && let (Some(a), Some(b)) = (a, b)
+                    {
+                        for i in 0..N {
+                            let t = i as f64 / N as f64;
+                            let pp = crate::boolean::curve_point(curve, t);
+                            let d = crate::boolean::seg_dist3(pp, a, b);
+                            if d <= tol && best.is_none_or(|(_, _, _, bd)| d < bd) {
+                                let ab = b - a;
+                                let s = if ab.dot(ab) > 1e-300 {
+                                    ((pp - a).dot(ab) / ab.dot(ab)).clamp(0.0, 1.0)
+                                } else {
+                                    0.0
+                                };
+                                best = Some((ek, a + ab * s, t, d));
+                            }
+                        }
+                    }
+                }
+                let Some(nx) = self.fins.get(cur).map(|f| f.next) else {
+                    break;
+                };
+                cur = nx;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        best.map(|(e, p, t, _)| (e, p, t)).ok_or(TopoError::Precondition(
+            "wrap imprint: no seam-line crossing for non-planar seam",
+        ))
+    }
+
+    /// Imprint an encircling NON-planar NURBS seam on a cylinder lateral by
+    /// the periodic-domain band split (dossier 64 Q2.2): split the seam slit
+    /// at the wrap's crossing S, then `mef` the wrap edge between the TWO fins
+    /// ENDING at S. That makes each band close THROUGH a seam-slit sub-edge
+    /// (BELOW = bottom rim + slit + wrap; ABOVE = wrap + slit + top rim), a
+    /// full-width strip of strictly positive (u,v) area, instead of the
+    /// antipode spur that collapses to zero area (Add.273). Two encircling
+    /// seams reach this once each via the multi-component relocation, giving
+    /// three bands.
+    pub(crate) fn imprint_cylinder_wrap_bands(
+        &mut self,
+        face: FaceKey,
+        curve: &Curve3,
+        tol: f64,
+    ) -> Result<ImprintReport, TopoError> {
+        let surf = self.face_analytic_surface(face)?;
+        let (pcurve, _seam3) = self.curve_pcurve_on(face, curve, &surf, tol)?;
+        let (slit_edge, p, _tp) =
+            self.find_curve_seam_line_crossing(face, curve, tol.max(1e-7))?;
+        let se = self.split_edge(slit_edge, p)?;
+        // The slit sub-edges meet at S in WHICHEVER loop the crossed edge
+        // belonged to (loops[0] on a pristine wall, a band loop on a wall
+        // already split by a prior wrap). Pick the loop with two fins at S.
+        let lp = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .find(|&l| self.loop_fins_ending_at_vertex(l, se.vertex).len() == 2)
+            .ok_or(TopoError::Precondition(
+                "wrap-bands: no loop with two fins at the crossing",
+            ))?;
+        let fins = self.loop_fins_ending_at_vertex(lp, se.vertex);
+        let (fin_a, fin_b) = (fins[0], fins[1]);
+        let surf_key = self.faces.get(face).and_then(|f| f.surface);
+        // The wrap edge c (S -> S): the mef splits the lateral into the two
+        // bands; each keeps a slit sub-edge so neither loop is degenerate.
+        let mef = self.mef(fin_a, fin_b, surf_key)?;
+        let c_edge = mef.edge;
+        let new_face = mef.face;
+        let pkey = self.add_curve(Curve3::Nurbs(pcurve));
+        let ckey = self.add_curve(curve.clone());
+        if let Some(e) = self.edges.get_mut(c_edge) {
+            e.curve = Some((ckey, true));
+        }
+        let radial = self
+            .edges
+            .get(c_edge)
+            .map(|e| e.radial.clone())
+            .unwrap_or_default();
+        for fk in radial {
+            if let Some(f) = self.fins.get_mut(fk) {
+                f.pcurve = Some((pkey, true));
+            }
+        }
+        if let Some((sk, sense)) = surf_key
+            && let Some(nf) = self.faces.get_mut(new_face)
+        {
+            nf.surface = Some((sk, sense));
+        }
+        self.debug_validate();
+        Ok(ImprintReport {
+            edge: c_edge,
+            faces: vec![face, new_face],
+        })
+    }
+
     /// Imprint a CLOSED planar curve that CROSSES a boundary line edge
     /// of `face` (a cylinder's vertical seam): split the seam at the
     /// crossing point P, then base the closed curve edge at P (`mef`
