@@ -8356,3 +8356,29 @@ the self-consistent-wrong catcher; accurate mesh only tightens mass==mesh for
 correct bodies. This is the ROOT unblock for the sphere tessellation CLIP (Add.263)
 -- the flat-cone soak false-positive is gone. NEXT: re-apply the clip and soak both
 to FAIL=0 -> the sphere 3-zone carve lands. [[kernel-known-limitations]]
+
+## Addendum 265: the sphere tessellation rim-clip LANDS -- the 3-zone sphere carve passes (caps + band), dominant-class first conversion (2026-06-15)
+
+With the Add.264 mesh_volume recenter removing the flat-cone soak false-positive,
+re-applied the Add.263 sphere tessellation clip: `tessellate_sphere` CLIPS each
+grid triangle to the rim half-spaces (cap plane + a band's open-arc planes) via
+`clip_half_space` (Sutherland-Hodgman), then fan-triangulates, instead of
+keep-or-drop by centroid. A cut not aligned to a latitude grid row no longer lets
+boundary triangles overshoot the rim.
+
+Result: the SPHERE 3-ZONE CARVE PASSES. `sph - slab` (two pole caps) and
+`sph n slab` (pole-free mid band) both mass == mesh == truth (21.206/21.142,
+12.305/12.256); single-cut caps still pass; the block-bite and all sphere socket
+rails unaffected. Combined soak (mesh recenter + clip) seed 1: FAIL 0 (PASS 4794;
+the seed-1 trajectory explores few 3-zone sphere carves so the soak PASS is flat,
+but the carve is verified by `probe_sphcut` and locked by the test). 280 -> 282
+lib tests pass. Tests `sphere_slab_carve_three_zones_pass` +
+`sphere_band_interior_point_is_on_the_band`.
+
+This is the first real conversion in the DOMINANT decline class's blocker: the
+sphere carve (cyl/sph + cone/sph + sph/sph all gated on it). The three sphere
+fixes that compose it: band-classify interior point (Add.262), offset-robust
+mesh_volume (Add.264), tessellation rim-clip (Add.265). NEXT: re-add the coaxial
+cylinder_sphere SSI rung (reverted earlier ONLY because this sphere downstream was
+broken -- now fixed), which should start converting the cyl/sph class itself.
+[[sphere-split-integration-trap]] [[kernel-known-limitations]]

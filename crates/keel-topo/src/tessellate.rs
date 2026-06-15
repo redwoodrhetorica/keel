@@ -1309,16 +1309,17 @@ impl Body {
         let np = arc_segments(tau, radius, tol, 60);
         let mut tris = Vec::new();
         let sgn = if sense { 1.0 } else { -1.0 };
-        let on_cap = |q: Vec3| -> bool {
-            let cap_ok = match cap {
-                Some((cc, ax, side)) => ((q - cc).dot(ax) * side) >= 0.0,
-                None => true,
-            };
-            cap_ok
-                && arc_planes
-                    .iter()
-                    .all(|(c, n, s)| ((q - *c).dot(*n)) * s >= 0.0)
-        };
+        // Trim half-spaces: the cap rim plane (closed SSI circle) OR the open
+        // arc planes (a band's meridian-split rims, a spherical polygon's
+        // arcs). Each grid triangle is CLIPPED to these planes (LOG Add. 265),
+        // not kept-or-dropped by its centroid: a cut that does not align with a
+        // latitude grid row otherwise lets boundary triangles overshoot the rim
+        // (a sphere cap read 1.9 percent high, sphere-carve PASS blocker).
+        let mut half_spaces: Vec<(Vec3, Vec3, f64)> = Vec::new();
+        if let Some(c) = cap {
+            half_spaces.push(c);
+        }
+        half_spaces.extend(arc_planes.iter().copied());
         for i in 0..nt {
             let t0 = pi * i as f64 / nt as f64;
             let t1 = pi * (i + 1) as f64 / nt as f64;
@@ -1330,9 +1331,21 @@ impl Body {
                 let c = pt(t1, p1);
                 let d = pt(t0, p1);
                 for tri in [[a, b, c], [a, c, d]] {
-                    let cen = (tri[0] + tri[1] + tri[2]) * (1.0 / 3.0);
-                    if on_cap(cen) {
-                        tris.push(orient(tri, (cen - center) * sgn));
+                    let mut poly: Vec<Vec3> = tri.to_vec();
+                    for (q, n, s) in &half_spaces {
+                        if poly.len() < 3 {
+                            break;
+                        }
+                        poly = clip_half_space(&poly, *q, *n, *s);
+                    }
+                    if poly.len() < 3 {
+                        continue;
+                    }
+                    let cen = poly.iter().copied().fold(Vec3::ZERO, |acc, x| acc + x)
+                        * (1.0 / poly.len() as f64);
+                    let outward = (cen - center) * sgn;
+                    for k in 1..poly.len() - 1 {
+                        tris.push(orient([poly[0], poly[k], poly[k + 1]], outward));
                     }
                 }
             }
@@ -1375,6 +1388,32 @@ impl Body {
         }
         None
     }
+}
+
+/// Clip a convex polygon to the half-space `(p - q).dot(n) * sign >= 0`
+/// (one Sutherland-Hodgman pass). Used to trim sphere grid triangles
+/// exactly to a rim plane so the cap/band mesh does not overshoot a
+/// non-grid-aligned cut. Returns the clipped polygon in order (empty if
+/// fully outside).
+fn clip_half_space(poly: &[Vec3], q: Vec3, n: Vec3, sign: f64) -> Vec<Vec3> {
+    let dist = |p: Vec3| (p - q).dot(n) * sign;
+    let m = poly.len();
+    let mut out = Vec::with_capacity(m + 1);
+    for i in 0..m {
+        let a = poly[i];
+        let b = poly[(i + 1) % m];
+        let (da, db) = (dist(a), dist(b));
+        let ain = da >= -1e-12;
+        let bin = db >= -1e-12;
+        if ain {
+            out.push(a);
+        }
+        if ain != bin && (da - db).abs() > 1e-300 {
+            let t = da / (da - db);
+            out.push(a + (b - a) * t);
+        }
+    }
+    out
 }
 
 /// Order a triangle's vertices so its geometric normal points along

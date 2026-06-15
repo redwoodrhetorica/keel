@@ -7056,6 +7056,43 @@ mod tests {
     }
 
     #[test]
+    fn sphere_slab_carve_three_zones_pass() {
+        // The sphere 3-zone carve: a sphere cut by a slab into two pole caps
+        // plus a pole-free mid BAND. Difference keeps the two caps;
+        // intersection keeps the band. Both PASS (mass == mesh == truth) only
+        // with all three sphere fixes: the band-classify interior point
+        // (Add.262), the sphere tessellation rim-clip (Add.265), and the
+        // offset-robust mesh_volume (Add.264). Before, sph - slab read the
+        // FULL-sphere mass (classify mis-kept the band).
+        let mut sphere = Body::new();
+        sphere
+            .sphere(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0)
+            .unwrap();
+        let mut slab = Body::new();
+        slab.block(Vec3::new(-5.0, -5.0, -0.5), 10.0, 10.0, 1.0).unwrap();
+        let pi = core::f64::consts::PI;
+        let cap = pi * 1.5 * 1.5 * (3.0 * 2.0 - 1.5) / 3.0; // cap of height 1.5, R=2
+        let full = 32.0 * pi / 3.0;
+        let check = |op: BoolOp, truth: f64| {
+            let r = boolean(&sphere, &slab, op, 1e-7).unwrap_or_else(|e| panic!("declined {e:?}"));
+            assert!(r.faults.is_empty(), "faults {:?}", r.faults);
+            assert!(r.body.validate().is_ok(), "invalid body");
+            let mass = r.body.mass_properties().unwrap().volume;
+            let mesh = r.body.mesh_volume();
+            assert!(
+                (mass - truth).abs() < 2e-2 * (1.0 + truth),
+                "mass {mass} vs truth {truth}"
+            );
+            assert!(
+                (mass - mesh).abs() < 3e-2 * (1.0 + mass),
+                "mass {mass} mesh {mesh}"
+            );
+        };
+        check(BoolOp::Difference, 2.0 * cap); // two caps
+        check(BoolOp::Intersection, full - 2.0 * cap); // mid band
+    }
+
+    #[test]
     fn sphere_band_interior_point_is_on_the_band() {
         // A sphere split by a slab into THREE zones: two pole caps + a mid
         // BAND. The band has NO pole, so its classify interior point must lie
