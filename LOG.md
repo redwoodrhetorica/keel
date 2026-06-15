@@ -8720,3 +8720,73 @@ OPEN cyl/cyl seam (degenerate/tangent) still declines. Soak FAIL=0 both seeds
 quadric quartics (cyl/sph, cone/sph). Remaining: the A u B stub-tessellation
 (partial-theta wrap sampling) and skew/tilted cyl/cyl (general quartic SSI).
 [[kernel-known-limitations]]
+
+## Addendum 276: cyl/sphere quartic SSI gateway (shared cylinder branch field) lands BEHAVIOR-NEUTRAL + gated; the soak surfaced (and I diagnosed, then deferred) a mesh_volume far-component cancellation and a pre-existing sph/sph frame-dependent malformed-lens class (2026-06-15)
+
+The dominant remaining decline class is non-coaxial cylinder/sphere (~2500) and
+cone/sphere (~700) quartics. Their HARDEST piece -- the analytic SSI seam -- is
+now SOLVED and unit-tested, shipped GATED + BEHAVIOR-NEUTRAL (zero production
+change, dormant exactly like the Add-272 cyl/cyl pieces) until the sphere-side
+downstream is built. The validation soak's novelty trajectory also surfaced two
+PRE-EXISTING latent issues -- both fully diagnosed and DEFERRED (not shipped), to
+keep this increment provably pass-neutral.
+
+THE SSI GATEWAY (keel-geom/ssi.rs) -- SHIPPED, test-only:
+The cyl/cyl rung-3 closed-form branch field (Add. 275 lineage) generalizes
+verbatim: on a cylinder's own (theta, v) parametrization the OTHER quadric
+contributes a quadratic q2 v^2 + q1(theta) v + q0(theta) = 0 in the axial
+coordinate v. Extracted that engine into a shared `cyl_quadratic_branch_field`
+(disc sampling -> WRAP [disc>0 all theta: 2 closed loops encircling the axis] vs
+BITE/WINDOW [sign change: one closed loop per positive run, + branch out / -
+branch back, Chebyshev-regularized at the sqrt turnarounds] -> certified cubic
+LSQ NURBS fit, miss DECLINES). cylinder_cylinder now CALLS it (behaviour
+preserved: the Steinmetz oracle + certified-branches tests still pass). The
+non-coaxial cylinder_sphere arm (was a blanket Err) supplies q2=1, q1=2 g.z,
+q0=|g|^2-R^2 with g = (cross-section point at theta) - C, and calls the same
+engine. Three new ssi.rs tests pin it: a side-graze sphere -> ONE window loop, a
+swallowing sphere -> TWO wrap loops (every sampled point on BOTH surfaces to
+1e-5), and coaxial still returns EXACT circles (never the branch field).
+
+THE GATE (boolean.rs seam_curves) -- BEHAVIOR-NEUTRAL: a non-coaxial cyl/sphere
+PAIR declines with IntersectionFailed BEFORE the SSI runs -- EXACTLY the prior
+blanket-Err behaviour (same coaxiality threshold > tol, same fault), so the
+boolean is byte-identical to Add.275 (coaxial circles assemble; off-axis
+declines). The branch-field arm is reached ONLY by ssi.rs unit tests. Why the
+gate is the whole non-coaxial class, not just "Nurbs seam": the correct SSI now
+returns Empty when an off-axis sphere clears the lateral (sphere inside the tube
+radially); letting that through removed the spurious lateral decline and the
+cap/sphere assembly then exposed a latent gap (probe_cysph_fail: a grazing
+cyl - sph difference read 1.7% OVER the cylinder's own volume; an intersection
+self-declined via the mass!=mesh net). So the gate stays broad until the sphere
+downstream lands -- DECLINE-never-WRONG, and pass-neutral vs baseline.
+
+SOAK-SURFACED FINDINGS (diagnosed, DEFERRED -- NOT in this commit):
+1. mesh_volume far-component f64 CANCELLATION. A DISJOINT cone/cone union
+   (centres ~6.7 apart, one flat cone r3.16 h0.24) read 6.7% low and was
+   REFERENCE-DEPENDENT (origin 4.041 / first-vertex 3.881 / centroid 4.060) --
+   mass EXACT (= disjoint sum 4.232), shell valid: pure f64 catastrophic
+   cancellation, no single reference keeps coords small across a multi-unit-
+   spread mesh. Per-component recenter (sum signed volume per connected_
+   components bucket, each about its own centroid) recovers 4.215. The fix is
+   correct and ready, but it FLIPS that cone/cone FAIL->PASS, which SHIFTS the
+   novelty trajectory -> see #2. Deferred so this commit stays behavior-neutral.
+2. PRE-EXISTING sph/sph frame-dependent MALFORMED LENS. With the mesh fix applied
+   (trajectory shifted), seed 1 hit 5 FAIL:mass-mesh I sph/sph on LARGE spheres
+   (r~2-3.8). At tol 1e-7 these mass-DECLINE ("green-slab: empty boundary") or
+   self-decline (AssemblyFailed) -- a malformed/incomplete lens (mesh ~13.2 vs MC
+   truth ~19.1, NOT closed by finer tessellation). FRAME-dependent: the sphere
+   axis (genome) places the u=0 seam + poles, and the lens assembly is sensitive
+   to where the SSI circle sits relative to them (the Add-267 sphere_face_
+   interior_point sensitivity). Untouched by this work; KL5 sphere-robustness
+   territory. The fix for #1 + the hardening for #2 are a coupled NEXT increment.
+
+Validation: keel-geom 138 + keel-topo 283 (+ integration) green; boolean +
+mesh_volume behaviour is BYTE-IDENTICAL to Add.275 (cyl/sphere gated = prior Err
+path; cyl/cyl refactor behaviour-preserving; mesh_volume reverted), so the soak
+is the baseline result (FAIL=0 both seeds, gateway dormant). NEXT: the coupled
+mesh-fix + sph/sph-frame hardening, then the sphere-side cyl/sphere downstream --
+the window case first (imprint_closed_curve is already curve-agnostic via
+curve_pcurve_on_any, which inverts a NURBS onto the analytic sphere; integrate_
+face_green already handles arbitrary sphere loop windings), then the WRAP case
+needs the band fallback + multi-rim clip generalized from circle rims to NURBS.
+[[kernel-known-limitations]]

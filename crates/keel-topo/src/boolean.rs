@@ -6032,6 +6032,36 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
             // 12.5 against the exact 16/3).
             let both_cyl = matches!(ref_a, SurfaceRef::Analytic(Surface3::Cylinder(_)))
                 && matches!(ref_b, SurfaceRef::Analytic(Surface3::Cylinder(_)));
+            // Non-coaxial cylinder/sphere: the lateral seam is a quartic the
+            // SSI now resolves analytically (cyl_quadratic_branch_field) and
+            // returns Empty when the sphere clears the lateral, but the
+            // sphere-side imprint/classify/mass do not yet assemble that
+            // family, and an off-axis sphere meeting only a cap exposes
+            // downstream assembly gaps (a grazing cyl - sph difference read
+            // ~1.7% over the cylinder's own volume). Decline the whole
+            // non-coaxial cyl/sphere class -- EXACTLY the prior blanket-Err
+            // behavior, same IntersectionFailed fault -- until that
+            // downstream lands; the SSI gateway is exercised by its own unit
+            // tests (ssi.rs). Coaxial cyl/sphere (exact circles) still
+            // assembles. Matches the SSI's own coaxiality threshold (> tol).
+            let cyl_sphere_noncoaxial = match (&ref_a, &ref_b) {
+                (
+                    SurfaceRef::Analytic(Surface3::Cylinder(c)),
+                    SurfaceRef::Analytic(Surface3::Sphere(s)),
+                )
+                | (
+                    SurfaceRef::Analytic(Surface3::Sphere(s)),
+                    SurfaceRef::Analytic(Surface3::Cylinder(c)),
+                ) => {
+                    let w = s.frame.origin - c.frame.origin;
+                    (w - c.frame.z * w.dot(c.frame.z)).norm() > tol
+                }
+                _ => false,
+            };
+            if cyl_sphere_noncoaxial {
+                faults.push(BoolFault::IntersectionFailed(id_a, id_b));
+                continue;
+            }
             // COINCIDENT cylinders (coaxial, equal radius: the mated
             // pin-in-hole laterals, dossier 39 sec 5) are the curved
             // on-on class, not a crossing: no seam, an informational
