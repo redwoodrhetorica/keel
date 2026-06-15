@@ -1033,6 +1033,8 @@ fn analytic_analytic(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, 
         (Cone(_), Plane(_)) => plane_cone(b, a, tol),
         (Cone(_), Cylinder(_)) => cone_cylinder(a, b, tol),
         (Cylinder(_), Cone(_)) => cone_cylinder(b, a, tol),
+        (Cylinder(_), Sphere(_)) => cylinder_sphere(a, b, tol),
+        (Sphere(_), Cylinder(_)) => cylinder_sphere(b, a, tol),
         // Other analytic pairs route to tier 2 (one side implicitized)
         // in Task 4; until then, unsupported.
         _ => Err(GeomError::Degenerate),
@@ -1596,6 +1598,50 @@ fn cone_cylinder(cone: &Surface3, cyl: &Surface3, tol: f64) -> Result<SsiResult,
         tangential: false,
         tol_achieved: 0.0,
     }]))
+}
+
+/// Cylinder x sphere (COAXIAL rung only): 0/1/2 exact circles at the axial
+/// heights where the sphere cross-section radius equals the cylinder
+/// radius. `v = d +- sqrt(R^2 - r^2)` (d = sphere centre height on the
+/// axis). R > r -> two transversal circles; R == r -> one TANGENT circle;
+/// R < r -> Empty. Non-coaxial is a quartic and DECLINES.
+fn cylinder_sphere(cyl: &Surface3, sph: &Surface3, tol: f64) -> Result<SsiResult, GeomError> {
+    let (Surface3::Cylinder(cy), Surface3::Sphere(s)) = (cyl, sph) else {
+        unreachable!("cylinder_sphere on wrong surfaces")
+    };
+    let z = cy.frame.z;
+    let w = s.frame.origin - cy.frame.origin;
+    if (w - z * w.dot(z)).norm() > tol {
+        return Err(GeomError::Degenerate);
+    }
+    let d = w.dot(z);
+    let disc = s.radius * s.radius - cy.radius * cy.radius;
+    if disc < -tol * tol {
+        return Ok(SsiResult::Empty);
+    }
+    if disc <= tol * tol {
+        let center = cy.frame.origin + z * d;
+        let circle = Circle3::new(center, cy.frame.x, cy.frame.y, cy.radius)?;
+        return Ok(SsiResult::Curves(vec![SsiCurve {
+            curve: Curve3::Circle(circle),
+            closed: true,
+            tangential: true,
+            tol_achieved: 0.0,
+        }]));
+    }
+    let h = disc.sqrt();
+    let mut curves = Vec::new();
+    for off in [h, -h] {
+        let center = cy.frame.origin + z * (d + off);
+        let circle = Circle3::new(center, cy.frame.x, cy.frame.y, cy.radius)?;
+        curves.push(SsiCurve {
+            curve: Curve3::Circle(circle),
+            closed: true,
+            tangential: false,
+            tol_achieved: 0.0,
+        });
+    }
+    Ok(SsiResult::Curves(curves))
 }
 
 // ---- pcurve helpers --------------------------------------------------

@@ -10,8 +10,15 @@ use keel_topo::Body;
 use keel_topo::boolean::{BoolOp, boolean_multi};
 
 fn zsphere(c: Vec3, r: f64) -> Body {
+    // Match the boolean test's z_sphere: pole along +X (tilted frame).
     let mut b = Body::new();
-    b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r).unwrap();
+    let frame = Frame3 {
+        origin: c,
+        x: Vec3::new(0., 1., 0.),
+        y: Vec3::new(0., 0., 1.),
+        z: Vec3::new(1., 0., 0.),
+    };
+    b.sphere(frame, r).unwrap();
     b
 }
 

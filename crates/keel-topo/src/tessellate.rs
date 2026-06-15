@@ -1255,6 +1255,32 @@ impl Body {
         // keep only triangles on the cap side of that circle's plane;
         // a whole-sphere face (no circle edge) meshes fully.
         let cap = self.sphere_cap_trim(face);
+        // ALL closed-circle rim planes (a BAND has TWO -- a cap one): each
+        // clipped on the side toward the face interior point. `cap` returns
+        // only the FIRST, so a band tessellation overshot the second rim
+        // (a sphere band read its mesh past the far cut). LOG Add. 267.
+        let mut rim_planes: Vec<(Vec3, Vec3, f64)> = Vec::new();
+        if cap.is_some()
+            && let Some(ip) = self.face_interior_point(face)
+        {
+            for lk in self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default() {
+                for e in self.ring_edges(lk) {
+                    let Some(ed) = self.edges.get(e) else { continue };
+                    if !ed.is_closed() {
+                        continue;
+                    }
+                    if let Some((ck, _)) = ed.curve
+                        && let Some(keel_geom::curve::Curve3::Circle(ci)) = self.curves.get(ck)
+                    {
+                        let n = ci.x_axis.cross(ci.y_axis);
+                        let side = (ip - ci.center).dot(n);
+                        if side.abs() > 1e-12 {
+                            rim_planes.push((ci.center, n, side.signum()));
+                        }
+                    }
+                }
+            }
+        }
         // A spherical POLYGON face (the vertex-blend octant, item 51):
         // bounded by OPEN circle arcs, each lying in a plane; keep the
         // triangles on the face side of EVERY arc plane (side = where
@@ -1316,7 +1342,9 @@ impl Body {
         // latitude grid row otherwise lets boundary triangles overshoot the rim
         // (a sphere cap read 1.9 percent high, sphere-carve PASS blocker).
         let mut half_spaces: Vec<(Vec3, Vec3, f64)> = Vec::new();
-        if let Some(c) = cap {
+        if !rim_planes.is_empty() {
+            half_spaces.extend(rim_planes.iter().copied());
+        } else if let Some(c) = cap {
             half_spaces.push(c);
         }
         half_spaces.extend(arc_planes.iter().copied());

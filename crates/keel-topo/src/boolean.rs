@@ -1095,6 +1095,7 @@ impl Body {
                             // candidate the trimmed-domain test confirms INTERIOR,
                             // so a partial (azimuthally trimmed) band can never get
                             // an out-of-face point. Full-ring bands accept any.
+                            let mut fallback: Option<(Vec3, f64)> = None;
                             for k in 0..12 {
                                 let a = k as f64 * (core::f64::consts::TAU / 12.0);
                                 let p = center + ax * h_m + (p1 * a.cos() + p2 * a.sin()) * rho;
@@ -1104,11 +1105,32 @@ impl Body {
                                     .atan2(w.dot(s.frame.x))
                                     .rem_euclid(core::f64::consts::TAU);
                                 let vlat = (w.dot(s.frame.z) / radius).clamp(-1.0, 1.0).asin();
+                                // Pick the candidate farthest from BOTH the
+                                // parameterization seam (u=0) AND the poles
+                                // (v=+-pi/2): when the band's rim axis is not the
+                                // sphere's frame axis (a tilted sphere), the
+                                // mid-latitude ring passes through the sphere's
+                                // poles, and a pole point is degenerate (u
+                                // undefined) and mis-classifies.
+                                let to_seam = u.min(core::f64::consts::TAU - u);
+                                let to_pole = core::f64::consts::FRAC_PI_2 - vlat.abs();
+                                let margin = to_seam.min(to_pole);
+                                if fallback.map(|(_, d)| margin > d).unwrap_or(true) {
+                                    fallback = Some((p, margin));
+                                }
                                 if self.point_in_face_uv(face, (u, vlat), 1e-6)
                                     == crate::pmc::UvClass::In
                                 {
                                     return Some(p);
                                 }
+                            }
+                            // FALLBACK: a band's interior is at the mid latitude,
+                            // never a pole. If no azimuth verified in-domain (a
+                            // full-revolution band's wrap-around uv has no simple
+                            // winding), return the mid-latitude point farthest from
+                            // the u=0 seam.
+                            if let Some((p, _)) = fallback {
+                                return Some(p);
                             }
                         }
                     }
@@ -7053,6 +7075,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn coaxial_cyl_sphere_all_ops_pass() {
+        // The dominant cyl/sph decline class, coaxial rung: a rod through a
+        // ball (sphere R=2 at origin, cylinder r=1 z[-3,3], caps outside the
+        // sphere; seam circles z=+-sqrt(3)). Needs cylinder_sphere SSI + the
+        // sphere carve + the band mid-latitude fallback (seam+pole margin) +
+        // the multi-rim tessellation clip. All 4 ops mass==mesh==truth.
+        let pi = core::f64::consts::PI;
+        let s3 = 3.0_f64.sqrt();
+        let inter = pi * 2.0 * s3 + 2.0 * pi * ((16.0 / 3.0) - 3.0 * s3);
+        let sphere_v = 32.0 * pi / 3.0;
+        let cyl_v = 6.0 * pi;
+        let mut sp = Body::new();
+        sp.sphere(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0)
+            .unwrap();
+        let mut cl = Body::new();
+        cl.cylinder(
+            Frame3::from_z(Vec3::new(0., 0., -3.0), Vec3::new(0., 0., 1.)).unwrap(),
+            1.0,
+            6.0,
+        )
+        .unwrap();
+        let check = |a: &Body, b: &Body, op: BoolOp, truth: f64| {
+            let r = boolean(a, b, op, 1e-7).unwrap_or_else(|e| panic!("declined {e:?}"));
+            assert!(r.faults.is_empty(), "faults {:?}", r.faults);
+            assert!(r.body.validate().is_ok(), "invalid body");
+            let mass = r.body.mass_properties().unwrap().volume;
+            let mesh = r.body.mesh_volume();
+            assert!(
+                (mass - truth).abs() < 2e-2 * (1.0 + truth),
+                "mass {mass} vs truth {truth}"
+            );
+            assert!(
+                (mass - mesh).abs() < 3e-2 * (1.0 + mass),
+                "mass {mass} mesh {mesh}"
+            );
+        };
+        check(&sp, &cl, BoolOp::Intersection, inter);
+        check(&sp, &cl, BoolOp::Union, sphere_v + cyl_v - inter);
+        check(&sp, &cl, BoolOp::Difference, sphere_v - inter);
+        check(&cl, &sp, BoolOp::Difference, cyl_v - inter);
     }
 
     #[test]

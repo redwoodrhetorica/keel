@@ -8420,3 +8420,37 @@ its volume vs the true core - 2 lenses = 3.469) -- if so it SHOULD decline and t
 test should allow it; (2) or fix the two-dimple difference assembly mass!=mesh;
 then re-apply the band fallback (the exact change above) + cyl-sphere SSI -> the
 coaxial cyl/sph class lands. [[sphere-split-integration-trap]] [[kernel-known-limitations]]
+
+## Addendum 267: coaxial cyl-sphere LANDS -- the dominant decline class's coaxial rung passes (all 4 ops), two-dimple kept green (2026-06-15)
+
+Resolved the Add.266 hold and LANDED coaxial cyl-sphere. Three pieces compose it
+on top of the sphere carve (Add.262/264/265):
+1. `cylinder_sphere` SSI rung (ssi.rs): coaxial -> 0/1/2 exact circles at the
+   heights where the sphere cross-section radius equals the cylinder radius.
+2. Band-classify FALLBACK (boolean.rs `sphere_face_interior_point`): a band's
+   interior is at the mid latitude, never a pole. When no azimuth verifies
+   in-domain (a full-revolution band's wrap-around uv has no simple winding),
+   return the mid-latitude point with MAX margin from BOTH the parameterization
+   seam (u=0) AND the poles (v=+-pi/2) -- the two-dimple test's `z_sphere` uses an
+   X-pole frame, so the band ring passes through the sphere's poles and a
+   seam-only metric picked a degenerate pole point.
+3. Multi-rim tessellation CLIP (tessellate.rs): clip a band against ALL its
+   closed-circle rim planes (sides via the face interior point), not just the
+   first `sphere_cap_trim` plane -- a band tessellation otherwise overshot the
+   far rim (the two-dimple band meshed to z=-1.00 past its z=-0.75 rim -> mesh
+   3.98 vs mass 3.469).
+
+Result: coaxial sphere(R2) x cylinder(r1) rod-through-ball -- sph n cyl 11.745,
+sph u cyl 40.615, sph - cyl 21.766, cyl - sph 7.105 -- ALL mass==mesh==truth. The
+two-dimple sphere-sphere difference (`boolean_multi`) stays correct (3.4688). 283
+keel-topo + 135 keel-geom lib tests pass. Soak seed 1: FAIL 0 (PASS 4794,
+trajectory-noisy). Tests `coaxial_cyl_sphere_all_ops_pass` +
+`sphere_slab_carve_three_zones_pass` + the existing two-dimple test.
+
+The KEY diagnosis (why the two-dimple needed the pole but cyl-sphere the equator):
+`sphere_face_interior_point` feeds BOTH classify AND tessellation, and the band's
+mid-latitude ring orientation depends on the sphere's FRAME (axis-aligned vs the
+two-dimple's X-pole frame); the seam+pole-margin fallback + multi-rim clip make
+both correct. Coaxial cyl/sph is the dominant decline class's first big conversion.
+NEXT: general (non-coaxial) cyl-sphere is still a quartic (declines); cone-sphere
+(coaxial: 2 circles) is the next analogous rung. [[kernel-known-limitations]]
