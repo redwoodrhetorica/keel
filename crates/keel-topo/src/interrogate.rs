@@ -808,18 +808,79 @@ impl Body {
     pub fn mesh_volume(&self) -> f64 {
         let _prof = crate::profile::Scope::new(&crate::profile::MESHVOL_NS);
         crate::profile::count(&crate::profile::MESHVOL_CALLS);
+        // Signed-tetra divergence volume, summed PER CONNECTED COMPONENT and
+        // recentered about each component's OWN centroid. The closed-mesh
+        // sum is translation-invariant in exact arithmetic, but in f64 the
+        // raw form cancels catastrophically far from the reference (terms
+        // ~ coord^3 summing to a tiny volume). A SINGLE global reference
+        // cannot keep coordinates small across a body whose components are
+        // far apart: a disjoint union spanning several units leaves the far
+        // component's terms large, and a flat cone ~6 units from the
+        // reference read ~7% low, false-flagging the soak's mass==mesh band.
+        // Each connected component is independently closed (encloses its own
+        // signed volume; an inner void contributes negatively), so summing
+        // them with per-component local references is exact and keeps every
+        // coordinate small.
+        let comps = self.connected_components();
+        let mut face_comp: std::collections::BTreeMap<crate::entity::FaceKey, usize> =
+            std::collections::BTreeMap::new();
+        for (ci, comp) in comps.iter().enumerate() {
+            for &sk in comp {
+                if let Some(shell) = self.shells.get(sk) {
+                    for &(fk, _) in &shell.faces {
+                        face_comp.entry(fk).or_insert(ci);
+                    }
+                }
+            }
+        }
+        let mut buckets: Vec<Vec<[Vec3; 3]>> = vec![Vec::new(); comps.len() + 1];
+        for f in self.face_keys() {
+            if self.is_interior_wall(f) {
+                continue;
+            }
+            let ci = face_comp.get(&f).copied().unwrap_or(comps.len());
+            buckets[ci].extend(self.tessellate_face(f));
+        }
+        let mut total = 0.0;
+        for tris in &buckets {
+            if tris.is_empty() {
+                continue;
+            }
+            let r =
+                tris.iter().flatten().fold(Vec3::ZERO, |a, &p| a + p) / (3 * tris.len()) as f64;
+            total += tris
+                .iter()
+                .map(|t| (t[0] - r).dot((t[1] - r).cross(t[2] - r)))
+                .sum::<f64>()
+                / 6.0;
+        }
+        total
+    }
+
+    /// Watertightness residual: ||sum of triangle area-vectors|| / (sum of
+    /// triangle areas). A CLOSED oriented mesh has zero net area-vector (the
+    /// surface integral of a constant over a closed boundary), so this is ~0;
+    /// an OPEN mesh (cracks, missing/dropped faces, mis-stitched seams) leaves
+    /// a residual proportional to the open-boundary span. Built from EDGE
+    /// vectors only, so it is translation-invariant -- no far-from-origin
+    /// cancellation (unlike the signed volume). Used by the boolean gate to
+    /// decline a non-watertight result that the mass==mesh self-consistency
+    /// check cannot catch (mass and a non-watertight mesh can agree on a WRONG
+    /// value -- the #48 silent class, e.g. a large offset sphere/sphere lens
+    /// reading ~18-33% over the exact volume).
+    pub(crate) fn mesh_open_ratio(&self) -> f64 {
         let tris = self.all_triangles();
-        // Signed-tetra sum about a LOCAL reference (the first vertex), not the
-        // world origin: the closed-mesh divergence volume is translation-
-        // invariant, but the raw form has catastrophic cancellation far from
-        // the origin (terms ~ coord^3 summing to a tiny volume). A flat cone
-        // ~6 units out read 13% low and false-flagged the soak's mass==mesh
-        // band; recentering keeps the coordinates small and the volume exact.
-        let r = tris.first().map(|t| t[0]).unwrap_or(Vec3::ZERO);
-        tris.iter()
-            .map(|t| (t[0] - r).dot((t[1] - r).cross(t[2] - r)))
-            .sum::<f64>()
-            / 6.0
+        let mut net = Vec3::ZERO;
+        let mut area2 = 0.0;
+        for t in &tris {
+            let n = (t[1] - t[0]).cross(t[2] - t[0]);
+            net = net + n;
+            area2 += n.norm();
+        }
+        if area2 <= 1e-30 {
+            return 0.0;
+        }
+        net.norm() / area2
     }
 
     /// Axis-aligned bounding box of the body (parity item 105). Tight

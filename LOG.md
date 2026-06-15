@@ -8790,3 +8790,47 @@ curve_pcurve_on_any, which inverts a NURBS onto the analytic sphere; integrate_
 face_green already handles arbitrary sphere loop windings), then the WRAP case
 needs the band fallback + multi-rim clip generalized from circle rims to NURBS.
 [[kernel-known-limitations]]
+
+## Addendum 277: the two Add-276 deferrals SHIPPED -- per-component mesh_volume recenter + a watertightness net that converts a pre-existing sph/sph SILENT WRONG into a DECLINE (2026-06-15)
+
+Add 276 deferred two soak-surfaced findings; this addendum lands both, and in
+doing so closes a genuine DECLINE-never-WRONG hole that predates this work.
+
+THE SILENT WRONG (the reason it mattered): the 5 seed-1 "FAIL:mass-mesh I
+sph/sph" were not false-positives -- with the correct genome sphere FRAMES
+(Frame3::from_z(pos, axis), the axis places the u=0 seam + poles), large offset
+sphere/sphere INTERSECTIONS emit a lens 18-33% OVER the exact two-sphere lens
+volume (case 0: kernel 22.85 vs the closed-form 19.13; case 2: 47.06 vs 35.19),
+validate-passing, faults empty, mass IN the op-bound. BOTH honesty gates miss
+it: self-consistency passes (the body's tessellation agrees with the wrong mass
+-- the #48 self-consistent-wrong trap) and the op-bound [0, min(volA,volB)] =
+[0, 39.7] is far too loose to flag 22.85. The committed kernel emits these; the
+baseline soak's novelty trajectory simply never generated these genomes. Root
+cause is the KL5 sphere-classify frame sensitivity (wrong cap selected) -- a
+hard, separately-tracked bug. The lens is also NON-WATERTIGHT.
+
+FIX 1 -- mesh_volume per-connected-component recenter (interrogate.rs): sum the
+signed-tetra volume PER connected_components bucket, each recentered about its
+own centroid. A single global reference cannot keep coordinates small across a
+multi-unit-spread body, so the far component cancels in f64 (the Add-276
+cone/cone disjoint union read 6.7% low, reference-dependent; mass was EXACT).
+Per-component is exact per closed component (a void contributes negatively) and
+keeps every coordinate local. Retires the disjoint/spread cancellation false-
+positive class.
+
+FIX 2 -- watertightness net (boolean.rs gate + interrogate.rs mesh_open_ratio):
+||sum of triangle area-vectors|| / (sum of triangle areas). A CLOSED oriented
+mesh has zero net area-vector; an open mesh (crack / dropped face / mis-stitch)
+leaves a residual. It is built from EDGE vectors so it is translation-invariant
+-- no far-origin cancellation, complementary to FIX 1. The gate declines a
+result with ratio > 1e-2. This is what catches the #48 silent wrong that mass==
+mesh cannot: the non-watertight lens is now DECLINED, not emitted. All 5 sph/sph
+genomes now decline (AssemblyFailed); the watertight coaxial rod-through-ball
+(coaxial_cyl_sphere) and the cyl/cyl band split still PASS unchanged.
+
+Net effect: a pre-existing sph/sph SILENT WRONG class -> DECLINE (the contract
+floor restored, the most important kind of fix), AND the cancellation false-
+positive retired. Tests: curved_volume_robustness.rs (cone/cone disjoint
+mesh==mass; sph/sph never-silent-wrong) + full keel-geom 138 / keel-topo 283
+green. Soak FAIL=0 both seeds (20k). Making the sph/sph lenses PASS (correct
+cap selection) remains the KL5 sphere-classify root-cause fix. [[kernel-known-limitations]] [[tessellation-tolerance-trap]]

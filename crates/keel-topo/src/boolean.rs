@@ -4716,6 +4716,15 @@ fn assemble_boolean(
     // body, including the clean empty result, has mesh >= 0).
     let mesh_vol = body.mesh_volume();
     let ok = ok && mesh_vol.is_finite() && mesh_vol >= -tol.max(1e-9);
+    // WATERTIGHTNESS net: a correct boolean result is a CLOSED oriented mesh
+    // (net triangle area-vector ~ 0). A non-watertight result (cracked /
+    // dropped-face / mis-stitched) slips the mass==mesh self-consistency gate
+    // -- mass and a non-watertight mesh can AGREE on a WRONG value (the #48
+    // silent class: large offset sphere/sphere lenses read ~18-33% over the
+    // exact lens volume yet mass==mesh, in-bounds). The residual is built from
+    // edge vectors so it is translation-invariant (no far-origin cancellation
+    // that the per-component volume recenter must otherwise fix). Decline.
+    let ok = ok && body.mesh_open_ratio() <= 1e-2;
     if !ok {
         return Err(BoolFault::AssemblyFailed(
             "degenerate or self-inconsistent result (mass != mesh)",
