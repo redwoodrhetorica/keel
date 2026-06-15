@@ -1022,6 +1022,99 @@ impl Body {
         };
         let center = s.frame.origin;
         let radius = s.radius;
+        // BAND first (LOG Add. 262): a sphere zone bounded by TWO distinct
+        // PARALLEL closed circle rims contains NO pole, so the cap/pole logic
+        // below returns a pole OUTSIDE the band and classify mis-keeps it (the
+        // sph - slab "two caps" read FULL-sphere mass). For such a
+        // full-revolution band, ANY point at the mid latitude between the rims
+        // is interior. Gated on >=2 DISTINCT parallel CLOSED circle rims, so
+        // cap / lens / rest faces (one rim) and non-parallel multi-cut faces
+        // fall through BYTE-UNCHANGED -- no regression to the working classes.
+        {
+            use keel_math::vec::Vec3;
+            // Distinct circle rims (ARCS included -- the sphere's meridian seam
+            // splits a band's rim into arcs -- grouped by distinct circle, so
+            // cap / lens / rest faces (one circle, however many arcs) stay at
+            // ONE distinct rim and never enter the band path.
+            let mut rims: Vec<(Vec3, Vec3, f64)> = Vec::new();
+            for lp in self.faces.get(face).map(|f| f.loops.clone()).into_iter().flatten() {
+                let Some(entry) = self.loops.get(lp).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                loop {
+                    let Some(fin) = self.fins.get(cur) else { break };
+                    let is_seam = self
+                        .edges
+                        .get(fin.edge)
+                        .map(|e| {
+                            e.radial.len() >= 2
+                                && e.radial.iter().all(|&rf| {
+                                    self.fins
+                                        .get(rf)
+                                        .and_then(|x| self.loops.get(x.owner))
+                                        .map(|x| x.face)
+                                        == Some(face)
+                                })
+                        })
+                        .unwrap_or(false);
+                    if !is_seam
+                        && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                        && let Some(keel_geom::curve::Curve3::Circle(c)) = self.curves.get(ck)
+                        && let Some(ax) = c.x_axis.cross(c.y_axis).try_normalize()
+                        && !rims.iter().any(|(rc, _, rr)| {
+                            (*rc - c.center).norm() < 1e-7 && (rr - c.radius).abs() < 1e-7
+                        })
+                    {
+                        rims.push((c.center, ax, c.radius));
+                    }
+                    cur = fin.next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+            }
+            if rims.len() >= 2 {
+                let ax = rims[0].1;
+                if rims.iter().all(|(_, a, _)| a.cross(ax).norm() < 1e-6) {
+                    let mut hs: Vec<f64> =
+                        rims.iter().map(|(c, _, _)| (*c - center).dot(ax)).collect();
+                    hs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+                    let (h_lo, h_hi) = (hs[0], hs[hs.len() - 1]);
+                    if h_hi - h_lo > 1e-9 {
+                        let h_m = 0.5 * (h_lo + h_hi);
+                        let rho = (radius * radius - h_m * h_m).max(0.0).sqrt();
+                        let t = if ax.x.abs() < 0.9 {
+                            Vec3::new(1.0, 0.0, 0.0)
+                        } else {
+                            Vec3::new(0.0, 1.0, 0.0)
+                        };
+                        if let Some(p1) = (t - ax * t.dot(ax)).try_normalize() {
+                            let p2 = ax.cross(p1);
+                            // Sweep azimuths around the band ring; return the first
+                            // candidate the trimmed-domain test confirms INTERIOR,
+                            // so a partial (azimuthally trimmed) band can never get
+                            // an out-of-face point. Full-ring bands accept any.
+                            for k in 0..12 {
+                                let a = k as f64 * (core::f64::consts::TAU / 12.0);
+                                let p = center + ax * h_m + (p1 * a.cos() + p2 * a.sin()) * rho;
+                                let w = p - center;
+                                let u = w
+                                    .dot(s.frame.y)
+                                    .atan2(w.dot(s.frame.x))
+                                    .rem_euclid(core::f64::consts::TAU);
+                                let vlat = (w.dot(s.frame.z) / radius).clamp(-1.0, 1.0).asin();
+                                if self.point_in_face_uv(face, (u, vlat), 1e-6)
+                                    == crate::pmc::UvClass::In
+                                {
+                                    return Some(p);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // Any loop fin whose edge is a circle (the SSI seam) determines
         // the cap side. The two caps share this edge with the SAME
         // forward flag and pcurve, so the side is fixed by the fin's
@@ -6960,6 +7053,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn sphere_band_interior_point_is_on_the_band() {
+        // A sphere split by a slab into THREE zones: two pole caps + a mid
+        // BAND. The band has NO pole, so its classify interior point must lie
+        // ON the band (between the two cuts), not at a pole. The old logic's
+        // off-rim witness found the OTHER rim and returned a pole OUTSIDE the
+        // band, so classify mis-kept it (sph - slab read FULL-sphere mass).
+        // LOG Add. 262: a gated band branch (>=2 distinct parallel circle
+        // rims, point_in_face_uv-verified) returns a mid-latitude point.
+        let mut sphere = Body::new();
+        sphere
+            .sphere(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0)
+            .unwrap();
+        let mut slab = Body::new();
+        slab.block(Vec3::new(-5.0, -5.0, -0.5), 10.0, 10.0, 1.0).unwrap();
+        let (ia, _ib, _f) = imprint_pair(&sphere, &slab, 1e-7);
+        // The band is the sphere face whose tessellation stays inside the slab
+        // (|z| < 0.9); the two caps reach the poles at z = +-2.
+        let band = ia
+            .body
+            .face_keys()
+            .into_iter()
+            .find(|&f| {
+                matches!(ia.body.face_surface3(f), Some(Surface3::Sphere(_))) && {
+                    let tris = ia.body.tessellate_face(f);
+                    !tris.is_empty() && tris.iter().flatten().all(|p| p.z.abs() < 0.9)
+                }
+            })
+            .expect("no band face found among the imprinted sphere zones");
+        let p = ia
+            .body
+            .sphere_face_interior_point(band)
+            .expect("band face has no interior point");
+        assert!(p.z.abs() < 0.5, "band interior point z={} is not on the band", p.z);
+        assert!((p.norm() - 2.0).abs() < 1e-6, "interior point off the sphere");
     }
 
     #[test]

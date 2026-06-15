@@ -8254,3 +8254,44 @@ arc) rather than drop-or-keep whole, which is effectively the imprint/classify
 problem and needs proper research. Net for the session: the cone-cylinder SSI rung
 (Add.259) stands committed (FAIL=0); offset inter / (cone-cyl) stay decline-safe.
 The honesty net (soak FAIL gate) did exactly its job twice. [[kernel-known-limitations]]
+
+## Addendum 262: the sphere CARVE -- dominant decline class diagnosed to TWO stacked defects; the band-classify half FIXED (mass now exact), tessellation-clip half specified (2026-06-15)
+
+A fresh 12k-eval decline soak (seed 7, FAIL=0) ranks the corpus: **cyl/sph ~3237
+declines is the DOMINANT class** (then cone/block ~992, cone/sph ~750, cyl/cyl +
+cyl/block UnassemblableSeam ~860). The cyl/sph blocker is NOT the missing SSI (the
+coaxial cylinder_sphere rung was re-added and reverted: correct seams, but the
+booleans decline DOWNSTREAM, see [[kernel-known-limitations]]); it is the
+SPHERE CARVE, which `probe_sphcut` localizes to TWO stacked defects in the
+3-zone case (a sphere cut by two parallel planes -> two pole caps + a pole-free
+mid BAND). SINGLE-cut carve (hemisphere, block-bite) already PASSES.
+
+DEFECT 1 -- band classify, FIXED. `sphere_face_interior_point` returned a POLE for
+a band (its off-rim witness found the OTHER rim and took the pole on that side),
+and a pole is OUTSIDE the band, so classify mis-kept it: `sph - slab` read
+**mass = 33.51 = the FULL sphere** (should be 21.21 = two caps). Fix: a surgically
+gated band branch -- fires only for a face with >=2 DISTINCT PARALLEL circle rims
+(arcs included, since the sphere meridian seam splits a band rim), sweeps azimuths
+at the mid latitude between the rims, and returns the first the robust
+`point_in_face_uv` confirms INTERIOR. One-rim faces (cap / lens / rest) and
+non-parallel multi-cut faces fall through BYTE-UNCHANGED, so the working sphere
+classes cannot regress. Result: `sph - slab` and `sph n slab` now have
+**mass == truth exactly** (21.206, 12.305). 20k soak seed 1: FAIL 0, PASS 4966
+(== baseline) -- SAFE, no regression; correctness-only (mass now exact where it
+was the full-sphere wrong, also DEFENSIVE: a correct mass cannot become a
+self-consistent wrong-positive). Locked: `sphere_band_interior_point_is_on_the_band`.
+
+DEFECT 2 -- cap/band tessellation clip, REMAINING (the PASS blocker). `sph - slab`
+now declines only because mesh != mass: the two-cap MESH reads 21.70 vs mass 21.21
+(+2.3%, WRONG direction for an inscribed sphere -- a single cap is 0.34% UNDER).
+Cause: `tessellate_sphere` keeps a grid triangle whole when its CENTROID is on the
+cap side of the rim plane (no clip), so at a cut that does NOT align with a
+latitude grid row (z=0.5 between rows; z=0 worked because it aligns) the boundary
+triangles extend past the rim (to z=0.467), adding a sliver -> the cap contribution
+reads 12.80 vs exact 12.566. FIX (specified, next): replace the centroid-keep with
+a clip of each straddling triangle to the rim plane(s) (Sutherland-Hodgman against
+all closed-circle rim half-spaces + the open-arc planes), then fan-triangulate.
+DECLINE-SAFE to attempt -- the mass==mesh gate catches any clip error -- but it
+changes the sphere oracle (all trimmed sphere meshes), so validate the pass-delta
+with the full soak. Once clipped, the sphere-carve class (cyl/sph + cone/sph +
+sph/sph caps) should PASS. [[sphere-split-integration-trap]] [[kernel-known-limitations]]
