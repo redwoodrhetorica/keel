@@ -88,13 +88,18 @@ impl Body {
     /// is coarse), so it is a guard + approximate oracle, not the exact
     /// mass-properties value.
     pub fn tessellated_volume(&self) -> f64 {
+        // Recenter on a local reference (the first triangle vertex): the raw
+        // world-origin divergence form has catastrophic cancellation far from
+        // the origin (see mesh_volume), reading a flat offset body ~13% low.
+        let mut r: Option<Vec3> = None;
         let mut v = 0.0f64;
         for face in self.face_keys() {
             if self.is_interior_wall(face) {
                 continue;
             }
             for tri in self.tessellate_face(face) {
-                v += tri[0].dot(tri[1].cross(tri[2])) / 6.0;
+                let rr = *r.get_or_insert(tri[0]);
+                v += (tri[0] - rr).dot((tri[1] - rr).cross(tri[2] - rr)) / 6.0;
             }
         }
         v
@@ -117,6 +122,32 @@ mod tests {
         b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r)
             .unwrap();
         b
+    }
+
+    #[test]
+    fn mesh_volume_is_offset_robust() {
+        // The signed-tetra divergence volume is translation-invariant in exact
+        // arithmetic, but the raw world-origin form catastrophically cancels
+        // far from the origin: a flat cone ~6+ units out read ~13% low and
+        // false-flagged the soak's mass==mesh band. Recentering on a local
+        // reference fixes it. (LOG Add. 264.)
+        let cone = |z: f64| {
+            let mut b = Body::new();
+            b.cone(
+                Frame3::from_z(Vec3::new(0., 0., z), Vec3::new(0., 0., 1.)).unwrap(),
+                3.13,
+                0.2,
+            )
+            .unwrap();
+            b
+        };
+        let pi = core::f64::consts::PI;
+        let exact = pi / 3.0 * 3.13 * 3.13 * 0.2;
+        let near = cone(0.0).mesh_volume();
+        let far = cone(-50.0).mesh_volume();
+        assert!((near - exact).abs() < 1e-2 * exact, "near {near} vs exact {exact}");
+        assert!((far - exact).abs() < 1e-2 * exact, "far {far} vs exact {exact}");
+        assert!((near - far).abs() < 1e-3 * exact, "not translation-invariant: {near} vs {far}");
     }
 
     // ---- Task 0 (MANDATE): winding-number soundness -------------------

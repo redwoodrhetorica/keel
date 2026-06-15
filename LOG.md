@@ -8327,3 +8327,32 @@ in `tessellate_cone`/disk; reproduce with `probe_failcone`'s genome), then re-ap
 the sphere clip and soak both to FAIL=0. The sphere carve then passes. The
 band-classify half (Add.262) stays committed (correctness, FAIL=0).
 [[sphere-split-integration-trap]] [[kernel-known-limitations]]
+
+## Addendum 264: the flat-cone false-positive was a mesh_volume CATASTROPHIC-CANCELLATION bug -- now offset-robust (root fix) (2026-06-15)
+
+The Add.263 "flat/tilted-cone tessellation coarseness" was MISDIAGNOSED as a
+tessellation issue. `probe_flatcone` isolated it: the under-count is
+POSITION-dependent, not aspect/tilt -- the SAME flat cone (r=3.13, h=0.2) meshes
+-0.16% at the origin but -12.93% at z=-5.88 (and -14.29% further out, -1.10% for a
+normal cone at offset). Root cause: `mesh_volume` and `tessellated_volume` summed
+the signed-tetra divergence `t0.(t1 x t2)` about the WORLD ORIGIN. That sum is
+translation-invariant in exact arithmetic, but far from the origin the per-triangle
+terms are ~coord^3 (hundreds) while the true volume is a tiny residual (~12) -- so
+the f64 sum CATASTROPHICALLY CANCELS, reading systematically low (worse the flatter
+the body / the larger the offset).
+
+Fix: recenter each triangle on a LOCAL reference (the first vertex) before the
+cross/dot -- `(t0-r).((t1-r) x (t2-r))`. Same volume (translation-invariant over a
+closed mesh) but coordinates near zero, so no cancellation. Now EVERY cone meshes
+-0.16% regardless of position (flat tilt @far: -12.93% -> -0.16%; normal @far:
+-1.10% -> -0.16%). A GENERAL numerical-robustness win for all offset bodies, not
+just cones. Test `mesh_volume_is_offset_robust`; 280 lib tests pass.
+
+20k soak seed 1: FAIL 0 (PASS 4794 vs baseline 4966 -- the -172 is EVOLUTIONARY
+TRAJECTORY divergence, not a regression: any result change reroutes the population;
+FAIL=0 / WRONG=0 is the robust contract metric, PASS count is trajectory-noisy
+across code changes). No new wrong risk: the op-volume bound (unchanged) remains
+the self-consistent-wrong catcher; accurate mesh only tightens mass==mesh for
+correct bodies. This is the ROOT unblock for the sphere tessellation CLIP (Add.263)
+-- the flat-cone soak false-positive is gone. NEXT: re-apply the clip and soak both
+to FAIL=0 -> the sphere 3-zone carve lands. [[kernel-known-limitations]]
