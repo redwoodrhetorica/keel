@@ -915,6 +915,30 @@ impl Body {
                 return self.integrate_face_green(fk, surf, sense_sign, m);
             }
         }
+        // RECTANGLE WITNESS for cylinder trims (dossier 66, the cylinder dual
+        // of the cone/sphere witnesses above). A HOLED wall (a lateral carrying
+        // inner bore-hole loops) or a partial-azimuth band whose cut edges have
+        // no pcurve keeps the FULL iso box, and the iso-rectangle integral
+        // OVER-counts the removed material (the cyl/cyl over-read: A u B mass
+        // 17.09 = V(A)+V(B) with the bore not subtracted). The analytic band
+        // lateral area is |u1-u0| * r * |v1-v0| (the cylinder's unit Jacobian r
+        // is constant; a full band is 2*pi*r*h). When it disagrees with the
+        // face's own tessellation the box is NOT the face's region, so
+        // integrate over the ACTUAL loops via the Green-slab (which iterates
+        // every loop, so CW inner-hole loops subtract their flux). A clean full
+        // or partial band matches within the tessellation coarseness and stays
+        // on the exact iso path.
+        if !closed_cover && let Surface3::Cylinder(c) = surf {
+            let rect_area = ((u1 - u0) * c.radius * (v1 - v0)).abs();
+            let tess_area: f64 = self
+                .tessellate_face(fk)
+                .iter()
+                .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
+                .sum();
+            if (rect_area - tess_area).abs() > 6e-2 * (1.0 + tess_area) {
+                return self.integrate_face_green(fk, surf, sense_sign, m);
+            }
+        }
         if std::env::var("KEEL_MASS_DEBUG").is_ok() {
             eprintln!("  rect {fk:?} u [{u0:.4}, {u1:.4}] v [{v0:.4}, {v1:.4}]");
         }

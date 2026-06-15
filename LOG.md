@@ -8650,3 +8650,34 @@ periodic split), which is the real work and is coupled to piece 5's canonical
 subdivision. Reverted to ff6abbf (guard ON, DECLINE-safe). The approach and the
 exact failure mode are recorded for the dedicated pieces-4+5 effort.
 [[kernel-known-limitations]]
+
+## Addendum 274: research round 0003 landed (dossiers 64-66); cylinder mass rectangle-witness implemented (the #66 mass-side completion) (2026-06-15)
+
+The New_research_0003 dossiers landed on master (5501283): #64 periodic-domain
+seam split (the genuinely-new arrangement algorithm, strategy A: build each band
+as a 2D (u,v) arrangement region, re-thread its loop down one slit side and up
+the other, verify positive-area in 2D before lifting to 3D -- the incremental
+mev/mef spur collapses because it supplies one slit crossing plus an interior
+chord, winding-zero); #65 canonical curved-seam identity (subdivide the ONE
+shared seam at the UNION of both operands' nodes with stable child EdgeIds, the
+curved subdivide_seam_ring, killing the unmatched-coedge divorce); #66 curved
+multi-loop-face mass (the cylinder rectangle-witness + the guard-removal
+soundness argument). Merged onto the curved-seam-split branch.
+
+Implemented the #66 mass-side fix, smallest self-contained piece first. FINDING:
+#66 part (ii), inner-hole subtraction, is ALREADY present -- integrate_face_green
+iterates ALL face loops and skips slit pairs, so a CW inner-hole loop already
+subtracts its flux. The A u B / A - B over-read (17.09 = V(A)+V(B); 12.566 =
+V(A)) was NOT a missing-loop bug; it was the multi-loop wall taking the iso-rect
+FAST PATH because the cylinder had no rectangle-witness (cone/sphere have one at
+massprops.rs ~877/905; the cylinder was never wired). Added the CYLINDER witness:
+analytic band area |u1-u0|*r*|v1-v0| (= 2*pi*r*h full) vs tessellated area, and on
+mismatch route to the Green-slab integrator (which iterates all loops, so bores
+subtract). closed_cover is sphere/torus-only, so it fires for cylinders; the 6%
+tessellation-coarseness band keeps clean bands on the exact iso path. This is the
+mass-side completion (dossier 60 + 66) and the precondition before the cyl/cyl
+guard can ever be removed. 283 keel-topo tests pass; soak FAIL=0 both seeds 20k,
+pass-NEUTRAL (decline counts 15206/15268 byte-identical to baseline -- dormant for
+current cases, exercised once dossier-64 banding produces the multi-loop wall).
+NEXT: dossier #64 banding (the gateway) on the curved-seam-split branch.
+[[kernel-known-limitations]]
