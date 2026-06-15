@@ -7078,6 +7078,56 @@ mod tests {
     }
 
     #[test]
+    fn coaxial_cone_sphere_all_ops_pass() {
+        // Coaxial cone (base r=2, apex z=3, m=-2/3) + sphere (centre z=1.5,
+        // R=1, fully inside the cone z-range) -> two transversal seam circles.
+        // Needs cone_sphere SSI + the sphere carve + band fallback + multi-rim
+        // clip. All 4 ops mass==mesh==truth (truth by cross-section integral).
+        let pi = core::f64::consts::PI;
+        let cone_r = |z: f64| (2.0 - (2.0 / 3.0) * z).max(0.0);
+        let sph_r = |z: f64| {
+            let t = 1.0 - (z - 1.5) * (z - 1.5);
+            if t > 0.0 { t.sqrt() } else { 0.0 }
+        };
+        let n = 200_000;
+        let (zlo, zhi) = (0.5_f64, 2.5_f64);
+        let dz = (zhi - zlo) / n as f64;
+        let mut inter = 0.0;
+        for i in 0..n {
+            let z = zlo + (i as f64 + 0.5) * dz;
+            let r = cone_r(z).min(sph_r(z));
+            inter += pi * r * r * dz;
+        }
+        let cone_v = 4.0 * pi;
+        let sphere_v = 4.0 / 3.0 * pi;
+        let mut cn = Body::new();
+        cn.cone(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0, 3.0)
+            .unwrap();
+        let mut sp = Body::new();
+        sp.sphere(Frame3::from_z(Vec3::new(0., 0., 1.5), Vec3::new(0., 0., 1.)).unwrap(), 1.0)
+            .unwrap();
+        let check = |a: &Body, b: &Body, op: BoolOp, truth: f64| {
+            let r = boolean(a, b, op, 1e-7).unwrap_or_else(|e| panic!("declined {e:?}"));
+            assert!(r.faults.is_empty(), "faults {:?}", r.faults);
+            assert!(r.body.validate().is_ok(), "invalid body");
+            let mass = r.body.mass_properties().unwrap().volume;
+            let mesh = r.body.mesh_volume();
+            assert!(
+                (mass - truth).abs() < 2e-2 * (1.0 + truth),
+                "mass {mass} vs truth {truth}"
+            );
+            assert!(
+                (mass - mesh).abs() < 3e-2 * (1.0 + mass),
+                "mass {mass} mesh {mesh}"
+            );
+        };
+        check(&cn, &sp, BoolOp::Intersection, inter);
+        check(&cn, &sp, BoolOp::Union, cone_v + sphere_v - inter);
+        check(&cn, &sp, BoolOp::Difference, cone_v - inter);
+        check(&sp, &cn, BoolOp::Difference, sphere_v - inter);
+    }
+
+    #[test]
     fn coaxial_cyl_sphere_all_ops_pass() {
         // The dominant cyl/sph decline class, coaxial rung: a rod through a
         // ball (sphere R=2 at origin, cylinder r=1 z[-3,3], caps outside the

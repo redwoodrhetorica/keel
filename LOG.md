@@ -8454,3 +8454,22 @@ two-dimple's X-pole frame); the seam+pole-margin fallback + multi-rim clip make
 both correct. Coaxial cyl/sph is the dominant decline class's first big conversion.
 NEXT: general (non-coaxial) cyl-sphere is still a quartic (declines); cone-sphere
 (coaxial: 2 circles) is the next analogous rung. [[kernel-known-limitations]]
+
+## Addendum 268: coaxial CONE-SPHERE lands too -- the sphere machinery generalizes (2026-06-15)
+
+Added the `cone_sphere` SSI rung (ssi.rs), mirroring cylinder_sphere: a coaxial
+cone (radius r0 + v*m) and sphere (radius R, centre height d) meet where
+`(r0 + v*m)^2 = R^2 - (v-d)^2`, the quadratic `(m^2+1)v^2 + (2 r0 m - 2 d)v +
+(r0^2 + d^2 - R^2) = 0` -> 0/1/2 circles at heights v_i, radius r0+v_i*m (kept
+only where positive; double root = tangent). NO downstream changes needed -- it
+reuses the sphere carve (Add.262/264/265) + band fallback + multi-rim clip
+(Add.267) verbatim, confirming those are the GENERAL sphere-vs-curved machinery.
+
+Result (cone base r=2/apex z=3, coaxial sphere centre z=1.5 R=1, fully inside the
+cone z-range, two transversal seam circles): cone n sph 3.594, cone u sph 13.161,
+cone - sph 8.972, sph - cone 0.595 -- ALL mass==mesh==truth (truth by
+cross-section integration). 284 keel-topo + 135 keel-geom lib tests pass; soak
+seed 1 FAIL=0. Test `coaxial_cone_sphere_all_ops_pass`. Converts the cone/sph
+class's coaxial cases (~part of 750). NEXT: cone-cone coaxial (1 circle, linear);
+then the general non-coaxial sphere/cone/cyl quartics; plus the still-open
+cone/block ~992 and cyl/cyl UnassemblableSeam ~860. [[kernel-known-limitations]]
