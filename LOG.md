@@ -8615,3 +8615,38 @@ remain. The SAME imprint+stitch gap blocks every non-coaxial quadric quartic
 (cyl/sph, cone/sph) and parabola/hyperbola plane-cone. All declines stay
 DECLINE-safe (guard ON); 283 keel-topo + integration tests pass; soak FAIL=0.
 [[kernel-known-limitations]]
+
+## Addendum 273: cyl/cyl piece 4 (non-planar wrap imprint) attempted -- B's wall splits but the multi-loop mev/mef is not yet clean; reverted (2026-06-15)
+
+Pieces 2+3 committed+pushed (ff6abbf), proven pass-NEUTRAL: soak FAIL=0 both
+seeds 20k, and seed-1 PASS/DECLINE byte-IDENTICAL to the parent 563f911
+baseline (4794/15206) -- zero production behavior change (dormant with the guard
+ON, as designed). Read dossiers #59 (curved-assembly) and #60 (curved-mass);
+they confirm the remaining work is entirely IMPRINT-STAGE (the stitcher does not
+change): #59 Q1 = seam-aware periodic-face split, #59 Q2 = canonical
+shared-EdgeId seam subdivision ("the single most important new piece"), and #60
+#3 flags that the multi-loop NURBS-face MASS needs an area-witness (full-band
+area vs tessellated area) BEFORE the guard can ever be removed (it is the one
+gap that can produce a WRONG, not just a decline).
+
+Attempted piece 4 (the non-planar wrap imprint) in dev mode (guard off only in
+dev): generalized `imprint_closed_curve_crossing` to compute P/Q for a
+NON-planar curve (closed_curve_plane returns None) via a new
+`find_curve_seam_line_crossing` (P = the sampled curve's closest approach to a
+boundary LINE edge, projected onto it; Q = the antipodal curve parameter
+`curve_point(tp+0.5)`); the dispatch routes `wraps && Curve3::Nurbs` to it, and
+`curve_point` / `seg_dist3` were exposed pub(crate). RESULT: B's wall DOES split
+now (3/4 op meshes moved toward truth -- A∪B 14.14 vs 14.94, A−B 11.74 vs 10.41,
+B−A 1.62 vs 2.37), confirming the curve-based P/Q approach is sound. BUT it
+produces DEGENERATE faces: the BARREL (the doubly-bounded middle, between BOTH
+encircling loops) comes out zero-area with an interior point OFF the cylinder
+(0, 0.2, 0 instead of y^2+z^2=0.36), so the area-gate drops it and A∩B's mesh
+fell to 0.78 (the two windows only, barrel lost). The single-loop split is
+roughly right; the SECOND loop's imprint on the already-split band builds a
+malformed loop -- the mev/mef fin-selection is wrong for the non-planar
+MULTI-loop case. So piece 4 is not a single-loop generalization: it needs #59
+Q1 step-3 fragment-loop RE-THREADING for two encircling loops (the seam-aware
+periodic split), which is the real work and is coupled to piece 5's canonical
+subdivision. Reverted to ff6abbf (guard ON, DECLINE-safe). The approach and the
+exact failure mode are recorded for the dedicated pieces-4+5 effort.
+[[kernel-known-limitations]]
