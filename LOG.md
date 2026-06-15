@@ -8473,3 +8473,29 @@ seed 1 FAIL=0. Test `coaxial_cone_sphere_all_ops_pass`. Converts the cone/sph
 class's coaxial cases (~part of 750). NEXT: cone-cone coaxial (1 circle, linear);
 then the general non-coaxial sphere/cone/cyl quartics; plus the still-open
 cone/block ~992 and cyl/cyl UnassemblableSeam ~860. [[kernel-known-limitations]]
+
+## Addendum 269: cone-cone coaxial SSI rung is correct but the cone-cone ASSEMBLY flags faults -- reverted pending multi-cut seam-location handling (2026-06-15)
+
+Added `cone_cone` (ssi.rs): two coaxial cones are two lines r = r0 + v*m in the
+(axial v, radius r) half-plane, crossing at ONE v (one circle) unless the slopes
+match (Coincident / Empty). Handles parallel AND anti-parallel axes (sgn*mb).
+The SSI is CORRECT: all 4 ops on test configs give mass==mesh==truth.
+
+But the cone-cone ASSEMBLY flags faults (so no CLEAN pass yet):
+- SHARED-base config (cone A r1 inside cone B r2, both base z=0): `Coincident`
+  (the coplanar base disks, same as the cone-cylinder shared base) -- 3/4 ops
+  geometrically correct (mass==mesh==truth), union declines.
+- OFFSET hourglass (A apex-up apex z=2, B apex-down apex z=1, cross z=1.5):
+  `unlocated seam component (non-planar multi-cut face)` on ALL 4 -- yet
+  mass==mesh==truth. The apex of each cone sits INSIDE the other, making the
+  cone lateral a multi-cut face whose seam component the assembly cannot place.
+- A clean cone-cone crossing seems hard to construct without one of: shared base,
+  apex-on-base-plane (Tangent), or apex-inside-other (unlocated seam).
+
+REVERTED `cone_cone` (the SSI is sound but the results flag faults; whether the
+flagged-Ok counts as a soak PASS or risks a wrong needs a soak, and the assembly
+fault-handling is the real blocker). NEXT-SESSION: either fix the multi-cut cone
+seam-location (the `unlocated seam component` path) so cone-cone passes cleanly,
+or pivot to the larger unblocked classes (cone/block ~992, cyl/cyl
+UnassemblableSeam ~860). The coaxial sphere-vs-{plane,cyl,cone} family stays the
+session's landed win (Add.262-268). [[kernel-known-limitations]]
