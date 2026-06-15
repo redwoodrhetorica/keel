@@ -1031,6 +1031,12 @@ fn analytic_analytic(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, 
         (Cylinder(_), Cylinder(_)) => cylinder_cylinder(a, b, tol),
         (Plane(_), Cone(_)) => plane_cone(a, b, tol),
         (Cone(_), Plane(_)) => plane_cone(b, a, tol),
+        (Cone(_), Cylinder(_)) => cone_cylinder(a, b, tol),
+        (Cylinder(_), Cone(_)) => cone_cylinder(b, a, tol),
+        (Cylinder(_), Sphere(_)) => cylinder_sphere(a, b, tol),
+        (Sphere(_), Cylinder(_)) => cylinder_sphere(b, a, tol),
+        (Cone(_), Sphere(_)) => cone_sphere(a, b, tol),
+        (Sphere(_), Cone(_)) => cone_sphere(b, a, tol),
         // Other analytic pairs route to tier 2 (one side implicitized)
         // in Task 4; until then, unsupported.
         _ => Err(GeomError::Degenerate),
@@ -1560,6 +1566,137 @@ fn plane_cone(plane: &Surface3, cone: &Surface3, tol: f64) -> Result<SsiResult, 
         tangential: false,
         tol_achieved: 0.0,
     }]))
+}
+
+/// Cone x cylinder. Only the COAXIAL rung is exact in closed form: a
+/// cone and a coaxial cylinder of radius `R` meet in the single circle
+/// at the axial height where the cone radius equals `R` (one nappe,
+/// since `R > 0`). The cone radius along its axis param v is
+/// `r(v) = radius + v*tan(half_angle)`, so the seam sits at
+/// `v = (R - radius)/tan(half_angle)`. Skew or offset axes are a quartic
+/// SSI (general ruling-quadric branch field) and DECLINE here for now.
+fn cone_cylinder(cone: &Surface3, cyl: &Surface3, tol: f64) -> Result<SsiResult, GeomError> {
+    let (Surface3::Cone(c), Surface3::Cylinder(cy)) = (cone, cyl) else {
+        unreachable!("cone_cylinder on wrong surfaces")
+    };
+    let z = c.frame.z;
+    if z.cross(cy.frame.z).norm() > COINCIDENCE_ANG {
+        return Err(GeomError::Degenerate); // skew axes -> quartic, decline
+    }
+    let w = cy.frame.origin - c.frame.origin;
+    if (w - z * w.dot(z)).norm() > tol {
+        return Err(GeomError::Degenerate); // parallel but offset axes -> quartic
+    }
+    let m = c.half_angle.tan();
+    if m.abs() < 1e-12 {
+        return Err(GeomError::Degenerate); // degenerate (cylinder-like) cone
+    }
+    let t = (cy.radius - c.radius) / m; // axial height where cone radius == cyl radius
+    let center = c.frame.origin + z * t;
+    let circle = Circle3::new(center, c.frame.x, c.frame.y, cy.radius)?;
+    Ok(SsiResult::Curves(vec![SsiCurve {
+        curve: Curve3::Circle(circle),
+        closed: true,
+        tangential: false,
+        tol_achieved: 0.0,
+    }]))
+}
+
+/// Cylinder x sphere (COAXIAL rung only): 0/1/2 exact circles at the axial
+/// heights where the sphere cross-section radius equals the cylinder
+/// radius. `v = d +- sqrt(R^2 - r^2)` (d = sphere centre height on the
+/// axis). R > r -> two transversal circles; R == r -> one TANGENT circle;
+/// R < r -> Empty. Non-coaxial is a quartic and DECLINES.
+fn cylinder_sphere(cyl: &Surface3, sph: &Surface3, tol: f64) -> Result<SsiResult, GeomError> {
+    let (Surface3::Cylinder(cy), Surface3::Sphere(s)) = (cyl, sph) else {
+        unreachable!("cylinder_sphere on wrong surfaces")
+    };
+    let z = cy.frame.z;
+    let w = s.frame.origin - cy.frame.origin;
+    if (w - z * w.dot(z)).norm() > tol {
+        return Err(GeomError::Degenerate);
+    }
+    let d = w.dot(z);
+    let disc = s.radius * s.radius - cy.radius * cy.radius;
+    if disc < -tol * tol {
+        return Ok(SsiResult::Empty);
+    }
+    if disc <= tol * tol {
+        let center = cy.frame.origin + z * d;
+        let circle = Circle3::new(center, cy.frame.x, cy.frame.y, cy.radius)?;
+        return Ok(SsiResult::Curves(vec![SsiCurve {
+            curve: Curve3::Circle(circle),
+            closed: true,
+            tangential: true,
+            tol_achieved: 0.0,
+        }]));
+    }
+    let h = disc.sqrt();
+    let mut curves = Vec::new();
+    for off in [h, -h] {
+        let center = cy.frame.origin + z * (d + off);
+        let circle = Circle3::new(center, cy.frame.x, cy.frame.y, cy.radius)?;
+        curves.push(SsiCurve {
+            curve: Curve3::Circle(circle),
+            closed: true,
+            tangential: false,
+            tol_achieved: 0.0,
+        });
+    }
+    Ok(SsiResult::Curves(curves))
+}
+
+/// Cone x sphere (COAXIAL rung only). A coaxial cone (radius r0 + v*m along
+/// its axis, m = tan(half_angle)) and a sphere of radius R centred at axial
+/// height d meet where `(r0 + v*m)^2 = R^2 - (v - d)^2`, a quadratic in v:
+/// `(m^2+1)v^2 + (2 r0 m - 2 d)v + (r0^2 + d^2 - R^2) = 0` -> 0/1/2 circles
+/// at heights v_i, radius r0 + v_i*m (kept only where that radius is
+/// positive -- squaring can introduce a far-nappe spurious root). A double
+/// root is a TANGENT circle. Non-coaxial is a quartic and DECLINES.
+fn cone_sphere(cone: &Surface3, sph: &Surface3, tol: f64) -> Result<SsiResult, GeomError> {
+    let (Surface3::Cone(c), Surface3::Sphere(s)) = (cone, sph) else {
+        unreachable!("cone_sphere on wrong surfaces")
+    };
+    let z = c.frame.z;
+    let w = s.frame.origin - c.frame.origin;
+    if (w - z * w.dot(z)).norm() > tol {
+        return Err(GeomError::Degenerate); // sphere centre off the axis -> quartic
+    }
+    let d = w.dot(z);
+    let m = c.half_angle.tan();
+    let r0 = c.radius;
+    let a = m * m + 1.0;
+    let b = 2.0 * r0 * m - 2.0 * d;
+    let cc = r0 * r0 + d * d - s.radius * s.radius;
+    let disc = b * b - 4.0 * a * cc;
+    if disc < -tol {
+        return Ok(SsiResult::Empty);
+    }
+    let sd = disc.max(0.0).sqrt();
+    let tangential = sd <= tol;
+    let mut vs = vec![(-b + sd) / (2.0 * a)];
+    if !tangential {
+        vs.push((-b - sd) / (2.0 * a));
+    }
+    let mut curves = Vec::new();
+    for v in vs {
+        let r = r0 + v * m;
+        if r < tol {
+            continue; // far nappe / apex-degenerate spurious root
+        }
+        let center = c.frame.origin + z * v;
+        let circle = Circle3::new(center, c.frame.x, c.frame.y, r)?;
+        curves.push(SsiCurve {
+            curve: Curve3::Circle(circle),
+            closed: true,
+            tangential,
+            tol_achieved: 0.0,
+        });
+    }
+    if curves.is_empty() {
+        return Ok(SsiResult::Empty);
+    }
+    Ok(SsiResult::Curves(curves))
 }
 
 // ---- pcurve helpers --------------------------------------------------

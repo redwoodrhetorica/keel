@@ -808,9 +808,16 @@ impl Body {
     pub fn mesh_volume(&self) -> f64 {
         let _prof = crate::profile::Scope::new(&crate::profile::MESHVOL_NS);
         crate::profile::count(&crate::profile::MESHVOL_CALLS);
-        self.all_triangles()
-            .iter()
-            .map(|t| t[0].dot(t[1].cross(t[2])))
+        let tris = self.all_triangles();
+        // Signed-tetra sum about a LOCAL reference (the first vertex), not the
+        // world origin: the closed-mesh divergence volume is translation-
+        // invariant, but the raw form has catastrophic cancellation far from
+        // the origin (terms ~ coord^3 summing to a tiny volume). A flat cone
+        // ~6 units out read 13% low and false-flagged the soak's mass==mesh
+        // band; recentering keeps the coordinates small and the volume exact.
+        let r = tris.first().map(|t| t[0]).unwrap_or(Vec3::ZERO);
+        tris.iter()
+            .map(|t| (t[0] - r).dot((t[1] - r).cross(t[2] - r)))
             .sum::<f64>()
             / 6.0
     }

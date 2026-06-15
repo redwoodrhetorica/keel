@@ -861,7 +861,10 @@ impl Body {
                         // cap, the corner sphere triangle) integrate
                         // via the Green-slab boundary path; other
                         // surfaces keep declining.
-                        if matches!(surf, Surface3::Cylinder(_) | Surface3::Sphere(_)) {
+                        if matches!(
+                            surf,
+                            Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Cone(_)
+                        ) {
                             return self.integrate_face_green(fk, surf, sense_sign, m);
                         }
                         return Err(TopoError::Precondition("curved face without pcurve bounds"));
@@ -885,6 +888,30 @@ impl Body {
                 .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
                 .sum();
             if (rect_area - tess_area).abs() > 5e-2 * (1.0 + tess_area) {
+                return self.integrate_face_green(fk, surf, sense_sign, m);
+            }
+        }
+        // RECTANGLE WITNESS for cone trims (dossier 60 sec 3, the cone dual
+        // of the sphere witness above, gap c). A notched / partial-azimuth
+        // cone fragment whose cut edges carry no NURBS pcurve keeps the
+        // FULL-azimuth iso box and the iso-rectangle integral OVER-counts the
+        // removed wedge (the block/cone over-count, mass 17.07 vs true 11.85).
+        // The analytic band lateral area is |u1-u0| * sqrt(1+slope^2) *
+        // integral_v (r0 + v*slope); when it disagrees with the face's own
+        // tessellation the box is not the face's region, so integrate over the
+        // actual boundary via the Green-slab (now cone-apex-anchored). A clean
+        // full band/tip matches within the tessellation coarseness and stays
+        // on the exact iso path.
+        if !closed_cover && let Surface3::Cone(c) = surf {
+            let slope = c.half_angle.tan();
+            let r_int = c.radius * (v1 - v0) + 0.5 * slope * (v1 * v1 - v0 * v0);
+            let rect_area = ((u1 - u0) * (1.0 + slope * slope).sqrt() * r_int).abs();
+            let tess_area: f64 = self
+                .tessellate_face(fk)
+                .iter()
+                .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
+                .sum();
+            if (rect_area - tess_area).abs() > 6e-2 * (1.0 + tess_area) {
                 return self.integrate_face_green(fk, surf, sense_sign, m);
             }
         }
@@ -946,9 +973,25 @@ impl Body {
         sense_sign: f64,
         m: &mut Moments,
     ) -> Result<(), TopoError> {
-        let (frame, is_sphere) = match surf {
-            Surface3::Cylinder(c) => (&c.frame, false),
-            Surface3::Sphere(s) => (&s.frame, true),
+        let (frame, is_sphere, cone_apex) = match surf {
+            Surface3::Cylinder(c) => (&c.frame, false, None),
+            // The cone shares the cylinder's parameterization (u = azimuth,
+            // v = axial height); its v-dependent radius lives in
+            // local_geometry, which the generic flux integrand below samples.
+            // The APEX is the axial height where the radius r0 + v*tan(alpha)
+            // vanishes: v_apex = -r0 / tan(alpha). It anchors a full-revolution
+            // cone-tip face the way the sphere pole anchors a polar cap
+            // (dossier 60 section 1).
+            Surface3::Cone(c) => {
+                let m = c.half_angle.tan();
+                let apex = if m.abs() > 1e-12 {
+                    Some(-c.radius / m)
+                } else {
+                    None
+                };
+                (&c.frame, false, apex)
+            }
+            Surface3::Sphere(s) => (&s.frame, true, None),
             _ => return Err(TopoError::Precondition("green-slab: unsupported surface")),
         };
         let (o, ex, ey, ez) = (frame.origin, frame.x, frame.y, frame.z);
@@ -956,6 +999,10 @@ impl Body {
             Seg(Vec3, Vec3),
             Circ(keel_geom::curve::Circle3, f64, f64),
             Ell(keel_geom::curve::Ellipse3, f64, f64),
+            // A general NURBS boundary fin (the curved SSI seam of two
+            // crossing quadrics fit to a NURBS): integrated by GL8 over its
+            // own parameter, using point + first derivative as the tangent.
+            Nurbs(keel_geom::nurbs_curve::NurbsCurve, f64, f64),
         }
         // UV mapping: u = azimuth about ez; v = axial height
         // (cylinder) or latitude (sphere), matching local_geometry.
@@ -1084,9 +1131,14 @@ impl Body {
                         }
                     }
                     Some(Curve3::Nurbs(n)) if n.degree() > 1 => {
-                        return Err(TopoError::Precondition(
-                            "green-slab: curved NURBS boundary fin",
-                        ));
+                        // Parameter range over the NURBS domain, matched to the
+                        // edge direction (p0 -> p1) and flipped for a backward
+                        // fin. Closed loops (b0 == b1) take the full domain.
+                        let (da, db) = n.domain();
+                        let fwd = (n.point(da) - p0).norm() <= (n.point(da) - p1).norm();
+                        let (s0, s1) = if fwd { (da, db) } else { (db, da) };
+                        let (t0, t1) = if fin.forward { (s0, s1) } else { (s1, s0) };
+                        fins_c.push((li, FinCurve::Nurbs(n.clone(), t0, t1)));
                     }
                     _ => {
                         // Straight fins lie on a cylinder only (as
@@ -1168,6 +1220,22 @@ impl Body {
                         }
                     }
                 }
+                FinCurve::Nurbs(n, t0, t1) => {
+                    // GL8 over the NURBS parameter; tangent = first derivative.
+                    // Panel count tied to the control-point count so a wiggly
+                    // fit is sampled densely enough for the boundary flux.
+                    let panels = (n.control_points().len() * 2).max(8);
+                    for ip in 0..panels {
+                        let a0 = t0 + (t1 - t0) * ip as f64 / panels as f64;
+                        let a1 = t0 + (t1 - t0) * (ip + 1) as f64 / panels as f64;
+                        for (xj, wj) in GL8_X.iter().zip(GL8_W) {
+                            let t = 0.5 * (a0 + a1) + 0.5 * (a1 - a0) * xj;
+                            let d = n.derivatives(t, 1);
+                            let dp = d.get(1).copied().unwrap_or(Vec3::ZERO);
+                            node(d[0], dp, wj * 0.5 * (a1 - a0));
+                        }
+                    }
+                }
             }
         }
         // ORIENTATION NORMALIZATION (task 41): the rep does not enforce
@@ -1221,6 +1289,7 @@ impl Body {
                     FinCurve::Seg(..) => "seg".to_string(),
                     FinCurve::Circ(_, a, b) => format!("circ {a:.3}..{b:.3}"),
                     FinCurve::Ell(_, a, b) => format!("ell {a:.3}..{b:.3}"),
+                    FinCurve::Nurbs(_, a, b) => format!("nurbs {a:.3}..{b:.3}"),
                 };
                 eprintln!("    fin {i} (loop {li}): {d}");
             }
@@ -1268,6 +1337,22 @@ impl Body {
                 ));
             }
             chosen
+        } else if let Some(v_apex) = cone_apex.filter(|_| (winding.abs() - 1.0).abs() < 0.25) {
+            // CONE-APEX anchor (dossier 60 section 1, the dual of the sphere
+            // pole anchor above): a full-revolution cone-tip face (winding
+            // +-1, one rim circle) closes its boundary loop at the apex.
+            // Anchor the v-slab at the apex axial height; the apex Jacobian
+            // |P_u x P_v| = v cos(alpha) vanishes there (a removable
+            // singularity), and the slab quadrature samples strictly between
+            // v_apex and the rim (GL nodes are panel-interior), so the
+            // integrand is never evaluated AT the apex. A rim sitting on the
+            // apex is a degenerate (apex-cut) face: decline.
+            if v_min <= v_apex + 1e-9 && v_max >= v_apex - 1e-9 {
+                return Err(TopoError::Precondition(
+                    "green-slab: cone boundary touches the apex",
+                ));
+            }
+            v_apex
         } else {
             return Err(TopoError::Precondition(
                 "green-slab: unsupported boundary winding",
@@ -1408,6 +1493,40 @@ mod tests {
         assert!((mp.centroid - Vec3::new(0.5, -1.0, 2.0)).norm() < 1e-9);
         let ixx = 0.4 * mp.volume * 4.0; // 2/5 V r^2
         assert!((mp.inertia[0][0] - ixx).abs() < 1e-6 * ixx);
+    }
+
+    #[test]
+    fn cone_apex_anchor_green_matches_cone_volume() {
+        // The Green-slab cone-apex anchor (dossier 60 section 1) integrates a
+        // full-revolution cone-tip face to the exact cone volume. The lateral
+        // carries the whole volume flux (the base normal is axial, n_x = 0, so
+        // the base contributes 0 to integral x n_x dA). Call the boundary-flux
+        // path directly to exercise the apex anchor (the iso path would handle
+        // a clean tip otherwise).
+        let (r, h) = (1.5, 2.0);
+        let mut b = Body::new();
+        let out = b
+            .cone(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                r,
+                h,
+            )
+            .unwrap();
+        let lateral = out.faces[0];
+        let (sk, sense) = b.faces.get(lateral).unwrap().surface.unwrap();
+        let SurfaceGeom::Analytic(surf) = b.surfaces.get(sk).unwrap().clone() else {
+            panic!("cone lateral is not an analytic surface");
+        };
+        let sense_sign = if sense { 1.0 } else { -1.0 };
+        let mut m = Moments::default();
+        b.integrate_face_green(lateral, &surf, sense_sign, &mut m)
+            .unwrap();
+        let exact = core::f64::consts::PI / 3.0 * r * r * h;
+        assert!(
+            (m.v - exact).abs() < 1e-9 * exact,
+            "apex-anchored cone lateral v = {} want {exact}",
+            m.v
+        );
     }
 
     #[test]

@@ -10,3 +10,6 @@
 .codegraph/
 docs/media/frames/
 gate_launch.log
+
+# evolutionary explorer run artifacts (examples/evolve.rs)
+/evolve-out/

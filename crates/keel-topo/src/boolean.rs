@@ -972,7 +972,117 @@ impl Body {
         // historic pick opposite the seam).
         let (a0, a1) = self.cyl_angular_span(face, origin, ex, ey, ez);
         let amid = 0.5 * (a0 + a1);
-        Some(origin + (ex * amid.cos() + ey * amid.sin()) * r + ez * hmid)
+        let to_pt = |th: f64, h: f64| origin + (ex * th.cos() + ey * th.sin()) * r + ez * h;
+
+        // INNER LOOPS (holes): a multi-loop cylinder face is the wall
+        // MATERIAL with the bore seams punched out as holes (a thin cyl
+        // boring through a thick one leaves the wall as one face with
+        // two oval holes). The blind (amid, hmid) pick lands at the ring
+        // centre, which for a diametric bore is the dead centre of a
+        // hole -- a point INSIDE the other operand, so classify mis-keeps
+        // the whole wall (cyl/cyl A n B over-keep, LOG Add. 270/272).
+        // Mirror the planar grid path: when holes are present, search
+        // (theta, h) for the most-central point OUTSIDE every hole.
+        // Single-loop faces (bands, windows) keep the fast pick.
+        let loops: Vec<crate::entity::LoopKey> = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        if loops.len() >= 2 {
+            use core::f64::consts::{PI, TAU};
+            use keel_math::vec::Vec3;
+            // Each inner loop -> an unwrapped (theta, h) polygon. The bore
+            // ovals are localised in theta and never wrap the ring, so
+            // unwrapping relative to the running angle keeps each polygon
+            // contiguous and branch-cut free.
+            let angle_h = |p: Vec3| -> (f64, f64) {
+                let d = p - origin;
+                let w = d - ez * d.dot(ez);
+                (w.dot(ey).atan2(w.dot(ex)), d.dot(ez))
+            };
+            let mut holes: Vec<Vec<(f64, f64)>> = Vec::new();
+            for &lk in loops.iter().skip(1) {
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut poly: Vec<(f64, f64)> = Vec::new();
+                let mut prev = f64::NAN;
+                let mut cur = entry;
+                while let Some(fin) = self.fins.get(cur) {
+                    for p in self.fin_curve_samples(cur, 12).unwrap_or_default() {
+                        let (mut th, h) = angle_h(p);
+                        if !prev.is_nan() {
+                            while th - prev > PI {
+                                th -= TAU;
+                            }
+                            while th - prev < -PI {
+                                th += TAU;
+                            }
+                        }
+                        prev = th;
+                        poly.push((th, h));
+                    }
+                    cur = fin.next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+                if poly.len() >= 3 {
+                    holes.push(poly);
+                }
+            }
+            if !holes.is_empty() {
+                // Each hole's mean angle (its branch anchor) and an
+                // arc-length-scaled copy (theta*r) so theta and h distances
+                // are comparable surface lengths.
+                let meta: Vec<(f64, Vec<(f64, f64)>)> = holes
+                    .iter()
+                    .map(|poly| {
+                        let mean = poly.iter().map(|q| q.0).sum::<f64>() / poly.len() as f64;
+                        (mean, poly.iter().map(|q| (q.0 * r, q.1)).collect())
+                    })
+                    .collect();
+                let branch = |th: f64, mean: f64| {
+                    let mut t = th;
+                    while t - mean > PI {
+                        t -= TAU;
+                    }
+                    while t - mean < -PI {
+                        t += TAU;
+                    }
+                    t
+                };
+                const N: usize = 24;
+                let mut best: Option<((f64, f64), f64)> = None;
+                for i in 0..=N {
+                    let th = a0 + (a1 - a0) * (i as f64 / N as f64);
+                    for j in 1..N {
+                        let h = hlo + (hhi - hlo) * (j as f64 / N as f64);
+                        let mut inside = false;
+                        let mut dmin = f64::INFINITY;
+                        for (k, poly) in holes.iter().enumerate() {
+                            let t = branch(th, meta[k].0);
+                            if winding_nonzero(poly, (t, h)) {
+                                inside = true;
+                                break;
+                            }
+                            dmin = dmin.min(dist_to_polyline(&meta[k].1, (t * r, h)));
+                        }
+                        if inside {
+                            continue;
+                        }
+                        if best.is_none_or(|(_, bd)| dmin > bd) {
+                            best = Some(((th, h), dmin));
+                        }
+                    }
+                }
+                if let Some(((th, h), _)) = best {
+                    return Some(to_pt(th, h));
+                }
+            }
+        }
+        Some(to_pt(amid, hmid))
     }
 
     /// The cone twin of the cylinder rung: rim heights bound the band,
@@ -983,14 +1093,32 @@ impl Body {
         cone: &keel_geom::surface::Cone3,
     ) -> Option<keel_math::vec::Vec3> {
         let (origin, ex, ez) = (cone.frame.origin, cone.frame.x, cone.frame.z);
-        let heights = self.cyl_circle_heights(face, origin, ez);
+        let mut heights = self.cyl_circle_heights(face, origin, ez);
+        // A TIP fragment has ONE rim circle and reaches the APEX (a degenerate
+        // v-line, not a circle edge), so cyl_circle_heights yields a single
+        // height and the midpoint would land ON the rim -- which, for a slab /
+        // plane cut, is exactly on the cutting boundary, so the winding probe
+        // mis-classifies the whole tip (the disconnected-difference dropped-tip
+        // bug, LOG Add. 253). Add the apex height so the midpoint sits strictly
+        // between rim and apex (the same apex handling tessellate_cone uses).
+        let slope = cone.half_angle.tan();
+        let (hlo0, hhi0) = (
+            heights.iter().cloned().fold(f64::INFINITY, f64::min),
+            heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+        );
+        if (heights.len() < 2 || hhi0 - hlo0 <= 1e-9) && slope.abs() > 1e-12 {
+            heights.push(-cone.radius / slope); // apex axial height
+        }
         if heights.len() < 2 {
             return None;
         }
         let hlo = heights.iter().cloned().fold(f64::INFINITY, f64::min);
         let hhi = heights.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        if hhi - hlo <= 1e-12 {
+            return None;
+        }
         let hmid = 0.5 * (hlo + hhi);
-        let r = cone.radius + hmid * cone.half_angle.tan();
+        let r = cone.radius + hmid * slope;
         Some(origin + ex * (-r) + ez * hmid)
     }
 
@@ -1004,6 +1132,121 @@ impl Body {
         };
         let center = s.frame.origin;
         let radius = s.radius;
+        // BAND first (LOG Add. 262): a sphere zone bounded by TWO distinct
+        // PARALLEL closed circle rims contains NO pole, so the cap/pole logic
+        // below returns a pole OUTSIDE the band and classify mis-keeps it (the
+        // sph - slab "two caps" read FULL-sphere mass). For such a
+        // full-revolution band, ANY point at the mid latitude between the rims
+        // is interior. Gated on >=2 DISTINCT parallel CLOSED circle rims, so
+        // cap / lens / rest faces (one rim) and non-parallel multi-cut faces
+        // fall through BYTE-UNCHANGED -- no regression to the working classes.
+        {
+            use keel_math::vec::Vec3;
+            // Distinct circle rims (ARCS included -- the sphere's meridian seam
+            // splits a band's rim into arcs -- grouped by distinct circle, so
+            // cap / lens / rest faces (one circle, however many arcs) stay at
+            // ONE distinct rim and never enter the band path.
+            let mut rims: Vec<(Vec3, Vec3, f64)> = Vec::new();
+            for lp in self.faces.get(face).map(|f| f.loops.clone()).into_iter().flatten() {
+                let Some(entry) = self.loops.get(lp).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                loop {
+                    let Some(fin) = self.fins.get(cur) else { break };
+                    let is_seam = self
+                        .edges
+                        .get(fin.edge)
+                        .map(|e| {
+                            e.radial.len() >= 2
+                                && e.radial.iter().all(|&rf| {
+                                    self.fins
+                                        .get(rf)
+                                        .and_then(|x| self.loops.get(x.owner))
+                                        .map(|x| x.face)
+                                        == Some(face)
+                                })
+                        })
+                        .unwrap_or(false);
+                    if !is_seam
+                        && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                        && let Some(keel_geom::curve::Curve3::Circle(c)) = self.curves.get(ck)
+                        && let Some(ax) = c.x_axis.cross(c.y_axis).try_normalize()
+                        && !rims.iter().any(|(rc, _, rr)| {
+                            (*rc - c.center).norm() < 1e-7 && (rr - c.radius).abs() < 1e-7
+                        })
+                    {
+                        rims.push((c.center, ax, c.radius));
+                    }
+                    cur = fin.next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+            }
+            if rims.len() >= 2 {
+                let ax = rims[0].1;
+                if rims.iter().all(|(_, a, _)| a.cross(ax).norm() < 1e-6) {
+                    let mut hs: Vec<f64> =
+                        rims.iter().map(|(c, _, _)| (*c - center).dot(ax)).collect();
+                    hs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+                    let (h_lo, h_hi) = (hs[0], hs[hs.len() - 1]);
+                    if h_hi - h_lo > 1e-9 {
+                        let h_m = 0.5 * (h_lo + h_hi);
+                        let rho = (radius * radius - h_m * h_m).max(0.0).sqrt();
+                        let t = if ax.x.abs() < 0.9 {
+                            Vec3::new(1.0, 0.0, 0.0)
+                        } else {
+                            Vec3::new(0.0, 1.0, 0.0)
+                        };
+                        if let Some(p1) = (t - ax * t.dot(ax)).try_normalize() {
+                            let p2 = ax.cross(p1);
+                            // Sweep azimuths around the band ring; return the first
+                            // candidate the trimmed-domain test confirms INTERIOR,
+                            // so a partial (azimuthally trimmed) band can never get
+                            // an out-of-face point. Full-ring bands accept any.
+                            let mut fallback: Option<(Vec3, f64)> = None;
+                            for k in 0..12 {
+                                let a = k as f64 * (core::f64::consts::TAU / 12.0);
+                                let p = center + ax * h_m + (p1 * a.cos() + p2 * a.sin()) * rho;
+                                let w = p - center;
+                                let u = w
+                                    .dot(s.frame.y)
+                                    .atan2(w.dot(s.frame.x))
+                                    .rem_euclid(core::f64::consts::TAU);
+                                let vlat = (w.dot(s.frame.z) / radius).clamp(-1.0, 1.0).asin();
+                                // Pick the candidate farthest from BOTH the
+                                // parameterization seam (u=0) AND the poles
+                                // (v=+-pi/2): when the band's rim axis is not the
+                                // sphere's frame axis (a tilted sphere), the
+                                // mid-latitude ring passes through the sphere's
+                                // poles, and a pole point is degenerate (u
+                                // undefined) and mis-classifies.
+                                let to_seam = u.min(core::f64::consts::TAU - u);
+                                let to_pole = core::f64::consts::FRAC_PI_2 - vlat.abs();
+                                let margin = to_seam.min(to_pole);
+                                if fallback.map(|(_, d)| margin > d).unwrap_or(true) {
+                                    fallback = Some((p, margin));
+                                }
+                                if self.point_in_face_uv(face, (u, vlat), 1e-6)
+                                    == crate::pmc::UvClass::In
+                                {
+                                    return Some(p);
+                                }
+                            }
+                            // FALLBACK: a band's interior is at the mid latitude,
+                            // never a pole. If no azimuth verified in-domain (a
+                            // full-revolution band's wrap-around uv has no simple
+                            // winding), return the mid-latitude point farthest from
+                            // the u=0 seam.
+                            if let Some((p, _)) = fallback {
+                                return Some(p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // Any loop fin whose edge is a circle (the SSI seam) determines
         // the cap side. The two caps share this edge with the SAME
         // forward flag and pcurve, so the side is fixed by the fin's
@@ -1757,6 +2000,42 @@ fn stitch_by_import(
     }
 
     finalize_imported_assembly(dst, rec, faces, wall_faces, inf, solid, vtol)
+}
+
+/// Disjoint-UNION combine (the broad-phase provably-separated case): the
+/// operands' AABBs do not meet, so the union is exactly both lumps in one
+/// body. Importing each ORIGINAL operand's faces verbatim -- no imprint,
+/// no SSI, no seam glue -- keeps every face byte-faithful, so each lump
+/// tessellates exactly as it did standalone and finalize derives one solid
+/// cell per connected component. This is the curved-operand fix: the full
+/// assembly's imprint/finalize machinery spawned spurious faces and merged
+/// the disconnected curved components into a single broken region (a cone
+/// lump's lateral split with one half tessellating to zero -> mass != mesh,
+/// the dossier-57 disconnected-union-of-curved-bodies decline). Sound only
+/// when the operands are PROVABLY non-touching (the caller guarantees it
+/// from the AABB gap), so no missed-intersection guard is needed.
+fn combine_disjoint(a: &Body, b: &Body, tol: f64) -> Result<Body, BoolFault> {
+    use crate::entity::{EdgeKey, VertexKey};
+    use crate::lineage::Derivation;
+    use std::collections::BTreeMap;
+    let vtol = tol.max(1e-7);
+    let mut dst = Body::new();
+    let inf = dst.infinite_region();
+    let mut rec = dst.begin_op();
+    let solid = dst.new_region(&mut rec, true, Derivation::Created);
+    let mut vmap: BTreeMap<(Operand, u64), VertexKey> = BTreeMap::new();
+    let mut emap: BTreeMap<(Operand, u64), EdgeKey> = BTreeMap::new();
+    let mut faces = Vec::new();
+    for (operand, src) in [(Operand::A, a), (Operand::B, b)] {
+        for sf in src.face_keys() {
+            let f = import_face(
+                &mut dst, src, sf, operand, false, &mut rec, &mut vmap, &mut emap, inf, solid,
+            )
+            .ok_or(BoolFault::AssemblyFailed("disjoint-union import failed"))?;
+            faces.push(f);
+        }
+    }
+    finalize_imported_assembly(dst, rec, faces, Vec::new(), inf, solid, vtol)
 }
 
 /// Sheet-solid boolean (parity item 28, sheet-target MVP): trim the
@@ -3351,6 +3630,65 @@ pub fn boolean_with(
             ));
         }
     }
+    // BROAD PHASE (task 49, the basic overlap gate): if the operands' AABBs
+    // are provably separated, the solids cannot meet, so the boolean is
+    // TRIVIAL -- intersection is empty, difference is A unchanged. Handle those
+    // here and skip the SSI/seam machinery entirely, which (a) is far faster on
+    // non-overlapping pairs and (b) removes any chance of the no-seam shortcut
+    // mis-probing a pair that never touched. A disjoint UNION is a disconnected
+    // body, so it falls through to the existing assembly (the planar two-shell
+    // case it supports; curved disjoint declines via the post-condition). The
+    // margin is the op tolerance, so contact / near-contact pairs (gap <= tol)
+    // take the normal path; the tolerant snap is unaffected because it runs the
+    // strict pipeline on already-snapped (touching) geometry.
+    {
+        let (ba, bb) = (a.bounding_box(), b.bounding_box());
+        // CONSERVATIVE margin: bounding_box() is TESSELLATION-derived, so it
+        // under-estimates a curved body's true extent by up to its chord
+        // sagitta (< ~1% of the body diagonal at the kernel's >=16-seg/circle
+        // density). Cull only when the AABB gap exceeds a safe multiple of
+        // that (5% of the combined diagonals) so a grazing CURVED overlap is
+        // never mistaken for disjoint (which would silently drop a real
+        // sliver). For exact (planar) AABBs this is merely stricter than
+        // needed; the culled and the fall-through paths return the same
+        // empty/clone for those, so box results are unchanged either way.
+        let m = tol.max(0.05 * ((ba.max - ba.min).norm() + (bb.max - bb.min).norm()));
+        let separated = ba.min.x - bb.max.x > m
+            || bb.min.x - ba.max.x > m
+            || ba.min.y - bb.max.y > m
+            || bb.min.y - ba.max.y > m
+            || ba.min.z - bb.max.z > m
+            || bb.min.z - ba.max.z > m;
+        if separated {
+            match op {
+                BoolOp::Intersection => {
+                    return Ok(BoolResult {
+                        body: Body::new(),
+                        faults: Vec::new(),
+                        op,
+                    });
+                }
+                BoolOp::Difference => {
+                    return Ok(BoolResult {
+                        body: a.clone(),
+                        faults: Vec::new(),
+                        op,
+                    });
+                }
+                BoolOp::Union => {
+                    // Disconnected union: both lumps, one body. The clean
+                    // verbatim combine (no imprint/SSI) is the curved-operand
+                    // fix -- the old fall-through to the full assembly merged
+                    // disconnected curved components into one broken region.
+                    return combine_disjoint(a, b, tol).map(|body| BoolResult {
+                        body,
+                        faults: Vec::new(),
+                        op,
+                    });
+                }
+            }
+        }
+    }
     // Pre-pass (research file 39 §1): where two coplanar faces partially
     // overlap, imprint the overlap-boundary cuts onto the operands so each
     // resulting fragment is uniformly inside/outside/on the other body --
@@ -3420,7 +3758,42 @@ pub fn boolean_with(
                 "no seams and no unambiguous containment probe",
             ));
         };
-        let done = |body: Body| {
+        let done = |body: Body| -> Result<BoolResult, BoolFault> {
+            // task 49: the no-seams shortcut trusts the containment probe, but
+            // a MISSING seam can mean "SSI failed to find a real intersection"
+            // (tilted cyl/cyl), not "disjoint/nested". For curved operands,
+            // bound the cloned result by the op-volume inequality from the
+            // operand volumes; a violation means the probe picked wrong (it
+            // dropped an operand), so DECLINE rather than return a silent WRONG
+            // (the soak's tilted cyl/cyl union, which returned b.clone()).
+            // Planar operands keep the exact probe (boxes are bit-identical).
+            let curved = |x: &Body| {
+                x.face_keys()
+                    .iter()
+                    .any(|&f| !matches!(x.face_surface3(f), Some(Surface3::Plane(_))))
+            };
+            if curved(a) || curved(b) {
+                let opvol =
+                    |x: &Body| x.mass_properties().map(|m| m.volume).unwrap_or_else(|_| x.mesh_volume());
+                let (va, vb) = (opvol(a), opvol(b));
+                if va.is_finite() && vb.is_finite() && va >= 0.0 && vb >= 0.0 {
+                    let (lo, hi) = match op {
+                        BoolOp::Union => (va.max(vb), va + vb),
+                        BoolOp::Intersection => (0.0, va.min(vb)),
+                        BoolOp::Difference => ((va - vb).max(0.0), va),
+                    };
+                    let slack = 5e-2 * (1.0 + hi);
+                    let rv = body
+                        .mass_properties()
+                        .map(|m| m.volume)
+                        .unwrap_or_else(|_| body.mesh_volume());
+                    if rv < lo - slack || rv > hi + slack {
+                        return Err(BoolFault::AssemblyFailed(
+                            "no-seam shortcut result violates op-volume bound (declined)",
+                        ));
+                    }
+                }
+            }
             // Coplanar-but-empty-overlap pairs flag Coincident even
             // though nothing interacts (the pre-pass found no overlap,
             // or it would have re-imprinted): noise here, dropped.
@@ -4176,14 +4549,68 @@ fn assemble_boolean(
     // is the clean EMPTY result, not a stitch failure. An empty UNION
     // of solid operands is impossible: that stays a decline.
     if kept.is_empty() && walls.is_empty() {
-        return match op {
-            BoolOp::Intersection | BoolOp::Difference => Ok(BoolResult {
-                body: Body::new(),
-                faults,
-                op,
-            }),
-            BoolOp::Union => Err(BoolFault::AssemblyFailed("union selected no faces")),
+        if op == BoolOp::Union {
+            return Err(BoolFault::AssemblyFailed("union selected no faces"));
+        }
+        // A DIFFERENCE A - B is empty ONLY when A is contained in B (A subset
+        // B, including A == B). If an interior point of A lies strictly OUTSIDE
+        // B then part of A survives, so an empty selection is a CLASSIFY FAILURE
+        // -- the heavy / equal-radius sphere-sphere difference drops every A
+        // fragment, and the op-bound below has lo == 0 for equal radii and
+        // cannot catch it (KL5). Re-probe containment directly (gwn over B at A
+        // face-interior points nudged inward, the classify mechanism, fresh so
+        // it does not trust the failed classify). A genuine touch or true
+        // containment keeps its clean empty: no A interior point lies outside B
+        // when A subset B, and a touch difference correctly keeps A (non-empty)
+        // so it never reaches this path. DECLINE rather than return the wrong
+        // empty body.
+        if op == BoolOp::Difference {
+            let b_tris = b.boundary_triangles();
+            // Sample A's whole surface (its tessellation), not one interior
+            // point: a single point can sit inside B even when A escapes it.
+            // Any A surface point CLEARLY outside B (gwn < 0.25) proves A is not
+            // contained in B. A == B keeps its surface ON B (gwn ~ 0.5), so it
+            // is not flagged and its empty difference stays valid.
+            let a_escapes_b = a
+                .boundary_triangles()
+                .iter()
+                .flatten()
+                .any(|&p| crate::winding::gwn_over(&b_tris, p) < 0.25);
+            if a_escapes_b {
+                return Err(BoolFault::AssemblyFailed(
+                    "empty difference but A is not contained in B (classify failure, declined)",
+                ));
+            }
+        }
+        // An empty Intersection/Difference is only valid when the op truly
+        // yields nothing: disjoint intersection, or a difference whose A is
+        // swallowed by B (lo == 0). If the EXACT operand volumes REQUIRE a
+        // positive result (lo > 0), an empty selection means classification
+        // failed -- the near-tangent thin-lens sphere-difference mis-classes
+        // every A fragment to one side, so select keeps nothing and the old
+        // path returned a malformed EMPTY body whose mass declines and whose
+        // mesh is ~0, slipping the post-condition gate entirely (the one
+        // residual silent-malformed escape, dossier 62 bucket c). DECLINE it
+        // rather than emit the malformed Ok (DECLINE-never-WRONG).
+        let opvol =
+            |x: &Body| x.mass_properties().map(|m| m.volume).unwrap_or_else(|_| x.mesh_volume());
+        let (va, vb) = (opvol(a), opvol(b));
+        let lo = if op == BoolOp::Difference {
+            (va - vb).max(0.0)
+        } else {
+            0.0 // intersection lower bound is always 0
         };
+        let slack = 5e-2 * (1.0 + va.max(vb));
+        if va.is_finite() && vb.is_finite() && lo > slack {
+            return Err(BoolFault::AssemblyFailed(
+                "empty selection violates op-volume bound (declined)",
+            ));
+        }
+        return Ok(BoolResult {
+            body: Body::new(),
+            faults,
+            op,
+        });
     }
     // PRIMARY assembly: the identity-preserving import-and-glue (research
     // file 47). It imports each kept fragment carrying its operand's edge
@@ -4219,22 +4646,50 @@ fn assemble_boolean(
         // to declined. Bodies whose mass legitimately declines (NURBS
         // corner patches) keep the positive-volume floor.
         let v = body.tessellated_volume();
+        let bm = body.mass_properties().map(|m| m.volume);
         if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
-            eprintln!(
-                "  curved gate: tess {v} mass {:?} mesh {}",
-                body.mass_properties().map(|m| m.volume),
-                body.mesh_volume()
-            );
+            eprintln!("  curved gate: tess {v} mass {bm:?} mesh {}", body.mesh_volume());
         }
-        match body.mass_properties() {
-            Ok(m) => {
-                m.volume.is_finite()
-                    && m.volume > 0.0
-                    && v.is_finite()
-                    && (m.volume - v).abs() <= 2e-2 * (1.0 + m.volume.abs())
+        let self_consistent = match bm {
+            Ok(mv) => {
+                mv.is_finite() && mv > 0.0 && v.is_finite() && (mv - v).abs() <= 2e-2 * (1.0 + mv.abs())
             }
             Err(_) => v.is_finite() && v > 1e-9 * (1.0 + v.abs()),
-        }
+        };
+        // INDEPENDENT op-volume bound (research file 47 / task 49, the sphere
+        // cluster the explorer surfaced): the self-consistency check above
+        // passes a SELF-CONSISTENT WRONG (mass==mesh agreeing on an impossible
+        // value, e.g. a disjoint union reading double) and the mass-declined
+        // floor passes a MALFORMED body whose tessellation is positive but
+        // wrong. A clean result must satisfy vol(A op B) in [lo, hi] from the
+        // EXACT operand volumes, regardless of geometry. Decline a violation
+        // (DECLINE-never-WRONG). Skipped only if an operand volume is itself
+        // undeterminable. Planar results keep the exact gate below (their mesh
+        // is exact, so a wrong there already fails self-consistency).
+        // Operand volumes for the bound: mass when available, else the
+        // tessellated mesh (a clean primitive operand's mesh is a good
+        // estimate). The fallback keeps the bound APPLICABLE even when an
+        // operand's OWN mass declines -- exactly the sphere case where an
+        // otherwise-malformed result would slip the gate.
+        let opvol =
+            |x: &Body| x.mass_properties().map(|m| m.volume).unwrap_or_else(|_| x.mesh_volume());
+        let (va, vb) = (opvol(a), opvol(b));
+        let bound_ok = if va.is_finite() && vb.is_finite() && va >= 0.0 && vb >= 0.0 {
+            let (lo, hi) = match op {
+                BoolOp::Union => (va.max(vb), va + vb),
+                BoolOp::Intersection => (0.0, va.min(vb)),
+                BoolOp::Difference => ((va - vb).max(0.0), va),
+            };
+            let slack = 5e-2 * (1.0 + hi);
+            let in_band = |x: f64| x >= lo - slack && x <= hi + slack;
+            // Both the authoritative volume (mass, or the tessellation when
+            // mass declines) AND the user-facing mesh must lie in band: a
+            // malformed body can pass one measure while the other lies.
+            in_band(bm.unwrap_or(v)) && in_band(body.mesh_volume())
+        } else {
+            true // operand volumes undeterminable: cannot bound
+        };
+        self_consistent && bound_ok
     } else if let Ok(m) = body.mass_properties() {
         // SELF-CONSISTENCY gate (research file 47): for a well-formed
         // all-planar body the sense-exact mass_properties and the
@@ -4253,6 +4708,14 @@ fn assemble_boolean(
     } else {
         false
     };
+    // A valid solid never has a non-finite or NEGATIVE mesh volume. A NaN or
+    // negative mesh is a broken (inverted/degenerate) result that the volume
+    // gates above can miss for TINY bodies: the near-tangent sphere^sphere
+    // thin lens returned mass 6.3e-4 / mesh -8.3e-4 against a true 1.38e-2, and
+    // every gate band's (1 + vol) term dwarfed that gap. Reject it (a valid
+    // body, including the clean empty result, has mesh >= 0).
+    let mesh_vol = body.mesh_volume();
+    let ok = ok && mesh_vol.is_finite() && mesh_vol >= -tol.max(1e-9);
     if !ok {
         return Err(BoolFault::AssemblyFailed(
             "degenerate or self-inconsistent result (mass != mesh)",
@@ -4502,50 +4965,137 @@ impl Body {
     }
 }
 
+/// Min/max height of a face's loop vertices along `axis` (relative to `org`).
+fn face_height_band(
+    body: &Body,
+    fk: FaceKey,
+    org: keel_math::vec::Vec3,
+    axis: keel_math::vec::Vec3,
+) -> Option<(f64, f64)> {
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    for lk in body
+        .faces
+        .get(fk)
+        .map(|f| f.loops.clone())
+        .unwrap_or_default()
+    {
+        let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
+            continue;
+        };
+        let mut cur = entry;
+        loop {
+            if let Some(v) = body.fin_start_vertex(cur)
+                && let Some(x) = body.vertices.get(v)
+            {
+                let hv = (x.point - org).dot(axis);
+                lo = lo.min(hv);
+                hi = hi.max(hv);
+            }
+            let Some(next) = body.fins.get(cur).map(|f| f.next) else {
+                break;
+            };
+            cur = next;
+            if cur == entry {
+                break;
+            }
+        }
+    }
+    if lo.is_finite() { Some((lo, hi)) } else { None }
+}
+
+/// The axis of the latitude circle(s) bounding a sphere face (the coaxial
+/// cut axis), from the first circular loop edge.
+fn sphere_face_cut_axis(body: &Body, fk: FaceKey) -> Option<keel_math::vec::Vec3> {
+    for lk in body
+        .faces
+        .get(fk)
+        .map(|f| f.loops.clone())
+        .unwrap_or_default()
+    {
+        let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
+            continue;
+        };
+        let mut cur = entry;
+        loop {
+            if let Some((ck, _)) = body
+                .fins
+                .get(cur)
+                .and_then(|x| body.edges.get(x.edge))
+                .and_then(|e| e.curve)
+                && let Some(cv) = body.curves.get(ck)
+                && let Some((_, ax)) = closed_curve_center_axis(cv)
+            {
+                return Some(ax);
+            }
+            let Some(next) = body.fins.get(cur).map(|f| f.next) else {
+                break;
+            };
+            cur = next;
+            if cur == entry {
+                break;
+            }
+        }
+    }
+    None
+}
+
+/// The curved face (cylinder / cone / sphere) whose trimmed extent contains
+/// `p`. Used to relocate a seam component onto the descendant fragment that
+/// now holds it after an earlier split (the multi-cut imprint path). Cylinder
+/// and cone use a height band along their axis; the sphere uses the band
+/// along its latitude-cut axis, extended by the cap interior point.
 pub(crate) fn curved_face_containing(
     body: &Body,
     p: keel_math::vec::Vec3,
     tol: f64,
 ) -> Option<FaceKey> {
+    let etol = tol.max(1e-7);
     body.face_keys().into_iter().find(|&fk| {
-        let Some(Surface3::Cylinder(c)) = body.face_surface3(fk) else {
-            return false;
-        };
-        let r = (p - c.frame.origin) - c.frame.z * (p - c.frame.origin).dot(c.frame.z);
-        if (r.norm() - c.radius).abs() > tol.max(1e-7) {
-            return false;
-        }
-        let h = (p - c.frame.origin).dot(c.frame.z);
-        let mut hmin = f64::INFINITY;
-        let mut hmax = f64::NEG_INFINITY;
-        for lk in body
-            .faces
-            .get(fk)
-            .map(|f| f.loops.clone())
-            .unwrap_or_default()
-        {
-            let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
-                continue;
-            };
-            let mut cur = entry;
-            loop {
-                if let Some(v) = body.fin_start_vertex(cur)
-                    && let Some(x) = body.vertices.get(v)
-                {
-                    let hv = (x.point - c.frame.origin).dot(c.frame.z);
-                    hmin = hmin.min(hv);
-                    hmax = hmax.max(hv);
+        match body.face_surface3(fk) {
+            Some(Surface3::Cylinder(c)) => {
+                let d = p - c.frame.origin;
+                let h = d.dot(c.frame.z);
+                if ((d - c.frame.z * h).norm() - c.radius).abs() > etol {
+                    return false;
                 }
-                let Some(next) = body.fins.get(cur).map(|f| f.next) else {
-                    break;
-                };
-                cur = next;
-                if cur == entry {
-                    break;
-                }
+                matches!(face_height_band(body, fk, c.frame.origin, c.frame.z),
+                    Some((lo, hi)) if h >= lo - tol && h <= hi + tol)
             }
+            Some(Surface3::Cone(c)) => {
+                let d = p - c.frame.origin;
+                let h = d.dot(c.frame.z);
+                let r_at = (c.radius + h * c.half_angle.tan()).abs();
+                if ((d - c.frame.z * h).norm() - r_at).abs() > etol {
+                    return false;
+                }
+                matches!(face_height_band(body, fk, c.frame.origin, c.frame.z),
+                    Some((lo, hi)) if h >= lo - tol && h <= hi + tol)
+            }
+            Some(Surface3::Sphere(sp)) => {
+                if ((p - sp.frame.origin).norm() - sp.radius).abs() > etol {
+                    return false;
+                }
+                let Some(axis) = sphere_face_cut_axis(body, fk) else {
+                    return false;
+                };
+                let mut lo = f64::INFINITY;
+                let mut hi = f64::NEG_INFINITY;
+                if let Some((a, b)) = face_height_band(body, fk, sp.frame.origin, axis) {
+                    lo = lo.min(a);
+                    hi = hi.max(b);
+                }
+                // The cap interior point bounds the pole side of a single-rim cap.
+                if let Some(q) = body.sphere_face_interior_point(fk) {
+                    let hq = (q - sp.frame.origin).dot(axis);
+                    lo = lo.min(hq);
+                    hi = hi.max(hq);
+                }
+                let h = (p - sp.frame.origin).dot(axis);
+                lo.is_finite() && h >= lo - tol && h <= hi + tol
+            }
+            _ => false,
         }
-        hmin.is_finite() && h >= hmin - tol && h <= hmax + tol
     })
 }
 
@@ -5509,13 +6059,13 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 faults.push(BoolFault::Coincident(id_a, id_b));
                 continue;
             }
-            // CERTIFIED-DISJOINT plane/cone rung (task 38): a plane
-            // PARALLEL to the cone axis meets the infinite cone in a
-            // hyperbola, which SSI has no section rung for; but when
-            // the plane's distance from the axis exceeds the trimmed
-            // lateral's largest radius the faces provably never meet,
-            // and attempting SSI only records a spurious
-            // IntersectionFailed (every countersink carried four).
+            // PLANE/CONE shared setup (tasks 38, 47): the analytic section
+            // rung works on the INFINITE cone, so the only thing that tells a
+            // real seam from a phantom one on the far nappe is the cone FACE's
+            // finite axial band [zlo, zhi]. Sample it once for any plane/cone
+            // pair; task 38 uses it for the parallel-axis disjoint skip, and
+            // task 47 carries it to the seam arm to bound the tilted ellipse.
+            let mut cone_band: Option<(keel_geom::surface::Cone3, f64, f64)> = None;
             {
                 let plane_cone = match (&ref_a, &ref_b) {
                     (
@@ -5528,9 +6078,7 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                     ) => Some((p.clone(), c.clone(), fa, true)),
                     _ => None,
                 };
-                if let Some((p, c, cone_face, cone_is_a)) = plane_cone
-                    && p.frame.z.dot(c.frame.z).abs() < 1e-9
-                {
+                if let Some((p, c, cone_face, cone_is_a)) = plane_cone {
                     let body = if cone_is_a { a } else { b };
                     let mut zlo = f64::INFINITY;
                     let mut zhi = f64::NEG_INFINITY;
@@ -5567,12 +6115,20 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                         }
                     }
                     if sampled && zlo.is_finite() {
-                        let r_at = |z: f64| (c.radius + z * c.half_angle.tan()).abs();
-                        let rmax = r_at(zlo).max(r_at(zhi));
-                        let dist = (c.frame.origin - p.frame.origin).dot(p.frame.z).abs();
-                        if dist > rmax + tol.max(1e-9) + 1e-9 {
-                            continue; // provably disjoint: no SSI, no fault
+                        // task 38: a plane PARALLEL to the cone axis meets the
+                        // infinite cone in a hyperbola (no section rung); when
+                        // the plane clears the trimmed lateral's largest radius
+                        // the faces provably never meet, so skip without the
+                        // spurious IntersectionFailed every countersink carried.
+                        if p.frame.z.dot(c.frame.z).abs() < 1e-9 {
+                            let r_at = |z: f64| (c.radius + z * c.half_angle.tan()).abs();
+                            let rmax = r_at(zlo).max(r_at(zhi));
+                            let dist = (c.frame.origin - p.frame.origin).dot(p.frame.z).abs();
+                            if dist > rmax + tol.max(1e-9) + 1e-9 {
+                                continue; // provably disjoint: no SSI, no fault
+                            }
                         }
+                        cone_band = Some((c.clone(), zlo, zhi));
                     }
                 }
             }
@@ -5609,6 +6165,38 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                         if c.tangential {
                             faults.push(BoolFault::Tangent(id_a, id_b));
                             continue;
+                        }
+                        // task 47: a plane/cone analytic section is the ellipse
+                        // of the plane with the INFINITE cone. A slice near-
+                        // parallel to a ruling runs the major axis tens of units
+                        // up the nappe, far past the finite face. Such an
+                        // ellipse cannot be a real seam, and sampling it in the
+                        // overlap test below is the perf cliff. Decide it here
+                        // by axial extent vs the sampled face band. A genuine
+                        // on-face section is never taller than its own cone
+                        // face, so this never trips a case that would assemble.
+                        if let Some((cone, zlo, zhi)) = &cone_band
+                            && let keel_geom::curve::Curve3::Ellipse(e) = &c.curve
+                        {
+                            let ax = cone.frame.z;
+                            let half = ((e.a * e.x_axis.dot(ax)).powi(2)
+                                + (e.b * e.y_axis.dot(ax)).powi(2))
+                            .sqrt();
+                            let cz = (e.center - cone.frame.origin).dot(ax);
+                            let (eh_lo, eh_hi) = (cz - half, cz + half);
+                            let band = *zhi - *zlo;
+                            let m = band.max(cone.radius.abs()).max(tol) + 1e-9;
+                            if eh_hi - eh_lo > band + m {
+                                if eh_lo >= *zhi - m || eh_hi <= *zlo + m {
+                                    continue; // ellipse off the finite band: no seam
+                                }
+                                // straddles a rim: the true section is an open
+                                // arc exiting the base/top, which the imprint
+                                // cannot assemble -> decline (fast, not after a
+                                // giant-ellipse sampling pass).
+                                faults.push(BoolFault::UnassemblableSeam(id_a, id_b));
+                                continue;
+                            }
                         }
                         // Plane-plane SSI is an UNBOUNDED line; clip it
                         // to both trimmed faces to get the real seam
@@ -6493,6 +7081,302 @@ mod tests {
         );
         let v = res.body.mass_properties().unwrap().volume;
         assert!((v - 2.0).abs() < 1e-9, "coincident union volume {v} != 2");
+    }
+
+    #[test]
+    fn cone_minus_slab_is_two_solids_with_correct_mass() {
+        // The first overlapping-curved cone boolean: a cone cut by a
+        // perpendicular slab (two circle seams) leaves a DISCONNECTED result,
+        // a bottom frustum plus a top tip. Both pieces must assemble with the
+        // tip's lateral kept (apex-aware classify) AND tessellating (apex-aware
+        // tessellate_cone): mass == mesh == frustum + tip. (LOG Add. 255.)
+        let mut cone = Body::new();
+        cone.cone(
+            Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+            2.0,
+            3.0,
+        )
+        .unwrap();
+        let mut slab = Body::new();
+        slab.block(Vec3::new(-3.0, -3.0, 0.8), 6.0, 6.0, 1.0).unwrap();
+        let r = boolean(&cone, &slab, BoolOp::Difference, 1e-7).unwrap();
+        assert!(r.faults.is_empty(), "faults {:?}", r.faults);
+        assert!(r.body.validate().is_ok(), "invalid body");
+        let mass = r.body.mass_properties().unwrap().volume;
+        let mesh = r.body.mesh_volume();
+        // Truth: frustum z[0,0.8] + tip z[1.8,3] of a cone r=2 h=3.
+        let pi = core::f64::consts::PI;
+        let r08 = 2.0 * (1.0 - 0.8 / 3.0);
+        let frustum = pi / 3.0 * 0.8 * (4.0 + 2.0 * r08 + r08 * r08);
+        let tip = pi / 3.0 * 0.8 * 0.8 * 1.2;
+        let truth = frustum + tip;
+        assert!((mass - truth).abs() < 2e-2 * truth, "mass {mass} vs truth {truth}");
+        assert!(
+            (mass - mesh).abs() < 3e-2 * (1.0 + mass),
+            "mass {mass} mesh {mesh}"
+        );
+        // Two disconnected solid cells (frustum + tip).
+        let solids = r.body.regions.iter().filter(|(_, rg)| rg.solid).count();
+        assert_eq!(solids, 2, "expected 2 solid cells, got {solids}");
+    }
+
+    #[test]
+    fn coaxial_cone_cylinder_seam_assembles() {
+        // The exact cone x coaxial-cylinder SSI rung (ssi::cone_cylinder, LOG
+        // Add. 259): a cone and a coaxial cylinder meet in the single circle at
+        // the axial height where the cone radius equals the cylinder radius.
+        // Before this rung EVERY cone-cylinder boolean declined
+        // IntersectionFailed (the SSI returned Degenerate).
+        //
+        // Cone base r=2 at z=0, apex z=3 (slope -2/3). Coaxial cylinder r=1,
+        // z in [0.3,2]: caps clear of the apex and the base plane, so the only
+        // interaction is the lateral seam circle at z=1.5 (cone radius==1) plus
+        // the cyl-top section at z=2. Union and (cyl - cone) assemble cleanly:
+        // mass == mesh == analytic truth.
+        let pi = core::f64::consts::PI;
+        let mut cone = Body::new();
+        cone.cone(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0, 3.0)
+            .unwrap();
+        let mut cyl = Body::new();
+        cyl.cylinder(
+            Frame3::from_z(Vec3::new(0., 0., 0.3), Vec3::new(0., 0., 1.)).unwrap(),
+            1.0,
+            1.7,
+        )
+        .unwrap();
+        // inter = pi*1.2 (cyl part z[0.3,1.5]) + integral_{1.5}^{2} pi*(2-2z/3)^2 dz.
+        let inter = (1.2 + 28.5 / 81.0) * pi;
+        let cone_v = 4.0 * pi;
+        let cyl_v = 1.7 * pi;
+
+        let clean = |a: &Body, b: &Body, op: BoolOp, truth: f64| {
+            let r = boolean(a, b, op, 1e-7).unwrap_or_else(|e| panic!("declined {e:?}"));
+            assert!(r.faults.is_empty(), "faults {:?}", r.faults);
+            assert!(r.body.validate().is_ok(), "invalid body");
+            let mass = r.body.mass_properties().unwrap().volume;
+            let mesh = r.body.mesh_volume();
+            assert!(
+                (mass - truth).abs() < 2e-2 * (1.0 + truth),
+                "mass {mass} vs truth {truth}"
+            );
+            assert!(
+                (mass - mesh).abs() < 3e-2 * (1.0 + mass),
+                "mass {mass} mesh {mesh}"
+            );
+        };
+        clean(&cone, &cyl, BoolOp::Union, cone_v + cyl_v - inter);
+        clean(&cyl, &cone, BoolOp::Difference, cyl_v - inter);
+
+        // The intersection and (cone - cyl) currently DECLINE on a separate
+        // tessellation limitation (a cap floating inside the cone -> a blind
+        // hole / pinch whose mesh disagrees with the exact mass). They must
+        // stay DECLINE-safe: if either ever assembles it must be CORRECT, never
+        // a wrong Ok. The exact mass equals truth in both, proving the seam
+        // itself is right.
+        for (a, b, op, truth) in [
+            (&cone, &cyl, BoolOp::Intersection, inter),
+            (&cone, &cyl, BoolOp::Difference, cone_v - inter),
+        ] {
+            if let Ok(r) = boolean(a, b, op, 1e-7) {
+                let mass = r.body.mass_properties().unwrap().volume;
+                assert!(
+                    (mass - truth).abs() < 3e-2 * (1.0 + truth),
+                    "wrong Ok mass {mass} vs truth {truth}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn coaxial_cone_sphere_all_ops_pass() {
+        // Coaxial cone (base r=2, apex z=3, m=-2/3) + sphere (centre z=1.5,
+        // R=1, fully inside the cone z-range) -> two transversal seam circles.
+        // Needs cone_sphere SSI + the sphere carve + band fallback + multi-rim
+        // clip. All 4 ops mass==mesh==truth (truth by cross-section integral).
+        let pi = core::f64::consts::PI;
+        let cone_r = |z: f64| (2.0 - (2.0 / 3.0) * z).max(0.0);
+        let sph_r = |z: f64| {
+            let t = 1.0 - (z - 1.5) * (z - 1.5);
+            if t > 0.0 { t.sqrt() } else { 0.0 }
+        };
+        let n = 200_000;
+        let (zlo, zhi) = (0.5_f64, 2.5_f64);
+        let dz = (zhi - zlo) / n as f64;
+        let mut inter = 0.0;
+        for i in 0..n {
+            let z = zlo + (i as f64 + 0.5) * dz;
+            let r = cone_r(z).min(sph_r(z));
+            inter += pi * r * r * dz;
+        }
+        let cone_v = 4.0 * pi;
+        let sphere_v = 4.0 / 3.0 * pi;
+        let mut cn = Body::new();
+        cn.cone(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0, 3.0)
+            .unwrap();
+        let mut sp = Body::new();
+        sp.sphere(Frame3::from_z(Vec3::new(0., 0., 1.5), Vec3::new(0., 0., 1.)).unwrap(), 1.0)
+            .unwrap();
+        let check = |a: &Body, b: &Body, op: BoolOp, truth: f64| {
+            let r = boolean(a, b, op, 1e-7).unwrap_or_else(|e| panic!("declined {e:?}"));
+            assert!(r.faults.is_empty(), "faults {:?}", r.faults);
+            assert!(r.body.validate().is_ok(), "invalid body");
+            let mass = r.body.mass_properties().unwrap().volume;
+            let mesh = r.body.mesh_volume();
+            assert!(
+                (mass - truth).abs() < 2e-2 * (1.0 + truth),
+                "mass {mass} vs truth {truth}"
+            );
+            assert!(
+                (mass - mesh).abs() < 3e-2 * (1.0 + mass),
+                "mass {mass} mesh {mesh}"
+            );
+        };
+        check(&cn, &sp, BoolOp::Intersection, inter);
+        check(&cn, &sp, BoolOp::Union, cone_v + sphere_v - inter);
+        check(&cn, &sp, BoolOp::Difference, cone_v - inter);
+        check(&sp, &cn, BoolOp::Difference, sphere_v - inter);
+    }
+
+    #[test]
+    fn coaxial_cyl_sphere_all_ops_pass() {
+        // The dominant cyl/sph decline class, coaxial rung: a rod through a
+        // ball (sphere R=2 at origin, cylinder r=1 z[-3,3], caps outside the
+        // sphere; seam circles z=+-sqrt(3)). Needs cylinder_sphere SSI + the
+        // sphere carve + the band mid-latitude fallback (seam+pole margin) +
+        // the multi-rim tessellation clip. All 4 ops mass==mesh==truth.
+        let pi = core::f64::consts::PI;
+        let s3 = 3.0_f64.sqrt();
+        let inter = pi * 2.0 * s3 + 2.0 * pi * ((16.0 / 3.0) - 3.0 * s3);
+        let sphere_v = 32.0 * pi / 3.0;
+        let cyl_v = 6.0 * pi;
+        let mut sp = Body::new();
+        sp.sphere(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0)
+            .unwrap();
+        let mut cl = Body::new();
+        cl.cylinder(
+            Frame3::from_z(Vec3::new(0., 0., -3.0), Vec3::new(0., 0., 1.)).unwrap(),
+            1.0,
+            6.0,
+        )
+        .unwrap();
+        let check = |a: &Body, b: &Body, op: BoolOp, truth: f64| {
+            let r = boolean(a, b, op, 1e-7).unwrap_or_else(|e| panic!("declined {e:?}"));
+            assert!(r.faults.is_empty(), "faults {:?}", r.faults);
+            assert!(r.body.validate().is_ok(), "invalid body");
+            let mass = r.body.mass_properties().unwrap().volume;
+            let mesh = r.body.mesh_volume();
+            assert!(
+                (mass - truth).abs() < 2e-2 * (1.0 + truth),
+                "mass {mass} vs truth {truth}"
+            );
+            assert!(
+                (mass - mesh).abs() < 3e-2 * (1.0 + mass),
+                "mass {mass} mesh {mesh}"
+            );
+        };
+        check(&sp, &cl, BoolOp::Intersection, inter);
+        check(&sp, &cl, BoolOp::Union, sphere_v + cyl_v - inter);
+        check(&sp, &cl, BoolOp::Difference, sphere_v - inter);
+        check(&cl, &sp, BoolOp::Difference, cyl_v - inter);
+    }
+
+    #[test]
+    fn sphere_slab_carve_three_zones_pass() {
+        // The sphere 3-zone carve: a sphere cut by a slab into two pole caps
+        // plus a pole-free mid BAND. Difference keeps the two caps;
+        // intersection keeps the band. Both PASS (mass == mesh == truth) only
+        // with all three sphere fixes: the band-classify interior point
+        // (Add.262), the sphere tessellation rim-clip (Add.265), and the
+        // offset-robust mesh_volume (Add.264). Before, sph - slab read the
+        // FULL-sphere mass (classify mis-kept the band).
+        let mut sphere = Body::new();
+        sphere
+            .sphere(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0)
+            .unwrap();
+        let mut slab = Body::new();
+        slab.block(Vec3::new(-5.0, -5.0, -0.5), 10.0, 10.0, 1.0).unwrap();
+        let pi = core::f64::consts::PI;
+        let cap = pi * 1.5 * 1.5 * (3.0 * 2.0 - 1.5) / 3.0; // cap of height 1.5, R=2
+        let full = 32.0 * pi / 3.0;
+        let check = |op: BoolOp, truth: f64| {
+            let r = boolean(&sphere, &slab, op, 1e-7).unwrap_or_else(|e| panic!("declined {e:?}"));
+            assert!(r.faults.is_empty(), "faults {:?}", r.faults);
+            assert!(r.body.validate().is_ok(), "invalid body");
+            let mass = r.body.mass_properties().unwrap().volume;
+            let mesh = r.body.mesh_volume();
+            assert!(
+                (mass - truth).abs() < 2e-2 * (1.0 + truth),
+                "mass {mass} vs truth {truth}"
+            );
+            assert!(
+                (mass - mesh).abs() < 3e-2 * (1.0 + mass),
+                "mass {mass} mesh {mesh}"
+            );
+        };
+        check(BoolOp::Difference, 2.0 * cap); // two caps
+        check(BoolOp::Intersection, full - 2.0 * cap); // mid band
+    }
+
+    #[test]
+    fn sphere_band_interior_point_is_on_the_band() {
+        // A sphere split by a slab into THREE zones: two pole caps + a mid
+        // BAND. The band has NO pole, so its classify interior point must lie
+        // ON the band (between the two cuts), not at a pole. The old logic's
+        // off-rim witness found the OTHER rim and returned a pole OUTSIDE the
+        // band, so classify mis-kept it (sph - slab read FULL-sphere mass).
+        // LOG Add. 262: a gated band branch (>=2 distinct parallel circle
+        // rims, point_in_face_uv-verified) returns a mid-latitude point.
+        let mut sphere = Body::new();
+        sphere
+            .sphere(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0)
+            .unwrap();
+        let mut slab = Body::new();
+        slab.block(Vec3::new(-5.0, -5.0, -0.5), 10.0, 10.0, 1.0).unwrap();
+        let (ia, _ib, _f) = imprint_pair(&sphere, &slab, 1e-7);
+        // The band is the sphere face whose tessellation stays inside the slab
+        // (|z| < 0.9); the two caps reach the poles at z = +-2.
+        let band = ia
+            .body
+            .face_keys()
+            .into_iter()
+            .find(|&f| {
+                matches!(ia.body.face_surface3(f), Some(Surface3::Sphere(_))) && {
+                    let tris = ia.body.tessellate_face(f);
+                    !tris.is_empty() && tris.iter().flatten().all(|p| p.z.abs() < 0.9)
+                }
+            })
+            .expect("no band face found among the imprinted sphere zones");
+        let p = ia
+            .body
+            .sphere_face_interior_point(band)
+            .expect("band face has no interior point");
+        assert!(p.z.abs() < 0.5, "band interior point z={} is not on the band", p.z);
+        assert!((p.norm() - 2.0).abs() < 1e-6, "interior point off the sphere");
+    }
+
+    #[test]
+    fn overlapping_sphere_difference_never_returns_malformed_ok() {
+        // KL5 / LOG Add.258: a heavy / equal-radius sphere-sphere difference
+        // must NEVER return an Ok body whose mass declines (the malformed empty
+        // body a mesh-only consumer would read as 0). It must PASS with a valid
+        // mass or DECLINE honestly. Equal radii give the difference lower bound
+        // lo == 0, so the op-volume guard alone cannot catch the wrong empty;
+        // the A-not-contained-in-B surface probe does.
+        let mk = |c: Vec3| {
+            let mut b = Body::new();
+            b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), 1.5)
+                .unwrap();
+            b
+        };
+        let a = mk(Vec3::ZERO);
+        let b = mk(Vec3::new(1.5, 0., 0.));
+        match boolean(&a, &b, BoolOp::Difference, 1e-7) {
+            Err(_) => {} // honest decline is acceptable
+            Ok(r) => assert!(
+                r.body.mass_properties().is_ok(),
+                "sphere-sphere difference returned a MALFORMED Ok (mass declines)"
+            ),
+        }
     }
 
     #[test]
