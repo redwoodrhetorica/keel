@@ -972,7 +972,117 @@ impl Body {
         // historic pick opposite the seam).
         let (a0, a1) = self.cyl_angular_span(face, origin, ex, ey, ez);
         let amid = 0.5 * (a0 + a1);
-        Some(origin + (ex * amid.cos() + ey * amid.sin()) * r + ez * hmid)
+        let to_pt = |th: f64, h: f64| origin + (ex * th.cos() + ey * th.sin()) * r + ez * h;
+
+        // INNER LOOPS (holes): a multi-loop cylinder face is the wall
+        // MATERIAL with the bore seams punched out as holes (a thin cyl
+        // boring through a thick one leaves the wall as one face with
+        // two oval holes). The blind (amid, hmid) pick lands at the ring
+        // centre, which for a diametric bore is the dead centre of a
+        // hole -- a point INSIDE the other operand, so classify mis-keeps
+        // the whole wall (cyl/cyl A n B over-keep, LOG Add. 270/272).
+        // Mirror the planar grid path: when holes are present, search
+        // (theta, h) for the most-central point OUTSIDE every hole.
+        // Single-loop faces (bands, windows) keep the fast pick.
+        let loops: Vec<crate::entity::LoopKey> = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        if loops.len() >= 2 {
+            use core::f64::consts::{PI, TAU};
+            use keel_math::vec::Vec3;
+            // Each inner loop -> an unwrapped (theta, h) polygon. The bore
+            // ovals are localised in theta and never wrap the ring, so
+            // unwrapping relative to the running angle keeps each polygon
+            // contiguous and branch-cut free.
+            let angle_h = |p: Vec3| -> (f64, f64) {
+                let d = p - origin;
+                let w = d - ez * d.dot(ez);
+                (w.dot(ey).atan2(w.dot(ex)), d.dot(ez))
+            };
+            let mut holes: Vec<Vec<(f64, f64)>> = Vec::new();
+            for &lk in loops.iter().skip(1) {
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut poly: Vec<(f64, f64)> = Vec::new();
+                let mut prev = f64::NAN;
+                let mut cur = entry;
+                while let Some(fin) = self.fins.get(cur) {
+                    for p in self.fin_curve_samples(cur, 12).unwrap_or_default() {
+                        let (mut th, h) = angle_h(p);
+                        if !prev.is_nan() {
+                            while th - prev > PI {
+                                th -= TAU;
+                            }
+                            while th - prev < -PI {
+                                th += TAU;
+                            }
+                        }
+                        prev = th;
+                        poly.push((th, h));
+                    }
+                    cur = fin.next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+                if poly.len() >= 3 {
+                    holes.push(poly);
+                }
+            }
+            if !holes.is_empty() {
+                // Each hole's mean angle (its branch anchor) and an
+                // arc-length-scaled copy (theta*r) so theta and h distances
+                // are comparable surface lengths.
+                let meta: Vec<(f64, Vec<(f64, f64)>)> = holes
+                    .iter()
+                    .map(|poly| {
+                        let mean = poly.iter().map(|q| q.0).sum::<f64>() / poly.len() as f64;
+                        (mean, poly.iter().map(|q| (q.0 * r, q.1)).collect())
+                    })
+                    .collect();
+                let branch = |th: f64, mean: f64| {
+                    let mut t = th;
+                    while t - mean > PI {
+                        t -= TAU;
+                    }
+                    while t - mean < -PI {
+                        t += TAU;
+                    }
+                    t
+                };
+                const N: usize = 24;
+                let mut best: Option<((f64, f64), f64)> = None;
+                for i in 0..=N {
+                    let th = a0 + (a1 - a0) * (i as f64 / N as f64);
+                    for j in 1..N {
+                        let h = hlo + (hhi - hlo) * (j as f64 / N as f64);
+                        let mut inside = false;
+                        let mut dmin = f64::INFINITY;
+                        for (k, poly) in holes.iter().enumerate() {
+                            let t = branch(th, meta[k].0);
+                            if winding_nonzero(poly, (t, h)) {
+                                inside = true;
+                                break;
+                            }
+                            dmin = dmin.min(dist_to_polyline(&meta[k].1, (t * r, h)));
+                        }
+                        if inside {
+                            continue;
+                        }
+                        if best.is_none_or(|(_, bd)| dmin > bd) {
+                            best = Some(((th, h), dmin));
+                        }
+                    }
+                }
+                if let Some(((th, h), _)) = best {
+                    return Some(to_pt(th, h));
+                }
+            }
+        }
+        Some(to_pt(amid, hmid))
     }
 
     /// The cone twin of the cylinder rung: rim heights bound the band,

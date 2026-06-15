@@ -8560,3 +8560,58 @@ tests pass; additive (NURBS fins previously declined, so no passing case
 regresses). Pieces 2 (NURBS-seam imprint/classify) and 3 (stitch coedge-matching)
 remain before cyl/cyl Rung 3 and the non-coaxial quartics pass end-to-end.
 [[kernel-known-limitations]]
+
+## Addendum 272: cyl/cyl NURBS-seam pieces 2+3 (classify hole-avoidance + tessellation stencil); the gap narrows to a non-planar wrap imprint + shared-subdivision stitch (2026-06-15)
+
+Drove the unequal-radius perpendicular cyl/cyl (probe_cc2: A z-cyl r1, B x-cyl
+r0.6) end-to-end with the guard temporarily off, and decomposed the universal
+NURBS-seam gap (Add.270) into FIVE pieces. Exact truths: A∩B=2.15496262,
+B−A=2.36893, A∪B=14.93530, A−B=10.41141. The SSI is two closed NON-planar NURBS
+loops (x=±sqrt(z^2+0.64)); on A's z-wall each is a small theta-localized HOLE,
+on B's x-wall each ENCIRCLES the axis (wraps phi as z spans the tube).
+
+LANDED this session (committed, guard kept ON, soak FAIL=0 both seeds 20k):
+- PIECE 2 CLASSIFY -- `cylinder_face_interior_point` (boolean.rs ~968) blindly
+  returned the angular/height midpoint (pi, 0) for a multi-loop wall = the DEAD
+  CENTRE of a bore hole -> a point INSIDE the other operand -> the whole wall was
+  mis-kept InsideOther (A∩B over-kept, mesh 16.39 vs cyl A's own 12.57). FIX:
+  when the face has inner loops, build their (theta,h) hole polygons and
+  grid-search (theta,h) for the most-central point OUTSIDE every hole (the
+  planar grid path's analogue). Single-loop bands/windows keep the fast pick, so
+  no planar/conic case changes. After: A's wall is correctly OutsideOther.
+- PIECE 3 TESSELLATION -- `tessellate_cylinder` (tessellate.rs) clipped only
+  PLANAR cap_planes (circle/ellipse arcs); NURBS ovals were ignored and the face
+  meshed to its full bounding band. FIX: gate on a degree>=2 NURBS trim edge ->
+  mesh the FULL ring [0,tau]x[hlo,hhi] (axial nv=48) and keep triangles whose
+  (theta,h) centroid is inside the face by an even-odd axial ray-cast against
+  EVERY loop edge (wrap-aware). The general analogue of the sphere multi-rim
+  clip (Add.265), for arbitrary NURBS seam loops. Verified: the windows mesh to
+  their oval (0.391 each, matching the Green mass arm exactly); A∩B mass reads
+  EXACT (2.15496262 == truth) and B−A EXACT (2.36893 == truth) -- mass and the
+  CORRECT-face mesh agree on the windows + barrel. These two are correct (not
+  merely safe) improvements, verified on the probe.
+
+THE REMAINING GAP (two coupled deep pieces, guard stays ON):
+- PIECE 4 non-planar WRAP IMPRINT on B's wall -- the encircling loop has
+  wraps=TRUE but `closed_curve_crosses_boundary` -> `closed_curve_plane` returns
+  None for a non-planar NURBS (imprint.rs 1825 handles only Circle/Ellipse), so
+  the dispatch (boolean.rs ~5884) falls to `synthesize_lateral_seam`, which fails
+  on B's already-seamed 1-loop wall -> `continue` -> B is NEVER imprinted and
+  stays the pristine full cylinder (mesh overshoots: A∩B mesh 3.79, A∪B mass
+  17.09=V(A)+V(B)). `imprint_closed_curve_crossing` (imprint.rs 420) also
+  hard-requires a planar curve. NEEDED: a wrap imprint that locates the
+  seam-line crossing P and antipode Q from the CURVE (not a plane), then the
+  proven mev/mef split.
+- PIECE 5 non-planar STITCH -- even with piece 4, A's oval is ONE closed edge
+  (imprint_closed_curve) and B's is two arcs (P,Q); each wall splits the shared
+  curve at its OWN seam-line crossing (different points) -> "unmatched coedge".
+  Steinmetz (equal radii) works because the two ellipses cross each other at two
+  SHARED points both operands split at; the unequal case has no crossing pair,
+  so it needs a SHARED CANONICAL seam subdivision (split both operands' copies at
+  the same curve-parameter points). A real design problem.
+
+VERDICT: cyl/cyl is a 5-piece effort -- 3 done + verified, 2 coupled deep pieces
+remain. The SAME imprint+stitch gap blocks every non-coaxial quadric quartic
+(cyl/sph, cone/sph) and parabola/hyperbola plane-cone. All declines stay
+DECLINE-safe (guard ON); 283 keel-topo + integration tests pass; soak FAIL=0.
+[[kernel-known-limitations]]

@@ -529,7 +529,48 @@ impl Body {
         if hhi - hlo <= 0.0 {
             return Vec::new();
         }
-        let (plo, phi_hi) = self.cyl_angular_span(face, origin, ex, ey, ez);
+        // NURBS-SEAM trim (cyl/cyl bore, plane/cone hyperbola, non-coaxial
+        // quartics): the boundary ovals/branches are NURBS, not planar, so
+        // the cap_planes ruling clip cannot bound them. Mesh the FULL ring
+        // and keep triangles whose (theta, h) centroid is inside the face by
+        // an even-odd ray cast against every loop edge (the general analogue
+        // of the planar cap-side / sphere multi-rim clip, LOG Add. 272).
+        // Gated to faces carrying a degree>=2 NURBS trim curve, so every
+        // planar/conic-trimmed cylinder face is byte-unchanged.
+        let nurbs_trimmed = {
+            let mut found = false;
+            'scan: for lk in self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default() {
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                loop {
+                    if let Some((ck, _)) = self
+                        .fins
+                        .get(cur)
+                        .and_then(|fin| self.edges.get(fin.edge))
+                        .and_then(|e| e.curve)
+                        && matches!(self.curves.get(ck), Some(keel_geom::curve::Curve3::Nurbs(n)) if n.degree() >= 2)
+                    {
+                        found = true;
+                        break 'scan;
+                    }
+                    let Some(nx) = self.fins.get(cur).map(|f| f.next) else {
+                        break;
+                    };
+                    cur = nx;
+                    if cur == entry {
+                        break;
+                    }
+                }
+            }
+            found
+        };
+        let (plo, phi_hi) = if nurbs_trimmed {
+            (0.0, core::f64::consts::TAU)
+        } else {
+            self.cyl_angular_span(face, origin, ex, ey, ez)
+        };
         // Oblique boundary planes (ellipse arcs / tilted circle arcs:
         // a mitre seam or a partial-span stop) clamp each ruling, as in
         // tessellate_cone.
@@ -558,7 +599,10 @@ impl Body {
                 }
             }
         }
-        const NV: usize = 16;
+        // Axial count: a NURBS-seam stencil clips by whole cells, so a jagged
+        // oval/seam boundary needs finer axial steps to converge the mesh
+        // volume to the analytic mass; a planar-trimmed band is exact axially.
+        let nv: usize = if nurbs_trimmed { 48 } else { 16 };
         // Adaptive angular count (item 98) from the cylinder radius and the
         // actual angular span; axial NV stays fixed (a cylinder is exact
         // along its axis).
@@ -657,14 +701,77 @@ impl Body {
             let h = hi_clip.unwrap_or(hhi);
             if l > h { (l, l) } else { (l, h) }
         };
+        // (theta, h) trim edges + even-odd membership for the NURBS stencil.
+        let wrap_pi = |x: f64| {
+            let t = core::f64::consts::TAU;
+            let mut a = x % t;
+            if a >= core::f64::consts::PI {
+                a -= t;
+            }
+            if a < -core::f64::consts::PI {
+                a += t;
+            }
+            a
+        };
+        let mut segs: Vec<((f64, f64), (f64, f64))> = Vec::new();
+        if nurbs_trimmed {
+            for lk in self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default() {
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut pts: Vec<(f64, f64)> = Vec::new();
+                let mut cur = entry;
+                while let Some(fin) = self.fins.get(cur) {
+                    for p in self.fin_curve_samples(cur, 24).unwrap_or_default() {
+                        let w = p - origin;
+                        let wp = w - ez * w.dot(ez);
+                        pts.push((wp.dot(ey).atan2(wp.dot(ex)), w.dot(ez)));
+                    }
+                    cur = fin.next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+                let m = pts.len();
+                for k in 0..m {
+                    segs.push((pts[k], pts[(k + 1) % m]));
+                }
+            }
+        }
+        // Axial ray from (thc, hc): odd crossing count => inside the face.
+        let inside = |thc: f64, hc: f64| -> bool {
+            let mut count = 0u32;
+            for &((ta, ha), (tb, hb)) in &segs {
+                let dab = wrap_pi(tb - ta);
+                if dab.abs() < 1e-12 {
+                    continue;
+                }
+                let s = wrap_pi(thc - ta) / dab;
+                if !(0.0..1.0).contains(&s) {
+                    continue;
+                }
+                if ha + s * (hb - ha) > hc {
+                    count += 1;
+                }
+            }
+            count % 2 == 1
+        };
+        let keep = |q: Vec3| -> bool {
+            if !nurbs_trimmed {
+                return true;
+            }
+            let w = q - origin;
+            let wp = w - ez * w.dot(ez);
+            inside(wp.dot(ey).atan2(wp.dot(ex)), w.dot(ez))
+        };
         let mut tris = Vec::new();
         for j in 0..np {
             let p0 = plo + (phi_hi - plo) * j as f64 / np as f64;
             let p1 = plo + (phi_hi - plo) * (j + 1) as f64 / np as f64;
             let (l0, h0) = ruling_band(p0);
             let (l1, h1) = ruling_band(p1);
-            for i in 0..NV {
-                let (f0, f1) = (i as f64 / NV as f64, (i + 1) as f64 / NV as f64);
+            for i in 0..nv {
+                let (f0, f1) = (i as f64 / nv as f64, (i + 1) as f64 / nv as f64);
                 let a = pt(p0, l0 + (h0 - l0) * f0);
                 let b = pt(p0, l0 + (h0 - l0) * f1);
                 let c = pt(p1, l1 + (h1 - l1) * f1);
@@ -673,8 +780,14 @@ impl Body {
                     let w = q - origin;
                     (w - ez * w.dot(ez)) * sgn
                 };
-                tris.push(orient([a, b, c], rad((a + b + c) * (1.0 / 3.0))));
-                tris.push(orient([a, c, d], rad((a + c + d) * (1.0 / 3.0))));
+                let ca = (a + b + c) * (1.0 / 3.0);
+                let cd = (a + c + d) * (1.0 / 3.0);
+                if keep(ca) {
+                    tris.push(orient([a, b, c], rad(ca)));
+                }
+                if keep(cd) {
+                    tris.push(orient([a, c, d], rad(cd)));
+                }
             }
         }
         tris
