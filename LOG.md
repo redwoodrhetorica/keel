@@ -8194,3 +8194,37 @@ the coplanar-base handling takes a different path. Fix target: imprint must clip
 each seam to the actual trimmed face (a seam wholly outside the face imprints
 nothing). Affects any curved boolean whose cap-plane extension meets another
 surface beyond the cap. Decline-safe meanwhile. [[kernel-known-limitations]]
+
+## Addendum 260: phantom-seam imprint clip ATTEMPTED and REVERTED -- the naive "drop seams outside a planar face" breaks DECLINE-never-WRONG (soak caught 114 wrongs) (2026-06-15)
+
+The Add.259 residual phantom (a cap PLANE's section of another surface imprinting
+OUTSIDE the cap) tempted a quick fix: in `imprint_operand`, drop any seam whose
+samples all lie outside a PLANAR face's trimmed boundary. Two versions tried --
+(1) hand-rolled Newell-normal + even-odd point-in-polygon, (2) the kernel's robust
+`planar_face_contains` (plane-frame projection + nonzero winding + holes). Both
+produced the SAME numbers: the offset coaxial cone-cylinder went 4/4 PASS and the
+20k explorer soak rose to PASS 5655 (+689 vs baseline 4966) with DECLINE 14231 --
+but FAIL went 0 -> **114** (all `mass!=mesh`, all involving a CONE: cone/cyl 37,
+cone/sph 27, cone/block 29, cone/cone 21). REVERTED both; baseline restored
+(PASS 4966 / DECLINE 15034 / FAIL 0).
+
+Why it is WRONG (the lesson): the drop is ASYMMETRIC. A seam belongs to a face
+PAIR and `imprint_operand` runs per operand, so dropping it from operand B's
+planar face (because the seam lies outside that face) while operand A keeps it on
+its OTHER face leaves an unmatched seam -> a stitch that is Euler-valid but
+geometrically wrong, slipping the curved gate (2e-2) yet caught by the soak's
+tighter mass==mesh. The cone-cylinder cap case happened to work (the phantom was
+on the CYLINDER cap and the cone-lateral genuinely did not reach it); but a CONE
+BASE in a difference legitimately receives seams whose sampled curve sits just
+outside the pre-imprint base boundary yet is still needed -- dropping those is the
+114-wrong class. Containment-test quality was NOT the issue (identical results);
+the DROP DECISION is.
+
+Correct approach (deferred, research-grade): make the clip SYMMETRIC at seam
+GENERATION (`seam_curves`) -- discard a seam only when it lies outside the trimmed
+extent of EITHER face of its pair (needs a robust point-on-trimmed-face test on
+BOTH faces, including the CURVED one via `curved_face_containing`), so the seam
+vanishes from both operands together or from neither. Until then the offset
+coaxial cone-cylinder intersection / (cone - cyl) DECLINE (decline-safe); the
+committed rung (Add.259) and its union / (cyl - cone) clean passes stand. The
+contract HELD: the soak gate stopped the wrong from shipping. [[kernel-known-limitations]]
