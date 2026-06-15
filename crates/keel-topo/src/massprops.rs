@@ -999,6 +999,10 @@ impl Body {
             Seg(Vec3, Vec3),
             Circ(keel_geom::curve::Circle3, f64, f64),
             Ell(keel_geom::curve::Ellipse3, f64, f64),
+            // A general NURBS boundary fin (the curved SSI seam of two
+            // crossing quadrics fit to a NURBS): integrated by GL8 over its
+            // own parameter, using point + first derivative as the tangent.
+            Nurbs(keel_geom::nurbs_curve::NurbsCurve, f64, f64),
         }
         // UV mapping: u = azimuth about ez; v = axial height
         // (cylinder) or latitude (sphere), matching local_geometry.
@@ -1127,9 +1131,14 @@ impl Body {
                         }
                     }
                     Some(Curve3::Nurbs(n)) if n.degree() > 1 => {
-                        return Err(TopoError::Precondition(
-                            "green-slab: curved NURBS boundary fin",
-                        ));
+                        // Parameter range over the NURBS domain, matched to the
+                        // edge direction (p0 -> p1) and flipped for a backward
+                        // fin. Closed loops (b0 == b1) take the full domain.
+                        let (da, db) = n.domain();
+                        let fwd = (n.point(da) - p0).norm() <= (n.point(da) - p1).norm();
+                        let (s0, s1) = if fwd { (da, db) } else { (db, da) };
+                        let (t0, t1) = if fin.forward { (s0, s1) } else { (s1, s0) };
+                        fins_c.push((li, FinCurve::Nurbs(n.clone(), t0, t1)));
                     }
                     _ => {
                         // Straight fins lie on a cylinder only (as
@@ -1211,6 +1220,22 @@ impl Body {
                         }
                     }
                 }
+                FinCurve::Nurbs(n, t0, t1) => {
+                    // GL8 over the NURBS parameter; tangent = first derivative.
+                    // Panel count tied to the control-point count so a wiggly
+                    // fit is sampled densely enough for the boundary flux.
+                    let panels = (n.control_points().len() * 2).max(8);
+                    for ip in 0..panels {
+                        let a0 = t0 + (t1 - t0) * ip as f64 / panels as f64;
+                        let a1 = t0 + (t1 - t0) * (ip + 1) as f64 / panels as f64;
+                        for (xj, wj) in GL8_X.iter().zip(GL8_W) {
+                            let t = 0.5 * (a0 + a1) + 0.5 * (a1 - a0) * xj;
+                            let d = n.derivatives(t, 1);
+                            let dp = d.get(1).copied().unwrap_or(Vec3::ZERO);
+                            node(d[0], dp, wj * 0.5 * (a1 - a0));
+                        }
+                    }
+                }
             }
         }
         // ORIENTATION NORMALIZATION (task 41): the rep does not enforce
@@ -1264,6 +1289,7 @@ impl Body {
                     FinCurve::Seg(..) => "seg".to_string(),
                     FinCurve::Circ(_, a, b) => format!("circ {a:.3}..{b:.3}"),
                     FinCurve::Ell(_, a, b) => format!("ell {a:.3}..{b:.3}"),
+                    FinCurve::Nurbs(_, a, b) => format!("nurbs {a:.3}..{b:.3}"),
                 };
                 eprintln!("    fin {i} (loop {li}): {d}");
             }

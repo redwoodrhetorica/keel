@@ -8536,3 +8536,27 @@ boundary mass arm (concrete, isolatable -- a face bounded by a NURBS fin); (2) t
 NURBS-seam imprint/classify; (3) the NURBS-seam stitch coedge-matching. Then the
 per-ruling SSI rungs (easy per #58) light up the whole non-coaxial curved frontier.
 [[kernel-known-limitations]]
+
+## Addendum 271: NURBS-seam piece 1 -- the Green-slab NURBS-boundary mass arm (FinCurve::Nurbs) (2026-06-15)
+
+Implemented the first piece of the universal NURBS-seam assembly (Add.270): the
+Green-slab mass integrator now integrates a face bounded by a NURBS arc, instead
+of declining `green-slab: curved NURBS boundary fin` (massprops.rs ~1129).
+`integrate_face_green`'s FinCurve enum gains a `Nurbs(NurbsCurve, t0, t1)` variant;
+the boundary-flux loop GL8-samples it over its own parameter (panels tied to the
+control-point count), with the tangent dp = `NurbsCurve::derivatives(t,1)[1]` and
+point `[0]` -- a direct mirror of the Circ/Ell arms (which are exact). The
+parameter range is matched to the edge direction (p0->p1) and flipped for a
+backward fin; closed loops take the full domain.
+
+This is GENERAL: it removes the NURBS-boundary mass decline for ANY curved face
+with a NURBS fin (future SSI seams, variable-radius blends, etc.), not just the
+cyl-cyl case. Verified the arm RUNS: with the cyl-cyl guard temporarily off, the
+unequal-perpendicular A n B mass goes from `Err(NURBS boundary fin)` to a value
+(14.72); the residual mass!=mesh gap there is the MALFORMED body (classify
+over-kept: mesh 16.39 > cyl A's own 12.57), NOT the arm -- a correct NURBS-fin
+body still awaits the classify+stitch pieces. 283 keel-topo + 135 keel-geom lib
+tests pass; additive (NURBS fins previously declined, so no passing case
+regresses). Pieces 2 (NURBS-seam imprint/classify) and 3 (stitch coedge-matching)
+remain before cyl/cyl Rung 3 and the non-coaxial quartics pass end-to-end.
+[[kernel-known-limitations]]
