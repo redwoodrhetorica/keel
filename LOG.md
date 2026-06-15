@@ -8499,3 +8499,40 @@ seam-location (the `unlocated seam component` path) so cone-cone passes cleanly,
 or pivot to the larger unblocked classes (cone/block ~992, cyl/cyl
 UnassemblableSeam ~860). The coaxial sphere-vs-{plane,cyl,cone} family stays the
 session's landed win (Add.262-268). [[kernel-known-limitations]]
+
+## Addendum 270: cyl/cyl UnassemblableSeam diagnosed -- it is the UNIVERSAL NURBS-seam assembly gap; concrete first blocker is the Green-slab NURBS-boundary mass arm (2026-06-15)
+
+Reproduced cyl/cyl UnassemblableSeam (`probe_cc2`): perpendicular UNEQUAL radii
+(A r=1 z-axis, B r=0.6 x-axis bores through), skew, and tilted ALL decline
+`UnassemblableSeam(5,5)`. Equal-radius Steinmetz passes because its SSI is the
+exact Rung-2 two-closed-ellipse form; the unequal/skew cases use Rung 3 (the
+per-ruling branch field) -> certified-NURBS seams. The decline is DELIBERATE
+(boolean.rs ~6033): for both-cylinder pairs, any SSI that is not exactly "2 closed
+exact (tol_achieved==0) circle/ellipse" curves is declined -- "approximate curves,
+open branches still have no assembly path."
+
+Disabled the guard to see the first blocker. The NURBS seam IMPRINTS, but the
+assembly is deeply unimplemented for NURBS seams:
+- MASS: `Err(Precondition("green-slab: curved NURBS boundary fin"))` -- the
+  Green-slab mass integrator CANNOT integrate a face bounded by a NURBS arc (the
+  boundary-flux node() arm handles conic fins, not general NURBS). THE concrete
+  first blocker (dossier #60 curved-mass: the generic-NURBS GL boundary arm).
+- CLASSIFY: A n B mesh=16.39 vs the in-bounds max min(volA 12.57, volB 4.52)=4.52
+  -> wrong faces kept (the NURBS-seam imprint/classify selects wrongly).
+- STITCH: union -> `unmatched coedge: shell-closure invariant violated` (the NURBS
+  seam edges do not match across operands).
+- ORIENTATION: A - B -> non-positive volume.
+So `UnassemblableSeam` is CORRECT (proceeding makes wrong bodies); the decline is
+decline-safe. Reverted the guard.
+
+KEY: this SAME general-NURBS-seam assembly gap (mass + classify + stitch +
+orientation for an arbitrary NURBS intersection curve on curved faces) is the
+UNIVERSAL downstream blocker -- it gates cyl/cyl Rung 3, ALL non-coaxial
+sphere/cone/cyl quadric quartics, AND the parabola/hyperbola plane-cone (a NURBS
+conic). The exact-conic path (circles/ellipses/lines, incl. the coaxial sphere
+family landed this session) works; the NURBS-seam path does not. NEXT (research-
+grade, multi-session, read #59/#60 first): (1) the Green-slab generic-NURBS-
+boundary mass arm (concrete, isolatable -- a face bounded by a NURBS fin); (2) the
+NURBS-seam imprint/classify; (3) the NURBS-seam stitch coedge-matching. Then the
+per-ruling SSI rungs (easy per #58) light up the whole non-coaxial curved frontier.
+[[kernel-known-limitations]]
