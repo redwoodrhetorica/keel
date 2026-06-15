@@ -8382,3 +8382,41 @@ mesh_volume (Add.264), tessellation rim-clip (Add.265). NEXT: re-add the coaxial
 cylinder_sphere SSI rung (reverted earlier ONLY because this sphere downstream was
 broken -- now fixed), which should start converting the cyl/sph class itself.
 [[sphere-split-integration-trap]] [[kernel-known-limitations]]
+
+## Addendum 266: coaxial cyl-sphere ALL 4 OPS PASS (band mid-latitude fallback) -- but HELD: it exposes a two-dimple sphere-sphere mass!=mesh (2026-06-15)
+
+On the landed sphere carve, re-added the coaxial `cylinder_sphere` SSI + a band
+interior-point FALLBACK, and the coaxial cyl-sphere class now FULLY works:
+sph n cyl 11.745, sph u cyl 40.615, sph - cyl 21.766, cyl - sph 7.105 -- ALL
+mass==mesh==truth (rod-through-ball, R=2 sphere x r=1 cyl). The dominant cyl/sph
+decline class is solvable.
+
+The fix (diagnosed via per-face interior-point dump): the sphere carve was
+necessary but not sufficient. For sph n cyl the sphere BAND (z[-sqrt3,sqrt3],
+r=1..2, OUTSIDE the cylinder, must be discarded) was KEPT because
+`sphere_face_interior_point` returned a POLE (0,0,2) -- the band-classify branch
+detected 2 rims but its `point_in_face_uv` verification fails for a
+full-revolution band (wrap-around uv has no simple winding) AND the cyl-cut band's
+rims are ARCS (`is_closed`=false), so it fell through to the pole, which sits on
+the axis INSIDE the cylinder -> mis-kept. The pole = full-sphere kept -> mass 44.39
+vs truth 11.74. FIX: when no azimuth verifies in-domain, return the mid-latitude
+point FARTHEST from the parameterization seam (never a pole; off-seam so it does
+not mis-classify a non-coaxial partner; azimuth-independent radius so it classifies
+a coaxial partner right).
+
+HELD / REVERTED: the band fallback REGRESSED `boolean_multi_empty_single_and_two_tools`
+(sphere minus two pole spheres). That rest face is ALSO a band (between the two
+dimple rims at z=+-0.75); the fallback gives it the correct EQUATOR point (the
+poles are removed, inside the dimples), and that CORRECT classify exposes a
+mass!=mesh in the two-dimple DIFFERENCE assembly -- which the old POLE mis-classify
+had MASKED (the wrong point gave a self-consistent body that passed the loose test
+v<v_core). So the band fallback is correct but surfaces a latent two-dimple
+sphere-sphere assembly bug, and the bands are geometrically indistinguishable from
+cyl-sphere bands (cannot scope around it). Reverted cyl-sphere SSI + band fallback
+to keep the committed tree green; sphere carve (fa1515c) stands.
+
+NEXT: (1) determine whether the old two-dimple result was a WRONG-POSITIVE (check
+its volume vs the true core - 2 lenses = 3.469) -- if so it SHOULD decline and the
+test should allow it; (2) or fix the two-dimple difference assembly mass!=mesh;
+then re-apply the band fallback (the exact change above) + cyl-sphere SSI -> the
+coaxial cyl/sph class lands. [[sphere-split-integration-trap]] [[kernel-known-limitations]]
