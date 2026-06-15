@@ -4327,6 +4327,36 @@ fn assemble_boolean(
         if op == BoolOp::Union {
             return Err(BoolFault::AssemblyFailed("union selected no faces"));
         }
+        // A DIFFERENCE A - B is empty ONLY when A is contained in B (A subset
+        // B, including A == B). If an interior point of A lies strictly OUTSIDE
+        // B then part of A survives, so an empty selection is a CLASSIFY FAILURE
+        // -- the heavy / equal-radius sphere-sphere difference drops every A
+        // fragment, and the op-bound below has lo == 0 for equal radii and
+        // cannot catch it (KL5). Re-probe containment directly (gwn over B at A
+        // face-interior points nudged inward, the classify mechanism, fresh so
+        // it does not trust the failed classify). A genuine touch or true
+        // containment keeps its clean empty: no A interior point lies outside B
+        // when A subset B, and a touch difference correctly keeps A (non-empty)
+        // so it never reaches this path. DECLINE rather than return the wrong
+        // empty body.
+        if op == BoolOp::Difference {
+            let b_tris = b.boundary_triangles();
+            // Sample A's whole surface (its tessellation), not one interior
+            // point: a single point can sit inside B even when A escapes it.
+            // Any A surface point CLEARLY outside B (gwn < 0.25) proves A is not
+            // contained in B. A == B keeps its surface ON B (gwn ~ 0.5), so it
+            // is not flagged and its empty difference stays valid.
+            let a_escapes_b = a
+                .boundary_triangles()
+                .iter()
+                .flatten()
+                .any(|&p| crate::winding::gwn_over(&b_tris, p) < 0.25);
+            if a_escapes_b {
+                return Err(BoolFault::AssemblyFailed(
+                    "empty difference but A is not contained in B (classify failure, declined)",
+                ));
+            }
+        }
         // An empty Intersection/Difference is only valid when the op truly
         // yields nothing: disjoint intersection, or a difference whose A is
         // swallowed by B (lo == 0). If the EXACT operand volumes REQUIRE a
@@ -6863,6 +6893,31 @@ mod tests {
         // Two disconnected solid cells (frustum + tip).
         let solids = r.body.regions.iter().filter(|(_, rg)| rg.solid).count();
         assert_eq!(solids, 2, "expected 2 solid cells, got {solids}");
+    }
+
+    #[test]
+    fn overlapping_sphere_difference_never_returns_malformed_ok() {
+        // KL5 / LOG Add.258: a heavy / equal-radius sphere-sphere difference
+        // must NEVER return an Ok body whose mass declines (the malformed empty
+        // body a mesh-only consumer would read as 0). It must PASS with a valid
+        // mass or DECLINE honestly. Equal radii give the difference lower bound
+        // lo == 0, so the op-volume guard alone cannot catch the wrong empty;
+        // the A-not-contained-in-B surface probe does.
+        let mk = |c: Vec3| {
+            let mut b = Body::new();
+            b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), 1.5)
+                .unwrap();
+            b
+        };
+        let a = mk(Vec3::ZERO);
+        let b = mk(Vec3::new(1.5, 0., 0.));
+        match boolean(&a, &b, BoolOp::Difference, 1e-7) {
+            Err(_) => {} // honest decline is acceptable
+            Ok(r) => assert!(
+                r.body.mass_properties().is_ok(),
+                "sphere-sphere difference returned a MALFORMED Ok (mass declines)"
+            ),
+        }
     }
 
     #[test]

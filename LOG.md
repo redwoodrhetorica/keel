@@ -8117,3 +8117,38 @@ Revised recommendation: the curved stitch is ready; spend effort on (1) the KL5
 gate hole + sphere robustness (contract first), then (2) the SSI matrix rungs
 (broadest capability), rather than a general #59 rewrite. Decline-safe today
 except the noted sphere-diff malformed `Ok`, which mass still flags.
+
+## Addendum 258: KL5 gate hole CLOSED -- the malformed sphere-difference empty `Ok` now declines (2026-06-15)
+
+Closed the Add.257 contract gap. The malformed `sph - sph` returned an `Ok`
+EMPTY body, not via the post-condition gate but via the `kept.is_empty()` path:
+for a heavy / equal-radius overlap, `classify_faces` drops EVERY A fragment, and
+the Add.251 op-bound guard only declines when `lo > slack` -- for an equal-radius
+difference `lo = max(0, vA - vB) = 0`, so the empty body passed. But the true
+`A - B` of two offset equal spheres is a non-empty CRESCENT, so empty is wrong.
+
+Fix (in the empty path, DIFFERENCE only): `A - B` is empty ONLY if A is contained
+in B. Re-probe containment directly and fresh (do not trust the failed classify):
+sample A's whole tessellated surface and, if ANY point is CLEARLY outside B
+(generalized winding number < 0.25), then A is not contained in B and the empty
+selection is a CLASSIFY FAILURE -> DECLINE. A subset B / A == B keep their valid
+empty (no A surface point lies outside B; A == B sits ON B at gwn ~ 0.5). Sampling
+the whole surface (not one interior point) is required because in
+`assemble_boolean` the operand is the un-imprinted full sphere whose single
+interior point can sit inside B even when A escapes it.
+
+Scoped to DIFFERENCE: a touch INTERSECTION is legitimately empty WITH a seam (the
+3 `*_touch_booleans_are_clean` tests), and an overlap intersection that is wrongly
+empty declines later at the mass==mesh gate, so the intersection empty path is
+left untouched (an earlier `!seams.is_empty()` cut regressed the 3 touch tests).
+
+Verification: `sph - sph` heavy-overlap and the two near-tangent thin-lens cases
+all DECLINE honestly ("A is not contained in B"); 276 lib tests pass; explorer
+8000 evals FAIL = 0; the disconnected/banded cone+cyl passes and disjoint-union
+unaffected. The kernel now has NO known malformed-`Ok` escape on sphere
+difference. (Making `sph - sph` PASS -- keep the crescent -- is the deeper sphere
+classify robustness work; this closes the contract gap so it DECLINES not LIES.)
+
+Bonus from the #59 diagnosis (Add.257): the cyl-cyl crossing stitch is sound
+(Steinmetz all-ops pass), so the curved frontier's true blockers are the SSI
+matrix rungs + sphere classify robustness, not a general stitch rewrite.
