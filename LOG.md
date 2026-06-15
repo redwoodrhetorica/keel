@@ -8078,3 +8078,42 @@ Next, in order: (1) the sphere two-rim-band interior point (this gap, a localize
 sphere-analog fix + a tessellate_sphere band check); (2) the hyperbola cuts
 (plane_cone Path A + gap b, dossier 58/60); (3) the curved stitch
 unmatched-coedge (dossier 59). All decline-safe today.
+
+## Addendum 257: dossier-59 diagnosis -- the curved STITCH is sound (cyl-cyl crossing all-ops pass); the blockers are elsewhere, plus a sphere-diff gate hole (2026-06-15)
+
+Started dossier 59 (curved stitch) with diagnosis (`examples/probe_cc.rs`) before
+any code, and the result REDIRECTS the effort: the canonical curved-curved stitch
+is NOT broken. Two perpendicular unit cylinders (Steinmetz) assemble on ALL THREE
+ops with empty faults:
+- `cyl ∩ cyl` = 5.3333 == 16/3 exact;
+- `cyl ∪ cyl` = 19.799 (mass==mesh);
+- `cyl - cyl` = 7.233 (mass==mesh).
+So `imprint_crossing_pair` + the dossier-47 radial-splice stitcher already handle
+the curved crossing seam (the dossier-59 "Hoffmann divorce" is solved for the
+cylinder pair). #59's general canonical-seam-identity is therefore NOT the
+universal blocker it was framed as; it is only needed once the MISSING SSI rungs
+produce non-cylinder curved seams to stitch.
+
+The real curved blockers, re-ranked from this diagnosis:
+- **MISSING SSI rungs** (cone-cyl, cone-sphere, cyl-sphere, cone-cone): no seam
+  is produced, so these families never reach the (working) stitch. This is the
+  highest-leverage gap -- dossier 58's matrix.
+- **Sphere-sphere robustness + a GATE HOLE (KL5).** Heavy / equal-radius overlap
+  (probe: r=1.5 spheres at d=1.5, each centre on the other's surface) DECLINES
+  for ∩/∪ (mass!=mesh) and for `-` returns a MALFORMED `Ok`: mass declines
+  ("non-positive volume, orientation conventions violated"), mesh ~ 0. The
+  lighter-overlap lib-test configs pass, so it is a heavy-overlap robustness gap.
+  The malformed `-` exposes a GATE HOLE beyond the Add.251 empty-path fix: a
+  NON-empty curved body whose tessellated volume collapses to ~0 (orientation
+  cancellation) still passes the op-volume bound when lo == 0 (equal-radius
+  difference: bound [0, vA]), so the boolean returns `Ok`. mass DECLINES on it,
+  so the three-bucket oracle counts it DECLINE not WRONG (WRONG=0 holds), but a
+  mesh-only consumer would read 0 -- the dossier-62 shell-validity precondition
+  (consistent-orientation / positive-volume-vs-area, run BEFORE the gate) is the
+  principled close, and it is the priority CONTRACT item.
+- Hyperbola plane-cone (#58 Path A), disconnected sphere band (sphere-specific).
+
+Revised recommendation: the curved stitch is ready; spend effort on (1) the KL5
+gate hole + sphere robustness (contract first), then (2) the SSI matrix rungs
+(broadest capability), rather than a general #59 rewrite. Decline-safe today
+except the noted sphere-diff malformed `Ok`, which mass still flags.
