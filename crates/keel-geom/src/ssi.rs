@@ -1031,6 +1031,8 @@ fn analytic_analytic(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, 
         (Cylinder(_), Cylinder(_)) => cylinder_cylinder(a, b, tol),
         (Plane(_), Cone(_)) => plane_cone(a, b, tol),
         (Cone(_), Plane(_)) => plane_cone(b, a, tol),
+        (Cone(_), Cylinder(_)) => cone_cylinder(a, b, tol),
+        (Cylinder(_), Cone(_)) => cone_cylinder(b, a, tol),
         // Other analytic pairs route to tier 2 (one side implicitized)
         // in Task 4; until then, unsupported.
         _ => Err(GeomError::Degenerate),
@@ -1556,6 +1558,40 @@ fn plane_cone(plane: &Surface3, cone: &Surface3, tol: f64) -> Result<SsiResult, 
     let ellipse = Ellipse3::new(center, major_dir, minor_dir, a_semi, b_semi)?;
     Ok(SsiResult::Curves(vec![SsiCurve {
         curve: Curve3::Ellipse(ellipse),
+        closed: true,
+        tangential: false,
+        tol_achieved: 0.0,
+    }]))
+}
+
+/// Cone x cylinder. Only the COAXIAL rung is exact in closed form: a
+/// cone and a coaxial cylinder of radius `R` meet in the single circle
+/// at the axial height where the cone radius equals `R` (one nappe,
+/// since `R > 0`). The cone radius along its axis param v is
+/// `r(v) = radius + v*tan(half_angle)`, so the seam sits at
+/// `v = (R - radius)/tan(half_angle)`. Skew or offset axes are a quartic
+/// SSI (general ruling-quadric branch field) and DECLINE here for now.
+fn cone_cylinder(cone: &Surface3, cyl: &Surface3, tol: f64) -> Result<SsiResult, GeomError> {
+    let (Surface3::Cone(c), Surface3::Cylinder(cy)) = (cone, cyl) else {
+        unreachable!("cone_cylinder on wrong surfaces")
+    };
+    let z = c.frame.z;
+    if z.cross(cy.frame.z).norm() > COINCIDENCE_ANG {
+        return Err(GeomError::Degenerate); // skew axes -> quartic, decline
+    }
+    let w = cy.frame.origin - c.frame.origin;
+    if (w - z * w.dot(z)).norm() > tol {
+        return Err(GeomError::Degenerate); // parallel but offset axes -> quartic
+    }
+    let m = c.half_angle.tan();
+    if m.abs() < 1e-12 {
+        return Err(GeomError::Degenerate); // degenerate (cylinder-like) cone
+    }
+    let t = (cy.radius - c.radius) / m; // axial height where cone radius == cyl radius
+    let center = c.frame.origin + z * t;
+    let circle = Circle3::new(center, c.frame.x, c.frame.y, cy.radius)?;
+    Ok(SsiResult::Curves(vec![SsiCurve {
+        curve: Curve3::Circle(circle),
         closed: true,
         tangential: false,
         tol_achieved: 0.0,

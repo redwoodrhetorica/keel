@@ -8152,3 +8152,45 @@ classify robustness work; this closes the contract gap so it DECLINES not LIES.)
 Bonus from the #59 diagnosis (Add.257): the cyl-cyl crossing stitch is sound
 (Steinmetz all-ops pass), so the curved frontier's true blockers are the SSI
 matrix rungs + sphere classify robustness, not a general stitch rewrite.
+
+## Addendum 259: SSI matrix grows the cone-cylinder rung -- coaxial cone+cyl booleans now assemble; a phantom-seam imprint bug is the residual decline (2026-06-15)
+
+First new SSI-matrix rung since the curved frontier was identified as the true
+blocker (Add.257). The highest-leverage tractable rung: **coaxial cone x
+cylinder** (`ssi::cone_cylinder`). A cone and a coaxial cylinder of radius R meet
+in the SINGLE exact circle at the axial height where the cone radius equals R:
+`v = (R - cone.radius)/tan(half_angle)`, one nappe since R > 0. Skew / offset
+axes are a quartic (the general ruling-quadric branch field) and DECLINE for now.
+Wired into `analytic_analytic` (both orderings). Before this rung EVERY
+cone-cylinder boolean declined `IntersectionFailed` (the SSI returned Degenerate).
+
+Result (cone base r=2 at z=0, apex z=3, slope -2/3; coaxial cylinder r=1). The
+seam circle lands at z=1.5, radius 1. **mass == analytic truth to all printed
+digits in all 8 cases tested** (both configs x 4 ops), proving the seam is exact:
+- SHARED base (cyl z[0,2]): all 4 ops mass==mesh==truth (n=5.8178, u=13.0318,
+  cone-cyl=6.7486, cyl-cone=0.4654) but each flags a benign `Coincident(7,7)`
+  from the coplanar cone-base / cyl-base disks (the coplanar-overlap path keeps
+  the result exact; the flag is the conservative on-on annotation, a follow-up).
+- OFFSET base (cyl z[0.3,2], no coplanar faces): union and (cyl - cone) are CLEAN
+  PASSES (faults empty, mass==mesh==truth: 13.0318 and 0.4654). The intersection
+  and (cone - cyl) DECLINE on a separate tessellation bug (below), DECLINE-safe.
+
+Locked: `coaxial_cone_cylinder_seam_assembles` asserts the two clean passes AND
+the decline-safety of the other two (if either ever assembles it must be correct,
+never a wrong `Ok`). 135 keel-geom + 278 keel-topo lib tests pass, no regression.
+
+**Residual decline diagnosed (phantom-seam imprint, a pre-existing class the
+floating cap exposes):** offset `cone n cyl` has the correct 4 faces and EXACT
+mass (4.8753), but mesh = 4.1653 (low by 0.71 = pi*0.226), so the self-consistency
+gate declines. Per-face dump: the bottom cap (cyl bottom cap, true radius 1 at
+z=0.3) TESSELLATES as a disk of radius **1.8** (vol -1.0113 = -(0.3/3)*pi*1.8^2),
+and 1.8 is exactly the CONE radius at z=0.3. Cause: `plane_cone` SSI between the
+cyl-bottom-cap PLANE (z=0.3) and the cone lateral is a circle r=1.8; that seam is
+imprinted onto the small cap (r=1) even though it lies entirely OUTSIDE the cap's
+trimmed extent -- the imprint runs on unbounded surfaces and does not clip the
+seam to the finite face boundary. Mass uses the true loop (exact); tessellate fills
+the corrupted r=1.8 loop -> mass != mesh. The shared-base config dodges it because
+the coplanar-base handling takes a different path. Fix target: imprint must clip
+each seam to the actual trimmed face (a seam wholly outside the face imprints
+nothing). Affects any curved boolean whose cap-plane extension meets another
+surface beyond the cap. Decline-safe meanwhile. [[kernel-known-limitations]]

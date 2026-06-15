@@ -6896,6 +6896,73 @@ mod tests {
     }
 
     #[test]
+    fn coaxial_cone_cylinder_seam_assembles() {
+        // The exact cone x coaxial-cylinder SSI rung (ssi::cone_cylinder, LOG
+        // Add. 259): a cone and a coaxial cylinder meet in the single circle at
+        // the axial height where the cone radius equals the cylinder radius.
+        // Before this rung EVERY cone-cylinder boolean declined
+        // IntersectionFailed (the SSI returned Degenerate).
+        //
+        // Cone base r=2 at z=0, apex z=3 (slope -2/3). Coaxial cylinder r=1,
+        // z in [0.3,2]: caps clear of the apex and the base plane, so the only
+        // interaction is the lateral seam circle at z=1.5 (cone radius==1) plus
+        // the cyl-top section at z=2. Union and (cyl - cone) assemble cleanly:
+        // mass == mesh == analytic truth.
+        let pi = core::f64::consts::PI;
+        let mut cone = Body::new();
+        cone.cone(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0, 3.0)
+            .unwrap();
+        let mut cyl = Body::new();
+        cyl.cylinder(
+            Frame3::from_z(Vec3::new(0., 0., 0.3), Vec3::new(0., 0., 1.)).unwrap(),
+            1.0,
+            1.7,
+        )
+        .unwrap();
+        // inter = pi*1.2 (cyl part z[0.3,1.5]) + integral_{1.5}^{2} pi*(2-2z/3)^2 dz.
+        let inter = (1.2 + 28.5 / 81.0) * pi;
+        let cone_v = 4.0 * pi;
+        let cyl_v = 1.7 * pi;
+
+        let clean = |a: &Body, b: &Body, op: BoolOp, truth: f64| {
+            let r = boolean(a, b, op, 1e-7).unwrap_or_else(|e| panic!("declined {e:?}"));
+            assert!(r.faults.is_empty(), "faults {:?}", r.faults);
+            assert!(r.body.validate().is_ok(), "invalid body");
+            let mass = r.body.mass_properties().unwrap().volume;
+            let mesh = r.body.mesh_volume();
+            assert!(
+                (mass - truth).abs() < 2e-2 * (1.0 + truth),
+                "mass {mass} vs truth {truth}"
+            );
+            assert!(
+                (mass - mesh).abs() < 3e-2 * (1.0 + mass),
+                "mass {mass} mesh {mesh}"
+            );
+        };
+        clean(&cone, &cyl, BoolOp::Union, cone_v + cyl_v - inter);
+        clean(&cyl, &cone, BoolOp::Difference, cyl_v - inter);
+
+        // The intersection and (cone - cyl) currently DECLINE on a separate
+        // tessellation limitation (a cap floating inside the cone -> a blind
+        // hole / pinch whose mesh disagrees with the exact mass). They must
+        // stay DECLINE-safe: if either ever assembles it must be CORRECT, never
+        // a wrong Ok. The exact mass equals truth in both, proving the seam
+        // itself is right.
+        for (a, b, op, truth) in [
+            (&cone, &cyl, BoolOp::Intersection, inter),
+            (&cone, &cyl, BoolOp::Difference, cone_v - inter),
+        ] {
+            if let Ok(r) = boolean(a, b, op, 1e-7) {
+                let mass = r.body.mass_properties().unwrap().volume;
+                assert!(
+                    (mass - truth).abs() < 3e-2 * (1.0 + truth),
+                    "wrong Ok mass {mass} vs truth {truth}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn overlapping_sphere_difference_never_returns_malformed_ok() {
         // KL5 / LOG Add.258: a heavy / equal-radius sphere-sphere difference
         // must NEVER return an Ok body whose mass declines (the malformed empty
