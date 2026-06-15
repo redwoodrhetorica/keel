@@ -8295,3 +8295,35 @@ DECLINE-SAFE to attempt -- the mass==mesh gate catches any clip error -- but it
 changes the sphere oracle (all trimmed sphere meshes), so validate the pass-delta
 with the full soak. Once clipped, the sphere-carve class (cyl/sph + cone/sph +
 sph/sph caps) should PASS. [[sphere-split-integration-trap]] [[kernel-known-limitations]]
+
+## Addendum 263: the sphere tessellation CLIP works (3-zone carve passes) but is HELD -- it surfaces a pre-existing FLAT/TILTED-CONE mesh-coarseness false-positive (2026-06-15)
+
+Implemented the Add.262 defect-2 fix: `tessellate_sphere` now CLIPS each grid
+triangle to the rim half-spaces (Sutherland-Hodgman vs the cap plane / a band's
+open-arc planes) instead of keep-or-drop by centroid (`clip_half_space`). Result:
+`sph - slab` (two caps) and `sph n slab` (mid band) now PASS -- mass == mesh ==
+truth (21.206/21.142, 12.305/12.256); single-cut caps still pass; 279 lib tests
+pass. The sphere 3-zone CARVE is SOLVED (band-classify Add.262 + this clip).
+
+BUT the 20k soak (seed 1) went PASS 4966->5013 (+47), FAIL 0->**5**. The 5 are all
+`FAIL:mass-mesh D cone/cone` -- and the clip is `tessellate_sphere`-only, never
+called for cone/cone. They are NOT caused by the clip's code path: the soak is
+EVOLUTIONARY, so changing sphere outcomes diverges the population trajectory and
+explores different cone genomes. Reproduced the first (`probe_failcone`): a very
+FLAT tilted cone (r=3.13, h=0.2) has **mass = 2.0518 = exact** but **mesh = 1.787
+(-12.93%)**; a DISJOINT `cone - cone` returns it unchanged (mass exact, valid=true,
+faults empty). So it is a CORRECT body with a coarse mesh -- WRONG=0 holds, the
+contract is intact; the soak's 6% mass-mesh band (calibrated for the ~3.8%-under
+cone primitive, Add comment) false-positives on this 12.93%-under flat/tilted cone.
+Likely cause: the cone base-disk (or apex-fallback band) tessellation is
+open/under for a steep tilted cone -- mesh_volume's divergence sum is then
+origin-dependent and reads low. KL6.
+
+REVERTED the clip to keep the committed state at a verifiable soak FAIL=0 (shipping
+even false-positive FAILs erodes the gate and can mask a future real wrong). The
+clip is PROVEN and sound; it lands together with the companion fix. NEXT: fix the
+flat/tilted-cone tessellation (KL6 -- diagnose base-disk vs apex-band under-count
+in `tessellate_cone`/disk; reproduce with `probe_failcone`'s genome), then re-apply
+the sphere clip and soak both to FAIL=0. The sphere carve then passes. The
+band-classify half (Add.262) stays committed (correctness, FAIL=0).
+[[sphere-split-integration-trap]] [[kernel-known-limitations]]
