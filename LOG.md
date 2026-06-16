@@ -9024,3 +9024,39 @@ resolve it; mass 14.43 EXCEEDS the cylinder's own 14.20, impossible for a
 difference, so the gate declines). That is the grazing-contact finer-imprint
 problem (dossier #59), left declining -- DECLINE-never-WRONG holds.
 [[kernel-known-limitations]] [[minimize-declines]]
+
+## Addendum 283: cyl/sphere WRAP -- the cylinder-side band split lands (mesh exact under the dev flag); the sphere NURBS-cut mass is the remaining wall (dormant enabling machinery) (2026-06-16)
+
+The dominant remaining decline class (cyl/sph + sph/cyl UnassemblableSeam,
+~2747/seed) is the WRAP case: a sphere swallowing the cylinder cross-section ->
+two ENCIRCLING NURBS loops (the off-axis rod-through-ball; the coaxial version
+PASSES, Add 267). probe_wrap reproduces a clean case (sphere R3, rod r1 offset
+x1, z[-4,4]).
+
+LANDED (cylinder side): the encircling loops were mis-routed to the
+interior-ring (hole) imprint because `closed_curve_center_axis` only recognises a
+coaxial PLANAR circle -- the off-axis sphere cut is a NON-planar NURBS loop
+(z = +-sqrt(R^2 - ...) varying with theta). New `curve_encircles_axis` sums the
+unwrapped azimuth advance about the cyl axis (nets ~+-2pi for a wrap, ~0 for a
+window), routing encircling NURBS wraps to `imprint_cylinder_wrap_bands` (the Add
+275 band split, which already chains: 2 wraps -> 3 bands, keep the middle). Under
+the dev flag this makes the cyl/sphere wrap assemble with the MESH EXACT (I mesh
+17.13 vs truth 17.17; D 7.95 vs 7.95; U 123.8 vs 121) -- the topology is correct.
+
+THE WALL (sphere side): the sphere NURBS-cut faces -- caps bounded by a wrap loop
+(intersection) and the sphere REST with two NURBS holes (union) -- integrate
+WRONG in the Green-slab (I mass 16.07 vs 17.17; U mass 67.58 vs 121) and are
+ORIENTATION-SENSITIVE (reorienting the sphere frame drops the caps from classify
+entirely). This is the documented KL5 "hardest piece": the sphere NURBS-cut
+classify + curved mass generalised from circle rims to arbitrary NURBS loops
+(dossier #60). Multi-session; the window-disc fan (Add 281) + arc-split cap-trim
+(Add 282) are reusable for the cap tessellation, but the classify (frame-robust
+interior point for a NURBS-cut sphere region) and the multi-hole Green-slab mass
+are the open work.
+
+STATE: all wrap machinery is DORMANT behind KEEL_WRAP_FLOW (the gate at
+boolean.rs:6469 + the encircling arm in `wraps`); default behaviour is
+byte-identical (the wrap still declines UnassemblableSeam) -- 283 lib + curved
+green, pass-neutral by construction. Committed as enabling machinery (the Add 273
+pattern) so the next session resumes from a mesh-correct wrap. probe_wrap +
+KEEL_WRAP_FLOW reproduce. [[kernel-known-limitations]] [[minimize-declines]]

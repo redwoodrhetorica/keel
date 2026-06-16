@@ -5193,6 +5193,58 @@ fn curve_endpoints(c: &keel_geom::curve::Curve3) -> (keel_math::vec::Vec3, keel_
     (curve_point(c, 0.0), curve_point(c, 1.0))
 }
 
+/// True if the closed seam `curve` ENCIRCLES `axis` through `origin` -- a
+/// non-contractible wrap (the off-axis cyl/sphere cut is a NON-planar NURBS loop
+/// spanning all azimuths, z = +-sqrt(R^2 - delta^2 - r^2 ... ) varying with
+/// theta) versus a contractible window/hole. Sums the UNWRAPPED azimuth advance
+/// about the axis over the sampled loop: an encircling wrap nets ~+-2pi, a
+/// window ~0. `closed_curve_center_axis` only catches a coaxial PLANAR circle,
+/// so a tilted sphere-cut wrap was mis-routed to the interior-ring (hole)
+/// imprint, leaving the lateral whole-with-holes (winding 0 -> degenerate mass)
+/// instead of split into bands.
+fn curve_encircles_axis(
+    curve: &keel_geom::curve::Curve3,
+    origin: keel_math::vec::Vec3,
+    axis: keel_math::vec::Vec3,
+) -> bool {
+    let Some(ax) = axis.try_normalize() else {
+        return false;
+    };
+    let t = if ax.x.abs() < 0.9 {
+        keel_math::vec::Vec3::new(1.0, 0.0, 0.0)
+    } else {
+        keel_math::vec::Vec3::new(0.0, 1.0, 0.0)
+    };
+    let Some(ex) = (t - ax * t.dot(ax)).try_normalize() else {
+        return false;
+    };
+    let ey = ax.cross(ex);
+    let n = 96;
+    let mut total = 0.0;
+    let mut prev: Option<f64> = None;
+    for i in 0..=n {
+        let p = curve_point(curve, i as f64 / n as f64);
+        let w = p - origin;
+        let wp = w - ax * w.dot(ax);
+        if wp.norm() < 1e-12 {
+            return false; // a point on the axis: azimuth undefined
+        }
+        let th = wp.dot(ey).atan2(wp.dot(ex));
+        if let Some(pv) = prev {
+            let mut d = th - pv;
+            while d > core::f64::consts::PI {
+                d -= core::f64::consts::TAU;
+            }
+            while d < -core::f64::consts::PI {
+                d += core::f64::consts::TAU;
+            }
+            total += d;
+        }
+        prev = Some(th);
+    }
+    total.abs() > core::f64::consts::PI
+}
+
 /// Distance from point `p` to the segment `a`-`b` in 3D.
 pub(crate) fn seg_dist3(p: keel_math::vec::Vec3, a: keel_math::vec::Vec3, b: keel_math::vec::Vec3) -> f64 {
     let ab = b - a;
@@ -6230,20 +6282,35 @@ fn imprint_operand(
                 // vertices): the crossing imprint then applies. The
                 // interior-ring imprint is topologically wrong for a
                 // non-contractible wrap.
-                let wraps = match (
-                    working.face_surface3(target),
-                    closed_curve_center_axis(curve),
-                ) {
-                    (Some(Surface3::Cylinder(c)), Some((centre, ax))) => {
-                        ax.cross(c.frame.z).norm() < 1e-6
-                            && (centre - c.frame.origin).cross(c.frame.z).norm() < 1e-6
+                let wraps = match working.face_surface3(target) {
+                    Some(Surface3::Cylinder(c)) => {
+                        let coaxial_planar = matches!(
+                            closed_curve_center_axis(curve),
+                            Some((centre, ax))
+                                if ax.cross(c.frame.z).norm() < 1e-6
+                                    && (centre - c.frame.origin).cross(c.frame.z).norm() < 1e-6
+                        );
+                        // A coaxial PLANAR circle, OR a NON-planar NURBS loop that
+                        // still ENCIRCLES the axis (the off-axis cyl/sphere cut):
+                        // both are non-contractible -> the band split, never an
+                        // interior-ring hole. The encircling arm is DORMANT
+                        // enabling machinery (gated to the cyl/sphere-wrap dev
+                        // flag): it correctly band-splits the cylinder lateral
+                        // (mesh then matches), but the cyl/sphere WRAP still
+                        // declines on the sphere NURBS-cut mass/classify (KL5,
+                        // dossier #60), so it stays off by default = pass-neutral.
+                        coaxial_planar
+                            || (std::env::var("KEEL_WRAP_FLOW").is_ok()
+                                && curve_encircles_axis(curve, c.frame.origin, c.frame.z))
                     }
                     // A coaxial circle wraps a cone lateral the same way
                     // (the countersink rim on the frustum face).
-                    (Some(Surface3::Cone(c)), Some((centre, ax))) => {
-                        ax.cross(c.frame.z).norm() < 1e-6
-                            && (centre - c.frame.origin).cross(c.frame.z).norm() < 1e-6
-                    }
+                    Some(Surface3::Cone(c)) => matches!(
+                        closed_curve_center_axis(curve),
+                        Some((centre, ax))
+                            if ax.cross(c.frame.z).norm() < 1e-6
+                                && (centre - c.frame.origin).cross(c.frame.z).norm() < 1e-6
+                    ),
                     _ => false,
                 };
                 // A NON-planar encircling NURBS seam (the cyl/cyl quartic wrap)
@@ -6470,7 +6537,7 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 }
                 _ => false,
             };
-            if cyl_sphere_wrap {
+            if cyl_sphere_wrap && std::env::var("KEEL_WRAP_FLOW").is_err() {
                 faults.push(BoolFault::UnassemblableSeam(id_a, id_b));
                 continue;
             }
