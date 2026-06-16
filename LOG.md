@@ -8834,3 +8834,48 @@ positive retired. Tests: curved_volume_robustness.rs (cone/cone disjoint
 mesh==mass; sph/sph never-silent-wrong) + full keel-geom 138 / keel-topo 283
 green. Soak FAIL=0 both seeds (20k). Making the sph/sph lenses PASS (correct
 cap selection) remains the KL5 sphere-classify root-cause fix. [[kernel-known-limitations]] [[tessellation-tolerance-trap]]
+
+## Addendum 278: cyl/sphere WINDOW class lands -- the FIRST non-coaxial cyl/sphere PASSES (+~570/seed), via NURBS-loop classify interior points + a tight cyl/sphere volume oracle (2026-06-16)
+
+The dominant decline frontier (non-coaxial cyl/sphere ~2500) starts converting
+to PASSES. The WINDOW case -- a sphere grazing a cylinder's lateral in a SINGLE
+non-encircling loop -- now assembles correctly. Soak: PASS 4687 -> 5255 (seed 1)
+and 4673 -> 5252 (seed 2), +568 / +579, FAIL=0 both seeds (20k). The SSI gateway
+(Add 276) was the prerequisite; this is the assembly half for the window class.
+
+ROOT CAUSE (found by tracing, not guessed): the SSI + imprint already WORKED
+(seam_curves returns the window NURBS loop; imprint_closed_curve splits both
+operands -- A into lateral-rest + window-disc + 2 caps, B sphere into rest +
+disc). The wall was CLASSIFY: both curved interior-point helpers only handled
+CIRCLE rims. For a NURBS window loop, `cylinder_face_interior_point` returned the
+"opposite the seam" full-ring point (theta=pi, OUTSIDE the window) and
+`sphere_face_interior_point` returned None ("NO INTERIOR POINT" -> Unknown ->
+the sphere bite patch dropped -> cyl-sph read the FULL cylinder, a silent wrong).
+
+THREE pieces (boolean.rs):
+1. cylinder_face_interior_point: a SINGLE non-periodic loop (a window disc, theta
+   does NOT wrap the ring) now returns the loop's (theta,h) bounding-box centre
+   (interior to the convex window), not the full-ring amid/hmid heuristic.
+2. sphere_face_interior_point: a NURBS window loop (no circle rim) now uses the
+   loop's centroid DIRECTION from the sphere centre -- the disc patch (loop is
+   OUTER) under it, the rest (loop is INNER ring) opposite -- verified against
+   the trimmed (u,v) domain.
+3. TIGHT cyl/sphere oracle (cyl_sphere_op_volume + cyl_sphere_inter_volume): the
+   exact cyl-intersect-sphere volume by 1D integration along the axis of the
+   closed-form TWO-DISC LENS area (cyl cross-section disc vs sphere cross-section
+   circle, centres delta apart). The window has NO closed form for the trimmed
+   shape, so this independent VOLUME truth is the safety net: the gate declines
+   any cyl/sphere result off the exact volume -> a watertight self-consistent
+   WRONG (the #48 class the loose op-bound + mass==mesh both miss) cannot ship.
+   This is what makes letting windows assemble SAFE.
+
+The gate (boolean.rs seam_curves) now declines only the WRAP case (sphere
+swallows the cross-section, R >= delta + r_cyl -> two encircling loops -> a
+sphere BAND, whose machinery is circle-rim-specific, Add 268). A window whose
+INTERSECTION is non-watertight at the shared NURBS edge still declines (the
+watertightness net, Add 277) -- a tessellation-consistency follow-up, not a
+wrong. Tests: curved_volume_robustness.rs::cyl_sphere_window_difference_passes_
+exact + keel-topo full suite green. REMAINING for the class: the window
+intersection/sph-cyl tessellation consistency at the shared curved edge, the
+WRAP case (sphere band generalized to NURBS rims), and skew cyl/cyl (same
+canonical-seam wall). [[kernel-known-limitations]]

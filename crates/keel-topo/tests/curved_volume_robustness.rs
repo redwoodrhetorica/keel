@@ -33,6 +33,32 @@ fn sph(pos: Vec3, axis: Vec3, r: f64) -> Body {
     b
 }
 
+fn cyl(pos: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
+    let mut b = Body::new();
+    b.cylinder(Frame3::from_z(pos, axis).unwrap(), r, h).unwrap();
+    b
+}
+
+#[test]
+fn cyl_sphere_window_difference_passes_exact() {
+    // A sphere grazing a cylinder's lateral in a SINGLE window loop -- the
+    // first non-coaxial cyl/sphere PASS (the window class). cyl - sph is the
+    // cylinder with a spherical bite: volume = pi*1*6 - lens ~= 17.78 (the
+    // lens ~= 1.07 by the same two-disc integral the gate's tight oracle uses).
+    let a = cyl(Vec3::new(0., 0., -3.), Vec3::new(0., 0., 1.), 1.0, 6.0);
+    let b = sph(Vec3::new(0., 1.5, 0.), Vec3::new(0., 0., 1.), 1.2);
+    let r = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
+    assert!(r.faults.is_empty(), "faults: {:?}", r.faults);
+    assert!(r.body.validate().is_ok(), "invalid shell");
+    let mass = r.body.mass_properties().unwrap().volume;
+    let mesh = r.body.mesh_volume();
+    assert!((mass - 17.78).abs() < 0.15, "mass {mass} vs ~17.78 (cyl - window bite)");
+    assert!(
+        (mass - mesh).abs() < 2e-2 * (1.0 + mass),
+        "mass {mass} vs mesh {mesh}: window bite not watertight"
+    );
+}
+
 /// Exact volume of the intersection lens of two spheres (radii ra, rb, centre
 /// distance d). Zero when disjoint; min-ball when nested.
 fn lens_volume(ra: f64, rb: f64, d: f64) -> f64 {
