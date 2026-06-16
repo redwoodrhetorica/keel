@@ -40,12 +40,38 @@ fn cyl(pos: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
 }
 
 #[test]
-fn cyl_sphere_window_three_ops_pass_exact() {
+fn cone_sphere_window_four_ops_pass_exact() {
+    // A sphere grazing a cone's lateral in a single window loop. ALL 4 ops PASS
+    // (mass == mesh == truth) via the generalized SSI branch field + the
+    // hole-orientation mass fix (a non-wrapping window inner ring must oppose
+    // the outer loop; the cone's apex anchor otherwise added an apex-wedge ->
+    // cone-rest 13.72 vs true 11.42) + the window-disc fan: the cap fans to the
+    // loop's shared edge samples (watertight with the partner cap), radially
+    // subdivided so the tiny intersection lens lands within the 2% mass gate.
+    let a = cone(Vec3::ZERO, Vec3::new(0., 0., 1.), 2.0, 3.0);
+    let b = sph(Vec3::new(2.0, 0., 1.0), Vec3::new(0., 0., 1.), 0.8);
+    let pass = |x: &Body, y: &Body, op: BoolOp, want: f64| {
+        let r = boolean(x, y, op, 1e-7).unwrap_or_else(|e| panic!("{op:?} declined: {e:?}"));
+        assert!(r.faults.is_empty() && r.body.validate().is_ok(), "{op:?} not clean");
+        let m = r.body.mass_properties().unwrap().volume;
+        let mesh = r.body.mesh_volume();
+        assert!((m - want).abs() < 0.1, "{op:?} mass {m} != ~{want}");
+        assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "{op:?} mass {m} mesh {mesh} not watertight");
+    };
+    pass(&a, &b, BoolOp::Difference, 12.45); // cone with a spherical bite
+    pass(&b, &a, BoolOp::Difference, 2.03); // sphere with a conical bite
+    pass(&a, &b, BoolOp::Union, 14.60);
+    pass(&a, &b, BoolOp::Intersection, 0.114); // the lens
+}
+
+#[test]
+fn cyl_sphere_window_four_ops_pass_exact() {
     // A sphere grazing a cylinder's lateral in a SINGLE window loop -- the first
-    // non-coaxial cyl/sphere class to assemble. 3 of 4 ops PASS exact (mass ==
-    // mesh == truth); the intersection (a tiny lens) declines on shared-edge
-    // tessellation -- decline-safe, and the tight cyl/sphere oracle forbids a
-    // wrong volume either way. Truths by the two-disc lens integral / MC.
+    // non-coaxial cyl/sphere class to assemble. ALL 4 ops PASS exact (mass ==
+    // mesh == truth) once the window-disc caps fan to the loop's shared edge
+    // samples (watertight) with radial subdivision (the tiny intersection lens
+    // needs the curvature to land within the 2% mass gate). Truths by the
+    // two-disc lens integral / MC.
     let a = cyl(Vec3::new(0., 0., -3.), Vec3::new(0., 0., 1.), 1.0, 6.0);
     let b = sph(Vec3::new(0., 1.5, 0.), Vec3::new(0., 0., 1.), 1.2);
     let pass = |x: &Body, y: &Body, op: BoolOp, want: f64| {
@@ -60,13 +86,7 @@ fn cyl_sphere_window_three_ops_pass_exact() {
     pass(&a, &b, BoolOp::Difference, 17.78); // cyl with a spherical bite
     pass(&b, &a, BoolOp::Difference, 6.17); // sphere with a cylindrical bite
     pass(&a, &b, BoolOp::Union, 25.01);
-    // Intersection: DECLINE or correct, never a silent wrong (tight oracle).
-    if let Ok(r) = boolean(&a, &b, BoolOp::Intersection, 1e-7) {
-        if r.faults.is_empty() {
-            let m = r.body.mass_properties().map(|x| x.volume).unwrap_or(1.07);
-            assert!((m - 1.07).abs() < 0.1, "intersection mass {m} != ~1.07 -- SILENT WRONG");
-        }
-    }
+    pass(&a, &b, BoolOp::Intersection, 1.07); // the lens
 }
 
 /// Exact volume of the intersection lens of two spheres (radii ra, rb, centre

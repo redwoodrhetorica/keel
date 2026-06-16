@@ -8930,3 +8930,56 @@ Soak FAIL=0 both seeds (20k); keel-geom 138 + keel-topo green; cyl/sphere 3/4
 preserved. (Supersedes Add 279's "cone/sphere stays SSI-gated": it now flows,
 oracle-guarded.) The generalized engine + oracle now serve the whole
 quadric-vs-sphere family. [[kernel-known-limitations]]
+
+## Addendum 281: the quadric-vs-sphere WINDOW class is COMPLETE -- cyl/sphere AND cone/sphere each PASS all 4 ops exact, via the window-disc edge-conforming fan + radial subdivision + the cone hole-orientation mass fix (2026-06-16)
+
+Closes the arc opened in Add 276-280. The SSI engine, oracle, and classify were
+all in place; the remaining blocker was purely TESSELLATION watertightness at the
+shared NURBS seam edge. Two faces meeting along an SSI window each meshed their
+own side independently -- `tessellate_sphere` had NO NURBS-trim path at all (it
+meshed the FULL sphere), and the cyl/cone even-odd (theta,v) grid stencils snap
+the window boundary to each face's OWN param grid, leaving two non-matching
+staircases and an open seam. The curved gate (mesh_open_ratio / mass!=mesh) then
+DECLINED -- decline-safe and oracle-guarded, but a decline, not a pass.
+
+THE FIX (three pieces, all shipped together):
+1. HOLE-ORIENTATION mass fix (massprops `integrate_face_green`): a non-wrapping
+   window inner ring must OPPOSE the outer loop's winding. The cone's apex anchor
+   left the window inner ring co-signed with the outer, adding an apex-wedge
+   (cone-rest read 13.72 vs true 11.42). Flip every inner ring co-signed with the
+   outer. -> cone-sph and cone u sph masses exact.
+2. WINDOW-DISC FAN (tessellate `fan_window_disc` + `window_loop_polyline`): a
+   curved face whose trim is a single star-convex seam loop (a disc-cap) is
+   triangulated by fanning from an on-surface interior anchor to the loop's
+   CANONICAL edge samples (`fin_curve_samples`), NOT the grid. Watertightness is
+   structural: two faces sharing the seam EDGE return the SAME points -- a closed
+   seam edge differs only by the fin's `fwd` (one samples s, the other 1-s ->
+   identical set, reversed), so the two caps weld exactly. This also gave
+   tessellate_sphere its first NURBS-trim path.
+3. RADIAL SUBDIVISION (concentric rings, each `project`ed back onto the surface):
+   a single fan ring chords a curved cap too crudely for a TINY/THIN lens -- the
+   cap error is a large fraction of the small intersection volume (mesh!=mass >
+   2% -> decline). Marching rings inward to the anchor, projected onto the
+   surface, follow curvature so the lens lands within the 2% gate. Interior rings
+   + anchor are face-private, so watertightness (ring 0 = the shared edge) holds.
+
+DETECTOR (dispatch fan vs grid): cyl/cone disc-cap = exactly one loop, every edge
+a degree>=2 NURBS seam (no circle/line rim -> the kept region is the loop
+interior, a small cap; a band/rest has a rim or >1 loop -> keep the even-odd
+grid). sphere disc-cap = a single NURBS-seam loop whose SMALL-cap side (mean rim
+direction dot-test) contains the face interior point; the big-cap REST side
+returns None and falls through to the grid. So cone-sph / cone u sph rests stay
+on the grid (their small jagged seam is under the area-ratio threshold against a
+large body), while every small-cap (both intersection lenses, both bite walls)
+fans watertight.
+
+RESULT: cyl/sphere 4/4 + cone/sphere 4/4, INCLUDING the intersection lens that
+Add 278/279/280 left declining. probe_cone_win: all 4 mass==mesh==truth (cone n
+sph mass 0.1165 mesh 0.1150 truth 0.1144; sph - cone 2.0282/2.0189/2.0302; cone -
+sph 12.45; cone u sph 14.59). `cyl_sphere_window_four_ops_pass_exact` +
+`cone_sphere_window_four_ops_pass_exact` lock all 8 ops. keel-topo 283 lib +
+curved-robustness green. Soak FAIL=0 both seeds (20k): seed1 PASS 5370 / DECLINE
+14630, seed2 PASS 5343 / DECLINE 14657 (zero failures, zero hangs). The
+quadric-vs-sphere window family is now fully solved -- minimize-declines advances
+two whole op-classes from DECLINE to PASS. [[kernel-known-limitations]]
+[[minimize-declines]]

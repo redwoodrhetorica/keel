@@ -571,6 +571,31 @@ impl Body {
         } else {
             self.cyl_angular_span(face, origin, ex, ey, ez)
         };
+        // A pure WINDOW-DISC cap (single all-NURBS seam loop, no circle rim):
+        // fan it to the loop's shared edge samples (watertight with the partner
+        // cap) instead of the jagged even-odd grid. Bands/rests keep the grid.
+        if nurbs_trimmed
+            && self.is_lateral_window_disc(face)
+            && let Some(anchor) = self.face_interior_point(face)
+        {
+            let sgn = if sense { 1.0 } else { -1.0 };
+            let rad = move |q: Vec3| -> Vec3 {
+                let w = q - origin;
+                (w - ez * w.dot(ez)) * sgn
+            };
+            let proj = move |q: Vec3| -> Vec3 {
+                let w = q - origin;
+                let v = w.dot(ez);
+                let rd = w - ez * v;
+                let rn = rd.norm();
+                if rn < 1e-12 {
+                    q
+                } else {
+                    origin + rd * (radius / rn) + ez * v
+                }
+            };
+            return self.fan_window_disc(face, anchor, &proj, &rad);
+        }
         // Oblique boundary planes (ellipse arcs / tilted circle arcs:
         // a mitre seam or a partial-span stop) clamp each ruling, as in
         // tessellate_cone.
@@ -793,6 +818,174 @@ impl Body {
         tris
     }
 
+    /// Sample a curved face's trim loops as one 3D boundary polyline from the
+    /// loop edges' CANONICAL curve samples (`fin_curve_samples`). Two faces
+    /// that meet along a shared NURBS seam edge return the SAME points (one
+    /// reversed: a closed seam edge differs only by the fin's `fwd`), so
+    /// fanning each to its own interior anchor welds the seam watertight. The
+    /// even-odd grid stencil instead snaps the boundary to each face's OWN
+    /// (theta, v) grid, leaving two non-matching staircases and an open seam --
+    /// the cyl/cone-sphere intersection + window-disc blocker (LOG Add 281+).
+    fn window_loop_polyline(&self, face: FaceKey, m: usize) -> Vec<Vec3> {
+        let mut pts: Vec<Vec3> = Vec::new();
+        for lk in self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default()
+        {
+            let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            loop {
+                for p in self.fin_curve_samples(cur, m).unwrap_or_default() {
+                    if pts.last().map(|q: &Vec3| (*q - p).norm() > 1e-9).unwrap_or(true) {
+                        pts.push(p);
+                    }
+                }
+                let Some(nx) = self.fins.get(cur).map(|f| f.next) else {
+                    break;
+                };
+                cur = nx;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        if pts.len() >= 2 && (pts[0] - pts[pts.len() - 1]).norm() <= 1e-9 {
+            pts.pop();
+        }
+        pts
+    }
+
+    /// Triangulate a boolean WINDOW-DISC cap (a curved face whose trim is a
+    /// single star-convex seam loop) as concentric rings from the loop's
+    /// canonical edge samples (ring 0, the EXACT boundary) inward to an
+    /// on-surface `anchor`, each intermediate ring `project`ed back onto the
+    /// surface so the cap follows curvature, each triangle oriented by
+    /// `outward`. Ring 0 is shared verbatim with the partner cap across the
+    /// seam, so the pair is watertight; the interior rings + anchor are
+    /// face-private and need not match. The radial subdivision is what brings a
+    /// small/thin lens's chordal mesh within the 2% mass gate -- a single fan
+    /// ring is too crude there (LOG Add 281+).
+    fn fan_window_disc(
+        &self,
+        face: FaceKey,
+        anchor: Vec3,
+        project: &dyn Fn(Vec3) -> Vec3,
+        outward: &dyn Fn(Vec3) -> Vec3,
+    ) -> Vec<[Vec3; 3]> {
+        let b = self.window_loop_polyline(face, 64);
+        let n = b.len();
+        if n < 3 {
+            return Vec::new();
+        }
+        const R: usize = 6; // radial bands; ring 0 = shared boundary, last = anchor
+        let mut tris = Vec::with_capacity(n * 2 * R);
+        let mut prev = b.clone();
+        for r in 1..R {
+            // March inward: factor 1 at the boundary, ->0 at the anchor.
+            let f = 1.0 - r as f64 / R as f64;
+            let cur: Vec<Vec3> = b
+                .iter()
+                .map(|&p| project(anchor + (p - anchor) * f))
+                .collect();
+            for k in 0..n {
+                let k1 = (k + 1) % n;
+                for tri in [[prev[k], prev[k1], cur[k1]], [prev[k], cur[k1], cur[k]]] {
+                    let cen = (tri[0] + tri[1] + tri[2]) * (1.0 / 3.0);
+                    tris.push(orient(tri, outward(cen)));
+                }
+            }
+            prev = cur;
+        }
+        for k in 0..n {
+            let k1 = (k + 1) % n;
+            let cen = (prev[k] + prev[k1] + anchor) * (1.0 / 3.0);
+            tris.push(orient([prev[k], prev[k1], anchor], outward(cen)));
+        }
+        tris
+    }
+
+    /// True if `face` is a pure boolean WINDOW-DISC cap on a cylinder/cone
+    /// lateral: exactly one trim loop, every edge a degree>=2 NURBS seam (no
+    /// circle/line/ellipse rim, so the kept region is the loop interior -- a
+    /// small cap, not a band or rest). Such a cap fan-triangulates watertight;
+    /// a band/rest (rim present, or >1 loop) keeps the even-odd grid stencil.
+    fn is_lateral_window_disc(&self, face: FaceKey) -> bool {
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        if loops.len() != 1 {
+            return false;
+        }
+        let mut any_nurbs = false;
+        for e in self.ring_edges(loops[0]) {
+            let Some((ck, _)) = self.edges.get(e).and_then(|x| x.curve) else {
+                return false;
+            };
+            match self.curves.get(ck) {
+                Some(keel_geom::curve::Curve3::Nurbs(n)) if n.degree() >= 2 => any_nurbs = true,
+                _ => return false,
+            }
+        }
+        any_nurbs
+    }
+
+    /// If `face` is a spherical WINDOW-DISC cap (a single NURBS-seam trim loop
+    /// whose enclosed small cap contains the face interior point), return that
+    /// on-surface anchor. `tessellate_sphere` carries no NURBS-trim path (only
+    /// circle caps), so the disc-fan is the only watertight route for an
+    /// SSI-windowed cap; the big-cap REST side (anchor outside the rim cone)
+    /// returns None and falls through to the (full-sphere) grid.
+    fn sphere_window_disc_anchor(&self, face: FaceKey, center: Vec3) -> Option<Vec3> {
+        let loops = self.faces.get(face).map(|f| f.loops.clone())?;
+        if loops.len() != 1 {
+            return None;
+        }
+        let mut has_nurbs = false;
+        for e in self.ring_edges(loops[0]) {
+            if let Some((ck, _)) = self.edges.get(e).and_then(|x| x.curve)
+                && matches!(self.curves.get(ck), Some(keel_geom::curve::Curve3::Nurbs(n)) if n.degree() >= 2)
+            {
+                has_nurbs = true;
+            }
+        }
+        if !has_nurbs {
+            return None;
+        }
+        let anchor = self.face_interior_point(face)?;
+        let b = self.window_loop_polyline(face, 32);
+        if b.len() < 3 {
+            return None;
+        }
+        // Small-cap test: u = mean rim direction from the centre; the cap is
+        // the side subtending < a hemisphere. The anchor is INSIDE that cap iff
+        // it is at least as axial (along u) as the least-axial rim sample.
+        let dir = |p: Vec3| -> Vec3 {
+            let d = p - center;
+            d * (1.0 / d.norm())
+        };
+        let mut u = Vec3::ZERO;
+        for &p in &b {
+            u = u + dir(p);
+        }
+        let un = u.norm();
+        if un < 1e-9 {
+            return None;
+        }
+        u = u * (1.0 / un);
+        let min_rim = b.iter().map(|&p| dir(p).dot(u)).fold(f64::INFINITY, f64::min);
+        if dir(anchor).dot(u) >= min_rim - 1e-9 {
+            Some(anchor)
+        } else {
+            None
+        }
+    }
+
     /// Lat-band tessellate a conical face. The axial band is bounded by
     /// the face's CLOSED circle edges and, where the face reaches the
     /// apex, the apex height (radius -> 0). Radius varies linearly with
@@ -861,10 +1054,75 @@ impl Body {
         if hhi - hlo <= 0.0 {
             return Vec::new();
         }
+        // NURBS-SEAM trim (cone/sphere window quartic): the boundary loop is a
+        // NURBS, not a circle/ellipse, so cap_planes cannot bound it. Mesh the
+        // FULL ring and keep cells whose (theta, v) centroid is inside the face
+        // by an even-odd ray cast (the tessellate_cylinder stencil, LOG Add 272/
+        // 280). Gated to a degree>=2 NURBS trim edge so planar/conic cone faces
+        // are byte-unchanged.
+        let nurbs_trimmed = {
+            let mut found = false;
+            'scan: for lk in self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default() {
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut cur = entry;
+                loop {
+                    if let Some((ck, _)) = self
+                        .fins
+                        .get(cur)
+                        .and_then(|fin| self.edges.get(fin.edge))
+                        .and_then(|e| e.curve)
+                        && matches!(self.curves.get(ck), Some(keel_geom::curve::Curve3::Nurbs(n)) if n.degree() >= 2)
+                    {
+                        found = true;
+                        break 'scan;
+                    }
+                    let Some(nx) = self.fins.get(cur).map(|f| f.next) else {
+                        break;
+                    };
+                    cur = nx;
+                    if cur == entry {
+                        break;
+                    }
+                }
+            }
+            found
+        };
+        // A pure WINDOW-DISC cap (single all-NURBS seam loop, no circle rim):
+        // fan it to the loop's shared edge samples (watertight with the partner
+        // cap) instead of the jagged even-odd grid. Bands/rests keep the grid.
+        if nurbs_trimmed
+            && self.is_lateral_window_disc(face)
+            && let Some(anchor) = self.face_interior_point(face)
+        {
+            let sgn = if sense { 1.0 } else { -1.0 };
+            let rad = move |q: Vec3| -> Vec3 {
+                let w = q - origin;
+                (w - ez * w.dot(ez)) * sgn
+            };
+            let proj = move |q: Vec3| -> Vec3 {
+                let w = q - origin;
+                let v = w.dot(ez);
+                let rd = w - ez * v;
+                let rn = rd.norm();
+                let rv = (cone.radius + v * slope).max(0.0);
+                if rn < 1e-12 {
+                    origin + ez * v
+                } else {
+                    origin + rd * (rv / rn) + ez * v
+                }
+            };
+            return self.fan_window_disc(face, anchor, &proj, &rad);
+        }
         // A partial-angle cone patch (a partial-revolve cone-sector band)
         // has no closed circle edge -> trim to its boundary's phi span,
         // exactly as the cylinder lateral does.
-        let (plo, phi_hi) = self.cyl_angular_span(face, origin, ex, ey, ez);
+        let (plo, phi_hi) = if nurbs_trimmed {
+            (0.0, core::f64::consts::TAU)
+        } else {
+            self.cyl_angular_span(face, origin, ex, ey, ez)
+        };
         // A cone patch bounded by two ELLIPSE arcs (the variable-radius
         // blend face, item 48) ends on TILTED cap planes, not constant-
         // height circles: clamp each ruling to its exact cap-plane
@@ -899,9 +1157,11 @@ impl Body {
                 }
             }
         }
-        const NV: usize = 16;
+        // A NURBS-seam stencil clips by whole cells, so a jagged window
+        // boundary needs finer axial steps to converge the mesh to the mass.
+        let nv: usize = if nurbs_trimmed { 48 } else { 16 };
         // Adaptive angular count (item 98) from the cone's LARGEST band
-        // radius and the angular span; the slant (NV) stays fixed (linear).
+        // radius and the angular span; the slant (nv) stays fixed (linear).
         let np = arc_segments(phi_hi - plo, r_at(hlo).max(r_at(hhi)), tol, 64);
         let sgn = if sense { 1.0 } else { -1.0 };
         let pt = |phi: f64, v: f64| -> Vec3 {
@@ -932,14 +1192,77 @@ impl Body {
             }
             (l.min(h), l.max(h))
         };
+        // (theta, v) trim edges + even-odd membership for the NURBS stencil
+        // (identical to tessellate_cylinder: it works in (angle, axial) space).
+        let wrap_pi = |x: f64| {
+            let t = core::f64::consts::TAU;
+            let mut a = x % t;
+            if a >= core::f64::consts::PI {
+                a -= t;
+            }
+            if a < -core::f64::consts::PI {
+                a += t;
+            }
+            a
+        };
+        let mut segs: Vec<((f64, f64), (f64, f64))> = Vec::new();
+        if nurbs_trimmed {
+            for lk in self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default() {
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut pts: Vec<(f64, f64)> = Vec::new();
+                let mut cur = entry;
+                while let Some(fin) = self.fins.get(cur) {
+                    for p in self.fin_curve_samples(cur, 32).unwrap_or_default() {
+                        let w = p - origin;
+                        let wp = w - ez * w.dot(ez);
+                        pts.push((wp.dot(ey).atan2(wp.dot(ex)), w.dot(ez)));
+                    }
+                    cur = fin.next;
+                    if cur == entry {
+                        break;
+                    }
+                }
+                let m = pts.len();
+                for k in 0..m {
+                    segs.push((pts[k], pts[(k + 1) % m]));
+                }
+            }
+        }
+        let inside = |thc: f64, hc: f64| -> bool {
+            let mut count = 0u32;
+            for &((ta, ha), (tb, hb)) in &segs {
+                let dab = wrap_pi(tb - ta);
+                if dab.abs() < 1e-12 {
+                    continue;
+                }
+                let s = wrap_pi(thc - ta) / dab;
+                if !(0.0..1.0).contains(&s) {
+                    continue;
+                }
+                if ha + s * (hb - ha) > hc {
+                    count += 1;
+                }
+            }
+            count % 2 == 1
+        };
+        let keep = |q: Vec3| -> bool {
+            if !nurbs_trimmed {
+                return true;
+            }
+            let w = q - origin;
+            let wp = w - ez * w.dot(ez);
+            inside(wp.dot(ey).atan2(wp.dot(ex)), w.dot(ez))
+        };
         let mut tris = Vec::new();
         for j in 0..np {
             let p0 = plo + (phi_hi - plo) * j as f64 / np as f64;
             let p1 = plo + (phi_hi - plo) * (j + 1) as f64 / np as f64;
             let (l0, h0) = ruling_band(p0);
             let (l1, h1) = ruling_band(p1);
-            for i in 0..NV {
-                let (f0, f1) = (i as f64 / NV as f64, (i + 1) as f64 / NV as f64);
+            for i in 0..nv {
+                let (f0, f1) = (i as f64 / nv as f64, (i + 1) as f64 / nv as f64);
                 let a = pt(p0, l0 + (h0 - l0) * f0);
                 let b = pt(p0, l0 + (h0 - l0) * f1);
                 let c = pt(p1, l1 + (h1 - l1) * f1);
@@ -948,8 +1271,14 @@ impl Body {
                     let w = q - origin;
                     (w - ez * w.dot(ez)) * sgn
                 };
-                tris.push(orient([a, b, c], rad((a + b + c) * (1.0 / 3.0))));
-                tris.push(orient([a, c, d], rad((a + c + d) * (1.0 / 3.0))));
+                let ca = (a + b + c) * (1.0 / 3.0);
+                let cd = (a + c + d) * (1.0 / 3.0);
+                if keep(ca) {
+                    tris.push(orient([a, b, c], rad(ca)));
+                }
+                if keep(cd) {
+                    tris.push(orient([a, c, d], rad(cd)));
+                }
             }
         }
         tris
@@ -1364,6 +1693,23 @@ impl Body {
                     + ez * theta.cos())
                     * radius
         };
+        // NURBS WINDOW-DISC cap (cyl/cone-sphere SSI): tessellate_sphere has no
+        // NURBS-trim path (only circle caps), so an SSI-windowed cap would mesh
+        // the FULL sphere. Fan the small-cap side to the loop's shared edge
+        // samples -> watertight with the partner cap (LOG Add 281+).
+        if let Some(anchor) = self.sphere_window_disc_anchor(face, center) {
+            let sgn = if sense { 1.0 } else { -1.0 };
+            let proj = move |q: Vec3| -> Vec3 {
+                let d = q - center;
+                let dn = d.norm();
+                if dn < 1e-12 {
+                    q
+                } else {
+                    center + d * (radius / dn)
+                }
+            };
+            return self.fan_window_disc(face, anchor, &proj, &move |q| (q - center) * sgn);
+        }
         // If the face is a trimmed cap (bounded by an SSI circle),
         // keep only triangles on the cap side of that circle's plane;
         // a whole-sphere face (no circle edge) meshes fully.

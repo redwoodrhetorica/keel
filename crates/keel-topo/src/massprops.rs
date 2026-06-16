@@ -1433,6 +1433,31 @@ impl Body {
                 fins_c.len()
             );
         }
+        // HOLE-ORIENTATION normalization (the cone/sphere window mass): an
+        // inner-ring loop is a HOLE and must REDUCE the region, so its (u,v)
+        // area contribution must OPPOSE the outer loop's. A non-wrapping window
+        // (du ~ 0) is invisible to the task-41 winding flip above, and the
+        // cone's apex-side anchor flips a window's (u,v) handedness relative to
+        // the cylinder's base-side anchor -- so a window imprinted consistently
+        // in 3D arrives CO-oriented with the outer loop on the cone and ADDS
+        // its apex-wedge (the cone-rest read 13.72 vs the true 11.42). Flip any
+        // inner ring (li>=1) whose area co-signs with the outer (li=0).
+        {
+            let nl = loop_du.len();
+            if nl >= 2 {
+                let mut larea = vec![0.0f64; nl];
+                for (i, &(_, v_t, wu)) in nodes.iter().enumerate() {
+                    larea[node_li[i]] -= wu * (v_t - v_base);
+                }
+                let outer_sign = larea[0].signum();
+                for (i, n) in nodes.iter_mut().enumerate() {
+                    let li = node_li[i];
+                    if li >= 1 && larea[li].abs() > 1e-12 && larea[li].signum() == outer_sign {
+                        n.2 = -n.2;
+                    }
+                }
+            }
+        }
         let mut area = 0.0;
         let mut acc: Vec<(f64, f64, f64)> = Vec::new();
         for &(u, v_t, wu) in &nodes {
