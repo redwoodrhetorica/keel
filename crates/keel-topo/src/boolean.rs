@@ -1143,6 +1143,56 @@ impl Body {
         cone: &keel_geom::surface::Cone3,
     ) -> Option<keel_math::vec::Vec3> {
         let (origin, ex, ez) = (cone.frame.origin, cone.frame.x, cone.frame.z);
+        let ey = cone.frame.y;
+        // SINGLE non-periodic loop -- a WINDOW disc cut by a NURBS seam (a
+        // cone/sphere graze). The circle-rim path below finds no circle and
+        // returns None; use the loop's own (theta, v) bbox centre, interior to
+        // the convex window (theta NOT wrapping the full ring => a window).
+        let loops = self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default();
+        if loops.len() == 1
+            && let Some(entry) = self.loops.get(loops[0]).and_then(|l| l.fin)
+        {
+            use core::f64::consts::{PI, TAU};
+            let angle_v = |p: keel_math::vec::Vec3| -> (f64, f64) {
+                let d = p - origin;
+                let vv = d.dot(ez);
+                let w = d - ez * vv;
+                (w.dot(ey).atan2(w.dot(ex)), vv)
+            };
+            let (mut tlo, mut thi) = (f64::INFINITY, f64::NEG_INFINITY);
+            let (mut vlo, mut vhi) = (f64::INFINITY, f64::NEG_INFINITY);
+            let mut prev = f64::NAN;
+            let mut cnt = 0u32;
+            let mut cur = entry;
+            while let Some(fin) = self.fins.get(cur) {
+                for p in self.fin_curve_samples(cur, 16).unwrap_or_default() {
+                    let (mut th, vv) = angle_v(p);
+                    if !prev.is_nan() {
+                        while th - prev > PI {
+                            th -= TAU;
+                        }
+                        while th - prev < -PI {
+                            th += TAU;
+                        }
+                    }
+                    prev = th;
+                    tlo = tlo.min(th);
+                    thi = thi.max(th);
+                    vlo = vlo.min(vv);
+                    vhi = vhi.max(vv);
+                    cnt += 1;
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+            if cnt >= 3 && thi - tlo < TAU - 0.1 {
+                let (tc, vc) = (0.5 * (tlo + thi), 0.5 * (vlo + vhi));
+                let r = (cone.radius + vc * cone.half_angle.tan()).max(0.0);
+                return Some(origin + (ex * tc.cos() + ey * tc.sin()) * r + ez * vc);
+            }
+        }
         let mut heights = self.cyl_circle_heights(face, origin, ez);
         // A TIP fragment has ONE rim circle and reaches the APEX (a degenerate
         // v-line, not a circle edge), so cyl_circle_heights yields a single
@@ -4714,6 +4764,106 @@ fn cyl_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
     })
 }
 
+/// EXACT cone-intersect-sphere volume by 1D integration along the cone axis of
+/// the closed-form two-disc lens area -- the cone cross-section is a disc of
+/// v-VARYING radius r0 + v*m (vs the cylinder's constant r). Tight ground truth
+/// for the cone/sphere window class (no closed form for the trimmed result).
+fn cone_sphere_inter_volume(
+    c: &keel_geom::surface::Cone3,
+    vlo: f64,
+    vhi: f64,
+    sp: &keel_geom::surface::Sphere3,
+) -> f64 {
+    let axis = c.frame.z;
+    let w = sp.frame.origin - c.frame.origin;
+    let vc = w.dot(axis);
+    let delta = (w - axis * vc).norm();
+    let m = c.half_angle.tan();
+    let lo = vlo.max(vc - sp.radius);
+    let hi = vhi.min(vc + sp.radius);
+    if hi <= lo {
+        return 0.0;
+    }
+    let n = 4000usize;
+    let dv = (hi - lo) / n as f64;
+    let mut vol = 0.0;
+    for i in 0..n {
+        let v = lo + (i as f64 + 0.5) * dv;
+        let rcone = (c.radius + v * m).max(0.0);
+        let rs2 = sp.radius * sp.radius - (v - vc) * (v - vc);
+        if rs2 > 0.0 && rcone > 0.0 {
+            vol += two_disc_lens_area(rcone, rs2.sqrt(), delta) * dv;
+        }
+    }
+    vol
+}
+
+/// Solid volume of a cone frustum between axial v in [vlo, vhi]: integral of
+/// pi*(r0 + v*m)^2 dv (the cone primitive's own volume, for the op bound).
+fn cone_solid_volume(c: &keel_geom::surface::Cone3, vlo: f64, vhi: f64) -> f64 {
+    let m = c.half_angle.tan();
+    let n = 4000usize;
+    let dv = (vhi - vlo) / n as f64;
+    let mut vol = 0.0;
+    for i in 0..n {
+        let v = vlo + (i as f64 + 0.5) * dv;
+        let r = (c.radius + v * m).max(0.0);
+        vol += core::f64::consts::PI * r * r * dv;
+    }
+    vol
+}
+
+/// Tight EXACT op-volume oracle for a quadric + sphere pair: cyl/sphere, else
+/// cone/sphere. None for any other pair. The gate requires the boolean's mass
+/// to match this, so the window classes (no closed-form trimmed shape) cannot
+/// ship a watertight self-consistent WRONG.
+fn quadric_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
+    if let Some(v) = cyl_sphere_op_volume(a, b, op) {
+        return Some(v);
+    }
+    let cone_of = |body: &Body| -> Option<(keel_geom::surface::Cone3, f64, f64)> {
+        let c = body.face_keys().into_iter().find_map(|f| match body.face_surface3(f) {
+            Some(Surface3::Cone(c)) => Some(c),
+            _ => None,
+        })?;
+        let axis = c.frame.z;
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        for t in body.facets(None) {
+            for p in t {
+                let v = (p - c.frame.origin).dot(axis);
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+        }
+        (lo.is_finite() && hi > lo).then_some((c, lo, hi))
+    };
+    let sph_of = |body: &Body| -> Option<keel_geom::surface::Sphere3> {
+        body.face_keys().into_iter().find_map(|f| match body.face_surface3(f) {
+            Some(Surface3::Sphere(s)) => Some(s),
+            _ => None,
+        })
+    };
+    let pi = core::f64::consts::PI;
+    let (cone, vlo, vhi, sph, va, vb) =
+        if let (Some((c, lo, hi)), Some(s)) = (cone_of(a), sph_of(b)) {
+            let vs = 4.0 / 3.0 * pi * s.radius.powi(3);
+            (c, lo, hi, s, f64::NAN, vs)
+        } else if let (Some(s), Some((c, lo, hi))) = (sph_of(a), cone_of(b)) {
+            let vs = 4.0 / 3.0 * pi * s.radius.powi(3);
+            (c, lo, hi, s, vs, f64::NAN)
+        } else {
+            return None;
+        };
+    let inter = cone_sphere_inter_volume(&cone, vlo, vhi, &sph);
+    let vcone = cone_solid_volume(&cone, vlo, vhi);
+    let (va, vb) = if va.is_nan() { (vcone, vb) } else { (va, vcone) };
+    Some(match op {
+        BoolOp::Intersection => inter,
+        BoolOp::Union => va + vb - inter,
+        BoolOp::Difference => va - inter,
+    })
+}
+
 /// The shared post-seam boolean tail: imprint both operands along the
 /// given seams, classify, select, stitch, and apply the degeneracy /
 /// self-consistency gates. Used by `boolean` (all seams) and
@@ -4928,7 +5078,7 @@ fn assemble_boolean(
         // (the #48 class the loose op-bound and mass==mesh both miss), so the
         // cyl/sphere WINDOW class is safe to assemble: a correct window passes,
         // a mis-classified one declines. Mass-declined on such a pair -> decline.
-        let tight_ok = match cyl_sphere_op_volume(a, b, op) {
+        let tight_ok = match quadric_sphere_op_volume(a, b, op) {
             Some(exact) => bm
                 .as_ref()
                 .ok()

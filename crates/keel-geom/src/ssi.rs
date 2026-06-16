@@ -1062,19 +1062,21 @@ fn analytic_analytic(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, 
 ///    otherwise = one closed bite curve (branch + out, branch - back,
 ///    joining smoothly at the D = 0 ends). Certified NURBS fit per
 ///    curve; certificate misses DECLINE.
-/// Closed-form SSI branch field on a cylinder's own (theta, v) parametrization.
+/// Closed-form SSI branch field on a RULED surface's (theta, v) parametrization
+/// (cylinder or cone): `point_at(theta, v)` is the surface point at cross-
+/// section angle theta and ruling parameter v.
 ///
-/// For each cross-section angle theta the other surface contributes a quadratic
-/// `q2 v^2 + q1(theta) v + q0(theta) = 0` in the axial coordinate v along the
-/// cylinder's axis. Sampling the discriminant separates a full WRAP (disc > 0
-/// for all theta -> one closed loop per branch, encircling the axis) from
-/// BITE/window components (disc changes sign -> one closed loop per maximal
-/// positive run: + branch out, - branch back), Chebyshev-regularizing the sqrt
-/// turnarounds at the disc = 0 ends. Each branch is a certified cubic LSQ NURBS
-/// fit (SAFETY = 2 vs FRESH samples); a miss DECLINES. Shared by the
-/// cylinder/cylinder rung 3 and the non-coaxial cylinder/sphere arm.
-fn cyl_quadratic_branch_field(
-    cy: &crate::surface::Cylinder3,
+/// For each theta the OTHER surface contributes a quadratic
+/// `q2 v^2 + q1(theta) v + q0(theta) = 0` in the ruling parameter v. Sampling
+/// the discriminant separates a full WRAP (disc > 0 for all theta -> one closed
+/// loop per branch, encircling the axis) from BITE/window components (disc
+/// changes sign -> one closed loop per maximal positive run: + branch out, -
+/// branch back), Chebyshev-regularizing the sqrt turnarounds at the disc = 0
+/// ends. Each branch is a certified cubic LSQ NURBS fit (SAFETY = 2 vs FRESH
+/// samples); a miss DECLINES. Shared by the cylinder/cylinder rung 3, the
+/// non-coaxial cylinder/sphere arm, and the non-coaxial cone/sphere arm.
+fn quadratic_branch_field(
+    point_at: &dyn Fn(f64, f64) -> Vec3,
     q2: f64,
     coeffs: &dyn Fn(f64) -> (f64, f64),
     tol: f64,
@@ -1082,7 +1084,6 @@ fn cyl_quadratic_branch_field(
     if q2 <= 1e-18 {
         return Err(GeomError::Degenerate);
     }
-    let az = cy.frame.z;
     let disc = |theta: f64| -> f64 {
         let (q1, q0) = coeffs(theta);
         q1 * q1 - 4.0 * q2 * q0
@@ -1094,7 +1095,7 @@ fn cyl_quadratic_branch_field(
         let (q1, q0) = coeffs(theta);
         let d = (q1 * q1 - 4.0 * q2 * q0).max(0.0);
         let v = (-q1 + sign * d.sqrt()) / (2.0 * q2);
-        cy.frame.origin + (cy.frame.x * theta.cos() + cy.frame.y * theta.sin()) * cy.radius + az * v
+        point_at(theta, v)
     };
 
     // Certified cubic LSQ fit of one closed branch, escalating the
@@ -1297,7 +1298,10 @@ fn cylinder_cylinder(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, 
         let q0 = w.dot(w) - cb.radius * cb.radius;
         (q1, q0)
     };
-    cyl_quadratic_branch_field(ca, q2, &coeffs, tol)
+    let point_at = |theta: f64, v: f64| -> Vec3 {
+        ca.frame.origin + (ca.frame.x * theta.cos() + ca.frame.y * theta.sin()) * ca.radius + az * v
+    };
+    quadratic_branch_field(&point_at, q2, &coeffs, tol)
 }
 
 fn plane_of(s: &Surface3) -> (&crate::surface::Frame3,) {
@@ -1651,7 +1655,10 @@ fn cylinder_sphere(cyl: &Surface3, sph: &Surface3, tol: f64) -> Result<SsiResult
                 - s.frame.origin;
             (2.0 * g.dot(z), g.dot(g) - s.radius * s.radius)
         };
-        return cyl_quadratic_branch_field(cy, 1.0, &coeffs, tol);
+        let point_at = |theta: f64, v: f64| -> Vec3 {
+            cy.frame.origin + (cy.frame.x * theta.cos() + cy.frame.y * theta.sin()) * cy.radius + z * v
+        };
+        return quadratic_branch_field(&point_at, 1.0, &coeffs, tol);
     }
     let d = w.dot(z);
     let disc = s.radius * s.radius - cy.radius * cy.radius;
@@ -1697,7 +1704,26 @@ fn cone_sphere(cone: &Surface3, sph: &Surface3, tol: f64) -> Result<SsiResult, G
     let z = c.frame.z;
     let w = s.frame.origin - c.frame.origin;
     if (w - z * w.dot(z)).norm() > tol {
-        return Err(GeomError::Degenerate); // sphere centre off the axis -> quartic
+        // Non-coaxial: the seam is a quartic. On the cone's (theta, v) ruling
+        // P(theta,v) = O + (r0 + v*m)*rad(theta) + v*a, the sphere |P-C|^2=R^2
+        // is a quadratic in v: (m^2+1) v^2 + 2(g0.dir) v + (|g0|^2 - R^2) = 0,
+        // with g0 = (O - C) + r0*rad, dir = m*rad + a (|dir|^2 = m^2+1). Same
+        // shared branch field as cyl/sphere; only the ruling has a v-varying
+        // radius. (Apex-crossing seams produce non-finite fits -> DECLINE.)
+        let m = c.half_angle.tan();
+        let r0 = c.radius;
+        let dc = c.frame.origin - s.frame.origin;
+        let coeffs = |theta: f64| -> (f64, f64) {
+            let rad = c.frame.x * theta.cos() + c.frame.y * theta.sin();
+            let g0 = dc + rad * r0;
+            let dir = rad * m + c.frame.z;
+            (2.0 * g0.dot(dir), g0.dot(g0) - s.radius * s.radius)
+        };
+        let point_at = |theta: f64, v: f64| -> Vec3 {
+            let rad = c.frame.x * theta.cos() + c.frame.y * theta.sin();
+            c.frame.origin + rad * (r0 + v * m) + c.frame.z * v
+        };
+        return quadratic_branch_field(&point_at, m * m + 1.0, &coeffs, tol);
     }
     let d = w.dot(z);
     let m = c.half_angle.tan();

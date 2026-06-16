@@ -8898,3 +8898,35 @@ non-watertightness (decline-safe). Soak FAIL=0 both seeds (20k), slow configs
 cyl_sphere_window_three_ops_pass_exact. The antipode-for-rest is safe ONLY
 because the oracle guards cyl/sphere; cone/sphere stays SSI-gated and sph/sph
 uses circles, so neither reaches this unverified path. [[kernel-known-limitations]]
+
+## Addendum 280: cone/sphere SSI infrastructure -- branch-field engine generalized to ANY ruled surface; oracle + classify in place; cone passes gated on the tessellate_cone NURBS stencil (2026-06-16)
+
+Sets up the cone/sphere class (~700 declines) by replicating the cyl/sphere
+method. cone/sphere is ALSO a quadratic in the ruling parameter: on the cone
+ruling P(theta,v) = O + (r0 + v*m)*rad + v*a, the sphere |P-C|^2=R^2 gives
+(m^2+1) v^2 + 2(g0.dir) v + (|g0|^2-R^2) = 0 with g0 = (O-C)+r0*rad, dir =
+m*rad + a (|dir|^2 = m^2+1). So the SAME branch field serves it.
+
+PIECES:
+- SSI: `cyl_quadratic_branch_field` generalized to `quadratic_branch_field`,
+  taking a `point_at(theta,v)` closure instead of a Cylinder3 (the ONLY surface-
+  specific bit was the eval point). cylinder_cylinder, cylinder_sphere, and the
+  NEW non-coaxial cone_sphere arm all build their point_at and call it. 18 ssi
+  tests green (cyl/cyl Steinmetz + cyl/sphere preserved through the refactor).
+- ORACLE: cone_sphere_inter_volume (1D integral of the two-disc lens area, cone
+  disc radius r0+v*m VARIES along the ruling) + cone_solid_volume; the gate's
+  tight check now calls quadric_sphere_op_volume (cyl/sphere else cone/sphere),
+  so cone/sphere is volume-guarded -> no silent wrong even un-gated.
+- CLASSIFY: cone_face_interior_point gets the NURBS-window case (loop (theta,v)
+  bbox centre); the sphere-side fix (Add 278/279) is surface-agnostic, already
+  serving cone/sphere.
+
+STATUS: cone/sphere windows still DECLINE (decline-safe, oracle-backed) -- the
+assembly is malformed because tessellate_cone has NO NURBS-window stencil (the
+exact gap tessellate_cylinder filled for cyl/cyl). probe_cone_win: all 4 ops
+decline (mass!=mesh / invalid). Adding that stencil (mirror tessellate_cylinder's
+even-odd (theta,v) ray-cast) is THE last piece -> cone/sphere window passes.
+Soak FAIL=0 both seeds (20k); keel-geom 138 + keel-topo green; cyl/sphere 3/4
+preserved. (Supersedes Add 279's "cone/sphere stays SSI-gated": it now flows,
+oracle-guarded.) The generalized engine + oracle now serve the whole
+quadric-vs-sphere family. [[kernel-known-limitations]]
