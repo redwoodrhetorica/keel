@@ -1845,14 +1845,15 @@ impl Body {
     /// `(q - point).dot(normal) * sign >= 0` selects the cap side.
     fn sphere_cap_trim(&self, face: FaceKey) -> Option<(Vec3, Vec3, f64)> {
         let loops = self.faces.get(face).map(|f| f.loops.clone())?;
-        for lk in loops {
-            let entry = self.loops.get(lk).and_then(|l| l.fin)?;
+        // 1. A CLOSED circle rim (the M6a single cut, or a band's first rim --
+        //    rim_planes then adds the rest). Side from the interior point.
+        for lk in &loops {
+            let Some(entry) = self.loops.get(*lk).and_then(|l| l.fin) else {
+                continue;
+            };
             let mut cur = entry;
             loop {
-                let fin = self.fins.get(cur)?;
-                // Only a CLOSED circle edge is an SSI seam; the sphere's
-                // own meridian is an open pole-to-pole circle and must
-                // not be mistaken for a cap trim.
+                let Some(fin) = self.fins.get(cur) else { break };
                 let closed = self.edges.get(fin.edge).map(|e| e.is_closed()) == Some(true);
                 if closed
                     && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
@@ -1860,11 +1861,7 @@ impl Body {
                     && let Some((center_c, ax)) = crate::boolean::closed_curve_center_axis(cv)
                 {
                     let apex = self.face_interior_point(face)?;
-                    let side = if (apex - center_c).dot(ax) >= 0.0 {
-                        1.0
-                    } else {
-                        -1.0
-                    };
+                    let side = if (apex - center_c).dot(ax) >= 0.0 { 1.0 } else { -1.0 };
                     return Some((center_c, ax, side));
                 }
                 cur = fin.next;
@@ -1873,7 +1870,65 @@ impl Body {
                 }
             }
         }
-        None
+        // 2. A planar cap cut whose circle CROSSES the sphere's parametric seam
+        //    is stored as open ARCS, not a closed circle. Collect every non-seam
+        //    circle arc (SKIP the sphere's own meridian: an edge whose both fins
+        //    are on THIS face); if they all share ONE (centre, axis) it is a
+        //    single cap cut -> return it with the INTERIOR-POINT side. (The
+        //    arc_planes path's boundary-vertex-average side is ambiguous for a
+        //    lone circle, whose vertices average to its centre, and it wrongly
+        //    treats the seam meridian as a clip plane -- the F1 cyl/sphere
+        //    planar-cap mesh = 0.96 vs mass 2.87 bug.) Two distinct circles is a
+        //    band: return None so the band path handles it.
+        let mut rim: Option<(Vec3, Vec3, f64)> = None;
+        for lk in &loops {
+            let Some(entry) = self.loops.get(*lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            loop {
+                let Some(fin) = self.fins.get(cur) else { break };
+                let is_seam = self
+                    .edges
+                    .get(fin.edge)
+                    .map(|e| {
+                        e.radial.len() >= 2
+                            && e.radial.iter().all(|&rf| {
+                                self.fins
+                                    .get(rf)
+                                    .and_then(|x| self.loops.get(x.owner))
+                                    .map(|x| x.face)
+                                    == Some(face)
+                            })
+                    })
+                    .unwrap_or(false);
+                if !is_seam
+                    && let Some((ck, _)) = self.edges.get(fin.edge).and_then(|e| e.curve)
+                    && let Some(keel_geom::curve::Curve3::Circle(ci)) = self.curves.get(ck)
+                    && let Some(ax) = ci.x_axis.cross(ci.y_axis).try_normalize()
+                {
+                    match rim {
+                        None => rim = Some((ci.center, ax, ci.radius)),
+                        Some((rc, ra, rr)) => {
+                            if (rc - ci.center).norm() > 1e-7
+                                || ra.cross(ax).norm() > 1e-6
+                                || (rr - ci.radius).abs() > 1e-7
+                            {
+                                return None; // two distinct rims -> band, not a cap
+                            }
+                        }
+                    }
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        let (center_c, ax, _) = rim?;
+        let apex = self.face_interior_point(face)?;
+        let side = if (apex - center_c).dot(ax) >= 0.0 { 1.0 } else { -1.0 };
+        Some((center_c, ax, side))
     }
 }
 

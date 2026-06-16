@@ -1374,9 +1374,32 @@ impl Body {
             // wrong one, so the candidate whose magnitude matches the
             // face's own tessellated area wins.
             let pole = core::f64::consts::FRAC_PI_2;
+            // ENCLOSED-POLE anchor. The boundary nodes span a latitude BAND
+            // [v_min, v_max]; the face's interior reaches past it to exactly ONE
+            // frame pole, where the anchor must sit (the other pole integrates
+            // the COMPLEMENT -- the trap's defect 2). PRIMARY test (frame-robust):
+            // the face interior point lies on the enclosed-pole side of the band.
+            // A TILTED planar cap cut (a cylinder/cone end-cap not square to the
+            // sphere axis) leaves the SSI circle at mid latitudes while the big
+            // cap reaches a frame pole, so the interior latitude falls OUTSIDE
+            // [v_min, v_max] toward the enclosed pole. The area-vs-tessellation
+            // witness below mis-picks here (it reads the COMPLEMENT pole when the
+            // tessellation meshed the wrong cap side -- the F1 cyl/sphere
+            // planar-cap mass = 1.25 vs true 2.85 bug).
+            let ip_pole = self.face_interior_point(fk).and_then(|ip| {
+                let vlat = vmap(ip - o);
+                if vlat < v_min - 1e-9 {
+                    Some(-pole)
+                } else if vlat > v_max + 1e-9 {
+                    Some(pole)
+                } else {
+                    None
+                }
+            });
             // SPHERICAL area from the boundary nodes (dA = r^2 cos v
             // dv du, so the inner integral is sin v_t - sin vb): the
-            // same units as the tessellated area witness.
+            // same units as the tessellated area witness. FALLBACK only,
+            // when the interior latitude sits inside the boundary band.
             let r2 = match surf {
                 Surface3::Sphere(s) => s.radius * s.radius,
                 _ => 1.0,
@@ -1388,17 +1411,18 @@ impl Body {
                 }
                 (s * r2).abs()
             };
-            let tess_area: f64 = self
-                .tessellate_face(fk)
-                .iter()
-                .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
-                .sum();
-            let chosen = if (area_at(pole) - tess_area).abs() <= (area_at(-pole) - tess_area).abs()
-            {
-                pole
-            } else {
-                -pole
-            };
+            let chosen = ip_pole.unwrap_or_else(|| {
+                let tess_area: f64 = self
+                    .tessellate_face(fk)
+                    .iter()
+                    .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
+                    .sum();
+                if (area_at(pole) - tess_area).abs() <= (area_at(-pole) - tess_area).abs() {
+                    pole
+                } else {
+                    -pole
+                }
+            });
             if (chosen > 0.0 && v_max > pole - 1e-6) || (chosen < 0.0 && v_min < -pole + 1e-6) {
                 return Err(TopoError::Precondition(
                     "green-slab: boundary touches the anchor pole",

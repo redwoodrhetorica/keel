@@ -89,6 +89,39 @@ fn cyl_sphere_window_four_ops_pass_exact() {
     pass(&a, &b, BoolOp::Intersection, 1.07); // the lens
 }
 
+#[test]
+fn cyl_sphere_planar_cap_intersection_pass() {
+    // A sphere sitting inside a (tilted) cylinder radially but poking out one
+    // flat END: cyl n sph is the sphere truncated by the cylinder's cap PLANE
+    // (a single circle, NOT a lateral NURBS window). The big truncated-sphere
+    // cap reaches a sphere FRAME pole, and the cut circle crosses the sphere's
+    // parametric seam so it is stored as ARCS. Two fixes land it: (1) the mass
+    // green-slab anchors at the ENCLOSED pole chosen by the interior point's
+    // latitude (not the fragile tess-area witness, which read the complement
+    // pole -> mass 1.25 vs true 2.85); (2) sphere_cap_trim recognises the
+    // arc-split cut circle and meshes the correct cap side via the interior
+    // point (the arc_planes vertex-average path sliced the cap on the seam
+    // meridian -> mesh 0.96). Geometry from the seed-1 soak (probe_cysph_fail).
+    let a = cyl(
+        Vec3::new(-0.7282314989287573, 0.2578193561387194, -1.4989243807508887),
+        Vec3::new(-0.10491245566834961, 0.8316768206114489, 0.7683821733488301),
+        2.964423919723465,
+        1.796689666271305,
+    );
+    let b = sph(
+        Vec3::new(-0.8752042306236147, 1.904556614958362, -1.1882431622168834),
+        Vec3::new(0., 0., 1.),
+        0.9596500794485675,
+    );
+    let r = boolean(&a, &b, BoolOp::Intersection, 1e-7)
+        .unwrap_or_else(|e| panic!("intersection declined: {e:?}"));
+    assert!(r.faults.is_empty() && r.body.validate().is_ok(), "not clean: {:?}", r.faults);
+    let m = r.body.mass_properties().unwrap().volume;
+    let mesh = r.body.mesh_volume();
+    assert!((m - 2.853).abs() < 0.1, "mass {m} != ~2.853");
+    assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+}
+
 /// Exact volume of the intersection lens of two spheres (radii ra, rb, centre
 /// distance d). Zero when disjoint; min-ball when nested.
 fn lens_volume(ra: f64, rb: f64, d: f64) -> f64 {

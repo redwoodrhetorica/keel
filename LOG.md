@@ -8983,3 +8983,44 @@ curved-robustness green. Soak FAIL=0 both seeds (20k): seed1 PASS 5370 / DECLINE
 quadric-vs-sphere window family is now fully solved -- minimize-declines advances
 two whole op-classes from DECLINE to PASS. [[kernel-known-limitations]]
 [[minimize-declines]]
+
+## Addendum 282: cyl/sphere PLANAR-CAP intersection PASSES -- sphere truncated by a cylinder END plane, via a frame-robust mass pole anchor + arc-split cut-circle cap trim (2026-06-16)
+
+A sphere sitting inside a cylinder radially but poking out one flat END: cyl n
+sph is the sphere truncated by the cylinder's cap PLANE (a single circle, NOT a
+lateral NURBS window -- a distinct class from Add 281). Two independent sphere
+bugs, both rooted in the cut circle being TILTED relative to the sphere frame and
+CROSSING the sphere's parametric seam:
+
+1. MASS green-slab pole anchor (massprops.rs): the big truncated-sphere cap
+   reaches a sphere FRAME pole, so the green-slab anchors at the enclosed pole.
+   The enclosed-pole selection used a tess-area witness (match the boundary-node
+   area to the tessellated area), which mis-picked the COMPLEMENT pole when the
+   tessellation meshed the wrong cap side -> mass 1.25 vs true 2.85. FIX: pick the
+   enclosed pole from the face INTERIOR POINT's latitude vs the boundary band --
+   the interior sits OUTSIDE [v_min, v_max] toward the enclosed pole. Frame-robust;
+   the area witness stays as the ambiguous-band fallback.
+2. TESSELLATION cap side (tessellate.rs sphere_cap_trim): the cut circle crosses
+   the sphere seam -> stored as open ARCS, not a closed circle -> sphere_cap_trim
+   (closed-circle only) returned None -> fell to the arc_planes path, whose
+   boundary-vertex-AVERAGE side is ambiguous for a lone circle (vertices average
+   to the centre) AND wrongly treats the sphere's seam MERIDIAN as a clip plane ->
+   sliced the cap on the meridian -> mesh 0.96. FIX: generalize sphere_cap_trim to
+   recognise a cut circle stored as coplanar non-seam arcs (skip the seam
+   meridian: an edge whose both fins are on this face), then use the
+   interior-point side. Two distinct rims still -> None (a band, handled
+   downstream).
+
+RESULT: cyl/sphere planar-cap intersection PASSES (mass 2.8655, mesh 2.8551,
+truth 2.8531). Test cyl_sphere_planar_cap_intersection_pass. keel-topo 283 lib +
+curved-robustness (5) green. Soak FAIL=0 both seeds (20k): seed1 PASS 5612 /
+DECLINE 14388, seed2 PASS 5589 / DECLINE 14411 -- up +240/seed from Add 281's
+5370/5343, so the cap-trim + pole-anchor fix lands many more planar-cap sphere
+cases than just F1 (broad sphere-cap win, not one genome). F2
+(the cyl - sph graze in probe_cysph_fail) REMAINS decline-safe: a near-tangent
+contact where the tiny in-cylinder sphere region is not walled (a sphere face
+STRADDLES the cylinder boundary, so the single-interior-point classify cannot
+resolve it; mass 14.43 EXCEEDS the cylinder's own 14.20, impossible for a
+difference, so the gate declines). That is the grazing-contact finer-imprint
+problem (dossier #59), left declining -- DECLINE-never-WRONG holds.
+[[kernel-known-limitations]] [[minimize-declines]]
