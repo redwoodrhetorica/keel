@@ -16,7 +16,9 @@ fn main() {
         .unwrap();
     for (lbl, x, y, op) in [
         ("cyl - sph", &a, &b, BoolOp::Difference),
+        ("sph - cyl", &b, &a, BoolOp::Difference),
         ("cyl n sph", &a, &b, BoolOp::Intersection),
+        ("cyl u sph", &a, &b, BoolOp::Union),
     ] {
         println!("==== {lbl} ====");
         match boolean(x, y, op, 1e-7) {

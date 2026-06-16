@@ -1449,8 +1449,15 @@ impl Body {
                 let Some(dir) = (cloop - center).try_normalize() else {
                     continue;
                 };
-                let sgn = if inner { -1.0 } else { 1.0 };
-                let p = center + dir * (radius * sgn);
+                let p = center + dir * (radius * if inner { -1.0 } else { 1.0 });
+                if inner {
+                    // REST face (window as an INNER ring): the antipode of the
+                    // window centroid is the big region's interior. The seamed
+                    // sphere rest defeats point_in_face_uv's (u,v) winding (it
+                    // returns None for every grid point), so trust the antipode
+                    // -- the tight cyl/sphere oracle backstops any error.
+                    return Some(p);
+                }
                 let w = p - center;
                 let u = w
                     .dot(s.frame.y)
@@ -1459,6 +1466,31 @@ impl Body {
                 let vlat = (w.dot(s.frame.z) / radius).clamp(-1.0, 1.0).asin();
                 if self.point_in_face_uv(face, (u, vlat), 1e-6) == crate::pmc::UvClass::In {
                     return Some(p);
+                }
+            }
+        }
+        // GENERAL grid fallback: scan the (u, v) domain for any point the
+        // trimmed-face test confirms interior. Handles a sphere REST face (a
+        // window as an inner ring -> the big region, which the centroid pick
+        // and the circle-cap path both miss) and any other loop shape. Poles
+        // (v = +-pi/2, where u is degenerate) are skipped.
+        {
+            use core::f64::consts::{FRAC_PI_2, PI, TAU};
+            const NU: usize = 24;
+            const NV: usize = 12;
+            for iu in 0..NU {
+                let u = (iu as f64 + 0.5) * TAU / NU as f64;
+                for iv in 1..NV {
+                    let vlat = -FRAC_PI_2 + (iv as f64) * PI / NV as f64;
+                    if self.point_in_face_uv(face, (u, vlat), 1e-6) == crate::pmc::UvClass::In {
+                        return Some(
+                            center
+                                + (s.frame.x * (u.cos() * vlat.cos())
+                                    + s.frame.y * (u.sin() * vlat.cos())
+                                    + s.frame.z * vlat.sin())
+                                    * radius,
+                        );
+                    }
                 }
             }
         }

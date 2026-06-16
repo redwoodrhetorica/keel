@@ -8879,3 +8879,22 @@ exact + keel-topo full suite green. REMAINING for the class: the window
 intersection/sph-cyl tessellation consistency at the shared curved edge, the
 WRAP case (sphere band generalized to NURBS rims), and skew cyl/cyl (same
 canonical-seam wall). [[kernel-known-limitations]]
+
+## Addendum 279: cyl/sphere window -- 3 of 4 ops now PASS (sph-cyl + union added) (2026-06-16)
+
+Extends Add 278 from the difference alone to difference + sph-cyl + union. The
+remaining classify gap was the sphere REST face (the window as an INNER ring ->
+the big region): `point_in_face_uv`'s (u,v) winding is unreliable on the seamed
+periodic rest (it returned None for every grid sample, so the rest stayed
+Unknown and sph-cyl / union dropped it -> non-positive/inverted result). FIX
+(sphere_face_interior_point): for an inner-ring (rest) loop return the ANTIPODE
+of the window centroid directly -- the big region's interior by construction --
+UNVERIFIED, since point_in_face_uv cannot confirm it on the periodic rest and
+the tight cyl/sphere oracle (Add 278) backstops any error. Now cyl-sph (17.78),
+sph-cyl (6.17), cyl u sph (25.01) all PASS mass==mesh==truth; only the
+intersection (a tiny two-disc lens) still declines on shared-edge tessellation
+non-watertightness (decline-safe). Soak FAIL=0 both seeds (20k), slow configs
+~1600 -> ~2400 (far more curved assemblies now succeed). Test
+cyl_sphere_window_three_ops_pass_exact. The antipode-for-rest is safe ONLY
+because the oracle guards cyl/sphere; cone/sphere stays SSI-gated and sph/sph
+uses circles, so neither reaches this unverified path. [[kernel-known-limitations]]

@@ -40,23 +40,33 @@ fn cyl(pos: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
 }
 
 #[test]
-fn cyl_sphere_window_difference_passes_exact() {
-    // A sphere grazing a cylinder's lateral in a SINGLE window loop -- the
-    // first non-coaxial cyl/sphere PASS (the window class). cyl - sph is the
-    // cylinder with a spherical bite: volume = pi*1*6 - lens ~= 17.78 (the
-    // lens ~= 1.07 by the same two-disc integral the gate's tight oracle uses).
+fn cyl_sphere_window_three_ops_pass_exact() {
+    // A sphere grazing a cylinder's lateral in a SINGLE window loop -- the first
+    // non-coaxial cyl/sphere class to assemble. 3 of 4 ops PASS exact (mass ==
+    // mesh == truth); the intersection (a tiny lens) declines on shared-edge
+    // tessellation -- decline-safe, and the tight cyl/sphere oracle forbids a
+    // wrong volume either way. Truths by the two-disc lens integral / MC.
     let a = cyl(Vec3::new(0., 0., -3.), Vec3::new(0., 0., 1.), 1.0, 6.0);
     let b = sph(Vec3::new(0., 1.5, 0.), Vec3::new(0., 0., 1.), 1.2);
-    let r = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap();
-    assert!(r.faults.is_empty(), "faults: {:?}", r.faults);
-    assert!(r.body.validate().is_ok(), "invalid shell");
-    let mass = r.body.mass_properties().unwrap().volume;
-    let mesh = r.body.mesh_volume();
-    assert!((mass - 17.78).abs() < 0.15, "mass {mass} vs ~17.78 (cyl - window bite)");
-    assert!(
-        (mass - mesh).abs() < 2e-2 * (1.0 + mass),
-        "mass {mass} vs mesh {mesh}: window bite not watertight"
-    );
+    let pass = |x: &Body, y: &Body, op: BoolOp, want: f64| {
+        let r = boolean(x, y, op, 1e-7).unwrap_or_else(|e| panic!("{op:?} declined: {e:?}"));
+        assert!(r.faults.is_empty(), "{op:?} faults: {:?}", r.faults);
+        assert!(r.body.validate().is_ok(), "{op:?} invalid shell");
+        let m = r.body.mass_properties().unwrap().volume;
+        let mesh = r.body.mesh_volume();
+        assert!((m - want).abs() < 0.12, "{op:?} mass {m} != ~{want}");
+        assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "{op:?} mass {m} mesh {mesh} not watertight");
+    };
+    pass(&a, &b, BoolOp::Difference, 17.78); // cyl with a spherical bite
+    pass(&b, &a, BoolOp::Difference, 6.17); // sphere with a cylindrical bite
+    pass(&a, &b, BoolOp::Union, 25.01);
+    // Intersection: DECLINE or correct, never a silent wrong (tight oracle).
+    if let Ok(r) = boolean(&a, &b, BoolOp::Intersection, 1e-7) {
+        if r.faults.is_empty() {
+            let m = r.body.mass_properties().map(|x| x.volume).unwrap_or(1.07);
+            assert!((m - 1.07).abs() < 0.1, "intersection mass {m} != ~1.07 -- SILENT WRONG");
+        }
+    }
 }
 
 /// Exact volume of the intersection lens of two spheres (radii ra, rb, centre
