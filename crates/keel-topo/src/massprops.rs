@@ -942,13 +942,27 @@ impl Body {
         if std::env::var("KEEL_MASS_DEBUG").is_ok() {
             eprintln!("  rect {fk:?} u [{u0:.4}, {u1:.4}] v [{v0:.4}, {v1:.4}]");
         }
-        let panels = 16usize;
-        for iu in 0..panels {
-            let ua = u0 + (u1 - u0) * iu as f64 / panels as f64;
-            let ub = u0 + (u1 - u0) * (iu + 1) as f64 / panels as f64;
-            for iv in 0..panels {
-                let va = v0 + (v1 - v0) * iv as f64 / panels as f64;
-                let vb = v0 + (v1 - v0) * (iv + 1) as f64 / panels as f64;
+        // Panels per axis. The u-integrand carries the azimuthal harmonics
+        // (cos/sin products up to ~degree 3 for the inertia tensor), so it
+        // keeps the subdivision. The v-integrand is a low-degree POLYNOMIAL for
+        // a cylinder (radius constant -> moments degree <=2 in v) and a cone
+        // (radius linear -> degree <=4), which a SINGLE GL8 panel (exact to
+        // degree 15) integrates EXACTLY; only the sphere's latitude (trig in v)
+        // needs v-subdivision. (A plain cylinder lateral was 16x16x64 = 16384
+        // nodes -> 2.1 ms; nv=1 makes it 1024 nodes, exact, the OPT win.)
+        let nu = 16usize;
+        let nv = match surf {
+            // v-integrand is a low-degree POLYNOMIAL -> one GL8 panel is exact.
+            Surface3::Cylinder(_) | Surface3::Cone(_) => 1usize,
+            // Sphere (cos v) and torus (minor-circle trig) need v-subdivision.
+            _ => 16usize,
+        };
+        for iu in 0..nu {
+            let ua = u0 + (u1 - u0) * iu as f64 / nu as f64;
+            let ub = u0 + (u1 - u0) * (iu + 1) as f64 / nu as f64;
+            for iv in 0..nv {
+                let va = v0 + (v1 - v0) * iv as f64 / nv as f64;
+                let vb = v0 + (v1 - v0) * (iv + 1) as f64 / nv as f64;
                 for (xu, wu) in GL8_X.iter().zip(GL8_W) {
                     let u = 0.5 * (ua + ub) + 0.5 * (ub - ua) * xu;
                     for (xv, wv) in GL8_X.iter().zip(GL8_W) {

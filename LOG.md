@@ -9060,3 +9060,44 @@ byte-identical (the wrap still declines UnassemblableSeam) -- 283 lib + curved
 green, pass-neutral by construction. Committed as enabling machinery (the Add 273
 pattern) so the next session resumes from a mesh-correct wrap. probe_wrap +
 KEEL_WRAP_FLOW reproduce. [[kernel-known-limitations]] [[minimize-declines]]
+
+## Addendum 284: optimization series -- the iso-rect mass integrator was over-sampling an exactly-integrable polynomial; cylinder/cone mass 11x, drill difference 2.1x (2026-06-16)
+
+Re-measured the curved benchmark (tests/profile_curved) on noncoaxial-quartics:
+it had REGRESSED since Add 192 (drill difference 4.3 -> 8.5 ms, sphere 6.3 ->
+14.7) as the curved-SSI work added per-op cost. Isolating one op (probe_prof)
+localized it: a PLAIN cylinder's mass_properties was 2.11 ms (a box is 0.004 ms),
+and tessellation was fast (0.09 ms) -- so the cost was the INTEGRATION.
+
+ROOT: integrate_curved_face's iso-rectangle quadrature used a FIXED 16x16 panel
+grid x GL8^2 = 16,384 nodes per curved face, for cylinder, cone AND sphere alike.
+But the v-direction integrand is a low-degree POLYNOMIAL for a cylinder (radius
+CONSTANT -> the moment integrands are degree <=2 in v) and a cone (radius LINEAR
+-> degree <=4), which a SINGLE GL8 panel (exact to degree 15) integrates EXACTLY.
+Only the sphere (cos v) and torus (minor-circle trig) have a trigonometric
+v-integrand needing the subdivision.
+
+FIX: nv (v-panels) adaptive -- 1 for Cylinder/Cone, 16 for Sphere/Torus; nu stays
+16 (the azimuthal cos/sin harmonics up to ~degree 3). One line, provably exact.
+(Setting nv=1 for the torus too first broke its volume -- caught immediately by
+the cylinder_cone_torus_volumes test -- torus has trig v; the allow-list is now
+explicit.)
+
+MEASURED: plain cylinder mass 2.11 -> 0.19 ms (11x); holed-plate result mass 2.22
+-> 0.29 ms (7.6x); drill difference 8.49 -> 3.97 ms (2.1x, now BELOW the Add-192
+4.3 ms baseline); mass_properties total over the benchmark 130 -> 42 ms (3x).
+Sphere difference 14.7 -> 12.55 (the sphere keeps nv=16; it is now WINDING-bound,
+not mass-bound). EXACTNESS held: all 283 lib + curved tests green, the integral
+is exact either way (1 GL8 panel exact for the polynomial v-integrand), so
+bit-identical at the value level -> soak buckets unchanged. Soak FAIL=0 both seeds
+(20k) [pending confirm].
+
+This is the SAME finding the Add 189-192 leg kept hitting: a numerical grid
+over-sampling something integrable in closed/exact form. REMAINING dominant cost:
+the winding number (336 ms, 6352 calls) -- the sphere difference + GWN-probe
+workloads are now winding-bound. That is the BVH/Barnes-Hut fast-winding option,
+an APPROXIMATION the optimization leg deliberately kept "in the drawer" (the
+classify path's exactness); taking it out is a separate, validation-heavy
+decision (the threshold margins are 0.25, so a <1e-6-agreeing FWN would be
+bucket-safe, but it warrants the three-bucket oracle, not just the soak). probe_prof
+isolates any single op's stage breakdown. [[geometry-kernel-project]]
