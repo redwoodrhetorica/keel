@@ -1037,6 +1037,7 @@ fn analytic_analytic(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, 
         (Sphere(_), Cylinder(_)) => cylinder_sphere(b, a, tol),
         (Cone(_), Sphere(_)) => cone_sphere(a, b, tol),
         (Sphere(_), Cone(_)) => cone_sphere(b, a, tol),
+        (Cone(_), Cone(_)) => cone_cone(a, b, tol),
         // Other analytic pairs route to tier 2 (one side implicitized)
         // in Task 4; until then, unsupported.
         _ => Err(GeomError::Degenerate),
@@ -1596,38 +1597,105 @@ fn plane_cone(plane: &Surface3, cone: &Surface3, tol: f64) -> Result<SsiResult, 
     }]))
 }
 
-/// Cone x cylinder. Only the COAXIAL rung is exact in closed form: a
-/// cone and a coaxial cylinder of radius `R` meet in the single circle
-/// at the axial height where the cone radius equals `R` (one nappe,
-/// since `R > 0`). The cone radius along its axis param v is
-/// `r(v) = radius + v*tan(half_angle)`, so the seam sits at
-/// `v = (R - radius)/tan(half_angle)`. Skew or offset axes are a quartic
-/// SSI (general ruling-quadric branch field) and DECLINE here for now.
+/// Cone x cylinder. COAXIAL: the single circle at the axial height where the
+/// cone radius equals `R` (one nappe, since `R > 0`); the cone radius along its
+/// axis param v is `r(v) = radius + v*tan(half_angle)`, so the seam sits at
+/// `v = (R - radius)/tan(half_angle)`. PARALLEL but OFFSET axes: the cone ruling
+/// `P(theta,v) = O + rad(theta)*(r0 + v*m) + z*v` is linear in v, and the
+/// cylinder `|P_perp - cyl_O_perp|^2 = R^2` is a quadratic in v whose leading
+/// coeff is the ruling's perpendicular speed `|m*rad|^2 = m^2` -- CONSTANT,
+/// because the cone axis is parallel to the cylinder axis. So it solves on the
+/// shared ruling-quadric branch field (same engine as the non-coaxial
+/// cylinder/sphere arm). SKEW axes make that leading coeff vary with theta (a
+/// general quartic) -- deferred, DECLINE.
 fn cone_cylinder(cone: &Surface3, cyl: &Surface3, tol: f64) -> Result<SsiResult, GeomError> {
     let (Surface3::Cone(c), Surface3::Cylinder(cy)) = (cone, cyl) else {
         unreachable!("cone_cylinder on wrong surfaces")
     };
     let z = c.frame.z;
-    if z.cross(cy.frame.z).norm() > COINCIDENCE_ANG {
-        return Err(GeomError::Degenerate); // skew axes -> quartic, decline
-    }
-    let w = cy.frame.origin - c.frame.origin;
-    if (w - z * w.dot(z)).norm() > tol {
-        return Err(GeomError::Degenerate); // parallel but offset axes -> quartic
-    }
     let m = c.half_angle.tan();
     if m.abs() < 1e-12 {
         return Err(GeomError::Degenerate); // degenerate (cylinder-like) cone
     }
-    let t = (cy.radius - c.radius) / m; // axial height where cone radius == cyl radius
-    let center = c.frame.origin + z * t;
-    let circle = Circle3::new(center, c.frame.x, c.frame.y, cy.radius)?;
-    Ok(SsiResult::Curves(vec![SsiCurve {
-        curve: Curve3::Circle(circle),
-        closed: true,
-        tangential: false,
-        tol_achieved: 0.0,
-    }]))
+    if z.cross(cy.frame.z).norm() > COINCIDENCE_ANG {
+        return Err(GeomError::Degenerate); // skew axes -> varying leading coeff (quartic), decline
+    }
+    // Axes parallel. Coaxial (offset within tol) -> the exact closed-form circle.
+    let w = cy.frame.origin - c.frame.origin;
+    if (w - z * w.dot(z)).norm() <= tol {
+        let t = (cy.radius - c.radius) / m; // axial height where cone radius == cyl radius
+        let center = c.frame.origin + z * t;
+        let circle = Circle3::new(center, c.frame.x, c.frame.y, cy.radius)?;
+        return Ok(SsiResult::Curves(vec![SsiCurve {
+            curve: Curve3::Circle(circle),
+            closed: true,
+            tangential: false,
+            tol_achieved: 0.0,
+        }]));
+    }
+    // Parallel but OFFSET: the shared branch field. q2 = m^2 (constant);
+    // q1, q0 are the cylinder quadratic along the cone ruling at theta.
+    let cz = cy.frame.z;
+    let r0 = c.radius;
+    let point_at = |theta: f64, v: f64| -> Vec3 {
+        let rad = c.frame.x * theta.cos() + c.frame.y * theta.sin();
+        c.frame.origin + rad * (r0 + v * m) + z * v
+    };
+    let coeffs = |theta: f64| -> (f64, f64) {
+        let rad = c.frame.x * theta.cos() + c.frame.y * theta.sin();
+        let dir = rad * m + z; // d(point_at)/dv
+        let g0 = (c.frame.origin - cy.frame.origin) + rad * r0; // P0 - cyl_O
+        let g0p = g0 - cz * g0.dot(cz);
+        let dirp = dir - cz * dir.dot(cz); // = m*rad for parallel axes
+        (2.0 * g0p.dot(dirp), g0p.dot(g0p) - cy.radius * cy.radius)
+    };
+    quadratic_branch_field(&point_at, m * m, &coeffs, tol)
+}
+
+/// Cone x cone. PARALLEL axes only (offset apexes allowed). Parametrize the
+/// SHALLOWER cone (smaller half-angle) by its ruling `P(theta,v)`; the other
+/// cone's implicit `((P-A2).n2)^2 = cos^2(a2)|P-A2|^2` is a quadratic in v whose
+/// leading coeff `(dir.n2)^2 - cos^2(a2)|dir|^2` is constant for parallel axes
+/// and POSITIVE precisely when the ruling cone is the shallower one. Solved on
+/// the shared branch field. SKEW axes (varying leading coeff) or EQUAL
+/// half-angles (vanishing leading coeff -> a conic/line section) are deferred,
+/// DECLINE.
+fn cone_cone(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, GeomError> {
+    let (Surface3::Cone(ca), Surface3::Cone(cb)) = (a, b) else {
+        unreachable!("cone_cone on wrong surfaces")
+    };
+    if ca.frame.z.cross(cb.frame.z).norm() > COINCIDENCE_ANG {
+        return Err(GeomError::Degenerate); // skew axes -> quartic, decline
+    }
+    let (ma, mb) = (ca.half_angle.tan(), cb.half_angle.tan());
+    if ma.abs() < 1e-12 || mb.abs() < 1e-12 {
+        return Err(GeomError::Degenerate);
+    }
+    // Parametrize the shallower cone so the implicit's leading coeff is > 0.
+    let (cr, ci) = if ma <= mb { (ca, cb) } else { (cb, ca) };
+    let (mr, mi) = (cr.half_angle.tan(), ci.half_angle.tan());
+    let z = cr.frame.z;
+    let r0 = cr.radius;
+    let ni = ci.frame.z;
+    let apex_i = ci.frame.origin - ni * (ci.radius / mi); // implicit cone apex
+    let cos2 = 1.0 / (1.0 + mi * mi); // cos^2(half_angle_i)
+    let dni = z.dot(ni); // +-1 for parallel axes
+    let q2 = dni * dni - cos2 * (mr * mr + 1.0);
+    if q2 <= 1e-12 {
+        return Err(GeomError::Degenerate); // equal half-angles -> degenerate section
+    }
+    let point_at = |theta: f64, v: f64| -> Vec3 {
+        let rad = cr.frame.x * theta.cos() + cr.frame.y * theta.sin();
+        cr.frame.origin + rad * (r0 + v * mr) + z * v
+    };
+    let coeffs = |theta: f64| -> (f64, f64) {
+        let rad = cr.frame.x * theta.cos() + cr.frame.y * theta.sin();
+        let dir = rad * mr + z;
+        let u = cr.frame.origin + rad * r0 - apex_i; // P0 - apex_i
+        let (un, dn) = (u.dot(ni), dir.dot(ni));
+        (2.0 * un * dn - 2.0 * cos2 * u.dot(dir), un * un - cos2 * u.dot(u))
+    };
+    quadratic_branch_field(&point_at, q2, &coeffs, tol)
 }
 
 /// Cylinder x sphere (COAXIAL rung only): 0/1/2 exact circles at the axial
@@ -1795,7 +1863,7 @@ fn sphere_uv(s: &crate::surface::Sphere3, p: Vec3) -> (f64, f64) {
 mod tests {
     use super::*;
     use crate::nurbs_curve::NurbsCurve;
-    use crate::surface::{Cylinder3, Frame3, Plane3, Sphere3};
+    use crate::surface::{Cone3, Cylinder3, Frame3, Plane3, Sphere3};
 
     const TOL: f64 = 1e-9;
 
@@ -1830,6 +1898,52 @@ mod tests {
             let rb = on_implicit(b, p).abs() / b.implicit_gradient(p).norm().max(1e-12);
             assert!(ra < tol, "off A: dist {ra}");
             assert!(rb < tol, "off B: dist {rb}");
+        }
+    }
+
+    #[test]
+    fn cone_cylinder_parallel_offset_on_both() {
+        // Cone (axis +z, r0=1 at z=0, half-angle 0.4) and a PARALLEL-axis
+        // cylinder (r 0.5) offset 1.0 in x so it clips the cone lateral in a
+        // window. The non-coaxial branch must produce seam curve(s) that lie on
+        // BOTH surfaces (the cone-face SSI gap the countersink residual exposed).
+        let cone = Surface3::Cone(
+            Cone3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 1.0, 0.4).unwrap(),
+        );
+        let cyl = Surface3::Cylinder(
+            Cylinder3::new(Frame3::from_z(Vec3::new(1.0, 0., 0.), Vec3::new(0., 0., 1.)).unwrap(), 0.5)
+                .unwrap(),
+        );
+        let r = intersect_surfaces(&SurfaceRef::Analytic(&cone), &SurfaceRef::Analytic(&cyl), 1e-7)
+            .unwrap();
+        let SsiResult::Curves(cs) = r else { panic!("expected curves, got {r:?}") };
+        assert!(!cs.is_empty());
+        for c in &cs {
+            check_curve_on_both_tol(&cone, &cyl, &c.curve, 40, 1e-6);
+        }
+    }
+
+    #[test]
+    fn cone_cone_safety_contract() {
+        // cone x cone is DEFERRED (the double-nappe / unbounded-seam wall, LOG
+        // Add 289): the full curve case needs extent-aware seam bounding. The
+        // SAFETY contract that MUST hold meanwhile: it never emits a WRONG seam.
+        // Whatever it returns -- Empty, a graceful decline, or curves -- any
+        // curve it does produce must lie on BOTH surfaces (never a spurious
+        // wrong-nappe curve that would imprint a wrong body).
+        let a = Surface3::Cone(
+            Cone3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 1.0, 0.4).unwrap(),
+        );
+        let b = Surface3::Cone(
+            Cone3::new(Frame3::from_z(Vec3::new(0.5, 0., 0.), Vec3::new(0., 0., 1.)).unwrap(), 0.8, 0.7)
+                .unwrap(),
+        );
+        if let Ok(SsiResult::Curves(cs)) =
+            intersect_surfaces(&SurfaceRef::Analytic(&a), &SurfaceRef::Analytic(&b), 1e-7)
+        {
+            for c in &cs {
+                check_curve_on_both_tol(&a, &b, &c.curve, 40, 1e-6);
+            }
         }
     }
 

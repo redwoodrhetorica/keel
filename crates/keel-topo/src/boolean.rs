@@ -6973,7 +6973,42 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 Ok(SsiResult::Coincident) => faults.push(BoolFault::Coincident(id_a, id_b)),
                 Ok(SsiResult::Points(_)) => faults.push(BoolFault::Tangent(id_a, id_b)),
                 Ok(SsiResult::Empty) => {}
-                Err(_) => faults.push(BoolFault::IntersectionFailed(id_a, id_b)),
+                Err(_) => {
+                    // SSI runs on the UNBOUNDED surfaces, so a NON-overlapping
+                    // face pair (a countersink cone vs a hole across the plate)
+                    // can still reach a far/unfittable intersection and Err --
+                    // the dominant cone-face residual (LOG Add 289). When the
+                    // faces' actual (bulge-safe) AABBs are disjoint by more than
+                    // the chord margin there is provably no seam within
+                    // tolerance: skip, don't fault. RESTRICTED to CONE-involved
+                    // pairs: that is the unbounded-surface class. A non-cone SSI
+                    // Err (a hard cyl/sphere config) stays an honest
+                    // IntersectionFailed -- skipping it would only UNMASK a
+                    // separate downstream assembly issue (a disjoint cyl/sphere
+                    // union whose tessellated volume passes the gate while its
+                    // render mesh disagrees) that the soak rightly flags.
+                    let cone_involved = matches!(ref_a, SurfaceRef::Analytic(Surface3::Cone(_)))
+                        || matches!(ref_b, SurfaceRef::Analytic(Surface3::Cone(_)));
+                    let disjoint = cone_involved
+                        && match (a.face_aabb(fa), b.face_aabb(fb)) {
+                            (Some((alo, ahi)), Some((blo, bhi))) => {
+                                // Margin > the 1e-4 face_aabb chord error so a
+                                // real (touching) seam is never falsely skipped;
+                                // far features sit orders of magnitude beyond it.
+                                let m = 1e-3;
+                                ahi.x + m < blo.x
+                                    || bhi.x + m < alo.x
+                                    || ahi.y + m < blo.y
+                                    || bhi.y + m < alo.y
+                                    || ahi.z + m < blo.z
+                                    || bhi.z + m < alo.z
+                            }
+                            _ => false,
+                        };
+                    if !disjoint {
+                        faults.push(BoolFault::IntersectionFailed(id_a, id_b));
+                    }
+                }
             }
         }
     }

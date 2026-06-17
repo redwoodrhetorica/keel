@@ -9314,3 +9314,42 @@ likely NON-intersecting cone pairs (separate countersinks) -> the branch field
 already returns Empty there, so even the parallel rung alone should recover most
 of it once cone/cone fits cleanly. [[minimize-declines]] [[kernel-known-limitations]]
 [[hit-a-wall-review-research]]
+
+## Addendum 290: the cone-face residual was a BROAD-PHASE gap, not an SSI gap -- a face-AABB reject (+ cone/cyl parallel SSI) lands soak PASS +450/+314, FAIL=0 (2026-06-17)
+
+Add 289 framed the cone-face frontier as an SSI capability gap. A boolean-level
+probe (probe_conecyl) on the bug_extract repros corrected that. The dominant
+residual (`IntersectionFailed`, ~580 hits) is a countersink cone vs a feature on
+the FAR side of the plate -- DISJOINT faces with no real seam. But SSI runs on
+the UNBOUNDED surfaces, so the infinite cone reaches the far cylinder/cone and
+returns a far / unfittable intersection -> Err -> IntersectionFailed -> the whole
+op faults. Not a missing SSI; a missing broad-phase reject.
+
+FIX 1 (the dominant win): on an SSI Err for a CONE-involved pair, if the faces'
+actual bulge-safe AABBs (`face_aabb`, fine-tessellated so it never under-reports
+the curved extent) are disjoint by more than the chord margin, there is provably
+no seam within tolerance -- skip, don't fault. FIX 2: cone/cyl PARALLEL-axis SSI
+now lands the genuinely-OVERLAPPING cone+feature (a hole clipping a countersink
+wall): the cone ruling is linear in v, the cylinder quadratic, leading coeff m^2
+constant -> the shared branch field (probe case C PASSES, mass==MC). cone/cone
+stays DEFERRED (the double-nappe wall, Add 289), guarded by a safety-contract
+test (never emit a wrong-nappe curve).
+
+THE SOAK EARNED ITS KEEP (again). The first cut skipped ANY disjoint SSI-Err
+pair; seed 2 flagged FAIL:mass-mesh on a cyl/sphere UNION -- skipping had UNMASKED
+a separate pre-existing bug (a disjoint cyl/sphere union whose tessellated volume
+passes the gate's self-consistency while the render mesh disagrees -- the Add-288
+tessellated-vs-mesh gate gap). Restricting the skip to CONE-involved pairs keeps
+the cone win and leaves the cyl/sphere pair declining exactly as before (no
+regression). The cyl/sphere disjoint-union tessellated-vs-mesh gap is a separate
+latent item for later (it stays masked-as-declined, never wrong).
+
+MEASURED: soak FAIL=0 BOTH seeds, PASS 6085/6091 -> 6535/6405 (+450/+314, the
+session's biggest explorer gain -- cones are a large share of the explorer's
+shapes, so the reject helps far beyond nested workloads). probe_conecyl:
+countersink + far through-hole, countersink + far countersink, AND a hole
+clipping a countersink wall all PASS-CORRECT (mass == MC to <=1%). Suite 283 +
+curved robustness 9/9 (new guard `countersink_then_far_hole_no_intersection_failed`).
+0 gate escapes throughout. REMAINING: cone/cone INTERSECTING (the double-nappe,
+Add 289) and the cyl/sphere disjoint-union gate gap. [[minimize-declines]]
+[[kernel-known-limitations]]

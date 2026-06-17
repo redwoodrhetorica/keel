@@ -202,6 +202,30 @@ fn second_through_hole_reports_clean_no_coincident_fault() {
     assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
 }
 
+#[test]
+fn countersink_then_far_hole_no_intersection_failed() {
+    // Cone frontier (LOG Add 289+): a countersink cone and a through-hole on the
+    // FAR side of the plate are DISJOINT faces, but SSI on the UNBOUNDED cone
+    // reached the far cylinder and Err'd -> IntersectionFailed (the dominant cone
+    // residual, ~580 bug_extract hits). The broad-phase face-AABB reject skips
+    // the non-overlapping pair, so the independent feature lands. Must PASS:
+    // faultless, valid, mass == exact (905.78 block - cone plug - cyl bore).
+    let block = blk(Vec3::ZERO, 22.5, 13.5, 2.982);
+    let csink = cone(Vec3::new(2.731, 2.159, 3.032), Vec3::new(0., 0., -1.), 0.601, 1.428);
+    let b1 = boolean(&block, &csink, BoolOp::Difference, 1e-7)
+        .unwrap_or_else(|e| panic!("countersink declined: {e:?}"));
+    assert!(b1.faults.is_empty(), "countersink faults: {:?}", b1.faults);
+    let hole = cyl(Vec3::new(1.742, 6.870, -0.5), Vec3::new(0., 0., 1.), 1.082, 3.982);
+    let r = boolean(&b1.body, &hole, BoolOp::Difference, 1e-7)
+        .unwrap_or_else(|e| panic!("far hole declined: {e:?}"));
+    assert!(r.faults.is_empty(), "far-hole faults (broad-phase regression): {:?}", r.faults);
+    assert!(r.body.validate().is_ok(), "invalid shell");
+    let m = r.body.mass_properties().unwrap().volume;
+    let mesh = r.body.mesh_volume();
+    assert!((m - 894.33).abs() < 0.3, "mass {m} != ~894.33");
+    assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+}
+
 /// Exact volume of the intersection lens of two spheres (radii ra, rb, centre
 /// distance d). Zero when disjoint; min-ball when nested.
 fn lens_volume(ra: f64, rb: f64, d: f64) -> f64 {

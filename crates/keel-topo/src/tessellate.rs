@@ -49,6 +49,26 @@ impl Body {
             .collect()
     }
 
+    /// Axis-aligned bounding box `(min, max)` of a single face's extent, or
+    /// None if the face has no facets. Tessellated to a fine chord (1e-4) so it
+    /// is BULGE-SAFE -- it covers the curved surface to within that chord, never
+    /// under-reporting the extent by more than 1e-4. The boolean broad phase
+    /// uses it to reject NON-overlapping face pairs whose unbounded-surface SSI
+    /// would otherwise reach a far / unfittable seam (e.g. a countersink cone vs
+    /// a hole across the plate: disjoint faces, no real seam).
+    pub(crate) fn face_aabb(&self, face: FaceKey) -> Option<(Vec3, Vec3)> {
+        let tris = self.tessellate_face_opt(face, Some(1e-4));
+        let mut lo = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+        let mut hi = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for t in &tris {
+            for p in t {
+                lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+                hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+            }
+        }
+        lo.x.is_finite().then_some((lo, hi))
+    }
+
     /// Like `tessellate_face`, but tessellate curved analytic faces to a
     /// chord tolerance `tol` (parity item 98). The default-density path
     /// (`tessellate_face`) is unchanged, so the winding/volume oracle is
