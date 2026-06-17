@@ -167,16 +167,18 @@ DECLINE of a malformed body). Three downstream patches proven unsafe (LOG Add
 292/293/294); needs the ROOT fix in the stitch, not a heal-after. The
 decline-minimization soak corpus is the worklist.
 
-**B. Topology editing / healing (mostly present; few genuine gaps).**
+**B. Topology editing / healing.** Untrim, defillet, delete-redundant, and
+extend-sheet landed in 943ac28 (gate: 540 release tests + soak 2x20000 seeds 1/2
+FAIL=0). Only Remove Nominal Surface remains.
 
 | Gap | Plasticity | Note |
 |---|---|---|
-| Untrim | Untrim (Alt+T) | recreate face from base surface's natural domain |
-| Remove Fillets (defillet) | Remove Fillets from Shell | inverse of the fillet suite: delete blend + extend-reintersect neighbors |
+| ~~Untrim~~ | Untrim (Alt+T) | DONE: `untrim_face` (tweak.rs), rebuild natural cylinder band; declines plane/sphere/cone/torus/NURBS |
+| ~~Remove Fillets (defillet)~~ | Remove Fillets from Shell | DONE: `remove_fillet` (blend.rs), two-planar-support rung; declines other cases |
 | ~~Explode / Unjoin~~ | Unjoin Shells (Alt+J) | DONE: `boolean::explode` (body → per-face sheets) |
-| Delete Redundant Topology | Delete Redundant Topology | merge co-faces / co-edges (`simplify` covers part) |
-| Extend Sheet (solid-level) | Extend Sheet | wrap geom `extend_*` to a sheet command |
-| Remove Nominal Surface | Remove Nominal Surface | — |
+| ~~Delete Redundant Topology~~ | Delete Redundant Topology | DONE: `delete_redundant_topology` (tweak.rs), dissolve collinear valence-2 verts + same-surface edges |
+| ~~Extend Sheet (solid-level)~~ | Extend Sheet | DONE: `extend_sheet` (sheet.rs), planar boundary offset; declines curved/multi-face |
+| Remove Nominal Surface | Remove Nominal Surface | (open) |
 
 **A. Free-form NURBS surfacing (largest net-new; the organic/artist pillar).**
 Building blocks exist (NURBS surfaces, knot insert, degree elevate, fill,
@@ -188,8 +190,8 @@ extend); the high-level tools do not.
 | Degree/span surface | Square |
 | Constrained / Bridge surface | Constrained Surface, Bridge Surface |
 | Match face / Rebuild face | Match Face, Rebuild Face |
-| Raise surface degree (expose) | Raise Surface Degree (Shift+S) |
-| Isoparametric lines | Isoparam (Ctrl+R) |
+| ~~Raise surface degree (expose)~~ DONE: `raise_face_degree` | Raise Surface Degree (Shift+S) |
+| ~~Isoparametric lines~~ DONE: `imprint_isoparams` (planar) | Isoparam (Ctrl+R) |
 | Slide surface CV / Deform | Slide Surface CV, Deform |
 | Mesh → NURBS | PolySplines |
 
