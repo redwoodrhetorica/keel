@@ -1896,6 +1896,270 @@ impl Body {
             }
         }
     }
+
+    /// Imprint an isoparametric GRID onto `face`: `n_u` constant-u lines
+    /// and `n_v` constant-v lines, each becoming a real edge that
+    /// subdivides the face. Returns a NEW body (the parent is untouched,
+    /// mirroring `knit`/`explode`).
+    ///
+    /// MVP scope (PLANAR face): the surface's (u,v) parameters are the
+    /// plane-frame coordinates, so the iso-lines are straight world
+    /// segments spanning the face's parameter bounding box. Each line is
+    /// a boundary-to-boundary chord imprinted by `imprint_planar_chord`
+    /// (the open-curve surgery generalized to reuse-or-split each
+    /// endpoint). To keep every imprint crossing-free (the chord split
+    /// runs between two BOUNDARY fins and does not handle interior
+    /// X-crossings), the lines are laid down in order: first all `n_u`
+    /// mutually-parallel verticals (each splits a strip), then each
+    /// horizontal is cut into per-strip SEGMENTS at the vertical
+    /// positions, and every segment is routed to the sub-face that
+    /// contains it. With `n_u = n_v = 1` a face splits into the four
+    /// quadrant sub-faces.
+    ///
+    /// Non-planar faces (curved parameterization, periodic seams, inner
+    /// rings) DECLINE: the iso-lines there are curved and may wrap the
+    /// seam, which needs the crossing/wrap imprints, not this MVP.
+    pub fn imprint_isoparams(
+        &self,
+        face: FaceKey,
+        n_u: usize,
+        n_v: usize,
+    ) -> Result<Body, TopoError> {
+        // MVP: planar faces only.
+        let pl = match self.face_surface3(face) {
+            Some(keel_geom::surface::Surface3::Plane(p)) => p,
+            _ => {
+                return Err(TopoError::Precondition(
+                    "imprint_isoparams: MVP handles planar faces only",
+                ));
+            }
+        };
+        // A single simple outer loop (no inner rings): the parameter box
+        // is well-defined and the open-curve endpoints land cleanly.
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .ok_or(TopoError::StaleKey)?;
+        if loops.len() != 1 {
+            return Err(TopoError::Precondition(
+                "imprint_isoparams: MVP needs a single-loop face",
+            ));
+        }
+        if n_u == 0 && n_v == 0 {
+            return Ok(self.clone());
+        }
+        let fr = &pl.frame;
+        let to_uv = |q: Vec3| {
+            let w = q - fr.origin;
+            (w.dot(fr.x), w.dot(fr.y))
+        };
+        let to_world = |u: f64, v: f64| fr.origin + fr.x * u + fr.y * v;
+        // Parameter bounding box from the outer-loop vertices.
+        let pts = self.face_outer_loop_points(face);
+        if pts.len() < 3 {
+            return Err(TopoError::Precondition(
+                "imprint_isoparams: degenerate face loop",
+            ));
+        }
+        let (mut umin, mut umax, mut vmin, mut vmax) =
+            (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
+        for p in &pts {
+            let (u, v) = to_uv(*p);
+            umin = umin.min(u);
+            umax = umax.max(u);
+            vmin = vmin.min(v);
+            vmax = vmax.max(v);
+        }
+        let du = umax - umin;
+        let dv = vmax - vmin;
+        if !(du > 1e-9 && dv > 1e-9) {
+            return Err(TopoError::Precondition(
+                "imprint_isoparams: degenerate parameter box",
+            ));
+        }
+        let tol = 1e-7 * (du.max(dv)).max(1.0);
+        // Interior iso positions (strictly inside the box).
+        let us: Vec<f64> = (0..n_u)
+            .map(|k| umin + du * (k + 1) as f64 / (n_u + 1) as f64)
+            .collect();
+        let vs: Vec<f64> = (0..n_v)
+            .map(|k| vmin + dv * (k + 1) as f64 / (n_v + 1) as f64)
+            .collect();
+
+        let mut out = self.clone();
+        // The live sub-face whose interior contains a world point. The
+        // original `face` key is consumed by the first split, so always
+        // search the current face list. CRUCIAL: `planar_face_contains`
+        // is a 2D winding test in each candidate's OWN frame and ignores
+        // the point's out-of-plane distance, so a vertical side face
+        // whose plane the point merely projects onto would falsely
+        // "contain" a point sitting high above it. Restrict to faces the
+        // point actually LIES ON (coplanar within tol), which is exactly
+        // the family of iso sub-faces we are subdividing.
+        let on_tol = tol.max(1e-7);
+        let host_of = |b: &Body, p: Vec3| -> Option<FaceKey> {
+            b.face_keys().into_iter().find(|&fk| {
+                let coplanar = match b.face_surface3(fk) {
+                    Some(keel_geom::surface::Surface3::Plane(cp)) => {
+                        (p - cp.frame.origin).dot(cp.frame.z).abs() <= on_tol
+                    }
+                    _ => false,
+                };
+                coplanar && b.planar_face_contains(fk, p)
+            })
+        };
+
+        // Lay one family down FULL-LENGTH first (boundary-to-boundary,
+        // mutually parallel so they never cross each other), then cut
+        // the SECOND family at the first family's positions: those cut
+        // points fall exactly on the first family's now-real edges, so
+        // no chord ever crosses an existing edge (the open-curve surgery
+        // splits a face between two BOUNDARY fins; an interior
+        // X-crossing is out of scope). Each chord routes to the live
+        // sub-face containing it.
+        let mut ubreaks = vec![umin];
+        ubreaks.extend(us.iter().copied());
+        ubreaks.push(umax);
+        ubreaks.sort_by(|x, y| x.partial_cmp(y).unwrap());
+
+        // Pass 1: full-height verticals (constant u).
+        for &u in &us {
+            let (a, b) = (to_world(u, vmin), to_world(u, vmax));
+            let mid = to_world(u, 0.5 * (vmin + vmax));
+            let host = host_of(&out, mid).ok_or(TopoError::Precondition(
+                "imprint_isoparams: iso-u chord has no host face",
+            ))?;
+            out.imprint_planar_chord(host, a, b, on_tol)?;
+        }
+        // Pass 2: horizontals (constant v), each cut at the vertical
+        // u-positions so every segment lies within a single strip.
+        for &v in &vs {
+            for w in ubreaks.windows(2) {
+                let (ua, ub) = (w[0], w[1]);
+                if ub - ua <= 1e-9 {
+                    continue;
+                }
+                let (a, b) = (to_world(ua, v), to_world(ub, v));
+                let mid = to_world(0.5 * (ua + ub), v);
+                let host = host_of(&out, mid).ok_or(TopoError::Precondition(
+                    "imprint_isoparams: iso-v chord has no host face",
+                ))?;
+                out.imprint_planar_chord(host, a, b, on_tol)?;
+            }
+        }
+        out.debug_validate();
+        Ok(out)
+    }
+
+    /// Imprint a straight CHORD from `a` to `b` across a planar `face`,
+    /// where each endpoint lies on the face's outer loop -- either at an
+    /// EXISTING vertex (reuse it) or in the interior of a boundary edge
+    /// (split the edge there). The general endpoint handling that
+    /// `imprint_open_curve` (both endpoints mid-edge) and
+    /// `imprint_open_arc_between` (both endpoints existing vertices)
+    /// special-case; a grid chord meets one of each where two lines
+    /// share a crossing. Splits the face along the chord, carrying the
+    /// exact straight pcurve.
+    fn imprint_planar_chord(
+        &mut self,
+        face: FaceKey,
+        a: Vec3,
+        b: Vec3,
+        tol: f64,
+    ) -> Result<crate::entity::EdgeKey, TopoError> {
+        let lp = self
+            .faces
+            .get(face)
+            .and_then(|f| f.loops.first().copied())
+            .ok_or(TopoError::StaleKey)?;
+        // Resolve an endpoint to a loop vertex: reuse a coincident
+        // existing vertex, otherwise split the boundary edge containing
+        // it. Returns the vertex now sitting at the endpoint.
+        let resolve = |me: &mut Self, p: Vec3| -> Result<crate::entity::VertexKey, TopoError> {
+            // Existing vertex on the loop within tol?
+            let entry = me
+                .loops
+                .get(lp)
+                .and_then(|l| l.fin)
+                .ok_or(TopoError::Precondition("chord: no boundary"))?;
+            let mut cur = entry;
+            loop {
+                if let Some(v) = me.fin_end_vertex(cur)
+                    && me
+                        .vertices
+                        .get(v)
+                        .map(|x| (x.point - p).norm() <= tol)
+                        .unwrap_or(false)
+                {
+                    return Ok(v);
+                }
+                cur = me.fins.get(cur).map(|f| f.next).ok_or(TopoError::StaleKey)?;
+                if cur == entry {
+                    break;
+                }
+            }
+            // Else split the boundary edge whose interior contains p.
+            let e = me.boundary_edge_containing(lp, p, tol)?;
+            Ok(me.split_edge(e, p)?.vertex)
+        };
+        let va = resolve(self, a)?;
+        let vb = resolve(self, b)?;
+        if va == vb {
+            return Err(TopoError::Precondition("chord: endpoints coincide"));
+        }
+        // Both endpoints are now vertices on the (possibly re-split)
+        // outer loop: split the face between the fins ending at them.
+        let lp = self
+            .faces
+            .get(face)
+            .and_then(|f| f.loops.first().copied())
+            .ok_or(TopoError::StaleKey)?;
+        let fin_a = self.fin_ending_at_vertex(lp, va)?;
+        let fin_b = self.fin_ending_at_vertex(lp, vb)?;
+        let split = self.split_face(fin_a, fin_b, None)?;
+        let new_edge = split.edge;
+        // Geometry: the exact straight 3D curve + its planar pcurve on
+        // both fins; the new face inherits the surface.
+        if let Ok(line) = keel_geom::curve::Line3::new(a, b - a) {
+            self.attach_edge_curve(new_edge, Curve3::Line(line), true);
+            if let Ok(surf) = self.face_analytic_surface(face)
+                && let Ok((pcurve, _, _)) = self.open_curve_pcurve_on(
+                    face,
+                    &Curve3::Nurbs(
+                        keel_geom::nurbs_curve::NurbsCurve::new(
+                            1,
+                            vec![0., 0., 1., 1.],
+                            vec![a, b],
+                            None,
+                        )
+                        .map_err(|_| TopoError::Precondition("chord: segment build failed"))?,
+                    ),
+                    &surf,
+                    tol,
+                )
+            {
+                let pkey = self.add_curve(Curve3::Nurbs(pcurve));
+                let radial = self
+                    .edges
+                    .get(new_edge)
+                    .map(|e| e.radial.clone())
+                    .unwrap_or_default();
+                for fk in radial {
+                    if let Some(f) = self.fins.get_mut(fk) {
+                        f.pcurve = Some((pkey, true));
+                    }
+                }
+            }
+        }
+        if let Some((sk, sense)) = self.faces.get(face).and_then(|f| f.surface)
+            && let Some(nf) = self.faces.get_mut(split.face_new)
+        {
+            nf.surface = Some((sk, sense));
+        }
+        self.debug_validate();
+        Ok(new_edge)
+    }
 }
 
 /// The plane (a point on it, unit normal) of a closed planar curve.
@@ -2467,5 +2731,65 @@ mod tests {
             "volume changed by imprint: {v_before} -> {v_after}"
         );
         let _ = (Surface3::Cylinder, Cylinder3::new, Frame3::from_z);
+    }
+
+    #[test]
+    fn imprint_isoparams_block_face_quarters() {
+        // A 2x3x4 block: imprint a 1x1 isoparametric grid on the top
+        // face. The face must split into four sub-faces (three new
+        // edges), while total volume and surface area are invariant and
+        // the body stays valid (mass == mesh).
+        let mut blk = Body::new();
+        blk.block(Vec3::ZERO, 2.0, 3.0, 4.0).unwrap();
+        let before = blk.counts();
+        let v0 = blk.mesh_volume();
+        let a0 = blk.surface_area();
+        // The top face: outward normal +z.
+        let top = blk
+            .face_keys()
+            .into_iter()
+            .find(|&fk| {
+                blk.face_outward_normal(fk)
+                    .map(|n| (n - Vec3::new(0., 0., 1.)).norm() < 1e-6)
+                    .unwrap_or(false)
+            })
+            .expect("top face");
+
+        let out = blk.imprint_isoparams(top, 1, 1).unwrap();
+
+        // Validity + the self-consistency gate.
+        assert!(out.validate().is_ok(), "imprinted body invalid");
+        let v1 = out.mesh_volume();
+        let m1 = out.mass_properties().unwrap().volume;
+        assert!((v1 - v0).abs() < 1e-9, "volume changed: {v0} -> {v1}");
+        assert!(
+            (m1 - v1).abs() <= 2e-2 * (1.0 + m1.abs()),
+            "mass {m1} != mesh {v1}"
+        );
+        let a1 = out.surface_area();
+        assert!((a1 - a0).abs() < 1e-9, "surface area changed: {a0} -> {a1}");
+
+        // Topology: the one top face became four; net +3 faces, and the
+        // 1x1 grid adds three interior edges plus the boundary splits.
+        let after = out.counts();
+        assert_eq!(after.f, before.f + 3, "top face should split into four");
+        assert!(after.e > before.e, "imprint must add edges");
+
+        // Exactly four planar faces now carry the top plane (z == 4).
+        let quarters: Vec<_> = out
+            .face_keys()
+            .into_iter()
+            .filter(|&fk| {
+                matches!(out.face_surface3(fk), Some(Surface3::Plane(_)))
+                    && out
+                        .face_outward_normal(fk)
+                        .map(|n| (n - Vec3::new(0., 0., 1.)).norm() < 1e-6)
+                        .unwrap_or(false)
+            })
+            .collect();
+        assert_eq!(quarters.len(), 4, "top face split into four sub-faces");
+        // Their areas sum to the original top-face area (2*3 = 6).
+        let qa: f64 = quarters.iter().map(|&fk| out.face_area(fk)).sum();
+        assert!((qa - 6.0).abs() < 1e-9, "quarter areas sum {qa} != 6");
     }
 }

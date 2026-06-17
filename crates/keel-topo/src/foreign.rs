@@ -166,6 +166,53 @@ impl Body {
         Ok(b)
     }
 
+    /// Degree-elevate a NURBS face's surface to `(target_u, target_v)`
+    /// WITHOUT changing geometry: the elevated surface is the SAME point
+    /// set with more control points (NURBS Book degree elevation, exact
+    /// on the rational form via the Bernstein elevation operator). The
+    /// face's bounding edges and their iso-curves are untouched because
+    /// the surface is point-identical, so the result needs no re-stitch
+    /// and is geometrically indistinguishable from the input.
+    ///
+    /// DECLINES (Err) a non-NURBS (analytic) face, or a target below the
+    /// face's current degree in either direction. A target equal to the
+    /// current degree is a no-op for that direction.
+    pub fn raise_face_degree(
+        &self,
+        face: crate::entity::FaceKey,
+        target_u: usize,
+        target_v: usize,
+    ) -> Result<Body, TopoError> {
+        let (sk, _) = self
+            .faces
+            .get(face)
+            .and_then(|f| f.surface)
+            .ok_or(TopoError::StaleKey)?;
+        let surf = match self.surfaces.get(sk) {
+            Some(SurfaceGeom::Nurbs(s)) => s.clone(),
+            Some(SurfaceGeom::Analytic(_)) => {
+                return Err(TopoError::Precondition(
+                    "raise_face_degree: face is analytic, not NURBS (declined)",
+                ));
+            }
+            None => return Err(TopoError::StaleKey),
+        };
+        // DECLINE a downgrade: elevation only adds control points.
+        if target_u < surf.kv_u().degree() || target_v < surf.kv_v().degree() {
+            return Err(TopoError::Precondition(
+                "raise_face_degree: target degree below current (declined)",
+            ));
+        }
+        let raised = surf.elevated_to(target_u, target_v).map_err(geom_err)?;
+        // Geometry is unchanged, so overwrite the surface entry in place:
+        // same key, same sense, same bounding edges -- no topology touched.
+        let mut out = self.clone();
+        if let Some(slot) = out.surfaces.get_mut(sk) {
+            *slot = SurfaceGeom::Nurbs(raised);
+        }
+        Ok(out)
+    }
+
     /// Attach a foreign curve evaluator to an existing edge, fitting it
     /// to a certified NURBS within `tol` (the curve half of item 114).
     /// The fitted curve's endpoints must coincide with the edge's
@@ -491,6 +538,71 @@ mod tests {
         assert!(
             rep.curves_recovered >= 1,
             "foreign edge must recover to a line"
+        );
+    }
+
+    #[test]
+    fn raise_face_degree_preserves_geometry() {
+        // A NURBS sheet from four boundary sides (a gentle saddle, single
+        // fit patch). Degree-elevating its face must leave the surface
+        // point-identical -- same geometry, more control points -- and the
+        // body must stay valid.
+        let p = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
+        let sides = vec![
+            straight(p(0., 0., 0.), p(2., 0., 0.), 9),
+            straight(p(2., 0., 0.), p(2., 2., 1.), 9),
+            straight(p(2., 2., 1.), p(0., 2., 0.), 9),
+            straight(p(0., 2., 0.), p(0., 0., 0.), 9),
+        ];
+        let sheet = Body::filled_sheet(&sides, 1e-6).unwrap();
+        let face = sheet.face_keys()[0];
+        let Some(SurfaceGeom::Nurbs(orig)) = sheet.face_surface_geom(face) else {
+            panic!("filled_sheet face must be NURBS");
+        };
+        let (du, dv) = (orig.kv_u().degree(), orig.kv_v().degree());
+        // Elevate each direction by 2 (above the current degree).
+        let raised_body = sheet.raise_face_degree(face, du + 2, dv + 2).unwrap();
+        assert!(
+            raised_body.validate().is_ok(),
+            "elevated body invalid: {:?}",
+            raised_body.validate()
+        );
+        let Some(SurfaceGeom::Nurbs(elev)) = raised_body.face_surface_geom(face) else {
+            panic!("elevated face must still be NURBS");
+        };
+        assert_eq!(elev.kv_u().degree(), du + 2, "u degree must rise by 2");
+        assert_eq!(elev.kv_v().degree(), dv + 2, "v degree must rise by 2");
+        assert!(
+            elev.count_u() > orig.count_u() && elev.count_v() > orig.count_v(),
+            "elevation must add control points"
+        );
+        // The elevated surface evaluates to the SAME points on a grid.
+        let ((u0, u1), (v0, v1)) = orig.domain();
+        let n = 11;
+        let mut worst = 0.0f64;
+        for i in 0..n {
+            let u = u0 + (u1 - u0) * i as f64 / (n - 1) as f64;
+            for j in 0..n {
+                let v = v0 + (v1 - v0) * j as f64 / (n - 1) as f64;
+                worst = worst.max((elev.point(u, v) - orig.point(u, v)).norm());
+            }
+        }
+        assert!(
+            worst < 1e-9,
+            "degree elevation moved the surface by {worst} (> 1e-9)"
+        );
+
+        // DECLINE checks: a downgrade and an analytic face both err.
+        assert!(
+            sheet.raise_face_degree(face, du.saturating_sub(1), dv).is_err(),
+            "target below current degree must DECLINE"
+        );
+        let mut block = Body::new();
+        let prim = block.block(Vec3::ZERO, 1.0, 1.0, 1.0).unwrap();
+        let bf = prim.faces[0];
+        assert!(
+            block.raise_face_degree(bf, 5, 5).is_err(),
+            "analytic (planar) face must DECLINE"
         );
     }
 }

@@ -379,6 +379,104 @@ impl Body {
         }
         Body::planar_sheet(&out3d)
     }
+
+    /// Extend a SHEET body's free boundary outward along its surface by
+    /// `distance` (parity item 70, surface extension). MVP: a single
+    /// planar face -- analytic-plane sheets (`planar_sheet`,
+    /// `rectangular_sheet`) AND geometrically-planar NURBS sheets
+    /// (`filled_sheet` of a flat boundary, before any `simplify`). The
+    /// plane is recovered from the face's outward normal and boundary
+    /// loop, each boundary edge's supporting line is offset outward by
+    /// `distance` in that plane (the analytic continuation of the
+    /// plane's trim, dossier 13), and consecutive offset lines are
+    /// reintersected at the new sharp corners. `distance < 0` shrinks.
+    /// DECLINES (Err) a multi-face body, a genuinely non-planar
+    /// (curved) sheet, or a degenerate/parallel corner. The result is a
+    /// fresh analytic-plane sheet, so it validates and `thicken`s.
+    pub fn extend_sheet(&self, distance: f64) -> Result<Body, TopoError> {
+        if !distance.is_finite() {
+            return Err(TopoError::Precondition("extend_sheet: non-finite distance"));
+        }
+        let faces = self.face_keys();
+        let [face] = faces[..] else {
+            return Err(TopoError::Precondition(
+                "extend_sheet: only a single-face sheet is supported (MVP)",
+            ));
+        };
+        // Plane recovery: the face outward normal works for both an
+        // analytic plane and a (planar) NURBS surface (it samples the
+        // surface normal). The boundary loop is then verified flat.
+        let n = self
+            .face_outward_normal(face)
+            .ok_or(TopoError::Precondition("extend_sheet: no face normal"))?;
+        let poly = self.face_outer_loop_points(face);
+        let m = poly.len();
+        if m < 3 {
+            return Err(TopoError::Precondition(
+                "extend_sheet: degenerate or non-polygonal boundary (MVP: planar polygon)",
+            ));
+        }
+        // Reject a non-planar (curved) sheet: every boundary vertex must
+        // lie in the plane through poly[0] with normal `n`. A curved
+        // NURBS sheet (e.g. a saddle fill) fails here and is DECLINED.
+        let o0 = poly[0];
+        let flat = poly
+            .iter()
+            .all(|&p| (p - o0).dot(n).abs() <= 1e-6 * (1.0 + (p - o0).norm()));
+        if !flat {
+            return Err(TopoError::Precondition(
+                "extend_sheet: non-planar (curved) sheet (MVP: planar only)",
+            ));
+        }
+        // Project to 2D in the plane (u, v with u x v = n).
+        let o = poly[0];
+        let seed = if n.x.abs() < 0.9 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(0.0, 1.0, 0.0)
+        };
+        let u = (seed - n * seed.dot(n))
+            .try_normalize()
+            .ok_or(TopoError::Precondition("extend_sheet: axis"))?;
+        let v = n.cross(u);
+        let p2: Vec<[f64; 2]> = poly
+            .iter()
+            .map(|&p| [(p - o).dot(u), (p - o).dot(v)])
+            .collect();
+        // Outward edge normals (sign by polygon winding) and offset-line
+        // constants `q . normal = c` (shifted outward by `distance`).
+        let area2: f64 = (0..m)
+            .map(|i| p2[i][0] * p2[(i + 1) % m][1] - p2[(i + 1) % m][0] * p2[i][1])
+            .sum();
+        let s = if area2 >= 0.0 { 1.0 } else { -1.0 };
+        let mut lines: Vec<([f64; 2], f64)> = Vec::with_capacity(m);
+        for i in 0..m {
+            let a = p2[i];
+            let b = p2[(i + 1) % m];
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let len = (dx * dx + dy * dy).sqrt();
+            if len < 1e-12 {
+                return Err(TopoError::Precondition("extend_sheet: degenerate edge"));
+            }
+            let nm = [dy / len * s, -dx / len * s]; // outward unit normal
+            let c = a[0] * nm[0] + a[1] * nm[1] + distance;
+            lines.push((nm, c));
+        }
+        // New corner i = intersection of offset lines (i-1) and i.
+        let mut out3d: Vec<Vec3> = Vec::with_capacity(m);
+        for i in 0..m {
+            let (na, ca) = lines[(i + m - 1) % m];
+            let (nb, cb) = lines[i];
+            let det = na[0] * nb[1] - na[1] * nb[0];
+            if det.abs() < 1e-12 {
+                return Err(TopoError::Precondition("extend_sheet: parallel corner"));
+            }
+            let x = (ca * nb[1] - cb * na[1]) / det;
+            let y = (na[0] * cb - nb[0] * ca) / det;
+            out3d.push(o + u * x + v * y);
+        }
+        Body::planar_sheet(&out3d)
+    }
 }
 
 #[cfg(test)]
@@ -573,6 +671,65 @@ mod tests {
         assert!(
             (v - 3.0).abs() < 1e-9 && (mv - 3.0).abs() < 1e-9,
             "thickened slab volume must be 3.0 with mass == mesh (got mass {v}, mesh {mv})"
+        );
+    }
+
+    #[test]
+    fn extend_sheet_grows_filled_rectangle_area() {
+        // Task item 70 (extend_sheet): build a planar w x h rectangular
+        // sheet via `filled_sheet` of its four sides (a NURBS-backed
+        // sheet, NOT an analytic plane), extend the free boundary
+        // outward by d, and confirm the area grows from w*h to
+        // (w+2d)*(h+2d). The result must be a valid sheet whose analytic
+        // mass (after thicken) equals the tessellated mesh.
+        let (w, h, d) = (3.0_f64, 2.0_f64, 0.5_f64);
+        let p = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+        let straight = |a: Vec3, b: Vec3, n: usize| -> Vec<Vec3> {
+            (0..n)
+                .map(|i| a + (b - a) * (i as f64 / (n - 1) as f64))
+                .collect()
+        };
+        let sides = vec![
+            straight(p(0., 0.), p(w, 0.), 5),
+            straight(p(w, 0.), p(w, h), 5),
+            straight(p(w, h), p(0., h), 5),
+            straight(p(0., h), p(0., 0.), 5),
+        ];
+        let sheet = Body::filled_sheet(&sides, 1e-9).unwrap();
+        assert!(sheet.validate().is_ok(), "filled rectangular sheet invalid");
+        let a0 = sheet.face_area(sheet.face_keys()[0]);
+        assert!((a0 - w * h).abs() < 1e-6, "base area {a0} != {}", w * h);
+
+        let big = sheet.extend_sheet(d).unwrap();
+        assert!(
+            big.validate().is_ok(),
+            "extended sheet invalid: {:?}",
+            big.validate()
+        );
+        let want_area = (w + 2.0 * d) * (h + 2.0 * d);
+        let a1 = big.face_area(big.face_keys()[0]);
+        assert!(
+            (a1 - want_area).abs() < 1e-6,
+            "extended area must be {want_area} (got {a1})"
+        );
+
+        // Self-consistency gate: thicken to a slab and require analytic
+        // mass == tessellated mesh for the grown footprint.
+        let slab = big.thicken(1.0).unwrap();
+        let v = slab.mass_properties().unwrap().volume;
+        let mv = slab.mesh_volume();
+        assert!(
+            (v - want_area).abs() < 1e-9 && (mv - want_area).abs() < 1e-9,
+            "grown slab volume must be {want_area} with mass == mesh (mass {v}, mesh {mv})"
+        );
+
+        // Shrink also works (negative distance), back toward the core.
+        let small = sheet.extend_sheet(-0.5).unwrap();
+        let a2 = small.face_area(small.face_keys()[0]);
+        let want_small = (w - 1.0) * (h - 1.0);
+        assert!(
+            (a2 - want_small).abs() < 1e-6,
+            "shrunk area must be {want_small} (got {a2})"
         );
     }
 }

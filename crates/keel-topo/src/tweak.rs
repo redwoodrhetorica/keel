@@ -17,7 +17,8 @@
 
 use crate::Body;
 use crate::body::TopoError;
-use crate::entity::{EdgeKey, FaceKey, SurfaceGeom, VertexKey};
+use crate::entity::{EdgeKey, FaceKey, FinKey, SurfaceGeom, VertexKey};
+use crate::lineage::Derivation;
 use keel_geom::curve::{Circle3, Curve3, Line3};
 use keel_geom::surface::{Cylinder3, Frame3, Plane3, Surface3};
 use keel_math::transform::Transform3;
@@ -213,7 +214,7 @@ impl Body {
     }
 
     /// Ordered distinct edges of a face's outer loop.
-    fn face_loop_edges(&self, face: FaceKey) -> Option<Vec<EdgeKey>> {
+    pub(crate) fn face_loop_edges(&self, face: FaceKey) -> Option<Vec<EdgeKey>> {
         let lp = self.faces.get(face)?.loops.first().copied()?;
         let first = self.loops.get(lp)?.fin?;
         let mut out = Vec::new();
@@ -581,6 +582,81 @@ impl Body {
         Ok(())
     }
 
+    /// UNTRIM a face: discard a trimmed analytic face's outer loop and
+    /// rebuild the body that the surface's NATURAL full boundary bounds.
+    /// A boolean may leave a cylinder's lateral face carrying an
+    /// arbitrary notched loop; untrim recovers the full tube band the
+    /// raw surface defines over the face's current axial extent (a full
+    /// 2*pi revolution, seam + two rim circles).
+    ///
+    /// MVP scope (cylinder lateral faces): the result is a fresh full
+    /// cylinder SOLID spanning [v_min, v_max], where v_min/v_max are the
+    /// axial coordinates of the face's current boundary vertices along
+    /// the cylinder axis. Its lateral face is, by construction, the
+    /// natural full boundary (area exactly 2*pi*r*(v_max - v_min)); the
+    /// body is valid and mass == mesh. Rebuilding (rather than splicing
+    /// the natural loop into the existing notched topology) is what makes
+    /// the validity guarantee unconditional.
+    ///
+    /// Declines (never wrong): planes (a plane has no natural finite
+    /// bound), and -- as deferred follow-ups -- spheres, cones, tori, and
+    /// NURBS faces. A degenerate axial extent (the boundary collapses to
+    /// a single height) is also declined.
+    pub fn untrim_face(&self, face: FaceKey) -> Result<Body, TopoError> {
+        match self.face_surface_geom(face) {
+            Some(SurfaceGeom::Analytic(Surface3::Cylinder(c))) => {
+                self.untrim_cylinder_lateral(face, c)
+            }
+            Some(SurfaceGeom::Analytic(Surface3::Plane(_))) => Err(TopoError::Precondition(
+                "untrim_face: plane has no natural finite bound",
+            )),
+            Some(_) => Err(TopoError::Precondition(
+                "untrim_face: only cylinder lateral faces (MVP)",
+            )),
+            None => Err(TopoError::Precondition("untrim_face: no surface")),
+        }
+    }
+
+    /// Rebuild the full cylindrical band a lateral face's surface defines
+    /// over that face's current axial extent (the cylinder MVP of
+    /// `untrim_face`).
+    fn untrim_cylinder_lateral(&self, face: FaceKey, cyl: Cylinder3) -> Result<Body, TopoError> {
+        let (origin, axis) = (cyl.frame.origin, cyl.frame.z);
+        // Axial extent = span of the face's boundary vertices projected
+        // onto the cylinder axis. The loop vertices are the trimmed
+        // boundary; the natural band spans their full height range.
+        let verts = self
+            .face_loop_vertices(face)
+            .ok_or(TopoError::Precondition("untrim_face: face has no loop"))?;
+        let mut v_min = f64::INFINITY;
+        let mut v_max = f64::NEG_INFINITY;
+        for &v in &verts {
+            let p = self.vertices.get(v).ok_or(TopoError::StaleKey)?.point;
+            let t = (p - origin).dot(axis);
+            v_min = v_min.min(t);
+            v_max = v_max.max(t);
+        }
+        let height = v_max - v_min;
+        if !(height.is_finite() && height > 1e-9) {
+            return Err(TopoError::Precondition(
+                "untrim_face: degenerate axial extent",
+            ));
+        }
+        // Fresh full cylinder over [v_min, v_max]: same axis + radius,
+        // frame translated so its base disc sits at v_min. Its lateral
+        // face is the surface's natural full boundary by construction.
+        let base = Frame3 {
+            origin: origin + axis * v_min,
+            x: cyl.frame.x,
+            y: cyl.frame.y,
+            z: cyl.frame.z,
+        };
+        let mut out = Body::new();
+        out.cylinder(base, cyl.radius, height)?;
+        out.debug_validate();
+        Ok(out)
+    }
+
     /// Delete a face, healing the wound (item 40). This is the
     /// MERGE/absorb heal mode: the face is merged into a coplanar
     /// neighbour by killing their shared edge (`kef`), so the neighbour
@@ -617,6 +693,321 @@ impl Body {
         Err(TopoError::Precondition(
             "delete_face: no coplanar neighbour to merge into (extend-reintersect heal deferred)",
         ))
+    }
+
+    /// Remove REDUNDANT topology introduced by imprints/booleans without
+    /// changing the geometry (parity item 133, the global face-merge
+    /// heal): repeatedly (1) merge any two adjacent COPLANAR faces that
+    /// share an edge into one (killing the shared edge with `kef`), then
+    /// (2) dissolve any valence-2 vertex whose two incident edges are
+    /// COLLINEAR (the inverse of `split_edge`), so a face split into
+    /// coplanar pieces and a boundary edge split into collinear pieces
+    /// both collapse back. Geometry is untouched: a merge only fires when
+    /// the two faces lie in the same plane and the two edges on the same
+    /// line, so mass and mesh are invariant. Idempotent. Returns the
+    /// number of (faces merged, vertices dissolved).
+    ///
+    /// Slice (the honest MVP): planar coplanar-face merges via `kef`
+    /// (both faces single-loop on the shared edge -- the imprint/boolean
+    /// scar case) and manifold valence-2 collinear-vertex dissolves.
+    /// Curved-face coalescing (two arcs of one cylinder), ring-carrying
+    /// faces, and non-manifold rims are DECLINED (skipped), never guessed:
+    /// a `kef`/dissolve whose preconditions fail is transactional, so the
+    /// body is left untouched at that site and the pass moves on.
+    pub fn delete_redundant_topology(&mut self) -> Result<(usize, usize), TopoError> {
+        let coincident_planes = |a: &Plane3, b: &Plane3| -> bool {
+            a.frame.z.cross(b.frame.z).norm() < 1e-9
+                && (b.frame.origin - a.frame.origin).dot(a.frame.z).abs() < 1e-9
+        };
+
+        // 1. Coalesce coplanar faces. Re-scan from scratch after each
+        //    merge: `kef` deletes a face and an edge, invalidating the
+        //    iteration, and a fresh scan keeps the logic obviously correct
+        //    (the body shrinks by one face each pass, so this terminates).
+        let mut faces_merged = 0usize;
+        'merge: loop {
+            for e in self.edges.iter().map(|(k, _)| k).collect::<Vec<_>>() {
+                // Manifold shared edge between two DISTINCT planar faces.
+                if self.edges.get(e).map(|x| x.radial.len()) != Some(2) {
+                    continue;
+                }
+                let nbrs = self.faces_around_edge(e);
+                if nbrs.len() != 2 {
+                    continue;
+                }
+                let (fa, fb) = (nbrs[0], nbrs[1]);
+                let (Some((pa, _)), Some((pb, _))) =
+                    (self.face_plane(fa), self.face_plane(fb))
+                else {
+                    continue;
+                };
+                if !coincident_planes(&pa, &pb) {
+                    continue;
+                }
+                // `kef` kills the face whose loop owns the edge's SECOND
+                // radial fin and requires that face be single-loop; try as
+                // is, and if it declines, flip the radial pair so the
+                // single-loop face becomes the victim. Either failing
+                // leaves the body untouched (transactional): skip the site.
+                if self.kef(e).is_ok() {
+                    faces_merged += 1;
+                    continue 'merge;
+                }
+                if let Some(ed) = self.edges.get_mut(e) {
+                    ed.radial.reverse();
+                }
+                if self.kef(e).is_ok() {
+                    faces_merged += 1;
+                    continue 'merge;
+                }
+                // Restore the radial order we perturbed (the merge was not
+                // applicable from either side).
+                if let Some(ed) = self.edges.get_mut(e) {
+                    ed.radial.reverse();
+                }
+            }
+            break;
+        }
+
+        // 2. Dissolve valence-2 collinear vertices (merge the two edges).
+        let mut verts_dissolved = 0usize;
+        'dissolve: loop {
+            for v in self.vertices.iter().map(|(k, _)| k).collect::<Vec<_>>() {
+                if self.merge_collinear_edges_at(v).unwrap_or(false) {
+                    verts_dissolved += 1;
+                    continue 'dissolve;
+                }
+            }
+            break;
+        }
+        self.debug_validate();
+        Ok((faces_merged, verts_dissolved))
+    }
+
+    /// If `v` is a manifold valence-2 vertex whose two incident edges are
+    /// COLLINEAR, fuse them into one edge spanning the far endpoints (the
+    /// inverse of `split_edge`) and return `Ok(true)`. `Ok(false)` when
+    /// the vertex does not qualify (wrong valence, non-collinear, closed
+    /// edge, non-manifold, or a vertex-loop anchor): the body is left
+    /// untouched. The merged edge inherits a straight Line carrier when
+    /// both originals were straight/curveless (the planar-scar case).
+    fn merge_collinear_edges_at(&mut self, v: VertexKey) -> Result<bool, TopoError> {
+        // Manifold only: a vertex with PES groups is non-manifold.
+        if self.vertices.get(v).map(|x| !x.groups.is_empty()) != Some(false) {
+            return Ok(false);
+        }
+        // Not a vertex-loop anchor (an isolated vertex inside a face).
+        if self
+            .loops
+            .iter()
+            .any(|(_, l)| l.vertex == Some(v))
+        {
+            return Ok(false);
+        }
+        let inc = self.edges_of_vertex(v);
+        if inc.len() != 2 {
+            return Ok(false);
+        }
+        let (e1, e2) = (inc[0], inc[1]);
+        // Both edges must be open (no seam) and manifold radial-2.
+        let (b1, b2) = match (self.edges.get(e1), self.edges.get(e2)) {
+            (Some(x), Some(y)) => (x.bounds, y.bounds),
+            _ => return Ok(false),
+        };
+        if b1.0 == b1.1 || b2.0 == b2.1 {
+            return Ok(false);
+        }
+        if self.edges.get(e1).map(|x| x.radial.len()) != Some(2)
+            || self.edges.get(e2).map(|x| x.radial.len()) != Some(2)
+        {
+            return Ok(false);
+        }
+        // Far endpoints (the vertices that are not v), and they must be
+        // distinct from each other (else the pair is a degenerate needle).
+        let a = if b1.0 == v { b1.1 } else { b1.0 };
+        let b = if b2.0 == v { b2.1 } else { b2.0 };
+        if a == v || b == v || a == b {
+            return Ok(false);
+        }
+        let (pa, pv, pb) = match (
+            self.vertices.get(a).map(|x| x.point),
+            self.vertices.get(v).map(|x| x.point),
+            self.vertices.get(b).map(|x| x.point),
+        ) {
+            (Some(x), Some(y), Some(z)) => (x, y, z),
+            _ => return Ok(false),
+        };
+        // Collinearity: a->v parallel to v->b, same direction (the chain
+        // continues straight through v, not a spike doubling back).
+        let d1 = pv - pa;
+        let d2 = pb - pv;
+        let (n1, n2) = (d1.norm(), d2.norm());
+        if n1 < 1e-12 || n2 < 1e-12 {
+            return Ok(false);
+        }
+        let scale = n1.max(n2);
+        if d1.cross(d2).norm() > 1e-9 * scale * scale || d1.dot(d2) <= 0.0 {
+            return Ok(false);
+        }
+
+        // Both edges straight/curveless -> the merged edge is the line
+        // a->b; otherwise keep it curveless (curved coalescing is out of
+        // slice and would need a fitted carrier).
+        let straight = |body: &Self, e: EdgeKey| -> bool {
+            matches!(
+                body.edges
+                    .get(e)
+                    .and_then(|x| x.curve)
+                    .and_then(|(ck, _)| body.curves.get(ck)),
+                None | Some(Curve3::Line(_))
+            )
+        };
+        let line_carrier = straight(self, e1) && straight(self, e2);
+
+        // Pair up the four fins by loop. e1 has two fins; for each, the
+        // matching e2 fin is its ring neighbour at v. Build (f_in, f_out)
+        // per loop, where f_in ends at v and f_out starts at v, with
+        // f_in.next == f_out.
+        let e1_fins = self
+            .edges
+            .get(e1)
+            .map(|x| x.radial.clone())
+            .unwrap_or_default();
+        let mut pairs: Vec<(FinKey, FinKey)> = Vec::new();
+        for x in e1_fins {
+            let pair = if self.fin_end_vertex(x) == Some(v) {
+                // x ends at v; its successor leaves v on e2.
+                let nx = self.fins.get(x).map(|f| f.next);
+                nx.map(|nx| (x, nx))
+            } else if self.fin_start_vertex(x) == Some(v) {
+                // x starts at v; its predecessor arrives at v on e2.
+                let px = self.fins.get(x).map(|f| f.prev);
+                px.map(|px| (px, x))
+            } else {
+                None
+            };
+            let Some((f_in, f_out)) = pair else {
+                return Ok(false);
+            };
+            // The pair must be two distinct fins in ONE ring spanning the
+            // two edges (one on e1, one on e2 -- in EITHER order, since
+            // which of f_in/f_out lands on e1 depends on the loop's sense).
+            let edges = (
+                self.fins.get(f_in).map(|f| f.edge),
+                self.fins.get(f_out).map(|f| f.edge),
+            );
+            let spans_both = edges == (Some(e1), Some(e2)) || edges == (Some(e2), Some(e1));
+            if !spans_both
+                || f_in == f_out
+                || self.fins.get(f_in).map(|f| f.owner) != self.fins.get(f_out).map(|f| f.owner)
+            {
+                return Ok(false);
+            }
+            pairs.push((f_in, f_out));
+        }
+        if pairs.len() != 2 {
+            return Ok(false);
+        }
+
+        // Commit point: preconditions hold; the surgery is infallible.
+        let (id1, id2) = (
+            self.edges.get(e1).map(|x| x.id),
+            self.edges.get(e2).map(|x| x.id),
+        );
+        let mut rec = self.begin_op();
+        let derivation = match (id1, id2) {
+            (Some(a), Some(b)) => Derivation::MergeResult { from: vec![a, b] },
+            _ => Derivation::Created,
+        };
+        let e_new = self.new_edge(&mut rec, (a, b), derivation);
+        let mut new_fins: Vec<FinKey> = Vec::new();
+        for &(f_in, f_out) in &pairs {
+            let owner = self.fins.get(f_in).map(|f| f.owner).ok_or(TopoError::StaleKey)?;
+            // The merged fin traverses start(f_in) -> end(f_out). It is
+            // FORWARD on e_new (a -> b) iff start(f_in) == a.
+            let forward = self.fin_start_vertex(f_in) == Some(a);
+            let g = self.new_fin(&mut rec, e_new, forward, owner, Derivation::Created);
+            let in_prev = self.fins.get(f_in).map(|f| f.prev).ok_or(TopoError::StaleKey)?;
+            let out_next = self.fins.get(f_out).map(|f| f.next).ok_or(TopoError::StaleKey)?;
+            // Splice g where the pair sat: in_prev -> g -> out_next.
+            if let Some(x) = self.fins.get_mut(in_prev) {
+                x.next = g;
+            }
+            if let Some(x) = self.fins.get_mut(g) {
+                x.prev = in_prev;
+                x.next = out_next;
+            }
+            if let Some(x) = self.fins.get_mut(out_next) {
+                x.prev = g;
+            }
+            // Loop entry off the dying fins.
+            if let Some(l) = self.loops.get_mut(owner)
+                && (l.fin == Some(f_in) || l.fin == Some(f_out))
+            {
+                l.fin = Some(g);
+            }
+            new_fins.push(g);
+        }
+        if let Some(ed) = self.edges.get_mut(e_new) {
+            ed.radial = new_fins.clone();
+        }
+        // Re-anchor the far vertices' fin references off any dying fin, and
+        // give the (now fin-less) merged-away vertex v no anchor.
+        let dead: Vec<FinKey> = pairs.iter().flat_map(|&(i, o)| [i, o]).collect();
+        for &fv in &[a, b] {
+            let needs = self
+                .vertices
+                .get(fv)
+                .and_then(|x| x.fin)
+                .map(|fk| dead.contains(&fk))
+                .unwrap_or(false);
+            if needs {
+                // Pick a surviving fin incident to fv: a new merged fin, or
+                // any radial fin of fv's other edges.
+                let repl = new_fins
+                    .iter()
+                    .copied()
+                    .find(|&g| self.fin_start_vertex(g) == Some(fv) || self.fin_end_vertex(g) == Some(fv))
+                    .or_else(|| {
+                        self.edges_of_vertex(fv).into_iter().find_map(|ek| {
+                            self.edges
+                                .get(ek)
+                                .and_then(|e| e.radial.iter().copied().find(|g| !dead.contains(g)))
+                        })
+                    });
+                if let Some(x) = self.vertices.get_mut(fv) {
+                    x.fin = repl;
+                }
+            }
+        }
+        // Tear down the two old edges, their four fins, and vertex v.
+        for &(f_in, f_out) in &pairs {
+            for fk in [f_in, f_out] {
+                if let Some(id) = self.fins.get(fk).map(|x| x.id) {
+                    self.unregister(&mut rec, id);
+                }
+                self.fins.remove(fk);
+            }
+        }
+        for ek in [e1, e2] {
+            if let Some(id) = self.edges.get(ek).map(|x| x.id) {
+                self.unregister(&mut rec, id);
+            }
+            self.edges.remove(ek);
+        }
+        if let Some(id) = self.vertices.get(v).map(|x| x.id) {
+            self.unregister(&mut rec, id);
+        }
+        self.vertices.remove(v);
+        let _ = rec.finish();
+        // Attach the straight carrier now that e_new is wired in.
+        if line_carrier
+            && let Ok(l) = Line3::new(pa, pb - pa)
+        {
+            self.attach_edge_curve(e_new, Curve3::Line(l), true);
+        }
+        self.debug_validate();
+        Ok(true)
     }
 }
 
@@ -903,5 +1294,157 @@ mod tests {
             (v - expect).abs() < 0.05 * expect,
             "cyl vol {v} vs {expect}"
         );
+    }
+
+    #[test]
+    fn untrim_cylinder_lateral_restores_full_band() {
+        // Build a cylinder r=1 h=2 (axis +z), then drill a thin cross-bore
+        // (a perpendicular r=0.4 cylinder) through its wall: the main
+        // cylinder's lateral face is now TRIMMED -- it carries an inner
+        // ring (the bore hole bitten out of the side wall), so its boundary
+        // is no longer the surface's full natural boundary. untrim_face
+        // discards that trimmed boundary and rebuilds the band the raw
+        // cylinder defines over the face's axial extent [0, 2]: a full
+        // 2*pi tube of area 2*pi*r*h = 4*pi, no hole, valid, mass == mesh.
+        use crate::boolean::{BoolOp, boolean};
+        use keel_geom::surface::Frame3;
+        let r = 1.0;
+        let h = 2.0;
+        let mut main = Body::new();
+        main.cylinder(Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap(), r, h)
+            .unwrap();
+        let mut bore = Body::new();
+        bore.cylinder(
+            Frame3::from_z(Vec3::new(-2.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 0.0)).unwrap(),
+            0.4,
+            4.0,
+        )
+        .unwrap();
+        let trimmed = boolean(&main, &bore, BoolOp::Difference, 1e-7)
+            .unwrap()
+            .body;
+        assert!(trimmed.validate().is_ok(), "cross-bored cylinder invalid");
+
+        // Helper: the radius of a face's cylinder surface (None if not a
+        // cylinder) -- used to pick the MAIN wall (r=1), not the bore (0.4).
+        let cyl_radius = |b: &Body, f: FaceKey| match b.face_surface_geom(f) {
+            Some(SurfaceGeom::Analytic(Surface3::Cylinder(c))) => Some(c.radius),
+            _ => None,
+        };
+        let lateral = trimmed
+            .face_keys()
+            .into_iter()
+            .find(|&f| cyl_radius(&trimmed, f).is_some_and(|cr| (cr - r).abs() < 1e-6))
+            .expect("main lateral cylinder face");
+        // The bore really did trim this wall: it carries an inner ring.
+        let nloops = trimmed.faces.get(lateral).map(|f| f.loops.len()).unwrap();
+        assert!(
+            nloops >= 2,
+            "expected the main lateral to carry the bore hole (an inner ring), got {nloops} loop(s)"
+        );
+
+        let restored = trimmed.untrim_face(lateral).unwrap();
+        assert!(
+            restored.validate().is_ok(),
+            "untrimmed band invalid: {:?}",
+            restored.validate()
+        );
+        // The restored lateral is the full natural band: area = 2*pi*r*h,
+        // and it carries a single (outer) loop -- the hole is gone.
+        let lat = restored
+            .face_keys()
+            .into_iter()
+            .find(|&f| cyl_radius(&restored, f).is_some_and(|cr| (cr - r).abs() < 1e-6))
+            .unwrap();
+        assert_eq!(
+            restored.faces.get(lat).map(|f| f.loops.len()),
+            Some(1),
+            "restored lateral must be the single full-boundary loop"
+        );
+        let area = restored.face_area(lat);
+        let want = core::f64::consts::TAU * r * h;
+        assert!(
+            (area - want).abs() < 1e-6 * want,
+            "untrimmed lateral area {area} != 2*pi*r*h {want}"
+        );
+        // Self-consistency gate: mass == mesh on the rebuilt solid (it is a
+        // plain cylinder of volume pi*r^2*h = 2*pi).
+        let mass = restored.mass_properties().unwrap().volume;
+        let mesh = restored.mesh_volume();
+        assert!(
+            (mass - mesh).abs() < 0.02 * mass.max(1.0),
+            "untrimmed band mass {mass} != mesh {mesh}"
+        );
+        assert!(
+            (mass - core::f64::consts::PI * r * r * h).abs() < 1e-6,
+            "restored solid volume {mass} != pi*r^2*h"
+        );
+
+        // Decline rail (never wrong): a plane has no natural finite bound.
+        let plane_face = restored
+            .face_keys()
+            .into_iter()
+            .find(|&f| {
+                matches!(
+                    restored.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+                )
+            })
+            .unwrap();
+        assert!(restored.untrim_face(plane_face).is_err());
+    }
+
+    #[test]
+    fn delete_redundant_topology_undoes_an_imprint() {
+        // Block 2x2x2; imprint a straight line across its top face from
+        // one boundary edge to the opposite one. That splits the top into
+        // two coplanar quads (7 faces) AND splits the two crossed boundary
+        // edges into collinear halves (valence-2 scar vertices).
+        // delete_redundant_topology must collapse all of it: back to the
+        // pristine cube -- 6 faces, 12 edges, 8 vertices, volume 8, valid,
+        // mass == mesh. And it must be idempotent.
+        let mut b = Body::new();
+        b.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let c0 = b.counts();
+        assert_eq!((c0.v, c0.e, c0.f), (8, 12, 6), "pristine cube counts");
+
+        let top = top_face(&b);
+        // Midpoints of two OPPOSITE top edges (y=0 and y=2 at z=2).
+        b.imprint_open_polyline(
+            top,
+            &[Vec3::new(1.0, 0.0, 2.0), Vec3::new(1.0, 2.0, 2.0)],
+            1e-7,
+        )
+        .unwrap();
+        assert!(b.validate().is_ok(), "imprinted body invalid");
+        let c1 = b.counts();
+        assert!(c1.f > 6, "imprint must add a face (got {} faces)", c1.f);
+        assert_eq!(c1.f, 7, "one straight imprint -> 7 faces");
+        assert_eq!(c1.v, 10, "two boundary splits -> 10 vertices");
+        let v_imprint = b.mass_properties().unwrap().volume;
+        assert!((v_imprint - 8.0).abs() < 1e-9, "imprint changed volume");
+
+        let (merged, dissolved) = b.delete_redundant_topology().unwrap();
+        assert_eq!(merged, 1, "the two coplanar top halves merge (1 kef)");
+        assert_eq!(dissolved, 2, "the two collinear scar vertices dissolve");
+        assert!(b.validate().is_ok(), "cleaned body invalid: {:?}", b.validate());
+        let c2 = b.counts();
+        assert_eq!(
+            (c2.v, c2.e, c2.f),
+            (8, 12, 6),
+            "redundancy removal restores the pristine cube"
+        );
+        let v = b.mass_properties().unwrap().volume;
+        assert!((v - 8.0).abs() < 1e-9, "volume {v} != 8 after cleanup");
+        let mesh = b.mesh_volume();
+        assert!(
+            (mesh - v).abs() < 1e-9 * (1.0 + v),
+            "mass {v} != mesh {mesh}"
+        );
+
+        // Idempotence: a clean body has nothing left to remove.
+        let (m2, d2) = b.delete_redundant_topology().unwrap();
+        assert_eq!((m2, d2), (0, 0), "second pass is a no-op");
+        assert_eq!(b.counts(), c2, "idempotent counts");
     }
 }

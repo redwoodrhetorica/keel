@@ -24,6 +24,11 @@ impl Bernstein {
         self.coeffs.len() - 1
     }
 
+    /// Bernstein coefficients (control values), low index first.
+    pub fn coeffs(&self) -> &[f64] {
+        &self.coeffs
+    }
+
     /// Convert from power basis (`power[i]` multiplies x^i), for tests
     /// and for analytic-geometry callers that derive power-form
     /// polynomials. b_i = sum_{j<=i} C(i,j)/C(n,j) * power[j].

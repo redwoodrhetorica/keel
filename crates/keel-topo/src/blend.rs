@@ -22,7 +22,7 @@
 
 use crate::Body;
 use crate::body::TopoError;
-use crate::entity::{EdgeKey, SurfaceGeom};
+use crate::entity::{EdgeKey, FaceKey, FinKey, SurfaceGeom};
 use keel_geom::curve::{Curve3, Line3};
 use keel_geom::surface::{Cylinder3, Frame3, Surface3};
 use keel_math::vec::Vec3;
@@ -905,6 +905,268 @@ impl Body {
 
         b.validate()
             .map_err(|_| TopoError::Precondition("fillet: result invalid"))?;
+        Ok(b)
+    }
+
+    /// Dissolve a geometrically ZERO-LENGTH manifold edge `e` (its two
+    /// bound vertices coincide in space but are distinct keys), fusing
+    /// its two endpoints into one and removing the edge -- WITHOUT
+    /// merging the two faces it bounds. Neither `kev` (a spur: both fins
+    /// in one loop) nor `kef` (merges the faces) does this: the edge's
+    /// fin is spliced out of EACH of its two loops independently, then
+    /// the surviving vertex absorbs the other's incidences (as in
+    /// `merge_vertices`, which is itself blocked here because the two
+    /// vertices share `e`). `bounds.0` survives; `bounds.1` is removed.
+    fn fuse_zero_length_edge(&mut self, e: EdgeKey) -> Result<(), TopoError> {
+        let ed = self.edges.get(e).ok_or(TopoError::StaleKey)?;
+        let (keep_v, drop_v) = ed.bounds;
+        if keep_v == drop_v {
+            return Err(TopoError::Precondition("fuse: edge already closed"));
+        }
+        let [fa, fb] = ed.radial[..] else {
+            return Err(TopoError::Precondition("fuse: edge needs two fins"));
+        };
+        let (la, lb) = match (self.fins.get(fa), self.fins.get(fb)) {
+            (Some(x), Some(y)) => (x.owner, y.owner),
+            _ => return Err(TopoError::StaleKey),
+        };
+        if la == lb {
+            return Err(TopoError::Precondition("fuse: fins share a loop (use kev)"));
+        }
+
+        let mut rec = self.begin_op();
+        for f in [fa, fb] {
+            let (fp, fnx) = match self.fins.get(f) {
+                Some(x) => (x.prev, x.next),
+                None => return Err(TopoError::StaleKey),
+            };
+            let owner = self.fins.get(f).map(|x| x.owner).ok_or(TopoError::StaleKey)?;
+            if fp == f && fnx == f {
+                if let Some(l) = self.loops.get_mut(owner) {
+                    l.fin = None;
+                    l.vertex = Some(keep_v);
+                }
+            } else {
+                if let Some(x) = self.fins.get_mut(fp) {
+                    x.next = fnx;
+                }
+                if let Some(x) = self.fins.get_mut(fnx) {
+                    x.prev = fp;
+                }
+                if let Some(l) = self.loops.get_mut(owner)
+                    && l.fin == Some(f)
+                {
+                    l.fin = Some(fp);
+                }
+            }
+        }
+        let edge_keys: Vec<EdgeKey> = self.edges.iter().map(|(k, _)| k).collect();
+        for ek in edge_keys {
+            if let Some(edge) = self.edges.get_mut(ek) {
+                if edge.bounds.0 == drop_v {
+                    edge.bounds.0 = keep_v;
+                }
+                if edge.bounds.1 == drop_v {
+                    edge.bounds.1 = keep_v;
+                }
+            }
+        }
+        let survivor_fin = self.any_fin_at_vertex(keep_v, &[fa, fb]);
+        for vk in [keep_v, drop_v] {
+            if let Some(v) = self.vertices.get(vk)
+                && (v.fin == Some(fa) || v.fin == Some(fb))
+                && let Some(vv) = self.vertices.get_mut(vk)
+            {
+                vv.fin = survivor_fin;
+            }
+        }
+        for id in [
+            self.fins.get(fa).map(|x| x.id),
+            self.fins.get(fb).map(|x| x.id),
+            self.edges.get(e).map(|x| x.id),
+            self.vertices.get(drop_v).map(|x| x.id),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.unregister(&mut rec, id);
+        }
+        self.fins.remove(fa);
+        self.fins.remove(fb);
+        self.edges.remove(e);
+        self.vertices.remove(drop_v);
+        let _ = rec.finish();
+        self.debug_validate();
+        Ok(())
+    }
+
+    /// Any fin incident to vertex `v` (start or end), excluding the fins
+    /// in `skip`. Re-homes a dangling vertex.fin reference after a fuse.
+    fn any_fin_at_vertex(
+        &self,
+        v: crate::entity::VertexKey,
+        skip: &[FinKey],
+    ) -> Option<FinKey> {
+        for (fk, _) in self.fins.iter() {
+            if skip.contains(&fk) {
+                continue;
+            }
+            if self.fin_start_vertex(fk) == Some(v) || self.fin_end_vertex(fk) == Some(v) {
+                return Some(fk);
+            }
+        }
+        None
+    }
+
+    /// Remove a constant-radius CYLINDRICAL fillet face and restore the
+    /// sharp edge between its two PLANAR neighbour faces -- the inverse
+    /// of `fillet_edge` on a box-like (two-planar-support) edge. The
+    /// fillet face loop is two straight "spring" lines (each shared with
+    /// one planar neighbour A/B) plus one or two curved end arcs (each
+    /// shared with a planar cap). The springs collapse onto the sharp
+    /// edge eS = (plane A) INTERSECT (plane B): the four tangent-corner
+    /// vertices move onto eS (two per end, each pair to one point), the
+    /// cylinder dissolves into one neighbour by killing its first spring
+    /// (`kef`) -- which leaves A and B meeting exactly along the second
+    /// spring = eS -- and the now zero-length end arcs are fused away
+    /// (`fuse_zero_length_edge`), merging each arc's two coincident
+    /// corners and restoring the caps' sharp corners. The restored sharp
+    /// edge carries the exact line eS.
+    ///
+    /// MVP scope: exactly two PLANAR neighbour faces with one or two
+    /// PLANAR caps (the inverse of the `fillet_edge` cylinder rung).
+    /// Anything else -- a non-cylinder face, a non-planar neighbour,
+    /// parallel neighbours -- DECLINES with `Err(TopoError)`. The result
+    /// is `validate()`-checked; any failure DECLINES, never a wrong body.
+    pub fn remove_fillet(&self, fillet_face: FaceKey) -> Result<Body, TopoError> {
+        if !matches!(
+            self.face_surface_geom(fillet_face),
+            Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+        ) {
+            return Err(TopoError::Precondition("remove_fillet: not a cylinder face"));
+        }
+        let edges = self
+            .face_loop_edges(fillet_face)
+            .ok_or(TopoError::Precondition("remove_fillet: no loop"))?;
+        let mut springs: Vec<(EdgeKey, crate::entity::FaceKey)> = Vec::new();
+        let mut arcs: Vec<(EdgeKey, crate::entity::FaceKey)> = Vec::new();
+        for &e in &edges {
+            let ck = self.edges.get(e).and_then(|x| x.curve).map(|(k, _)| k);
+            let is_line = matches!(ck.and_then(|k| self.curves.get(k)), Some(Curve3::Line(_)));
+            let neighbours: Vec<_> = self
+                .faces_around_edge(e)
+                .into_iter()
+                .filter(|&f| f != fillet_face)
+                .collect();
+            if neighbours.len() != 1 {
+                return Err(TopoError::Precondition(
+                    "remove_fillet: non-manifold blend edge",
+                ));
+            }
+            let other = neighbours[0];
+            if !matches!(
+                self.face_surface_geom(other),
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+            ) {
+                return Err(TopoError::Precondition(
+                    "remove_fillet: non-planar neighbour (follow-up)",
+                ));
+            }
+            if is_line {
+                springs.push((e, other));
+            } else {
+                arcs.push((e, other));
+            }
+        }
+        if springs.len() != 2 || arcs.is_empty() || arcs.len() > 2 {
+            return Err(TopoError::Precondition(
+                "remove_fillet: not a two-support box fillet (follow-up)",
+            ));
+        }
+        let (sa_e, fa) = springs[0];
+        let (sb_e, fb) = springs[1];
+        if fa == fb {
+            return Err(TopoError::Precondition(
+                "remove_fillet: both springs share one face",
+            ));
+        }
+        let na = self
+            .face_outward_normal(fa)
+            .ok_or(TopoError::Precondition("remove_fillet: support normal"))?;
+        let nb = self
+            .face_outward_normal(fb)
+            .ok_or(TopoError::Precondition("remove_fillet: support normal"))?;
+        let pa = self
+            .face_outer_loop_points(fa)
+            .first()
+            .copied()
+            .ok_or(TopoError::Precondition("remove_fillet: support point"))?;
+        let pb = self
+            .face_outer_loop_points(fb)
+            .first()
+            .copied()
+            .ok_or(TopoError::Precondition("remove_fillet: support point"))?;
+        let dir = na
+            .cross(nb)
+            .try_normalize()
+            .ok_or(TopoError::Precondition("remove_fillet: parallel supports"))?;
+        let c = na.dot(nb);
+        let denom = 1.0 - c * c;
+        if denom.abs() < 1e-12 {
+            return Err(TopoError::Precondition("remove_fillet: parallel supports"));
+        }
+        let da = na.dot(pa);
+        let db = nb.dot(pb);
+        let es_pt = na * ((da - db * c) / denom) + nb * ((db - da * c) / denom);
+        let project = |p: Vec3| es_pt + dir * ((p - es_pt).dot(dir));
+
+        let (sa0, sa1) = self.edges.get(sa_e).ok_or(TopoError::StaleKey)?.bounds;
+        let (sb0, sb1) = self.edges.get(sb_e).ok_or(TopoError::StaleKey)?.bounds;
+        let shares_arc = |u: crate::entity::VertexKey, w: crate::entity::VertexKey| -> bool {
+            arcs.iter().any(|&(ae, _)| {
+                let (x, y) = self.edges.get(ae).map(|ed| ed.bounds).unwrap_or((u, u));
+                (x == u && y == w) || (x == w && y == u)
+            })
+        };
+        let (sb_at0, sb_at1) = if shares_arc(sa0, sb0) {
+            (sb0, sb1)
+        } else if shares_arc(sa0, sb1) {
+            (sb1, sb0)
+        } else {
+            let p_sa0 = self.vertices.get(sa0).ok_or(TopoError::StaleKey)?.point;
+            let d0 = (self.vertices.get(sb0).ok_or(TopoError::StaleKey)?.point - p_sa0).norm();
+            let d1 = (self.vertices.get(sb1).ok_or(TopoError::StaleKey)?.point - p_sa0).norm();
+            if d0 <= d1 { (sb0, sb1) } else { (sb1, sb0) }
+        };
+
+        let mut b = self.clone();
+        for (va, vb) in [(sa0, sb_at0), (sa1, sb_at1)] {
+            let pv = b.vertices.get(va).ok_or(TopoError::StaleKey)?.point;
+            let target = project(pv);
+            for v in [va, vb] {
+                if let Some(vx) = b.vertices.get_mut(v) {
+                    vx.point = target;
+                }
+            }
+        }
+
+        b.kef(sa_e)
+            .map_err(|_| TopoError::Precondition("remove_fillet: spring kef failed"))?;
+
+        for &(arc_e, _) in &arcs {
+            b.fuse_zero_length_edge(arc_e)
+                .map_err(|_| TopoError::Precondition("remove_fillet: arc fuse failed"))?;
+        }
+
+        let (sv0, sv1) = b.edges.get(sb_e).ok_or(TopoError::StaleKey)?.bounds;
+        let p0 = b.vertices.get(sv0).ok_or(TopoError::StaleKey)?.point;
+        let p1 = b.vertices.get(sv1).ok_or(TopoError::StaleKey)?.point;
+        if let Ok(line) = Line3::new(p0, p1 - p0) {
+            b.attach_edge_curve(sb_e, Curve3::Line(line), true);
+        }
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("remove_fillet: result invalid"))?;
         Ok(b)
     }
 }
@@ -4694,6 +4956,85 @@ mod tests {
             }
         }
         panic!("no top-right edge");
+    }
+
+    #[test]
+    fn remove_fillet_restores_box_exactly() {
+        // Round-trip: a 2x2x2 block, fillet the top-right edge by 0.5,
+        // then remove_fillet the cylinder blend face. The body must
+        // return EXACTLY to the block: V8 E12 F6, volume 8, valid, and
+        // analytic mass == tessellated mesh (the self-consistency gate).
+        let mut base = Body::new();
+        base.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e = top_right_edge(&base);
+        let filleted = base.fillet_edge(e, 0.5).unwrap();
+        // The blend face is the lone cylinder.
+        let cyl = filleted
+            .face_keys()
+            .into_iter()
+            .find(|&f| {
+                matches!(
+                    filleted.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )
+            })
+            .expect("no cylinder blend face");
+        let restored = filleted.remove_fillet(cyl).expect("remove_fillet declined");
+        assert!(
+            restored.validate().is_ok(),
+            "restored body invalid: {:?}",
+            restored.validate()
+        );
+        // No cylinder face survives.
+        assert!(
+            restored
+                .face_keys()
+                .into_iter()
+                .all(|f| !matches!(
+                    restored.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )),
+            "a cylinder face remained"
+        );
+        // Topology back to the block.
+        let cnt = restored.counts();
+        assert_eq!(
+            (cnt.v, cnt.e, cnt.f),
+            (8, 12, 6),
+            "restored counts {:?}",
+            (cnt.v, cnt.e, cnt.f)
+        );
+        // Volume EXACTLY the block's 8.0, and analytic mass == mesh.
+        let mass = restored.mass_properties().unwrap().volume;
+        assert!((mass - 8.0).abs() < 1e-9, "restored mass {mass} != 8");
+        let mesh = restored.mesh_volume();
+        assert!(
+            (mass - mesh).abs() < 0.02 * mass.abs().max(1e-9),
+            "mass {mass} != mesh {mesh}"
+        );
+
+        // A second orientation (a vertical +x/+y edge) round-trips too,
+        // exercising the surgery's generality beyond the top-right edge.
+        let mut base2 = Body::new();
+        base2.block(Vec3::ZERO, 2.0, 2.0, 2.0).unwrap();
+        let e2 = edge_with_normals(&base2, Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+        let fil2 = base2.fillet_edge(e2, 0.5).unwrap();
+        let cyl2 = fil2
+            .face_keys()
+            .into_iter()
+            .find(|&f| {
+                matches!(
+                    fil2.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )
+            })
+            .expect("no cylinder blend face (vertical)");
+        let rest2 = fil2.remove_fillet(cyl2).expect("remove_fillet declined (vertical)");
+        assert!(rest2.validate().is_ok(), "vertical restored invalid");
+        let c2 = rest2.counts();
+        assert_eq!((c2.v, c2.e, c2.f), (8, 12, 6), "vertical counts {:?}", (c2.v, c2.e, c2.f));
+        let m2 = rest2.mass_properties().unwrap().volume;
+        assert!((m2 - 8.0).abs() < 1e-9, "vertical restored mass {m2} != 8");
     }
 
     #[test]

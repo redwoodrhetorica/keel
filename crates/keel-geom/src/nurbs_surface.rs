@@ -467,6 +467,98 @@ impl NurbsSurface {
         }
         Ok(out)
     }
+
+    /// Degree-elevate to `(target_u, target_v)` WITHOUT changing the
+    /// surface geometry (same point set, more control points). Each
+    /// direction is elevated independently; a target equal to the current
+    /// degree is a no-op for that direction. Errs when a target is below
+    /// the current degree, or above `MAX_DEGREE`.
+    ///
+    /// Algorithm (per direction, exact on the rational form): saturate
+    /// every interior knot to full multiplicity so the net decomposes
+    /// into C0-joined Bezier segments; elevate each segment's homogeneous
+    /// control coordinates with the Bernstein elevation operator (exact,
+    /// and applied to the homogeneous Vec4 it elevates the weights too --
+    /// so the RATIONAL surface is preserved); reassemble, raising every
+    /// interior knot's multiplicity by the elevation amount
+    /// (geometry-identical, though not knot-minimal).
+    pub fn elevated_to(&self, target_u: usize, target_v: usize) -> Result<Self, GeomError> {
+        let s = self.elevate_u(target_u)?;
+        s.elevate_v(target_v)
+    }
+
+    /// Degree-elevate the u direction to `target`.
+    pub fn elevate_u(&self, target: usize) -> Result<Self, GeomError> {
+        let p = self.kv_u.degree();
+        if target == p {
+            return Ok(self.clone());
+        }
+        if target < p || target > crate::MAX_DEGREE {
+            return Err(GeomError::DegreeOutOfRange);
+        }
+        let raise = target - p;
+        // Saturate interior u-knots -> Bezier segments along u.
+        let mut s = self.clone();
+        while let Some(k) = next_unsaturated(&s.kv_u) {
+            s = s.insert_knot_u(k)?;
+        }
+        let breaks = distinct_domain_knots(&s.kv_u);
+        let nseg = breaks.len() - 1;
+        let new_nu = nseg * target + 1; // nseg*(target+1) - (nseg-1)
+        let mut ctrl = vec![Vec4::ZERO; new_nu * s.nv];
+        let mut lane = [Vec4::ZERO; MAX_ORDER];
+        for seg in 0..nseg {
+            let src0 = seg * p; // first source row of this segment
+            let dst0 = seg * target; // first destination row
+            for j in 0..s.nv {
+                for (i, slot) in lane.iter_mut().enumerate().take(p + 1) {
+                    *slot = s.ctrl[(src0 + i) * s.nv + j];
+                }
+                let elev = elevate_bezier_lane(&lane[..=p], raise);
+                for (i, &pt) in elev.iter().enumerate() {
+                    ctrl[(dst0 + i) * s.nv + j] = pt;
+                }
+            }
+        }
+        let new_kv = elevated_knots(&breaks, target)?;
+        Self::from_homogeneous(new_kv, s.kv_v.clone(), ctrl)
+    }
+
+    /// Degree-elevate the v direction to `target`.
+    pub fn elevate_v(&self, target: usize) -> Result<Self, GeomError> {
+        let q = self.kv_v.degree();
+        if target == q {
+            return Ok(self.clone());
+        }
+        if target < q || target > crate::MAX_DEGREE {
+            return Err(GeomError::DegreeOutOfRange);
+        }
+        let raise = target - q;
+        let mut s = self.clone();
+        while let Some(k) = next_unsaturated(&s.kv_v) {
+            s = s.insert_knot_v(k)?;
+        }
+        let breaks = distinct_domain_knots(&s.kv_v);
+        let nseg = breaks.len() - 1;
+        let new_nv = nseg * target + 1;
+        let mut ctrl = vec![Vec4::ZERO; s.nu * new_nv];
+        let mut lane = [Vec4::ZERO; MAX_ORDER];
+        for seg in 0..nseg {
+            let src0 = seg * q;
+            let dst0 = seg * target;
+            for i in 0..s.nu {
+                for (j, slot) in lane.iter_mut().enumerate().take(q + 1) {
+                    *slot = s.ctrl[i * s.nv + (src0 + j)];
+                }
+                let elev = elevate_bezier_lane(&lane[..=q], raise);
+                for (j, &pt) in elev.iter().enumerate() {
+                    ctrl[i * new_nv + (dst0 + j)] = pt;
+                }
+            }
+        }
+        let new_kv = elevated_knots(&breaks, target)?;
+        Self::from_homogeneous(s.kv_u.clone(), new_kv, ctrl)
+    }
 }
 
 /// Exact full surface of revolution: revolve `profile` about the axis
@@ -542,6 +634,50 @@ fn distinct_domain_knots(kv: &KnotVector) -> Vec<f64> {
         }
     }
     out
+}
+
+/// First interior knot of `kv` whose multiplicity is below the degree,
+/// or None when every interior knot is already saturated (Bezier form).
+fn next_unsaturated(kv: &KnotVector) -> Option<f64> {
+    let deg = kv.degree();
+    let (a, b) = kv.domain();
+    kv.knots()
+        .iter()
+        .copied()
+        .find(|&k| a < k && k < b && kv.multiplicity(k) < deg)
+}
+
+/// Clamped knot vector for the elevated direction: ends at multiplicity
+/// `target + 1`, each interior break at multiplicity `target`.
+fn elevated_knots(breaks: &[f64], target: usize) -> Result<KnotVector, GeomError> {
+    let mut knots: Vec<f64> = Vec::new();
+    knots.extend(std::iter::repeat(breaks[0]).take(target + 1));
+    for &bk in &breaks[1..breaks.len() - 1] {
+        knots.extend(std::iter::repeat(bk).take(target));
+    }
+    knots.extend(std::iter::repeat(breaks[breaks.len() - 1]).take(target + 1));
+    KnotVector::new(target, knots)
+}
+
+/// Degree-elevate one Bezier lane (`pts` are the p+1 homogeneous Bezier
+/// control points) by `raise`, returning p+1+raise points. Each
+/// homogeneous coordinate is an independent Bernstein polynomial; the
+/// elevation operator is exact, so the rational lane is preserved.
+fn elevate_bezier_lane(pts: &[Vec4], raise: usize) -> Vec<Vec4> {
+    let p = pts.len() - 1;
+    let target = p + raise;
+    #[allow(clippy::unwrap_used)]
+    let lift = |coord: &dyn Fn(&Vec4) -> f64| -> Vec<f64> {
+        let b = keel_math::bernstein::Bernstein::new(pts.iter().map(coord).collect()).unwrap();
+        b.elevated_to(target).coeffs().to_vec()
+    };
+    let xs = lift(&|v| v.x);
+    let ys = lift(&|v| v.y);
+    let zs = lift(&|v| v.z);
+    let ws = lift(&|v| v.w);
+    (0..=target)
+        .map(|k| Vec4::new(xs[k], ys[k], zs[k], ws[k]))
+        .collect()
 }
 
 /// Rational Bezier patch (one span pair of a NurbsSurface) with its
