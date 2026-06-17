@@ -5101,7 +5101,11 @@ fn assemble_boolean(
         let v = body.tessellated_volume();
         let bm = body.mass_properties().map(|m| m.volume);
         if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
-            eprintln!("  curved gate: tess {v} mass {bm:?} mesh {}", body.mesh_volume());
+            eprintln!(
+                "  curved gate: tess {v} mass {bm:?} mesh {} open_ratio {:.5}",
+                body.mesh_volume(),
+                body.mesh_open_ratio()
+            );
         }
         let self_consistent = match bm {
             Ok(mv) => {
