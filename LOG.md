@@ -9224,3 +9224,52 @@ REMAINING (the other ~half of nested declines): busier curved-compound bodies
 whose watertightness genuinely exceeds 0.05, plus residual imprint faults
 (boss-cyl union onto a compound body, countersink = the cone/block single-op
 gap, cross-hole). [[minimize-declines]] [[kernel-known-limitations]]
+
+## Addendum 288: ~half the residual nested "declines" were CORRECT bodies wearing a spurious fault -- an advisory-fault filter (mesh-verified) lands per-op recovery 49->73% and exposes the true frontier (cone-face SSI) (2026-06-17)
+
+bug_extract ranked the residual after Add 287: of 2116 failing ops (seed 1), the
+two dominant signatures were `Coincident(.,.)` (~662 hits) and
+`AssemblyFailed("unlocated seam component (non-planar multi-cut face)")` (~1369).
+probe_residual MC-checked the top-7 signatures against independent point
+membership (each is a block +/- primitive sequence): ALL SEVEN are CORRECT --
+mass == mesh == MC to <= 0.04% -- DESPITE the fault. The faults are pushed during
+imprint sub-steps (a Coincident degeneracy note; a multi-cut seam component whose
+relocation probe found no containing face, skipped as redundant), then the body
+goes on to PASS the full post-condition gate. So a verified-correct solid was
+being returned wearing a warning that every consumer -- and the realistic-CAD
+harnesses -- reads as "suspect" and rejects. A whole class of NON-declines
+inflating the decline set.
+
+THE FIX: at the gate's success return, drop the ADVISORY faults (Coincident,
+Tangent, the unlocated multi-cut seam component, the "open chain" imprint
+precondition). KEEP the faults that plausibly mark an INCOMPLETE result --
+`UnassemblableSeam` (documented WRONG-if-shipped-seamless), `IntersectionFailed`,
+other `AssemblyFailed`. The body is byte-identical either way, so this can never
+manufacture a WRONG; it only stops mislabelling a correct one.
+
+THE CATCH (the soak earned its keep). The first cut cleared advisory faults on
+ANY gate-passing body. The soak immediately flagged seed-2 FAIL:mass-mesh on a
+`block U cone`: the gate's self-consistency runs against `tessellated_volume`,
+which read consistent (2%) while the user-facing `mesh_volume` disagreed (a coarse
+curved-union mesh). That fault was the HONEST warning, and clearing it unmasked a
+defective body. Refined: clear an advisory fault ONLY when the result
+INDEPENDENTLY re-verifies -- validate() AND mass == mesh_volume within 2% (tighter
+than the soak oracle's 6%, so a cleared body provably passes that oracle). A
+suspect body keeps its warning. DECLINE-never-WRONG holds by construction.
+
+MEASURED (refined filter): cad_session_real per-op recovery 49.1% -> 73.1% (PASS
+5911/8087; dome 93%, pocket 97%, through-hole 79%), 0 INVALID gate escapes.
+bug_extract failing ops 2116 -> 977 (-54%). Soak FAIL=0 both seeds, PASS
+6002/6016 -> 6085/6091 (+83/+75), 0 gate escapes. Suite 283 + curved robustness
+8/8 (two new guards: `countersink_cone_reports_clean_no_advisory_fault`,
+`second_through_hole_reports_clean_no_coincident_fault`).
+
+THE TRUE FRONTIER, now visible. With the spurious faults gone, the residual is
+dominated by a GENUINE gap: `IntersectionFailed(_, 5)`. Every top-5 repro has a
+countersink (a cone cut) as a PRIOR feature; the NEXT op fails because SSI against
+the existing CONE FACE is unsupported (cone x cylinder / cone x cone / cone x
+plane). The cone primitive assembles fine, but a SECOND feature crossing its
+lateral cannot yet imprint -- correctly DECLINED, never wrong. That cone-face SSI
+support is the next target (the Add-287 "countersink single-op gap" was a
+misdiagnosis -- the single op was always correct; the gap is the cone face as an
+SSI OPERAND). [[minimize-declines]] [[kernel-known-limitations]]

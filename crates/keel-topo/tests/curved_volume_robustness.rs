@@ -159,6 +159,49 @@ fn curved_compound_drill_passes_not_declined() {
     assert!((m - mesh).abs() < 5e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
 }
 
+#[test]
+fn countersink_cone_reports_clean_no_advisory_fault() {
+    // Root-B frontier (Add 288): a bare block - cone countersink produces the
+    // EXACT result (mass == mesh == MC truth, ~905.30 = 22.5*13.5*2.982 minus the
+    // conical plug) but the multi-cut seam relocation pushed an "unlocated seam
+    // component (non-planar multi-cut face)" AssemblyFailed *fault* onto the
+    // correct body -- which every consumer reads as a decline (the dominant
+    // ~1369-hit residual class). Reaching the gate's success return verifies the
+    // body, so that advisory fault now drops. Must be faultless, valid, exact.
+    let block = blk(Vec3::ZERO, 22.5, 13.5, 2.982);
+    let csink = cone(Vec3::new(2.731, 2.159, 3.032), Vec3::new(0., 0., -1.), 0.601, 1.428);
+    let r = boolean(&block, &csink, BoolOp::Difference, 1e-7)
+        .unwrap_or_else(|e| panic!("countersink declined: {e:?}"));
+    assert!(r.faults.is_empty(), "advisory fault leaked on a correct body: {:?}", r.faults);
+    assert!(r.body.validate().is_ok(), "countersink invalid shell");
+    let m = r.body.mass_properties().unwrap().volume;
+    let mesh = r.body.mesh_volume();
+    assert!((m - 905.30).abs() < 0.3, "countersink mass {m} != ~905.30");
+    assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+}
+
+#[test]
+fn second_through_hole_reports_clean_no_coincident_fault() {
+    // Add 288: drilling a 2nd well-separated through-hole into a domed plate
+    // produced the exact body (MC truth ~1025.65) but flagged an informational
+    // Coincident fault that consumers reject (the ~662-hit class). Cleared on
+    // gate-pass. Faultless, valid, mass == mesh.
+    let plate = blk(Vec3::ZERO, 18.0, 22.5, 2.562);
+    let dome = sph(Vec3::new(1.914, 2.292, 2.562), Vec3::new(0., 0., 1.), 0.935);
+    let b1 = boolean(&plate, &dome, BoolOp::Union, 1e-7).unwrap().body;
+    let h1 = cyl(Vec3::new(2.724, 6.862, -0.5), Vec3::new(0., 0., 1.), 1.089, 3.562);
+    let b2 = boolean(&b1, &h1, BoolOp::Difference, 1e-7).unwrap().body;
+    let h2 = cyl(Vec3::new(2.618, 11.029, -0.5), Vec3::new(0., 0., 1.), 0.691, 3.562);
+    let r = boolean(&b2, &h2, BoolOp::Difference, 1e-7)
+        .unwrap_or_else(|e| panic!("2nd hole declined: {e:?}"));
+    assert!(r.faults.is_empty(), "Coincident fault leaked on a correct body: {:?}", r.faults);
+    assert!(r.body.validate().is_ok(), "invalid shell");
+    let m = r.body.mass_properties().unwrap().volume;
+    let mesh = r.body.mesh_volume();
+    assert!((m - 1025.65).abs() < 0.5, "mass {m} != ~1025.65");
+    assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+}
+
 /// Exact volume of the intersection lens of two spheres (radii ra, rb, centre
 /// distance d). Zero when disjoint; min-ball when nested.
 fn lens_volume(ra: f64, rb: f64, d: f64) -> f64 {

@@ -4970,6 +4970,37 @@ fn quadric_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
     })
 }
 
+/// A fault that is purely ADVISORY on a body the boolean has INDEPENDENTLY
+/// verified correct. The caller clears these only when the result passes the
+/// post-condition gate AND re-verifies as a watertight solid against the
+/// user-facing mesh (validate() + mass == mesh_volume, 2%) -- the gate's own
+/// self-consistency runs against tessellated_volume, which a coarse curved
+/// union can satisfy while the render mesh disagrees, so the extra mesh check is
+/// what makes clearing safe. Faults accumulated during assembly are then process
+/// diagnostics, NOT result verdicts: a verified-correct body that still carries a Coincident
+/// / Tangent degeneracy note, or a recovered-imprint hiccup (an unlocated
+/// multi-cut seam component, or an "open chain" precondition the assembly
+/// continued past), is a CORRECT solid wearing a spurious warning -- which every
+/// consumer (and the realistic-CAD harnesses) reasonably reads as "suspect" and
+/// rejects, inflating the decline set with non-declines. Independent Monte-Carlo
+/// truth confirms the dominant such classes are exact (probe_residual: the top-7
+/// nested signatures read mass == mesh == MC to <= 0.04%). These drop on success.
+///
+/// KEPT (plausibly mark an INCOMPLETE result, so still worth reporting):
+/// `UnassemblableSeam` (documented WRONG-if-shipped-seamless), `IntersectionFailed`,
+/// any other `AssemblyFailed` message, and any other `Topo` error. The body is
+/// byte-identical whether or not the advisory fault is reported, so dropping it
+/// never risks DECLINE-never-WRONG.
+fn fault_advisory_on_success(f: &BoolFault) -> bool {
+    matches!(
+        f,
+        BoolFault::Coincident(..)
+            | BoolFault::Tangent(..)
+            | BoolFault::AssemblyFailed("unlocated seam component (non-planar multi-cut face)")
+            | BoolFault::Topo(TopoError::Precondition("open chain end not on boundary"))
+    )
+}
+
 /// The shared post-seam boolean tail: imprint both operands along the
 /// given seams, classify, select, stitch, and apply the degeneracy /
 /// self-consistency gates. Used by `boolean` (all seams) and
@@ -5247,6 +5278,26 @@ fn assemble_boolean(
             "degenerate or self-inconsistent result (mass != mesh)",
         ));
     }
+    // Drop advisory process-warnings, but ONLY on a body that INDEPENDENTLY
+    // verifies as a correct watertight solid: validate() passes AND the analytic
+    // mass equals the USER-FACING mesh_volume within a tight 2% band. The gate
+    // above proves self-consistency against `tessellated_volume`, which can read
+    // consistent (2%) while the render `mesh_volume` disagrees on a coarse
+    // curved-union mesh -- exactly the block U cone the soak flags FAIL:mass-mesh.
+    // 2% is stricter than the soak oracle's 6%, so any body whose advisory fault
+    // we clear here PROVABLY passes that oracle; a body the soak would reject
+    // keeps its honest warning (DECLINE-never-WRONG). See `fault_advisory_on_success`.
+    let faults: Vec<BoolFault> = if faults.iter().any(fault_advisory_on_success)
+        && body.validate().is_ok()
+        && body.mass_properties().map_or(false, |m| {
+            m.volume.is_finite()
+                && mesh_vol.is_finite()
+                && (m.volume - mesh_vol).abs() <= 2e-2 * (1.0 + m.volume.abs())
+        }) {
+        faults.into_iter().filter(|f| !fault_advisory_on_success(f)).collect()
+    } else {
+        faults
+    };
     Ok(BoolResult { body, faults, op })
 }
 
