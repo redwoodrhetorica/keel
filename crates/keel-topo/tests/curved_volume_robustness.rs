@@ -226,6 +226,30 @@ fn countersink_then_far_hole_no_intersection_failed() {
     assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
 }
 
+#[test]
+fn curved_cavity_doubled_loop_mass_passes() {
+    // Add 292: a multi-cut stitch left the sphere ball-cavity face with a DOUBLED
+    // boundary loop (its rim circle traversed twice -> winding +-2), which the
+    // green-slab mass integrator could not anchor -> mass declined -> the body
+    // (geometrically correct: mesh ~ MC) was rejected (AssemblyFailed / a kept
+    // unlocated-seam fault). The fin-dedup collapses the doubled loop -> winding
+    // +-1 -> the pole anchor -> mass computes and matches MC, so the body PASSES.
+    let plate = blk(Vec3::ZERO, 22.5, 13.5, 3.923);
+    let ball = sph(Vec3::new(2.244, 2.120, 3.434), Vec3::new(0., 0., 1.), 1.221);
+    let b1 = boolean(&plate, &ball, BoolOp::Difference, 1e-7).unwrap().body;
+    let csink = cone(Vec3::new(2.540, 11.469, 3.973), Vec3::new(0., 0., -1.), 1.010, 1.479);
+    let b2 = boolean(&b1, &csink, BoolOp::Difference, 1e-7).unwrap().body;
+    let hole = cyl(Vec3::new(6.793, 11.515, 2.928), Vec3::new(0., 0., 1.), 0.703, 1.595);
+    let r = boolean(&b2, &hole, BoolOp::Difference, 1e-7)
+        .unwrap_or_else(|e| panic!("blind-hole declined (winding-2 regression): {e:?}"));
+    assert!(r.faults.is_empty(), "faults on a correct curved-cavity body: {:?}", r.faults);
+    assert!(r.body.validate().is_ok(), "invalid shell");
+    let m = r.body.mass_properties().unwrap().volume;
+    let mesh = r.body.mesh_volume();
+    assert!((m - 1181.0).abs() < 3.0, "mass {m} != ~1181 (MC 1182.7)");
+    assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+}
+
 /// Exact volume of the intersection lens of two spheres (radii ra, rb, centre
 /// distance d). Zero when disjoint; min-ball when nested.
 fn lens_volume(ra: f64, rb: f64, d: f64) -> f64 {

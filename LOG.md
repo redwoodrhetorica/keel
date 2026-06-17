@@ -9378,12 +9378,51 @@ with 4 boundary fins, the boundary sitting at a single latitude. That is a curve
 face (sphere/cone) whose trimmed boundary wraps the axis TWICE (two loops at one
 latitude), which arises after several booleans on one curved primitive.
 
-NEXT (a focused, careful effort -- NOT a rushed guess): extend the green-slab to
-the winding-+-2 (multi-loop, double-wrap) anchor. This is the analytic mass
-integrator, the FOUNDATION of WRONG=0: a subtly-wrong winding-2 integration would
-let the gate pass a wrong body. So it needs a derived anchor + tight per-face MC
-verification (probe_mm) + the full soak, not a plausible-looking guess. Until
-then these stay honest DECLINES (the bodies are correct but unverifiable;
-DECLINE-never-WRONG intact). Related: [[massprops-sense-region-inconsistency]],
-[[sphere-split-integration-trap]]. [[minimize-declines]] [[kernel-known-limitations]]
-[[hit-a-wall-review-research]]
+SHARPER ROOT CAUSE (the fin dump corrects the fix direction). The winding-2 is
+NOT a legitimate double-wrap geometry -- it is a DOUBLED LOOP. The failing sphere
+face has ONE loop with FOUR circle fins that cover its boundary circle TWICE
+(fins span [0,pi],[pi,2pi],[0,pi],[pi,2pi] -- the full circle, then the full
+circle again), all at one latitude -> loop_du +-2. So the boolean's imprint/stitch
+emitted a sphere face whose boundary loop traverses its rim circle twice. The
+body is Euler-valid (validate passes) and mesh-approximately-correct, but the
+topology is redundant, and the green-slab reads winding 2 and declines.
+
+So the FIX is in the STITCH (do not emit the doubled loop), or a fin-dedup before
+mass integration -- NOT a new winding-2 slab anchor (there is no real double-wrap
+to integrate). This is the better-scoped, lower-WRONG-risk direction: a true
+single-traversal loop reads winding +-1 and the existing pole/apex anchor already
+handles it. Likely shares a cause with the kept `unlocated seam component` faults
+on the same bodies (the multi-cut seam relocation duplicating fins). Until fixed
+these stay honest DECLINES (correct-but-unverifiable; DECLINE-never-WRONG intact).
+Related: [[massprops-sense-region-inconsistency]], [[sphere-split-integration-trap]].
+[[minimize-declines]] [[kernel-known-limitations]] [[hit-a-wall-review-research]]
+
+## Addendum 292: the winding-2 DOUBLED-LOOP subset fixed via a green-slab fin-dedup (correct + soak-safe; a PARTIAL bite of the mass!=mesh class) (2026-06-17)
+
+Add 291 pinned the failing curved-cavity faces to a DOUBLED boundary loop (a rim
+circle traversed twice -> winding +-2 -> no slab anchor). Fix: before the
+green-slab pass-1, dedup fins within a loop -- drop a fin whose ORDERED 3-sample
+signature matches an earlier fin in the SAME loop. The redundant second traversal
+vanishes, restoring winding +-1 (the pole/apex anchor) AND the single-cover
+boundary flux. Direction-sensitive (a forward+backward pair is a different
+degeneracy, kept). It only ever collapses a geometric duplicate, so it cannot
+manufacture a wrong mass.
+
+VERIFIED: probe_mm #1 (block - ball-cavity - countersink - blind-hole) and #4
+(block + dome - hole + boss) now compute mass that matches an independent MC truth
+to 0.06-0.17%, the advisory-fault filter then clears, and both PASS clean (were
+mass-declined). Suite 283 + curved robustness 10/10 (new guard
+`curved_cavity_doubled_loop_mass_passes`). Soak FAIL=0 BOTH seeds, PASS 6535/6405
+-- BIT-IDENTICAL to the Add-290 baseline, i.e. behavior-neutral on the explorer
+(the doubled loop is a multi-cut COMPOUND phenomenon, absent from primitive-pair
+fuzzing). DECLINE-never-WRONG intact.
+
+HONEST SCOPE: this is a PARTIAL bite. bug_extract failing ops 547 -> 533 (the
+exact-duplicate subset). The `mass != mesh` class is STILL the dominant residual
+(#1 93 hits, #2 87): the rest has OTHER causes -- doubled loops whose fins are
+NOT bit-identical (near-duplicate params), genuinely self-inconsistent bodies, and
+the cyl/sphere tessellated-vs-mesh gate gap (Add 288/290). And the ROOT -- the
+multi-cut stitch EMITTING the doubled loop -- is still unfixed; this dedups
+defensively in the integrator. Next: trace the stitch duplication (likely the
+"unlocated seam component" multi-cut relocation re-imprinting a seam) and/or widen
+the dedup to near-duplicate fins. [[minimize-declines]] [[kernel-known-limitations]]
