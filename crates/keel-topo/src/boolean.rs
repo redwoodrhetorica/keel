@@ -168,17 +168,54 @@ impl Body {
             Some(Surface3::Cylinder(_)) | Some(Surface3::Cone(_)) => {
                 self.curve_cylinder_face_overlap(face, curve, tol)
             }
-            Some(Surface3::Plane(p)) => match curve {
-                keel_geom::curve::Curve3::Line(line) => {
-                    let poly = self.face_outer_loop_points(face);
-                    if clip_line_to_planar_face(line, &p, &poly).is_some() {
+            Some(Surface3::Plane(p)) => {
+                use keel_geom::curve::Curve3;
+                let poly3 = self.face_outer_loop_points(face);
+                if poly3.len() < 3 {
+                    return CurveFaceOverlap::All;
+                }
+                if let Curve3::Line(line) = curve {
+                    // A ruling: the tested line-clip is exact.
+                    return if clip_line_to_planar_face(line, &p, &poly3).is_some() {
                         CurveFaceOverlap::All
                     } else {
                         CurveFaceOverlap::None
-                    }
+                    };
                 }
-                _ => CurveFaceOverlap::All,
-            },
+                // A circle/ellipse/NURBS section of this plane with another
+                // operand's CURVED feature (a prior hole's bore, a dome): sample
+                // it and keep only if ANY point lands inside the trimmed polygon.
+                // All-off => a phantom on the OTHER surface, off this plane's
+                // extent => drop. Conservative (32 samples, ANY-on keeps), so a
+                // real in-face arc is never dropped.
+                let tau = core::f64::consts::TAU;
+                let samples: Vec<keel_math::vec::Vec3> = match curve {
+                    Curve3::Circle(ci) => (0..32).map(|k| ci.point(tau * k as f64 / 32.0)).collect(),
+                    Curve3::Ellipse(e) => (0..32).map(|k| e.point(tau * k as f64 / 32.0)).collect(),
+                    Curve3::Nurbs(n) => {
+                        let (t0, t1) = n.domain();
+                        (0..=24).map(|k| n.point(t0 + (t1 - t0) * k as f64 / 24.0)).collect()
+                    }
+                    Curve3::Line(_) => unreachable!(),
+                };
+                let fr = &p.frame;
+                let poly2: Vec<(f64, f64)> = poly3
+                    .iter()
+                    .map(|q| {
+                        let qw = *q - fr.origin;
+                        (qw.dot(fr.x), qw.dot(fr.y))
+                    })
+                    .collect();
+                let any_on = samples.iter().any(|s| {
+                    let w = *s - fr.origin;
+                    winding_nonzero(&poly2, (w.dot(fr.x), w.dot(fr.y)))
+                });
+                if any_on {
+                    CurveFaceOverlap::All
+                } else {
+                    CurveFaceOverlap::None
+                }
+            }
             _ => CurveFaceOverlap::All,
         }
     }

@@ -9147,3 +9147,23 @@ and ROOT CAUSE B -- `mass != mesh` declines on curved-compound bodies (~a third)
 The realistic test re-prioritised the worklist: sustaining a busy multi-feature
 body is the #1 real-world gap for the fieldforge swap, above the exotic
 curved-SSI classes. [[geometry-kernel-project]] [[minimize-declines]]
+
+## Addendum 286: phantom-seam drop extended to circle/ellipse sections (sphere/cone features); nested 27->40%, explorer +~390 passes/seed (2026-06-16)
+
+Add 285 dropped only LINE phantoms (plane x cylinder-bore). The SAME phantom from
+a prior dome/ball/cone feature is a CIRCLE/ELLIPSE section of the tool plane,
+which the Line-only path left as `All` -> still kept-and-faulted (pocket after a
+dome). Extended `curve_face_overlap`'s plane branch: sample a circle/ellipse/NURBS
+section (32 pts), project to the plane frame, and keep only if ANY sample lands
+inside the trimmed polygon; ALL-off -> a phantom on the other operand's curved
+surface, off this plane -> drop. Conservative (any-on keeps), so a real in-face
+arc is never dropped -- the Add-260 unsound-drop concern.
+
+MEASURED: nested per-op 27% -> 40.1% (the two phantom slices together: 24 -> 40);
+bug_extract failures 3261 -> 2611. Not bit-identical this time -- it CONVERTS
+declines to PASSES on the primitive explorer too (block x sphere/cone phantom
+circle seams that used to fault): soak PASS 5612/5589 -> 5958/6030 (+346/+441),
+DECLINE down, FAIL=0 both seeds, 0 gate escapes, 283 + curved green. A real broad
+win. REMAINING (~half each): root cause B (`mass != mesh` on curved-compound
+bodies, the AssemblyFailed cluster) + residual imprint faults (boss-cyl union onto
+a compound body, countersink = the cone/block single-op gap). [[minimize-declines]]
