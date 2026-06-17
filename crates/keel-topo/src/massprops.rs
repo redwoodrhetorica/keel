@@ -942,13 +942,27 @@ impl Body {
         if std::env::var("KEEL_MASS_DEBUG").is_ok() {
             eprintln!("  rect {fk:?} u [{u0:.4}, {u1:.4}] v [{v0:.4}, {v1:.4}]");
         }
-        let panels = 16usize;
-        for iu in 0..panels {
-            let ua = u0 + (u1 - u0) * iu as f64 / panels as f64;
-            let ub = u0 + (u1 - u0) * (iu + 1) as f64 / panels as f64;
-            for iv in 0..panels {
-                let va = v0 + (v1 - v0) * iv as f64 / panels as f64;
-                let vb = v0 + (v1 - v0) * (iv + 1) as f64 / panels as f64;
+        // Panels per axis. The u-integrand carries the azimuthal harmonics
+        // (cos/sin products up to ~degree 3 for the inertia tensor), so it
+        // keeps the subdivision. The v-integrand is a low-degree POLYNOMIAL for
+        // a cylinder (radius constant -> moments degree <=2 in v) and a cone
+        // (radius linear -> degree <=4), which a SINGLE GL8 panel (exact to
+        // degree 15) integrates EXACTLY; only the sphere's latitude (trig in v)
+        // needs v-subdivision. (A plain cylinder lateral was 16x16x64 = 16384
+        // nodes -> 2.1 ms; nv=1 makes it 1024 nodes, exact, the OPT win.)
+        let nu = 16usize;
+        let nv = match surf {
+            // v-integrand is a low-degree POLYNOMIAL -> one GL8 panel is exact.
+            Surface3::Cylinder(_) | Surface3::Cone(_) => 1usize,
+            // Sphere (cos v) and torus (minor-circle trig) need v-subdivision.
+            _ => 16usize,
+        };
+        for iu in 0..nu {
+            let ua = u0 + (u1 - u0) * iu as f64 / nu as f64;
+            let ub = u0 + (u1 - u0) * (iu + 1) as f64 / nu as f64;
+            for iv in 0..nv {
+                let va = v0 + (v1 - v0) * iv as f64 / nv as f64;
+                let vb = v0 + (v1 - v0) * (iv + 1) as f64 / nv as f64;
                 for (xu, wu) in GL8_X.iter().zip(GL8_W) {
                     let u = 0.5 * (ua + ub) + 0.5 * (ub - ua) * xu;
                     for (xv, wv) in GL8_X.iter().zip(GL8_W) {
@@ -1374,9 +1388,32 @@ impl Body {
             // wrong one, so the candidate whose magnitude matches the
             // face's own tessellated area wins.
             let pole = core::f64::consts::FRAC_PI_2;
+            // ENCLOSED-POLE anchor. The boundary nodes span a latitude BAND
+            // [v_min, v_max]; the face's interior reaches past it to exactly ONE
+            // frame pole, where the anchor must sit (the other pole integrates
+            // the COMPLEMENT -- the trap's defect 2). PRIMARY test (frame-robust):
+            // the face interior point lies on the enclosed-pole side of the band.
+            // A TILTED planar cap cut (a cylinder/cone end-cap not square to the
+            // sphere axis) leaves the SSI circle at mid latitudes while the big
+            // cap reaches a frame pole, so the interior latitude falls OUTSIDE
+            // [v_min, v_max] toward the enclosed pole. The area-vs-tessellation
+            // witness below mis-picks here (it reads the COMPLEMENT pole when the
+            // tessellation meshed the wrong cap side -- the F1 cyl/sphere
+            // planar-cap mass = 1.25 vs true 2.85 bug).
+            let ip_pole = self.face_interior_point(fk).and_then(|ip| {
+                let vlat = vmap(ip - o);
+                if vlat < v_min - 1e-9 {
+                    Some(-pole)
+                } else if vlat > v_max + 1e-9 {
+                    Some(pole)
+                } else {
+                    None
+                }
+            });
             // SPHERICAL area from the boundary nodes (dA = r^2 cos v
             // dv du, so the inner integral is sin v_t - sin vb): the
-            // same units as the tessellated area witness.
+            // same units as the tessellated area witness. FALLBACK only,
+            // when the interior latitude sits inside the boundary band.
             let r2 = match surf {
                 Surface3::Sphere(s) => s.radius * s.radius,
                 _ => 1.0,
@@ -1388,17 +1425,18 @@ impl Body {
                 }
                 (s * r2).abs()
             };
-            let tess_area: f64 = self
-                .tessellate_face(fk)
-                .iter()
-                .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
-                .sum();
-            let chosen = if (area_at(pole) - tess_area).abs() <= (area_at(-pole) - tess_area).abs()
-            {
-                pole
-            } else {
-                -pole
-            };
+            let chosen = ip_pole.unwrap_or_else(|| {
+                let tess_area: f64 = self
+                    .tessellate_face(fk)
+                    .iter()
+                    .map(|t| 0.5 * (t[1] - t[0]).cross(t[2] - t[0]).norm())
+                    .sum();
+                if (area_at(pole) - tess_area).abs() <= (area_at(-pole) - tess_area).abs() {
+                    pole
+                } else {
+                    -pole
+                }
+            });
             if (chosen > 0.0 && v_max > pole - 1e-6) || (chosen < 0.0 && v_min < -pole + 1e-6) {
                 return Err(TopoError::Precondition(
                     "green-slab: boundary touches the anchor pole",
@@ -1432,6 +1470,31 @@ impl Body {
                 nodes.len(),
                 fins_c.len()
             );
+        }
+        // HOLE-ORIENTATION normalization (the cone/sphere window mass): an
+        // inner-ring loop is a HOLE and must REDUCE the region, so its (u,v)
+        // area contribution must OPPOSE the outer loop's. A non-wrapping window
+        // (du ~ 0) is invisible to the task-41 winding flip above, and the
+        // cone's apex-side anchor flips a window's (u,v) handedness relative to
+        // the cylinder's base-side anchor -- so a window imprinted consistently
+        // in 3D arrives CO-oriented with the outer loop on the cone and ADDS
+        // its apex-wedge (the cone-rest read 13.72 vs the true 11.42). Flip any
+        // inner ring (li>=1) whose area co-signs with the outer (li=0).
+        {
+            let nl = loop_du.len();
+            if nl >= 2 {
+                let mut larea = vec![0.0f64; nl];
+                for (i, &(_, v_t, wu)) in nodes.iter().enumerate() {
+                    larea[node_li[i]] -= wu * (v_t - v_base);
+                }
+                let outer_sign = larea[0].signum();
+                for (i, n) in nodes.iter_mut().enumerate() {
+                    let li = node_li[i];
+                    if li >= 1 && larea[li].abs() > 1e-12 && larea[li].signum() == outer_sign {
+                        n.2 = -n.2;
+                    }
+                }
+            }
         }
         let mut area = 0.0;
         let mut acc: Vec<(f64, f64, f64)> = Vec::new();

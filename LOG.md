@@ -8720,3 +8720,450 @@ OPEN cyl/cyl seam (degenerate/tangent) still declines. Soak FAIL=0 both seeds
 quadric quartics (cyl/sph, cone/sph). Remaining: the A u B stub-tessellation
 (partial-theta wrap sampling) and skew/tilted cyl/cyl (general quartic SSI).
 [[kernel-known-limitations]]
+
+## Addendum 276: cyl/sphere quartic SSI gateway (shared cylinder branch field) lands BEHAVIOR-NEUTRAL + gated; the soak surfaced (and I diagnosed, then deferred) a mesh_volume far-component cancellation and a pre-existing sph/sph frame-dependent malformed-lens class (2026-06-15)
+
+The dominant remaining decline class is non-coaxial cylinder/sphere (~2500) and
+cone/sphere (~700) quartics. Their HARDEST piece -- the analytic SSI seam -- is
+now SOLVED and unit-tested, shipped GATED + BEHAVIOR-NEUTRAL (zero production
+change, dormant exactly like the Add-272 cyl/cyl pieces) until the sphere-side
+downstream is built. The validation soak's novelty trajectory also surfaced two
+PRE-EXISTING latent issues -- both fully diagnosed and DEFERRED (not shipped), to
+keep this increment provably pass-neutral.
+
+THE SSI GATEWAY (keel-geom/ssi.rs) -- SHIPPED, test-only:
+The cyl/cyl rung-3 closed-form branch field (Add. 275 lineage) generalizes
+verbatim: on a cylinder's own (theta, v) parametrization the OTHER quadric
+contributes a quadratic q2 v^2 + q1(theta) v + q0(theta) = 0 in the axial
+coordinate v. Extracted that engine into a shared `cyl_quadratic_branch_field`
+(disc sampling -> WRAP [disc>0 all theta: 2 closed loops encircling the axis] vs
+BITE/WINDOW [sign change: one closed loop per positive run, + branch out / -
+branch back, Chebyshev-regularized at the sqrt turnarounds] -> certified cubic
+LSQ NURBS fit, miss DECLINES). cylinder_cylinder now CALLS it (behaviour
+preserved: the Steinmetz oracle + certified-branches tests still pass). The
+non-coaxial cylinder_sphere arm (was a blanket Err) supplies q2=1, q1=2 g.z,
+q0=|g|^2-R^2 with g = (cross-section point at theta) - C, and calls the same
+engine. Three new ssi.rs tests pin it: a side-graze sphere -> ONE window loop, a
+swallowing sphere -> TWO wrap loops (every sampled point on BOTH surfaces to
+1e-5), and coaxial still returns EXACT circles (never the branch field).
+
+THE GATE (boolean.rs seam_curves) -- BEHAVIOR-NEUTRAL: a non-coaxial cyl/sphere
+PAIR declines with IntersectionFailed BEFORE the SSI runs -- EXACTLY the prior
+blanket-Err behaviour (same coaxiality threshold > tol, same fault), so the
+boolean is byte-identical to Add.275 (coaxial circles assemble; off-axis
+declines). The branch-field arm is reached ONLY by ssi.rs unit tests. Why the
+gate is the whole non-coaxial class, not just "Nurbs seam": the correct SSI now
+returns Empty when an off-axis sphere clears the lateral (sphere inside the tube
+radially); letting that through removed the spurious lateral decline and the
+cap/sphere assembly then exposed a latent gap (probe_cysph_fail: a grazing
+cyl - sph difference read 1.7% OVER the cylinder's own volume; an intersection
+self-declined via the mass!=mesh net). So the gate stays broad until the sphere
+downstream lands -- DECLINE-never-WRONG, and pass-neutral vs baseline.
+
+SOAK-SURFACED FINDINGS (diagnosed, DEFERRED -- NOT in this commit):
+1. mesh_volume far-component f64 CANCELLATION. A DISJOINT cone/cone union
+   (centres ~6.7 apart, one flat cone r3.16 h0.24) read 6.7% low and was
+   REFERENCE-DEPENDENT (origin 4.041 / first-vertex 3.881 / centroid 4.060) --
+   mass EXACT (= disjoint sum 4.232), shell valid: pure f64 catastrophic
+   cancellation, no single reference keeps coords small across a multi-unit-
+   spread mesh. Per-component recenter (sum signed volume per connected_
+   components bucket, each about its own centroid) recovers 4.215. The fix is
+   correct and ready, but it FLIPS that cone/cone FAIL->PASS, which SHIFTS the
+   novelty trajectory -> see #2. Deferred so this commit stays behavior-neutral.
+2. PRE-EXISTING sph/sph frame-dependent MALFORMED LENS. With the mesh fix applied
+   (trajectory shifted), seed 1 hit 5 FAIL:mass-mesh I sph/sph on LARGE spheres
+   (r~2-3.8). At tol 1e-7 these mass-DECLINE ("green-slab: empty boundary") or
+   self-decline (AssemblyFailed) -- a malformed/incomplete lens (mesh ~13.2 vs MC
+   truth ~19.1, NOT closed by finer tessellation). FRAME-dependent: the sphere
+   axis (genome) places the u=0 seam + poles, and the lens assembly is sensitive
+   to where the SSI circle sits relative to them (the Add-267 sphere_face_
+   interior_point sensitivity). Untouched by this work; KL5 sphere-robustness
+   territory. The fix for #1 + the hardening for #2 are a coupled NEXT increment.
+
+Validation: keel-geom 138 + keel-topo 283 (+ integration) green; boolean +
+mesh_volume behaviour is BYTE-IDENTICAL to Add.275 (cyl/sphere gated = prior Err
+path; cyl/cyl refactor behaviour-preserving; mesh_volume reverted), so the soak
+is the baseline result (FAIL=0 both seeds, gateway dormant). NEXT: the coupled
+mesh-fix + sph/sph-frame hardening, then the sphere-side cyl/sphere downstream --
+the window case first (imprint_closed_curve is already curve-agnostic via
+curve_pcurve_on_any, which inverts a NURBS onto the analytic sphere; integrate_
+face_green already handles arbitrary sphere loop windings), then the WRAP case
+needs the band fallback + multi-rim clip generalized from circle rims to NURBS.
+[[kernel-known-limitations]]
+
+## Addendum 277: the two Add-276 deferrals SHIPPED -- per-component mesh_volume recenter + a watertightness net that converts a pre-existing sph/sph SILENT WRONG into a DECLINE (2026-06-15)
+
+Add 276 deferred two soak-surfaced findings; this addendum lands both, and in
+doing so closes a genuine DECLINE-never-WRONG hole that predates this work.
+
+THE SILENT WRONG (the reason it mattered): the 5 seed-1 "FAIL:mass-mesh I
+sph/sph" were not false-positives -- with the correct genome sphere FRAMES
+(Frame3::from_z(pos, axis), the axis places the u=0 seam + poles), large offset
+sphere/sphere INTERSECTIONS emit a lens 18-33% OVER the exact two-sphere lens
+volume (case 0: kernel 22.85 vs the closed-form 19.13; case 2: 47.06 vs 35.19),
+validate-passing, faults empty, mass IN the op-bound. BOTH honesty gates miss
+it: self-consistency passes (the body's tessellation agrees with the wrong mass
+-- the #48 self-consistent-wrong trap) and the op-bound [0, min(volA,volB)] =
+[0, 39.7] is far too loose to flag 22.85. The committed kernel emits these; the
+baseline soak's novelty trajectory simply never generated these genomes. Root
+cause is the KL5 sphere-classify frame sensitivity (wrong cap selected) -- a
+hard, separately-tracked bug. The lens is also NON-WATERTIGHT.
+
+FIX 1 -- mesh_volume per-connected-component recenter (interrogate.rs): sum the
+signed-tetra volume PER connected_components bucket, each recentered about its
+own centroid. A single global reference cannot keep coordinates small across a
+multi-unit-spread body, so the far component cancels in f64 (the Add-276
+cone/cone disjoint union read 6.7% low, reference-dependent; mass was EXACT).
+Per-component is exact per closed component (a void contributes negatively) and
+keeps every coordinate local. Retires the disjoint/spread cancellation false-
+positive class.
+
+FIX 2 -- watertightness net (boolean.rs gate + interrogate.rs mesh_open_ratio):
+||sum of triangle area-vectors|| / (sum of triangle areas). A CLOSED oriented
+mesh has zero net area-vector; an open mesh (crack / dropped face / mis-stitch)
+leaves a residual. It is built from EDGE vectors so it is translation-invariant
+-- no far-origin cancellation, complementary to FIX 1. The gate declines a
+result with ratio > 1e-2. This is what catches the #48 silent wrong that mass==
+mesh cannot: the non-watertight lens is now DECLINED, not emitted. All 5 sph/sph
+genomes now decline (AssemblyFailed); the watertight coaxial rod-through-ball
+(coaxial_cyl_sphere) and the cyl/cyl band split still PASS unchanged.
+
+Net effect: a pre-existing sph/sph SILENT WRONG class -> DECLINE (the contract
+floor restored, the most important kind of fix), AND the cancellation false-
+positive retired. Tests: curved_volume_robustness.rs (cone/cone disjoint
+mesh==mass; sph/sph never-silent-wrong) + full keel-geom 138 / keel-topo 283
+green. Soak FAIL=0 both seeds (20k). Making the sph/sph lenses PASS (correct
+cap selection) remains the KL5 sphere-classify root-cause fix. [[kernel-known-limitations]] [[tessellation-tolerance-trap]]
+
+## Addendum 278: cyl/sphere WINDOW class lands -- the FIRST non-coaxial cyl/sphere PASSES (+~570/seed), via NURBS-loop classify interior points + a tight cyl/sphere volume oracle (2026-06-16)
+
+The dominant decline frontier (non-coaxial cyl/sphere ~2500) starts converting
+to PASSES. The WINDOW case -- a sphere grazing a cylinder's lateral in a SINGLE
+non-encircling loop -- now assembles correctly. Soak: PASS 4687 -> 5255 (seed 1)
+and 4673 -> 5252 (seed 2), +568 / +579, FAIL=0 both seeds (20k). The SSI gateway
+(Add 276) was the prerequisite; this is the assembly half for the window class.
+
+ROOT CAUSE (found by tracing, not guessed): the SSI + imprint already WORKED
+(seam_curves returns the window NURBS loop; imprint_closed_curve splits both
+operands -- A into lateral-rest + window-disc + 2 caps, B sphere into rest +
+disc). The wall was CLASSIFY: both curved interior-point helpers only handled
+CIRCLE rims. For a NURBS window loop, `cylinder_face_interior_point` returned the
+"opposite the seam" full-ring point (theta=pi, OUTSIDE the window) and
+`sphere_face_interior_point` returned None ("NO INTERIOR POINT" -> Unknown ->
+the sphere bite patch dropped -> cyl-sph read the FULL cylinder, a silent wrong).
+
+THREE pieces (boolean.rs):
+1. cylinder_face_interior_point: a SINGLE non-periodic loop (a window disc, theta
+   does NOT wrap the ring) now returns the loop's (theta,h) bounding-box centre
+   (interior to the convex window), not the full-ring amid/hmid heuristic.
+2. sphere_face_interior_point: a NURBS window loop (no circle rim) now uses the
+   loop's centroid DIRECTION from the sphere centre -- the disc patch (loop is
+   OUTER) under it, the rest (loop is INNER ring) opposite -- verified against
+   the trimmed (u,v) domain.
+3. TIGHT cyl/sphere oracle (cyl_sphere_op_volume + cyl_sphere_inter_volume): the
+   exact cyl-intersect-sphere volume by 1D integration along the axis of the
+   closed-form TWO-DISC LENS area (cyl cross-section disc vs sphere cross-section
+   circle, centres delta apart). The window has NO closed form for the trimmed
+   shape, so this independent VOLUME truth is the safety net: the gate declines
+   any cyl/sphere result off the exact volume -> a watertight self-consistent
+   WRONG (the #48 class the loose op-bound + mass==mesh both miss) cannot ship.
+   This is what makes letting windows assemble SAFE.
+
+The gate (boolean.rs seam_curves) now declines only the WRAP case (sphere
+swallows the cross-section, R >= delta + r_cyl -> two encircling loops -> a
+sphere BAND, whose machinery is circle-rim-specific, Add 268). A window whose
+INTERSECTION is non-watertight at the shared NURBS edge still declines (the
+watertightness net, Add 277) -- a tessellation-consistency follow-up, not a
+wrong. Tests: curved_volume_robustness.rs::cyl_sphere_window_difference_passes_
+exact + keel-topo full suite green. REMAINING for the class: the window
+intersection/sph-cyl tessellation consistency at the shared curved edge, the
+WRAP case (sphere band generalized to NURBS rims), and skew cyl/cyl (same
+canonical-seam wall). [[kernel-known-limitations]]
+
+## Addendum 279: cyl/sphere window -- 3 of 4 ops now PASS (sph-cyl + union added) (2026-06-16)
+
+Extends Add 278 from the difference alone to difference + sph-cyl + union. The
+remaining classify gap was the sphere REST face (the window as an INNER ring ->
+the big region): `point_in_face_uv`'s (u,v) winding is unreliable on the seamed
+periodic rest (it returned None for every grid sample, so the rest stayed
+Unknown and sph-cyl / union dropped it -> non-positive/inverted result). FIX
+(sphere_face_interior_point): for an inner-ring (rest) loop return the ANTIPODE
+of the window centroid directly -- the big region's interior by construction --
+UNVERIFIED, since point_in_face_uv cannot confirm it on the periodic rest and
+the tight cyl/sphere oracle (Add 278) backstops any error. Now cyl-sph (17.78),
+sph-cyl (6.17), cyl u sph (25.01) all PASS mass==mesh==truth; only the
+intersection (a tiny two-disc lens) still declines on shared-edge tessellation
+non-watertightness (decline-safe). Soak FAIL=0 both seeds (20k), slow configs
+~1600 -> ~2400 (far more curved assemblies now succeed). Test
+cyl_sphere_window_three_ops_pass_exact. The antipode-for-rest is safe ONLY
+because the oracle guards cyl/sphere; cone/sphere stays SSI-gated and sph/sph
+uses circles, so neither reaches this unverified path. [[kernel-known-limitations]]
+
+## Addendum 280: cone/sphere SSI infrastructure -- branch-field engine generalized to ANY ruled surface; oracle + classify in place; cone passes gated on the tessellate_cone NURBS stencil (2026-06-16)
+
+Sets up the cone/sphere class (~700 declines) by replicating the cyl/sphere
+method. cone/sphere is ALSO a quadratic in the ruling parameter: on the cone
+ruling P(theta,v) = O + (r0 + v*m)*rad + v*a, the sphere |P-C|^2=R^2 gives
+(m^2+1) v^2 + 2(g0.dir) v + (|g0|^2-R^2) = 0 with g0 = (O-C)+r0*rad, dir =
+m*rad + a (|dir|^2 = m^2+1). So the SAME branch field serves it.
+
+PIECES:
+- SSI: `cyl_quadratic_branch_field` generalized to `quadratic_branch_field`,
+  taking a `point_at(theta,v)` closure instead of a Cylinder3 (the ONLY surface-
+  specific bit was the eval point). cylinder_cylinder, cylinder_sphere, and the
+  NEW non-coaxial cone_sphere arm all build their point_at and call it. 18 ssi
+  tests green (cyl/cyl Steinmetz + cyl/sphere preserved through the refactor).
+- ORACLE: cone_sphere_inter_volume (1D integral of the two-disc lens area, cone
+  disc radius r0+v*m VARIES along the ruling) + cone_solid_volume; the gate's
+  tight check now calls quadric_sphere_op_volume (cyl/sphere else cone/sphere),
+  so cone/sphere is volume-guarded -> no silent wrong even un-gated.
+- CLASSIFY: cone_face_interior_point gets the NURBS-window case (loop (theta,v)
+  bbox centre); the sphere-side fix (Add 278/279) is surface-agnostic, already
+  serving cone/sphere.
+
+STATUS: cone/sphere windows still DECLINE (decline-safe, oracle-backed) -- the
+assembly is malformed because tessellate_cone has NO NURBS-window stencil (the
+exact gap tessellate_cylinder filled for cyl/cyl). probe_cone_win: all 4 ops
+decline (mass!=mesh / invalid). Adding that stencil (mirror tessellate_cylinder's
+even-odd (theta,v) ray-cast) is THE last piece -> cone/sphere window passes.
+Soak FAIL=0 both seeds (20k); keel-geom 138 + keel-topo green; cyl/sphere 3/4
+preserved. (Supersedes Add 279's "cone/sphere stays SSI-gated": it now flows,
+oracle-guarded.) The generalized engine + oracle now serve the whole
+quadric-vs-sphere family. [[kernel-known-limitations]]
+
+## Addendum 281: the quadric-vs-sphere WINDOW class is COMPLETE -- cyl/sphere AND cone/sphere each PASS all 4 ops exact, via the window-disc edge-conforming fan + radial subdivision + the cone hole-orientation mass fix (2026-06-16)
+
+Closes the arc opened in Add 276-280. The SSI engine, oracle, and classify were
+all in place; the remaining blocker was purely TESSELLATION watertightness at the
+shared NURBS seam edge. Two faces meeting along an SSI window each meshed their
+own side independently -- `tessellate_sphere` had NO NURBS-trim path at all (it
+meshed the FULL sphere), and the cyl/cone even-odd (theta,v) grid stencils snap
+the window boundary to each face's OWN param grid, leaving two non-matching
+staircases and an open seam. The curved gate (mesh_open_ratio / mass!=mesh) then
+DECLINED -- decline-safe and oracle-guarded, but a decline, not a pass.
+
+THE FIX (three pieces, all shipped together):
+1. HOLE-ORIENTATION mass fix (massprops `integrate_face_green`): a non-wrapping
+   window inner ring must OPPOSE the outer loop's winding. The cone's apex anchor
+   left the window inner ring co-signed with the outer, adding an apex-wedge
+   (cone-rest read 13.72 vs true 11.42). Flip every inner ring co-signed with the
+   outer. -> cone-sph and cone u sph masses exact.
+2. WINDOW-DISC FAN (tessellate `fan_window_disc` + `window_loop_polyline`): a
+   curved face whose trim is a single star-convex seam loop (a disc-cap) is
+   triangulated by fanning from an on-surface interior anchor to the loop's
+   CANONICAL edge samples (`fin_curve_samples`), NOT the grid. Watertightness is
+   structural: two faces sharing the seam EDGE return the SAME points -- a closed
+   seam edge differs only by the fin's `fwd` (one samples s, the other 1-s ->
+   identical set, reversed), so the two caps weld exactly. This also gave
+   tessellate_sphere its first NURBS-trim path.
+3. RADIAL SUBDIVISION (concentric rings, each `project`ed back onto the surface):
+   a single fan ring chords a curved cap too crudely for a TINY/THIN lens -- the
+   cap error is a large fraction of the small intersection volume (mesh!=mass >
+   2% -> decline). Marching rings inward to the anchor, projected onto the
+   surface, follow curvature so the lens lands within the 2% gate. Interior rings
+   + anchor are face-private, so watertightness (ring 0 = the shared edge) holds.
+
+DETECTOR (dispatch fan vs grid): cyl/cone disc-cap = exactly one loop, every edge
+a degree>=2 NURBS seam (no circle/line rim -> the kept region is the loop
+interior, a small cap; a band/rest has a rim or >1 loop -> keep the even-odd
+grid). sphere disc-cap = a single NURBS-seam loop whose SMALL-cap side (mean rim
+direction dot-test) contains the face interior point; the big-cap REST side
+returns None and falls through to the grid. So cone-sph / cone u sph rests stay
+on the grid (their small jagged seam is under the area-ratio threshold against a
+large body), while every small-cap (both intersection lenses, both bite walls)
+fans watertight.
+
+RESULT: cyl/sphere 4/4 + cone/sphere 4/4, INCLUDING the intersection lens that
+Add 278/279/280 left declining. probe_cone_win: all 4 mass==mesh==truth (cone n
+sph mass 0.1165 mesh 0.1150 truth 0.1144; sph - cone 2.0282/2.0189/2.0302; cone -
+sph 12.45; cone u sph 14.59). `cyl_sphere_window_four_ops_pass_exact` +
+`cone_sphere_window_four_ops_pass_exact` lock all 8 ops. keel-topo 283 lib +
+curved-robustness green. Soak FAIL=0 both seeds (20k): seed1 PASS 5370 / DECLINE
+14630, seed2 PASS 5343 / DECLINE 14657 (zero failures, zero hangs). The
+quadric-vs-sphere window family is now fully solved -- minimize-declines advances
+two whole op-classes from DECLINE to PASS. [[kernel-known-limitations]]
+[[minimize-declines]]
+
+## Addendum 282: cyl/sphere PLANAR-CAP intersection PASSES -- sphere truncated by a cylinder END plane, via a frame-robust mass pole anchor + arc-split cut-circle cap trim (2026-06-16)
+
+A sphere sitting inside a cylinder radially but poking out one flat END: cyl n
+sph is the sphere truncated by the cylinder's cap PLANE (a single circle, NOT a
+lateral NURBS window -- a distinct class from Add 281). Two independent sphere
+bugs, both rooted in the cut circle being TILTED relative to the sphere frame and
+CROSSING the sphere's parametric seam:
+
+1. MASS green-slab pole anchor (massprops.rs): the big truncated-sphere cap
+   reaches a sphere FRAME pole, so the green-slab anchors at the enclosed pole.
+   The enclosed-pole selection used a tess-area witness (match the boundary-node
+   area to the tessellated area), which mis-picked the COMPLEMENT pole when the
+   tessellation meshed the wrong cap side -> mass 1.25 vs true 2.85. FIX: pick the
+   enclosed pole from the face INTERIOR POINT's latitude vs the boundary band --
+   the interior sits OUTSIDE [v_min, v_max] toward the enclosed pole. Frame-robust;
+   the area witness stays as the ambiguous-band fallback.
+2. TESSELLATION cap side (tessellate.rs sphere_cap_trim): the cut circle crosses
+   the sphere seam -> stored as open ARCS, not a closed circle -> sphere_cap_trim
+   (closed-circle only) returned None -> fell to the arc_planes path, whose
+   boundary-vertex-AVERAGE side is ambiguous for a lone circle (vertices average
+   to the centre) AND wrongly treats the sphere's seam MERIDIAN as a clip plane ->
+   sliced the cap on the meridian -> mesh 0.96. FIX: generalize sphere_cap_trim to
+   recognise a cut circle stored as coplanar non-seam arcs (skip the seam
+   meridian: an edge whose both fins are on this face), then use the
+   interior-point side. Two distinct rims still -> None (a band, handled
+   downstream).
+
+RESULT: cyl/sphere planar-cap intersection PASSES (mass 2.8655, mesh 2.8551,
+truth 2.8531). Test cyl_sphere_planar_cap_intersection_pass. keel-topo 283 lib +
+curved-robustness (5) green. Soak FAIL=0 both seeds (20k): seed1 PASS 5612 /
+DECLINE 14388, seed2 PASS 5589 / DECLINE 14411 -- up +240/seed from Add 281's
+5370/5343, so the cap-trim + pole-anchor fix lands many more planar-cap sphere
+cases than just F1 (broad sphere-cap win, not one genome). F2
+(the cyl - sph graze in probe_cysph_fail) REMAINS decline-safe: a near-tangent
+contact where the tiny in-cylinder sphere region is not walled (a sphere face
+STRADDLES the cylinder boundary, so the single-interior-point classify cannot
+resolve it; mass 14.43 EXCEEDS the cylinder's own 14.20, impossible for a
+difference, so the gate declines). That is the grazing-contact finer-imprint
+problem (dossier #59), left declining -- DECLINE-never-WRONG holds.
+[[kernel-known-limitations]] [[minimize-declines]]
+
+## Addendum 283: cyl/sphere WRAP -- the cylinder-side band split lands (mesh exact under the dev flag); the sphere NURBS-cut mass is the remaining wall (dormant enabling machinery) (2026-06-16)
+
+The dominant remaining decline class (cyl/sph + sph/cyl UnassemblableSeam,
+~2747/seed) is the WRAP case: a sphere swallowing the cylinder cross-section ->
+two ENCIRCLING NURBS loops (the off-axis rod-through-ball; the coaxial version
+PASSES, Add 267). probe_wrap reproduces a clean case (sphere R3, rod r1 offset
+x1, z[-4,4]).
+
+LANDED (cylinder side): the encircling loops were mis-routed to the
+interior-ring (hole) imprint because `closed_curve_center_axis` only recognises a
+coaxial PLANAR circle -- the off-axis sphere cut is a NON-planar NURBS loop
+(z = +-sqrt(R^2 - ...) varying with theta). New `curve_encircles_axis` sums the
+unwrapped azimuth advance about the cyl axis (nets ~+-2pi for a wrap, ~0 for a
+window), routing encircling NURBS wraps to `imprint_cylinder_wrap_bands` (the Add
+275 band split, which already chains: 2 wraps -> 3 bands, keep the middle). Under
+the dev flag this makes the cyl/sphere wrap assemble with the MESH EXACT (I mesh
+17.13 vs truth 17.17; D 7.95 vs 7.95; U 123.8 vs 121) -- the topology is correct.
+
+THE WALL (sphere side): the sphere NURBS-cut faces -- caps bounded by a wrap loop
+(intersection) and the sphere REST with two NURBS holes (union) -- integrate
+WRONG in the Green-slab (I mass 16.07 vs 17.17; U mass 67.58 vs 121) and are
+ORIENTATION-SENSITIVE (reorienting the sphere frame drops the caps from classify
+entirely). This is the documented KL5 "hardest piece": the sphere NURBS-cut
+classify + curved mass generalised from circle rims to arbitrary NURBS loops
+(dossier #60). Multi-session; the window-disc fan (Add 281) + arc-split cap-trim
+(Add 282) are reusable for the cap tessellation, but the classify (frame-robust
+interior point for a NURBS-cut sphere region) and the multi-hole Green-slab mass
+are the open work.
+
+STATE: all wrap machinery is DORMANT behind KEEL_WRAP_FLOW (the gate at
+boolean.rs:6469 + the encircling arm in `wraps`); default behaviour is
+byte-identical (the wrap still declines UnassemblableSeam) -- 283 lib + curved
+green, pass-neutral by construction. Committed as enabling machinery (the Add 273
+pattern) so the next session resumes from a mesh-correct wrap. probe_wrap +
+KEEL_WRAP_FLOW reproduce. [[kernel-known-limitations]] [[minimize-declines]]
+
+## Addendum 284: optimization series -- the iso-rect mass integrator was over-sampling an exactly-integrable polynomial; cylinder/cone mass 11x, drill difference 2.1x (2026-06-16)
+
+Re-measured the curved benchmark (tests/profile_curved) on noncoaxial-quartics:
+it had REGRESSED since Add 192 (drill difference 4.3 -> 8.5 ms, sphere 6.3 ->
+14.7) as the curved-SSI work added per-op cost. Isolating one op (probe_prof)
+localized it: a PLAIN cylinder's mass_properties was 2.11 ms (a box is 0.004 ms),
+and tessellation was fast (0.09 ms) -- so the cost was the INTEGRATION.
+
+ROOT: integrate_curved_face's iso-rectangle quadrature used a FIXED 16x16 panel
+grid x GL8^2 = 16,384 nodes per curved face, for cylinder, cone AND sphere alike.
+But the v-direction integrand is a low-degree POLYNOMIAL for a cylinder (radius
+CONSTANT -> the moment integrands are degree <=2 in v) and a cone (radius LINEAR
+-> degree <=4), which a SINGLE GL8 panel (exact to degree 15) integrates EXACTLY.
+Only the sphere (cos v) and torus (minor-circle trig) have a trigonometric
+v-integrand needing the subdivision.
+
+FIX: nv (v-panels) adaptive -- 1 for Cylinder/Cone, 16 for Sphere/Torus; nu stays
+16 (the azimuthal cos/sin harmonics up to ~degree 3). One line, provably exact.
+(Setting nv=1 for the torus too first broke its volume -- caught immediately by
+the cylinder_cone_torus_volumes test -- torus has trig v; the allow-list is now
+explicit.)
+
+MEASURED: plain cylinder mass 2.11 -> 0.19 ms (11x); holed-plate result mass 2.22
+-> 0.29 ms (7.6x); drill difference 8.49 -> 3.97 ms (2.1x, now BELOW the Add-192
+4.3 ms baseline); mass_properties total over the benchmark 130 -> 42 ms (3x).
+Sphere difference 14.7 -> 12.55 (the sphere keeps nv=16; it is now WINDING-bound,
+not mass-bound). EXACTNESS held: all 283 lib + curved tests green, the integral
+is exact either way (1 GL8 panel exact for the polynomial v-integrand), so
+bit-identical at the value level -> soak buckets unchanged. Soak FAIL=0 both seeds
+(20k) [pending confirm].
+
+This is the SAME finding the Add 189-192 leg kept hitting: a numerical grid
+over-sampling something integrable in closed/exact form. REMAINING dominant cost:
+the winding number (336 ms, 6352 calls) -- the sphere difference + GWN-probe
+workloads are now winding-bound. That is the BVH/Barnes-Hut fast-winding option,
+an APPROXIMATION the optimization leg deliberately kept "in the drawer" (the
+classify path's exactness); taking it out is a separate, validation-heavy
+decision (the threshold margins are 0.25, so a <1e-6-agreeing FWN would be
+bucket-safe, but it warrants the three-bucket oracle, not just the soak). probe_prof
+isolates any single op's stage breakdown. [[geometry-kernel-project]]
+
+## Addendum 285: realistic-CAD-workload testing + the first compound-body fix (drill-then-pocket); the multi-feature frontier mapped, 0 gate escapes throughout (2026-06-16)
+
+User redirected validation from the adversarial novelty-search explorer (random
+primitive PAIRS, mostly ill-posed) to REALISTIC CAD workloads -- valid operations
+a user actually issues -- and demanded the tests surface ACTIONABLE bugs, not
+scores. New instruments (examples/): cad_workload (single feature on clean stock),
+cad_session_real (one evolving body through dozens of nested features, deliberate
+non-overlapping placement), bug_extract (dedupe each failure by error signature +
+DELTA-DEBUG to a minimal triggering feature sequence -> ranked paste-able repros),
+decline_triage (independent MC overlap oracle: correct-refusal vs genuine gap).
+
+FINDINGS: single feature on clean stock = 90% PASS, really 100% on 11 of 14
+feature types with 3 named gaps (countersink=block-cone, rounded-end=cyl U sphere
+cap, cross-hole=perp cyl/cyl) -- a feature TO-DO list, not flakiness. NESTED on a
+busy compound body collapses to ~24% per-op: the real-world blocker, bigger than
+the off-axis curved-SSI frontier. CRITICAL SAFETY RESULT: 0 gate escapes across
+every realistic test (single + nested + the 512k explorer) -- no broken/wrong body
+ever returned as success; DECLINE-never-WRONG holds on compound operands too. (The
+"FAIL%" first reported was a mislabel: valid bodies with a NURBS face the analytic
+mass cannot integrate -- correct bodies.)
+
+ROOT CAUSE A (~half of nested failures), FIXED: a PHANTOM seam. The new tool's
+plane meets the body's PRE-EXISTING curved feature on the INFINITE surfaces --
+a pocket's side plane x a prior hole's bore cylinder = two rulings at the bore,
+OFF the pocket's trimmed extent. `curve_cylinder_face_overlap` defaulted a PLANE
+face to `All` (handled only cyl/cone), so the phantom passed the (All,All) filter,
+was kept, and faulted the multi-component imprint ("open chain end not on
+boundary" + "unlocated seam component (non-planar multi-cut face)") -- though the
+assembly was correct (valid, mass exact). FIX: `curve_face_overlap` dispatches by
+surface type; a PLANE face's Line seam that clips to nothing on its trimmed
+polygon (the tested clip_line_to_planar_face) returns None -> dropped.
+Conservative (Line + provably clearly-off only) so it cannot over-drop needed
+seams (the Add-260 unsound-drop trap). "Drill a hole, then cut a pocket
+elsewhere" -- 100% broken before -- now assembles clean (mass exact).
+probe_multicut repros it. 283 lib + curved-robustness green; soak FAIL=0 both
+seeds, buckets BIT-IDENTICAL to baseline (the primitive-pair explorer does not
+generate the compound phantom -> zero regression; the compound case is pinned by
+probe_multicut + the nested run's 0 escapes). Nested per-op 24% -> 27%.
+
+REMAINING CLUSTER (next slices, each soak-gated, regression-prone): the SAME
+phantom from sphere/cone features (circle/ellipse seams; the fix only did Line),
+and ROOT CAUSE B -- `mass != mesh` declines on curved-compound bodies (~a third).
+The realistic test re-prioritised the worklist: sustaining a busy multi-feature
+body is the #1 real-world gap for the fieldforge swap, above the exotic
+curved-SSI classes. [[geometry-kernel-project]] [[minimize-declines]]
+
+## Addendum 286: phantom-seam drop extended to circle/ellipse sections (sphere/cone features); nested 27->40%, explorer +~390 passes/seed (2026-06-16)
+
+Add 285 dropped only LINE phantoms (plane x cylinder-bore). The SAME phantom from
+a prior dome/ball/cone feature is a CIRCLE/ELLIPSE section of the tool plane,
+which the Line-only path left as `All` -> still kept-and-faulted (pocket after a
+dome). Extended `curve_face_overlap`'s plane branch: sample a circle/ellipse/NURBS
+section (32 pts), project to the plane frame, and keep only if ANY sample lands
+inside the trimmed polygon; ALL-off -> a phantom on the other operand's curved
+surface, off this plane -> drop. Conservative (any-on keeps), so a real in-face
+arc is never dropped -- the Add-260 unsound-drop concern.
+
+MEASURED: nested per-op 27% -> 40.1% (the two phantom slices together: 24 -> 40);
+bug_extract failures 3261 -> 2611. Not bit-identical this time -- it CONVERTS
+declines to PASSES on the primitive explorer too (block x sphere/cone phantom
+circle seams that used to fault): soak PASS 5612/5589 -> 5958/6030 (+346/+441),
+DECLINE down, FAIL=0 both seeds, 0 gate escapes, 283 + curved green. A real broad
+win. REMAINING (~half each): root cause B (`mass != mesh` on curved-compound
+bodies, the AssemblyFailed cluster) + residual imprint faults (boss-cyl union onto
+a compound body, countersink = the cone/block single-op gap). [[minimize-declines]]

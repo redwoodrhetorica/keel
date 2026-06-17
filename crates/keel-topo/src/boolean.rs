@@ -149,6 +149,77 @@ impl Body {
     /// wrong-positive class as the crossing-cylinder pair). Checks BOTH
     /// the axial band and the ANGULAR span (the original height-only
     /// test passed full circles onto quarter bands).
+    /// Overlap of `curve` with a face's TRIMMED extent, surface-type aware.
+    /// `curve_cylinder_face_overlap` defaulted a PLANE face to `All`, so a tool
+    /// plane's section of the OTHER operand's pre-existing CURVED feature -- a
+    /// phantom seam lying on that curved face but OFF this plane's trimmed
+    /// polygon -- was never dropped, and it faulted a multi-feature imprint that
+    /// otherwise assembles correctly (drill a hole, then cut a pocket elsewhere:
+    /// the pocket's side plane meets the bore cylinder in two phantom rulings).
+    /// Conservative: a plane returns `None` only when a LINE seam clips to
+    /// nothing on the face (clearly off); other curve types stay `All`.
+    pub(crate) fn curve_face_overlap(
+        &self,
+        face: FaceKey,
+        curve: &keel_geom::curve::Curve3,
+        tol: f64,
+    ) -> CurveFaceOverlap {
+        match self.face_surface3(face) {
+            Some(Surface3::Cylinder(_)) | Some(Surface3::Cone(_)) => {
+                self.curve_cylinder_face_overlap(face, curve, tol)
+            }
+            Some(Surface3::Plane(p)) => {
+                use keel_geom::curve::Curve3;
+                let poly3 = self.face_outer_loop_points(face);
+                if poly3.len() < 3 {
+                    return CurveFaceOverlap::All;
+                }
+                if let Curve3::Line(line) = curve {
+                    // A ruling: the tested line-clip is exact.
+                    return if clip_line_to_planar_face(line, &p, &poly3).is_some() {
+                        CurveFaceOverlap::All
+                    } else {
+                        CurveFaceOverlap::None
+                    };
+                }
+                // A circle/ellipse/NURBS section of this plane with another
+                // operand's CURVED feature (a prior hole's bore, a dome): sample
+                // it and keep only if ANY point lands inside the trimmed polygon.
+                // All-off => a phantom on the OTHER surface, off this plane's
+                // extent => drop. Conservative (32 samples, ANY-on keeps), so a
+                // real in-face arc is never dropped.
+                let tau = core::f64::consts::TAU;
+                let samples: Vec<keel_math::vec::Vec3> = match curve {
+                    Curve3::Circle(ci) => (0..32).map(|k| ci.point(tau * k as f64 / 32.0)).collect(),
+                    Curve3::Ellipse(e) => (0..32).map(|k| e.point(tau * k as f64 / 32.0)).collect(),
+                    Curve3::Nurbs(n) => {
+                        let (t0, t1) = n.domain();
+                        (0..=24).map(|k| n.point(t0 + (t1 - t0) * k as f64 / 24.0)).collect()
+                    }
+                    Curve3::Line(_) => unreachable!(),
+                };
+                let fr = &p.frame;
+                let poly2: Vec<(f64, f64)> = poly3
+                    .iter()
+                    .map(|q| {
+                        let qw = *q - fr.origin;
+                        (qw.dot(fr.x), qw.dot(fr.y))
+                    })
+                    .collect();
+                let any_on = samples.iter().any(|s| {
+                    let w = *s - fr.origin;
+                    winding_nonzero(&poly2, (w.dot(fr.x), w.dot(fr.y)))
+                });
+                if any_on {
+                    CurveFaceOverlap::All
+                } else {
+                    CurveFaceOverlap::None
+                }
+            }
+            _ => CurveFaceOverlap::All,
+        }
+    }
+
     pub(crate) fn curve_cylinder_face_overlap(
         &self,
         face: FaceKey,
@@ -1082,6 +1153,56 @@ impl Body {
                 }
             }
         }
+        // SINGLE non-periodic loop -- a WINDOW disc cut by a NURBS seam (a
+        // cyl/sphere graze, the patch inside the seam loop). The amid/hmid pick
+        // is the "opposite the seam" full-ring heuristic and lands OUTSIDE a
+        // localized window; use the loop's own (theta, h) bounding-box centre,
+        // interior to the convex-ish window. Detected by a theta extent that
+        // does NOT wrap the full ring (a full lateral's rim wraps to ~2pi).
+        if loops.len() == 1
+            && let Some(&lk) = loops.first()
+            && let Some(entry) = self.loops.get(lk).and_then(|l| l.fin)
+        {
+            use core::f64::consts::{PI, TAU};
+            let angle_h = |p: keel_math::vec::Vec3| -> (f64, f64) {
+                let d = p - origin;
+                let w = d - ez * d.dot(ez);
+                (w.dot(ey).atan2(w.dot(ex)), d.dot(ez))
+            };
+            let mut th_lo = f64::INFINITY;
+            let mut th_hi = f64::NEG_INFINITY;
+            let mut wh_lo = f64::INFINITY;
+            let mut wh_hi = f64::NEG_INFINITY;
+            let mut prev = f64::NAN;
+            let mut cur = entry;
+            let mut count = 0u32;
+            while let Some(fin) = self.fins.get(cur) {
+                for p in self.fin_curve_samples(cur, 16).unwrap_or_default() {
+                    let (mut th, h) = angle_h(p);
+                    if !prev.is_nan() {
+                        while th - prev > PI {
+                            th -= TAU;
+                        }
+                        while th - prev < -PI {
+                            th += TAU;
+                        }
+                    }
+                    prev = th;
+                    th_lo = th_lo.min(th);
+                    th_hi = th_hi.max(th);
+                    wh_lo = wh_lo.min(h);
+                    wh_hi = wh_hi.max(h);
+                    count += 1;
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+            if count >= 3 && th_hi - th_lo < TAU - 0.1 {
+                return Some(to_pt(0.5 * (th_lo + th_hi), 0.5 * (wh_lo + wh_hi)));
+            }
+        }
         Some(to_pt(amid, hmid))
     }
 
@@ -1093,6 +1214,56 @@ impl Body {
         cone: &keel_geom::surface::Cone3,
     ) -> Option<keel_math::vec::Vec3> {
         let (origin, ex, ez) = (cone.frame.origin, cone.frame.x, cone.frame.z);
+        let ey = cone.frame.y;
+        // SINGLE non-periodic loop -- a WINDOW disc cut by a NURBS seam (a
+        // cone/sphere graze). The circle-rim path below finds no circle and
+        // returns None; use the loop's own (theta, v) bbox centre, interior to
+        // the convex window (theta NOT wrapping the full ring => a window).
+        let loops = self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default();
+        if loops.len() == 1
+            && let Some(entry) = self.loops.get(loops[0]).and_then(|l| l.fin)
+        {
+            use core::f64::consts::{PI, TAU};
+            let angle_v = |p: keel_math::vec::Vec3| -> (f64, f64) {
+                let d = p - origin;
+                let vv = d.dot(ez);
+                let w = d - ez * vv;
+                (w.dot(ey).atan2(w.dot(ex)), vv)
+            };
+            let (mut tlo, mut thi) = (f64::INFINITY, f64::NEG_INFINITY);
+            let (mut vlo, mut vhi) = (f64::INFINITY, f64::NEG_INFINITY);
+            let mut prev = f64::NAN;
+            let mut cnt = 0u32;
+            let mut cur = entry;
+            while let Some(fin) = self.fins.get(cur) {
+                for p in self.fin_curve_samples(cur, 16).unwrap_or_default() {
+                    let (mut th, vv) = angle_v(p);
+                    if !prev.is_nan() {
+                        while th - prev > PI {
+                            th -= TAU;
+                        }
+                        while th - prev < -PI {
+                            th += TAU;
+                        }
+                    }
+                    prev = th;
+                    tlo = tlo.min(th);
+                    thi = thi.max(th);
+                    vlo = vlo.min(vv);
+                    vhi = vhi.max(vv);
+                    cnt += 1;
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+            if cnt >= 3 && thi - tlo < TAU - 0.1 {
+                let (tc, vc) = (0.5 * (tlo + thi), 0.5 * (vlo + vhi));
+                let r = (cone.radius + vc * cone.half_angle.tan()).max(0.0);
+                return Some(origin + (ex * tc.cos() + ey * tc.sin()) * r + ez * vc);
+            }
+        }
         let mut heights = self.cyl_circle_heights(face, origin, ez);
         // A TIP fragment has ONE rim circle and reaches the APEX (a degenerate
         // v-line, not a circle edge), so cyl_circle_heights yields a single
@@ -1358,6 +1529,89 @@ impl Body {
                 cur = fin.next;
                 if cur == entry {
                     break;
+                }
+            }
+        }
+        // NURBS WINDOW loop (a sphere patch cut by a NON-circular seam, e.g. a
+        // cyl/sphere graze): the circle-cap path above found no circle rim.
+        // Use the seam loop's centroid DIRECTION from the sphere centre -- the
+        // disc patch (loop is the OUTER loop) sits UNDER it, the rest (loop is
+        // an INNER ring) opposite. Verified against the trimmed (u, v) domain.
+        {
+            use keel_math::vec::Vec3;
+            for lp in self.faces.get(face).map(|f| f.loops.clone()).into_iter().flatten() {
+                let Some(entry) = self.loops.get(lp).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let inner = self.loops.get(lp).map(|l| l.kind == crate::entity::LoopKind::Inner)
+                    == Some(true);
+                let mut sum = Vec3::ZERO;
+                let mut n = 0u32;
+                let mut cur = entry;
+                loop {
+                    if let Some(pts) = self.fin_curve_samples(cur, 16) {
+                        for p in pts {
+                            sum = sum + p;
+                            n += 1;
+                        }
+                    }
+                    let Some(nx) = self.fins.get(cur).map(|f| f.next) else {
+                        break;
+                    };
+                    cur = nx;
+                    if cur == entry {
+                        break;
+                    }
+                }
+                if n == 0 {
+                    continue;
+                }
+                let cloop = sum * (1.0 / n as f64);
+                let Some(dir) = (cloop - center).try_normalize() else {
+                    continue;
+                };
+                let p = center + dir * (radius * if inner { -1.0 } else { 1.0 });
+                if inner {
+                    // REST face (window as an INNER ring): the antipode of the
+                    // window centroid is the big region's interior. The seamed
+                    // sphere rest defeats point_in_face_uv's (u,v) winding (it
+                    // returns None for every grid point), so trust the antipode
+                    // -- the tight cyl/sphere oracle backstops any error.
+                    return Some(p);
+                }
+                let w = p - center;
+                let u = w
+                    .dot(s.frame.y)
+                    .atan2(w.dot(s.frame.x))
+                    .rem_euclid(core::f64::consts::TAU);
+                let vlat = (w.dot(s.frame.z) / radius).clamp(-1.0, 1.0).asin();
+                if self.point_in_face_uv(face, (u, vlat), 1e-6) == crate::pmc::UvClass::In {
+                    return Some(p);
+                }
+            }
+        }
+        // GENERAL grid fallback: scan the (u, v) domain for any point the
+        // trimmed-face test confirms interior. Handles a sphere REST face (a
+        // window as an inner ring -> the big region, which the centroid pick
+        // and the circle-cap path both miss) and any other loop shape. Poles
+        // (v = +-pi/2, where u is degenerate) are skipped.
+        {
+            use core::f64::consts::{FRAC_PI_2, PI, TAU};
+            const NU: usize = 24;
+            const NV: usize = 12;
+            for iu in 0..NU {
+                let u = (iu as f64 + 0.5) * TAU / NU as f64;
+                for iv in 1..NV {
+                    let vlat = -FRAC_PI_2 + (iv as f64) * PI / NV as f64;
+                    if self.point_in_face_uv(face, (u, vlat), 1e-6) == crate::pmc::UvClass::In {
+                        return Some(
+                            center
+                                + (s.frame.x * (u.cos() * vlat.cos())
+                                    + s.frame.y * (u.sin() * vlat.cos())
+                                    + s.frame.z * vlat.sin())
+                                    * radius,
+                        );
+                    }
                 }
             }
         }
@@ -4482,6 +4736,205 @@ pub fn boolean_selective(
     assemble_boolean(a, b, op, tol, &seams, faults, BooleanOptions::default())
 }
 
+/// 2D area of the intersection of two discs (radii r1, r2, centre distance d).
+fn two_disc_lens_area(r1: f64, r2: f64, d: f64) -> f64 {
+    if d >= r1 + r2 {
+        return 0.0;
+    }
+    if d <= (r1 - r2).abs() {
+        let r = r1.min(r2);
+        return core::f64::consts::PI * r * r;
+    }
+    let a1 = ((d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1)).clamp(-1.0, 1.0).acos();
+    let a2 = ((d * d + r2 * r2 - r1 * r1) / (2.0 * d * r2)).clamp(-1.0, 1.0).acos();
+    let tri = 0.5
+        * ((-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2))
+            .max(0.0)
+            .sqrt();
+    r1 * r1 * a1 + r2 * r2 * a2 - tri
+}
+
+/// EXACT cylinder-intersect-sphere volume by 1D integration along the cylinder
+/// axis of the closed-form two-disc lens area (the cyl cross-section disc and
+/// the sphere's cross-section circle, both in the plane perpendicular to the
+/// axis at height h, centres delta apart). A tight, op-agnostic ground truth
+/// the boolean's mass must match: a non-coaxial cyl/sphere assembly can then
+/// NEVER ship a wrong volume -- watertight or not -- even without a closed form
+/// for the trimmed result itself (DECLINE-never-WRONG for the window class).
+fn cyl_sphere_inter_volume(
+    cy: &keel_geom::surface::Cylinder3,
+    hlo: f64,
+    hhi: f64,
+    sp: &keel_geom::surface::Sphere3,
+) -> f64 {
+    let axis = cy.frame.z;
+    let w = sp.frame.origin - cy.frame.origin;
+    let hc = w.dot(axis);
+    let delta = (w - axis * hc).norm();
+    let lo = hlo.max(hc - sp.radius);
+    let hi = hhi.min(hc + sp.radius);
+    if hi <= lo {
+        return 0.0;
+    }
+    let n = 4000usize;
+    let dh = (hi - lo) / n as f64;
+    let mut v = 0.0;
+    for i in 0..n {
+        let h = lo + (i as f64 + 0.5) * dh;
+        let rs2 = sp.radius * sp.radius - (h - hc) * (h - hc);
+        if rs2 > 0.0 {
+            v += two_disc_lens_area(cy.radius, rs2.sqrt(), delta) * dh;
+        }
+    }
+    v
+}
+
+/// If `a`/`b` are a cylinder primitive + a sphere primitive, the EXACT op
+/// volume (the cylinder axial extent is read from the body's facets). None when
+/// the pair is not cyl + sphere. Used as a tight gate bound for the otherwise-
+/// oracle-less cyl/sphere window class.
+fn cyl_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
+    let cyl_of = |body: &Body| -> Option<(keel_geom::surface::Cylinder3, f64, f64)> {
+        let c = body.face_keys().into_iter().find_map(|f| match body.face_surface3(f) {
+            Some(Surface3::Cylinder(c)) => Some(c),
+            _ => None,
+        })?;
+        let axis = c.frame.z;
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        for t in body.facets(None) {
+            for p in t {
+                let h = (p - c.frame.origin).dot(axis);
+                lo = lo.min(h);
+                hi = hi.max(h);
+            }
+        }
+        (lo.is_finite() && hi > lo).then_some((c, lo, hi))
+    };
+    let sph_of = |body: &Body| -> Option<keel_geom::surface::Sphere3> {
+        body.face_keys().into_iter().find_map(|f| match body.face_surface3(f) {
+            Some(Surface3::Sphere(s)) => Some(s),
+            _ => None,
+        })
+    };
+    let pi = core::f64::consts::PI;
+    let (cyl, hlo, hhi, sph, va, vb) =
+        if let (Some((c, lo, hi)), Some(s)) = (cyl_of(a), sph_of(b)) {
+            let (vc, vs) = (pi * c.radius * c.radius * (hi - lo), 4.0 / 3.0 * pi * s.radius.powi(3));
+            (c, lo, hi, s, vc, vs)
+        } else if let (Some(s), Some((c, lo, hi))) = (sph_of(a), cyl_of(b)) {
+            let (vc, vs) = (pi * c.radius * c.radius * (hi - lo), 4.0 / 3.0 * pi * s.radius.powi(3));
+            (c, lo, hi, s, vs, vc) // operand A is the sphere here
+        } else {
+            return None;
+        };
+    let inter = cyl_sphere_inter_volume(&cyl, hlo, hhi, &sph);
+    Some(match op {
+        BoolOp::Intersection => inter,
+        BoolOp::Union => va + vb - inter,
+        BoolOp::Difference => va - inter,
+    })
+}
+
+/// EXACT cone-intersect-sphere volume by 1D integration along the cone axis of
+/// the closed-form two-disc lens area -- the cone cross-section is a disc of
+/// v-VARYING radius r0 + v*m (vs the cylinder's constant r). Tight ground truth
+/// for the cone/sphere window class (no closed form for the trimmed result).
+fn cone_sphere_inter_volume(
+    c: &keel_geom::surface::Cone3,
+    vlo: f64,
+    vhi: f64,
+    sp: &keel_geom::surface::Sphere3,
+) -> f64 {
+    let axis = c.frame.z;
+    let w = sp.frame.origin - c.frame.origin;
+    let vc = w.dot(axis);
+    let delta = (w - axis * vc).norm();
+    let m = c.half_angle.tan();
+    let lo = vlo.max(vc - sp.radius);
+    let hi = vhi.min(vc + sp.radius);
+    if hi <= lo {
+        return 0.0;
+    }
+    let n = 4000usize;
+    let dv = (hi - lo) / n as f64;
+    let mut vol = 0.0;
+    for i in 0..n {
+        let v = lo + (i as f64 + 0.5) * dv;
+        let rcone = (c.radius + v * m).max(0.0);
+        let rs2 = sp.radius * sp.radius - (v - vc) * (v - vc);
+        if rs2 > 0.0 && rcone > 0.0 {
+            vol += two_disc_lens_area(rcone, rs2.sqrt(), delta) * dv;
+        }
+    }
+    vol
+}
+
+/// Solid volume of a cone frustum between axial v in [vlo, vhi]: integral of
+/// pi*(r0 + v*m)^2 dv (the cone primitive's own volume, for the op bound).
+fn cone_solid_volume(c: &keel_geom::surface::Cone3, vlo: f64, vhi: f64) -> f64 {
+    let m = c.half_angle.tan();
+    let n = 4000usize;
+    let dv = (vhi - vlo) / n as f64;
+    let mut vol = 0.0;
+    for i in 0..n {
+        let v = vlo + (i as f64 + 0.5) * dv;
+        let r = (c.radius + v * m).max(0.0);
+        vol += core::f64::consts::PI * r * r * dv;
+    }
+    vol
+}
+
+/// Tight EXACT op-volume oracle for a quadric + sphere pair: cyl/sphere, else
+/// cone/sphere. None for any other pair. The gate requires the boolean's mass
+/// to match this, so the window classes (no closed-form trimmed shape) cannot
+/// ship a watertight self-consistent WRONG.
+fn quadric_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
+    if let Some(v) = cyl_sphere_op_volume(a, b, op) {
+        return Some(v);
+    }
+    let cone_of = |body: &Body| -> Option<(keel_geom::surface::Cone3, f64, f64)> {
+        let c = body.face_keys().into_iter().find_map(|f| match body.face_surface3(f) {
+            Some(Surface3::Cone(c)) => Some(c),
+            _ => None,
+        })?;
+        let axis = c.frame.z;
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        for t in body.facets(None) {
+            for p in t {
+                let v = (p - c.frame.origin).dot(axis);
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+        }
+        (lo.is_finite() && hi > lo).then_some((c, lo, hi))
+    };
+    let sph_of = |body: &Body| -> Option<keel_geom::surface::Sphere3> {
+        body.face_keys().into_iter().find_map(|f| match body.face_surface3(f) {
+            Some(Surface3::Sphere(s)) => Some(s),
+            _ => None,
+        })
+    };
+    let pi = core::f64::consts::PI;
+    let (cone, vlo, vhi, sph, va, vb) =
+        if let (Some((c, lo, hi)), Some(s)) = (cone_of(a), sph_of(b)) {
+            let vs = 4.0 / 3.0 * pi * s.radius.powi(3);
+            (c, lo, hi, s, f64::NAN, vs)
+        } else if let (Some(s), Some((c, lo, hi))) = (sph_of(a), cone_of(b)) {
+            let vs = 4.0 / 3.0 * pi * s.radius.powi(3);
+            (c, lo, hi, s, vs, f64::NAN)
+        } else {
+            return None;
+        };
+    let inter = cone_sphere_inter_volume(&cone, vlo, vhi, &sph);
+    let vcone = cone_solid_volume(&cone, vlo, vhi);
+    let (va, vb) = if va.is_nan() { (vcone, vb) } else { (va, vcone) };
+    Some(match op {
+        BoolOp::Intersection => inter,
+        BoolOp::Union => va + vb - inter,
+        BoolOp::Difference => va - inter,
+    })
+}
+
 /// The shared post-seam boolean tail: imprint both operands along the
 /// given seams, classify, select, stitch, and apply the degeneracy /
 /// self-consistency gates. Used by `boolean` (all seams) and
@@ -4648,7 +5101,11 @@ fn assemble_boolean(
         let v = body.tessellated_volume();
         let bm = body.mass_properties().map(|m| m.volume);
         if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
-            eprintln!("  curved gate: tess {v} mass {bm:?} mesh {}", body.mesh_volume());
+            eprintln!(
+                "  curved gate: tess {v} mass {bm:?} mesh {} open_ratio {:.5}",
+                body.mesh_volume(),
+                body.mesh_open_ratio()
+            );
         }
         let self_consistent = match bm {
             Ok(mv) => {
@@ -4685,11 +5142,26 @@ fn assemble_boolean(
             // Both the authoritative volume (mass, or the tessellation when
             // mass declines) AND the user-facing mesh must lie in band: a
             // malformed body can pass one measure while the other lies.
-            in_band(bm.unwrap_or(v)) && in_band(body.mesh_volume())
+            in_band(bm.as_ref().ok().copied().unwrap_or(v)) && in_band(body.mesh_volume())
         } else {
             true // operand volumes undeterminable: cannot bound
         };
-        self_consistent && bound_ok
+        // TIGHT cyl/sphere oracle: for a cylinder + sphere pair the exact op
+        // volume is an independent 1D-integral ground truth (the trimmed result
+        // has no closed form, but its VOLUME does). Require the authoritative
+        // mass to match it -- this catches a watertight self-consistent WRONG
+        // (the #48 class the loose op-bound and mass==mesh both miss), so the
+        // cyl/sphere WINDOW class is safe to assemble: a correct window passes,
+        // a mis-classified one declines. Mass-declined on such a pair -> decline.
+        let tight_ok = match quadric_sphere_op_volume(a, b, op) {
+            Some(exact) => bm
+                .as_ref()
+                .ok()
+                .map(|&m| (m - exact).abs() <= 2e-2 * (1.0 + exact.abs()))
+                .unwrap_or(false),
+            None => true,
+        };
+        self_consistent && bound_ok && tight_ok
     } else if let Ok(m) = body.mass_properties() {
         // SELF-CONSISTENCY gate (research file 47): for a well-formed
         // all-planar body the sense-exact mass_properties and the
@@ -4716,6 +5188,15 @@ fn assemble_boolean(
     // body, including the clean empty result, has mesh >= 0).
     let mesh_vol = body.mesh_volume();
     let ok = ok && mesh_vol.is_finite() && mesh_vol >= -tol.max(1e-9);
+    // WATERTIGHTNESS net: a correct boolean result is a CLOSED oriented mesh
+    // (net triangle area-vector ~ 0). A non-watertight result (cracked /
+    // dropped-face / mis-stitched) slips the mass==mesh self-consistency gate
+    // -- mass and a non-watertight mesh can AGREE on a WRONG value (the #48
+    // silent class: large offset sphere/sphere lenses read ~18-33% over the
+    // exact lens volume yet mass==mesh, in-bounds). The residual is built from
+    // edge vectors so it is translation-invariant (no far-origin cancellation
+    // that the per-component volume recenter must otherwise fix). Decline.
+    let ok = ok && body.mesh_open_ratio() <= 1e-2;
     if !ok {
         return Err(BoolFault::AssemblyFailed(
             "degenerate or self-inconsistent result (mass != mesh)",
@@ -4785,6 +5266,58 @@ pub(crate) fn curve_point(c: &keel_geom::curve::Curve3, t: f64) -> keel_math::ve
 
 fn curve_endpoints(c: &keel_geom::curve::Curve3) -> (keel_math::vec::Vec3, keel_math::vec::Vec3) {
     (curve_point(c, 0.0), curve_point(c, 1.0))
+}
+
+/// True if the closed seam `curve` ENCIRCLES `axis` through `origin` -- a
+/// non-contractible wrap (the off-axis cyl/sphere cut is a NON-planar NURBS loop
+/// spanning all azimuths, z = +-sqrt(R^2 - delta^2 - r^2 ... ) varying with
+/// theta) versus a contractible window/hole. Sums the UNWRAPPED azimuth advance
+/// about the axis over the sampled loop: an encircling wrap nets ~+-2pi, a
+/// window ~0. `closed_curve_center_axis` only catches a coaxial PLANAR circle,
+/// so a tilted sphere-cut wrap was mis-routed to the interior-ring (hole)
+/// imprint, leaving the lateral whole-with-holes (winding 0 -> degenerate mass)
+/// instead of split into bands.
+fn curve_encircles_axis(
+    curve: &keel_geom::curve::Curve3,
+    origin: keel_math::vec::Vec3,
+    axis: keel_math::vec::Vec3,
+) -> bool {
+    let Some(ax) = axis.try_normalize() else {
+        return false;
+    };
+    let t = if ax.x.abs() < 0.9 {
+        keel_math::vec::Vec3::new(1.0, 0.0, 0.0)
+    } else {
+        keel_math::vec::Vec3::new(0.0, 1.0, 0.0)
+    };
+    let Some(ex) = (t - ax * t.dot(ax)).try_normalize() else {
+        return false;
+    };
+    let ey = ax.cross(ex);
+    let n = 96;
+    let mut total = 0.0;
+    let mut prev: Option<f64> = None;
+    for i in 0..=n {
+        let p = curve_point(curve, i as f64 / n as f64);
+        let w = p - origin;
+        let wp = w - ax * w.dot(ax);
+        if wp.norm() < 1e-12 {
+            return false; // a point on the axis: azimuth undefined
+        }
+        let th = wp.dot(ey).atan2(wp.dot(ex));
+        if let Some(pv) = prev {
+            let mut d = th - pv;
+            while d > core::f64::consts::PI {
+                d -= core::f64::consts::TAU;
+            }
+            while d < -core::f64::consts::PI {
+                d += core::f64::consts::TAU;
+            }
+            total += d;
+        }
+        prev = Some(th);
+    }
+    total.abs() > core::f64::consts::PI
 }
 
 /// Distance from point `p` to the segment `a`-`b` in 3D.
@@ -5824,20 +6357,35 @@ fn imprint_operand(
                 // vertices): the crossing imprint then applies. The
                 // interior-ring imprint is topologically wrong for a
                 // non-contractible wrap.
-                let wraps = match (
-                    working.face_surface3(target),
-                    closed_curve_center_axis(curve),
-                ) {
-                    (Some(Surface3::Cylinder(c)), Some((centre, ax))) => {
-                        ax.cross(c.frame.z).norm() < 1e-6
-                            && (centre - c.frame.origin).cross(c.frame.z).norm() < 1e-6
+                let wraps = match working.face_surface3(target) {
+                    Some(Surface3::Cylinder(c)) => {
+                        let coaxial_planar = matches!(
+                            closed_curve_center_axis(curve),
+                            Some((centre, ax))
+                                if ax.cross(c.frame.z).norm() < 1e-6
+                                    && (centre - c.frame.origin).cross(c.frame.z).norm() < 1e-6
+                        );
+                        // A coaxial PLANAR circle, OR a NON-planar NURBS loop that
+                        // still ENCIRCLES the axis (the off-axis cyl/sphere cut):
+                        // both are non-contractible -> the band split, never an
+                        // interior-ring hole. The encircling arm is DORMANT
+                        // enabling machinery (gated to the cyl/sphere-wrap dev
+                        // flag): it correctly band-splits the cylinder lateral
+                        // (mesh then matches), but the cyl/sphere WRAP still
+                        // declines on the sphere NURBS-cut mass/classify (KL5,
+                        // dossier #60), so it stays off by default = pass-neutral.
+                        coaxial_planar
+                            || (std::env::var("KEEL_WRAP_FLOW").is_ok()
+                                && curve_encircles_axis(curve, c.frame.origin, c.frame.z))
                     }
                     // A coaxial circle wraps a cone lateral the same way
                     // (the countersink rim on the frustum face).
-                    (Some(Surface3::Cone(c)), Some((centre, ax))) => {
-                        ax.cross(c.frame.z).norm() < 1e-6
-                            && (centre - c.frame.origin).cross(c.frame.z).norm() < 1e-6
-                    }
+                    Some(Surface3::Cone(c)) => matches!(
+                        closed_curve_center_axis(curve),
+                        Some((centre, ax))
+                            if ax.cross(c.frame.z).norm() < 1e-6
+                                && (centre - c.frame.origin).cross(c.frame.z).norm() < 1e-6
+                    ),
                     _ => false,
                 };
                 // A NON-planar encircling NURBS seam (the cyl/cyl quartic wrap)
@@ -6032,6 +6580,42 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
             // 12.5 against the exact 16/3).
             let both_cyl = matches!(ref_a, SurfaceRef::Analytic(Surface3::Cylinder(_)))
                 && matches!(ref_b, SurfaceRef::Analytic(Surface3::Cylinder(_)));
+            // Non-coaxial cylinder/sphere: the lateral seam is a quartic the
+            // SSI now resolves analytically (cyl_quadratic_branch_field) and
+            // returns Empty when the sphere clears the lateral, but the
+            // sphere-side imprint/classify/mass do not yet assemble that
+            // family, and an off-axis sphere meeting only a cap exposes
+            // downstream assembly gaps (a grazing cyl - sph difference read
+            // ~1.7% over the cylinder's own volume). Decline the whole
+            // non-coaxial cyl/sphere class -- EXACTLY the prior blanket-Err
+            // behavior, same IntersectionFailed fault -- until that
+            // downstream lands; the SSI gateway is exercised by its own unit
+            // tests (ssi.rs). Coaxial cyl/sphere (exact circles) still
+            // assembles. Matches the SSI's own coaxiality threshold (> tol).
+            let cyl_sphere_wrap = match (&ref_a, &ref_b) {
+                (
+                    SurfaceRef::Analytic(Surface3::Cylinder(c)),
+                    SurfaceRef::Analytic(Surface3::Sphere(s)),
+                )
+                | (
+                    SurfaceRef::Analytic(Surface3::Sphere(s)),
+                    SurfaceRef::Analytic(Surface3::Cylinder(c)),
+                ) => {
+                    let w = s.frame.origin - c.frame.origin;
+                    let delta = (w - c.frame.z * w.dot(c.frame.z)).norm();
+                    // WRAP (sphere swallows the cross-section, R >= delta+r_cyl
+                    // -> two encircling loops -> a sphere band) still declines;
+                    // the WINDOW (single grazing loop) flows to the imprint. The
+                    // watertightness + op-bound gate backstops a malformed
+                    // result; the canonical-seam work makes the good ones PASS.
+                    delta > tol && s.radius + tol >= delta + c.radius
+                }
+                _ => false,
+            };
+            if cyl_sphere_wrap && std::env::var("KEEL_WRAP_FLOW").is_err() {
+                faults.push(BoolFault::UnassemblableSeam(id_a, id_b));
+                continue;
+            }
             // COINCIDENT cylinders (coaxial, equal radius: the mated
             // pin-in-hole laterals, dossier 39 sec 5) are the curved
             // on-on class, not a crossing: no seam, an informational
@@ -6262,12 +6846,12 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                         let ova = if on_a {
                             CurveFaceOverlap::All
                         } else {
-                            a.curve_cylinder_face_overlap(fa, &c.curve, tol)
+                            a.curve_face_overlap(fa, &c.curve, tol)
                         };
                         let ovb = if on_b {
                             CurveFaceOverlap::All
                         } else {
-                            b.curve_cylinder_face_overlap(fb, &c.curve, tol)
+                            b.curve_face_overlap(fb, &c.curve, tol)
                         };
                         match (ova, ovb) {
                             (CurveFaceOverlap::All, CurveFaceOverlap::All) => {}

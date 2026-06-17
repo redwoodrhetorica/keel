@@ -1062,91 +1062,28 @@ fn analytic_analytic(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, 
 ///    otherwise = one closed bite curve (branch + out, branch - back,
 ///    joining smoothly at the D = 0 ends). Certified NURBS fit per
 ///    curve; certificate misses DECLINE.
-fn cylinder_cylinder(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, GeomError> {
-    let (Surface3::Cylinder(ca), Surface3::Cylinder(cb)) = (a, b) else {
-        unreachable!("cylinder_cylinder on non-cylinders")
-    };
-    let (az, bz) = (ca.frame.z, cb.frame.z);
-    let qb = |u: Vec3| -> Vec3 { u - bz * u.dot(bz) };
-
-    if az.cross(bz).norm() <= COINCIDENCE_ANG {
-        // Rung 1: parallel axes. Work in the shared cross-section.
-        let w = cb.frame.origin - ca.frame.origin;
-        let d = w - az * w.dot(az);
-        let dist = d.norm();
-        if dist <= tol && (ca.radius - cb.radius).abs() <= tol {
-            return Ok(SsiResult::Coincident);
-        }
-        if dist > ca.radius + cb.radius + tol || dist + tol < (ca.radius - cb.radius).abs() {
-            return Ok(SsiResult::Empty);
-        }
-        let u = d.try_normalize().ok_or(GeomError::Degenerate)?; // concentric unequal handled above
-        let x = (dist * dist + ca.radius * ca.radius - cb.radius * cb.radius) / (2.0 * dist);
-        let y2 = ca.radius * ca.radius - x * x;
-        let foot = ca.frame.origin + u * x;
-        if y2 <= tol * tol {
-            // Tangent ruling.
-            return Ok(SsiResult::Curves(vec![SsiCurve {
-                curve: Curve3::Line(Line3::new(foot, az)?),
-                closed: false,
-                tangential: true,
-                tol_achieved: 0.0,
-            }]));
-        }
-        let v = az.cross(u);
-        let y = y2.sqrt();
-        let mut curves = Vec::new();
-        for s in [y, -y] {
-            curves.push(SsiCurve {
-                curve: Curve3::Line(Line3::new(foot + v * s, az)?),
-                closed: false,
-                tangential: false,
-                tol_achieved: 0.0,
-            });
-        }
-        return Ok(SsiResult::Curves(curves));
-    }
-
-    // Axes' closest points (skew-line formula).
-    let w0 = ca.frame.origin - cb.frame.origin;
-    let (aa, ab, bb) = (az.dot(az), az.dot(bz), bz.dot(bz));
-    let det = aa * bb - ab * ab;
-    let sa = (ab * w0.dot(bz) - bb * w0.dot(az)) / det;
-    let sb = (aa * w0.dot(bz) - ab * w0.dot(az)) / det;
-    let pa = ca.frame.origin + az * sa;
-    let pb = cb.frame.origin + bz * sb;
-
-    if (pa - pb).norm() <= tol && (ca.radius - cb.radius).abs() <= tol {
-        // Rung 2: the exact two-ellipse degeneration.
-        let m = (pa + pb) * 0.5;
-        let mut curves = Vec::new();
-        for n in [az - bz, az + bz] {
-            let Ok(frame) = crate::surface::Frame3::from_z(m, n) else {
-                continue;
-            };
-            let plane = Surface3::Plane(crate::surface::Plane3::new(frame));
-            if let SsiResult::Curves(cs) = plane_cylinder(&plane, a, tol)? {
-                curves.extend(cs);
-            }
-        }
-        if curves.len() == 2 {
-            return Ok(SsiResult::Curves(curves));
-        }
-        return Err(GeomError::Degenerate);
-    }
-
-    // Rung 3: the closed-form branch field on cylinder A.
-    let q2 = qb(az).dot(qb(az));
+/// Closed-form SSI branch field on a RULED surface's (theta, v) parametrization
+/// (cylinder or cone): `point_at(theta, v)` is the surface point at cross-
+/// section angle theta and ruling parameter v.
+///
+/// For each theta the OTHER surface contributes a quadratic
+/// `q2 v^2 + q1(theta) v + q0(theta) = 0` in the ruling parameter v. Sampling
+/// the discriminant separates a full WRAP (disc > 0 for all theta -> one closed
+/// loop per branch, encircling the axis) from BITE/window components (disc
+/// changes sign -> one closed loop per maximal positive run: + branch out, -
+/// branch back), Chebyshev-regularizing the sqrt turnarounds at the disc = 0
+/// ends. Each branch is a certified cubic LSQ NURBS fit (SAFETY = 2 vs FRESH
+/// samples); a miss DECLINES. Shared by the cylinder/cylinder rung 3, the
+/// non-coaxial cylinder/sphere arm, and the non-coaxial cone/sphere arm.
+fn quadratic_branch_field(
+    point_at: &dyn Fn(f64, f64) -> Vec3,
+    q2: f64,
+    coeffs: &dyn Fn(f64) -> (f64, f64),
+    tol: f64,
+) -> Result<SsiResult, GeomError> {
     if q2 <= 1e-18 {
         return Err(GeomError::Degenerate);
     }
-    let coeffs = |theta: f64| -> (f64, f64) {
-        let c = ca.frame.origin + (ca.frame.x * theta.cos() + ca.frame.y * theta.sin()) * ca.radius;
-        let w = qb(c - cb.frame.origin);
-        let q1 = 2.0 * w.dot(qb(az));
-        let q0 = w.dot(w) - cb.radius * cb.radius;
-        (q1, q0)
-    };
     let disc = |theta: f64| -> f64 {
         let (q1, q0) = coeffs(theta);
         q1 * q1 - 4.0 * q2 * q0
@@ -1158,7 +1095,7 @@ fn cylinder_cylinder(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, 
         let (q1, q0) = coeffs(theta);
         let d = (q1 * q1 - 4.0 * q2 * q0).max(0.0);
         let v = (-q1 + sign * d.sqrt()) / (2.0 * q2);
-        ca.frame.origin + (ca.frame.x * theta.cos() + ca.frame.y * theta.sin()) * ca.radius + az * v
+        point_at(theta, v)
     };
 
     // Certified cubic LSQ fit of one closed branch, escalating the
@@ -1274,6 +1211,97 @@ fn cylinder_cylinder(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, 
         return Ok(SsiResult::Empty);
     }
     Ok(SsiResult::Curves(curves))
+}
+
+fn cylinder_cylinder(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, GeomError> {
+    let (Surface3::Cylinder(ca), Surface3::Cylinder(cb)) = (a, b) else {
+        unreachable!("cylinder_cylinder on non-cylinders")
+    };
+    let (az, bz) = (ca.frame.z, cb.frame.z);
+    let qb = |u: Vec3| -> Vec3 { u - bz * u.dot(bz) };
+
+    if az.cross(bz).norm() <= COINCIDENCE_ANG {
+        // Rung 1: parallel axes. Work in the shared cross-section.
+        let w = cb.frame.origin - ca.frame.origin;
+        let d = w - az * w.dot(az);
+        let dist = d.norm();
+        if dist <= tol && (ca.radius - cb.radius).abs() <= tol {
+            return Ok(SsiResult::Coincident);
+        }
+        if dist > ca.radius + cb.radius + tol || dist + tol < (ca.radius - cb.radius).abs() {
+            return Ok(SsiResult::Empty);
+        }
+        let u = d.try_normalize().ok_or(GeomError::Degenerate)?; // concentric unequal handled above
+        let x = (dist * dist + ca.radius * ca.radius - cb.radius * cb.radius) / (2.0 * dist);
+        let y2 = ca.radius * ca.radius - x * x;
+        let foot = ca.frame.origin + u * x;
+        if y2 <= tol * tol {
+            // Tangent ruling.
+            return Ok(SsiResult::Curves(vec![SsiCurve {
+                curve: Curve3::Line(Line3::new(foot, az)?),
+                closed: false,
+                tangential: true,
+                tol_achieved: 0.0,
+            }]));
+        }
+        let v = az.cross(u);
+        let y = y2.sqrt();
+        let mut curves = Vec::new();
+        for s in [y, -y] {
+            curves.push(SsiCurve {
+                curve: Curve3::Line(Line3::new(foot + v * s, az)?),
+                closed: false,
+                tangential: false,
+                tol_achieved: 0.0,
+            });
+        }
+        return Ok(SsiResult::Curves(curves));
+    }
+
+    // Axes' closest points (skew-line formula).
+    let w0 = ca.frame.origin - cb.frame.origin;
+    let (aa, ab, bb) = (az.dot(az), az.dot(bz), bz.dot(bz));
+    let det = aa * bb - ab * ab;
+    let sa = (ab * w0.dot(bz) - bb * w0.dot(az)) / det;
+    let sb = (aa * w0.dot(bz) - ab * w0.dot(az)) / det;
+    let pa = ca.frame.origin + az * sa;
+    let pb = cb.frame.origin + bz * sb;
+
+    if (pa - pb).norm() <= tol && (ca.radius - cb.radius).abs() <= tol {
+        // Rung 2: the exact two-ellipse degeneration.
+        let m = (pa + pb) * 0.5;
+        let mut curves = Vec::new();
+        for n in [az - bz, az + bz] {
+            let Ok(frame) = crate::surface::Frame3::from_z(m, n) else {
+                continue;
+            };
+            let plane = Surface3::Plane(crate::surface::Plane3::new(frame));
+            if let SsiResult::Curves(cs) = plane_cylinder(&plane, a, tol)? {
+                curves.extend(cs);
+            }
+        }
+        if curves.len() == 2 {
+            return Ok(SsiResult::Curves(curves));
+        }
+        return Err(GeomError::Degenerate);
+    }
+
+    // Rung 3: the closed-form branch field on cylinder A.
+    let q2 = qb(az).dot(qb(az));
+    if q2 <= 1e-18 {
+        return Err(GeomError::Degenerate);
+    }
+    let coeffs = |theta: f64| -> (f64, f64) {
+        let c = ca.frame.origin + (ca.frame.x * theta.cos() + ca.frame.y * theta.sin()) * ca.radius;
+        let w = qb(c - cb.frame.origin);
+        let q1 = 2.0 * w.dot(qb(az));
+        let q0 = w.dot(w) - cb.radius * cb.radius;
+        (q1, q0)
+    };
+    let point_at = |theta: f64, v: f64| -> Vec3 {
+        ca.frame.origin + (ca.frame.x * theta.cos() + ca.frame.y * theta.sin()) * ca.radius + az * v
+    };
+    quadratic_branch_field(&point_at, q2, &coeffs, tol)
 }
 
 fn plane_of(s: &Surface3) -> (&crate::surface::Frame3,) {
@@ -1606,7 +1634,9 @@ fn cone_cylinder(cone: &Surface3, cyl: &Surface3, tol: f64) -> Result<SsiResult,
 /// heights where the sphere cross-section radius equals the cylinder
 /// radius. `v = d +- sqrt(R^2 - r^2)` (d = sphere centre height on the
 /// axis). R > r -> two transversal circles; R == r -> one TANGENT circle;
-/// R < r -> Empty. Non-coaxial is a quartic and DECLINES.
+/// R < r -> Empty. Non-coaxial: the seam is a quartic, solved on the shared
+/// cylinder (theta, v) branch field -- a sphere swallowing the cross-section
+/// gives two closed WRAP loops; a partial overlap one closed WINDOW loop.
 fn cylinder_sphere(cyl: &Surface3, sph: &Surface3, tol: f64) -> Result<SsiResult, GeomError> {
     let (Surface3::Cylinder(cy), Surface3::Sphere(s)) = (cyl, sph) else {
         unreachable!("cylinder_sphere on wrong surfaces")
@@ -1614,7 +1644,21 @@ fn cylinder_sphere(cyl: &Surface3, sph: &Surface3, tol: f64) -> Result<SsiResult
     let z = cy.frame.z;
     let w = s.frame.origin - cy.frame.origin;
     if (w - z * w.dot(z)).norm() > tol {
-        return Err(GeomError::Degenerate);
+        // Non-coaxial: on the cylinder's own (theta, v) parametrization the
+        // sphere |P - C|^2 = R^2 is a quadratic in the axial coordinate v:
+        // v^2 + 2 (g . z) v + (|g|^2 - R^2) = 0, where g = (cross-section
+        // point at theta) - C. Solve with the shared branch field (same
+        // wrap/bite split and certified fit as the cylinder/cylinder rung).
+        let coeffs = |theta: f64| -> (f64, f64) {
+            let g = cy.frame.origin
+                + (cy.frame.x * theta.cos() + cy.frame.y * theta.sin()) * cy.radius
+                - s.frame.origin;
+            (2.0 * g.dot(z), g.dot(g) - s.radius * s.radius)
+        };
+        let point_at = |theta: f64, v: f64| -> Vec3 {
+            cy.frame.origin + (cy.frame.x * theta.cos() + cy.frame.y * theta.sin()) * cy.radius + z * v
+        };
+        return quadratic_branch_field(&point_at, 1.0, &coeffs, tol);
     }
     let d = w.dot(z);
     let disc = s.radius * s.radius - cy.radius * cy.radius;
@@ -1660,7 +1704,26 @@ fn cone_sphere(cone: &Surface3, sph: &Surface3, tol: f64) -> Result<SsiResult, G
     let z = c.frame.z;
     let w = s.frame.origin - c.frame.origin;
     if (w - z * w.dot(z)).norm() > tol {
-        return Err(GeomError::Degenerate); // sphere centre off the axis -> quartic
+        // Non-coaxial: the seam is a quartic. On the cone's (theta, v) ruling
+        // P(theta,v) = O + (r0 + v*m)*rad(theta) + v*a, the sphere |P-C|^2=R^2
+        // is a quadratic in v: (m^2+1) v^2 + 2(g0.dir) v + (|g0|^2 - R^2) = 0,
+        // with g0 = (O - C) + r0*rad, dir = m*rad + a (|dir|^2 = m^2+1). Same
+        // shared branch field as cyl/sphere; only the ruling has a v-varying
+        // radius. (Apex-crossing seams produce non-finite fits -> DECLINE.)
+        let m = c.half_angle.tan();
+        let r0 = c.radius;
+        let dc = c.frame.origin - s.frame.origin;
+        let coeffs = |theta: f64| -> (f64, f64) {
+            let rad = c.frame.x * theta.cos() + c.frame.y * theta.sin();
+            let g0 = dc + rad * r0;
+            let dir = rad * m + c.frame.z;
+            (2.0 * g0.dot(dir), g0.dot(g0) - s.radius * s.radius)
+        };
+        let point_at = |theta: f64, v: f64| -> Vec3 {
+            let rad = c.frame.x * theta.cos() + c.frame.y * theta.sin();
+            c.frame.origin + rad * (r0 + v * m) + c.frame.z * v
+        };
+        return quadratic_branch_field(&point_at, m * m + 1.0, &coeffs, tol);
     }
     let d = w.dot(z);
     let m = c.half_angle.tan();
@@ -1981,6 +2044,84 @@ mod tests {
         for c in &cs {
             check_curve_on_both_tol(&sph, &cylsurf, &c.curve, 24, 1e-5);
         }
+    }
+
+    #[test]
+    fn cylinder_sphere_noncoaxial_window_on_both() {
+        // z-cylinder radius 1 at the origin; a smaller sphere offset +1.5
+        // in x bites only the +x flank: disc(theta) = R^2 - (3.25 - 3 cos
+        // theta) >= 0 only near theta = 0, so the seam is ONE closed window
+        // loop. Every sampled point must lie on both surfaces.
+        let cyl = Surface3::Cylinder(
+            Cylinder3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 1.0)
+                .unwrap(),
+        );
+        let sph = Surface3::Sphere(
+            Sphere3::new(
+                Frame3::from_z(Vec3::new(1.5, 0., 0.), Vec3::new(0., 0., 1.)).unwrap(),
+                1.2,
+            )
+            .unwrap(),
+        );
+        let r = intersect_surfaces(&SurfaceRef::Analytic(&cyl), &SurfaceRef::Analytic(&sph), 1e-6)
+            .unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("expected window curve, got {r:?}")
+        };
+        assert_eq!(cs.len(), 1, "non-coaxial bite is a single window loop");
+        assert!(cs[0].closed, "window loop must be closed");
+        assert!(matches!(cs[0].curve, Curve3::Nurbs(_)), "quartic seam is a NURBS");
+        check_curve_on_both_tol(&cyl, &sph, &cs[0].curve, 48, 1e-5);
+    }
+
+    #[test]
+    fn cylinder_sphere_noncoaxial_wrap_on_both() {
+        // z-cylinder radius 1; a larger sphere offset only +0.3 in x still
+        // swallows the whole cross-section (max surface distance to the
+        // centre 1.3 < R = 1.5), so disc(theta) > 0 everywhere and the seam
+        // is TWO closed wrap loops (upper and lower branch).
+        let cyl = Surface3::Cylinder(
+            Cylinder3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 1.0)
+                .unwrap(),
+        );
+        let sph = Surface3::Sphere(
+            Sphere3::new(
+                Frame3::from_z(Vec3::new(0.3, 0., 0.), Vec3::new(0., 0., 1.)).unwrap(),
+                1.5,
+            )
+            .unwrap(),
+        );
+        let r = intersect_surfaces(&SurfaceRef::Analytic(&cyl), &SurfaceRef::Analytic(&sph), 1e-6)
+            .unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("expected wrap curves, got {r:?}")
+        };
+        assert_eq!(cs.len(), 2, "full swallow is two wrap loops");
+        for c in &cs {
+            assert!(c.closed && matches!(c.curve, Curve3::Nurbs(_)));
+            check_curve_on_both_tol(&cyl, &sph, &c.curve, 48, 1e-5);
+        }
+    }
+
+    #[test]
+    fn cylinder_sphere_coaxial_still_circles() {
+        // Regression: the coaxial rung must keep returning EXACT circles
+        // (never route through the new branch field). Sphere R 1.5 centred
+        // on the cylinder axis -> two circles at z = +-sqrt(1.25).
+        let cyl = Surface3::Cylinder(
+            Cylinder3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 1.0)
+                .unwrap(),
+        );
+        let sph = Surface3::Sphere(
+            Sphere3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 1.5).unwrap(),
+        );
+        let r = intersect_surfaces(&SurfaceRef::Analytic(&cyl), &SurfaceRef::Analytic(&sph), 1e-6)
+            .unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("{r:?}")
+        };
+        assert_eq!(cs.len(), 2);
+        assert!(cs.iter().all(|c| matches!(c.curve, Curve3::Circle(_))));
     }
 
     #[test]
