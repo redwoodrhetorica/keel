@@ -96,6 +96,8 @@ fn run(s: &Seq) {
                 return;
             }
             Ok(r) => {
+                let mok = r.body.mass_properties().is_ok();
+                eprintln!("  step {i}: faults={} mass_ok={mok}", r.faults.len());
                 if i + 1 == n {
                     let m = r.body.mass_properties().map(|x| x.volume).unwrap_or(f64::NAN);
                     println!(
@@ -117,12 +119,15 @@ fn run(s: &Seq) {
 fn main() {
     let z = Vec3::new(0., 0., 1.);
     let zd = Vec3::new(0., 0., -1.);
-    // #1: block - ball-cavity - countersink, then blind-hole FAILS mass!=mesh.
+    // bug_extract #1 (forward+backward / degenerate-UV): block - ball - hole -
+    // cone, then blind-hole. Per-step trace finds WHICH op corrupts the sphere
+    // face's loop into the degenerate fwd+bwd rim.
     run(&Seq {
-        label: "#1 blind after ball+cone",
+        label: "#1 blind(ball+hole+cone)",
         stock: Prim::Blk { o: Vec3::ZERO, d: Vec3::new(22.5, 13.5, 3.923) },
         feats: vec![
             (Prim::Sph { c: Vec3::new(2.244, 2.120, 3.434), r: 1.221 }, BoolOp::Difference),
+            (Prim::Cyl { p: Vec3::new(2.555, 6.236, -0.5), ax: z, r: 1.189, h: 4.923 }, BoolOp::Difference),
             (Prim::Cone { p: Vec3::new(2.540, 11.469, 3.973), ax: zd, r: 1.010, h: 1.479 }, BoolOp::Difference),
             (Prim::Cyl { p: Vec3::new(6.793, 11.515, 2.928), ax: z, r: 0.703, h: 1.595 }, BoolOp::Difference),
         ],

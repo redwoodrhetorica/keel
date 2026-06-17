@@ -9426,3 +9426,34 @@ multi-cut stitch EMITTING the doubled loop -- is still unfixed; this dedups
 defensively in the integrator. Next: trace the stitch duplication (likely the
 "unlocated seam component" multi-cut relocation re-imprinting a seam) and/or widen
 the dedup to near-duplicate fins. [[minimize-declines]] [[kernel-known-limitations]]
+
+## Addendum 293: the remaining mass!=mesh residual is a deep STITCH-ASSEMBLY corruption (a distant multi-cut op corrupts a curved face's loop); the forward+backward mass band-aid is UNSAFE -- reverted (2026-06-17)
+
+Continued the mass!=mesh dig. Two findings.
+
+(1) The forward+backward degenerate-loop variant (winding 0, all boundary at one
+latitude -> degenerate-UV) CANNOT be safely deduped in the mass integrator. The
+extension (drop a fin whose REVERSE is present) made the body assemble, but a hand
+volume + MC check caught the result as 0.67% WRONG (mass 1157.60 vs true 1165.46:
+block 1191.83 - ball 5.98 - hole 17.42 - countersink 1.43 - blind 1.55). It slips
+the gate only because the coarse mesh is ALSO off. Reverted -- a band-aid that
+emits a plausible-but-wrong mass is worse than an honest decline. (The Add-292
+SAME-direction dedup stays: that one is a clean collapse, MC-verified.)
+
+(2) Per-step trace (probe_mm): the corruption is the BLIND-HOLE op (a DISTANT,
+multi-cut step) -- steps 0-2 (ball, hole, cone) keep mass OK; step 3 (blind-hole,
+far from the ball-cavity) flips mass to Err and raises 6 "unlocated seam
+component" faults, leaving a curved face with a doubled / forward-backward rim. It
+is NOT imprint_operand (the seamless distant face is not in its per-face seam
+groups) and NOT the relocation match (`curved_face_containing` correctly rejects
+the far face -- the probe is ~10 units off-surface). So the corruption is in the
+result ASSEMBLY (classify / select / stitch): a multi-cut op rebuilds a far curved
+face's loop into a degenerate state. The body is genuinely malformed (mesh also
+~2% off) -> correctly DECLINED, never wrong.
+
+This is the dominant residual (bug_extract 533: #1-#7, the mass!=mesh /
+unlocated-seam cluster, ~330 hits, all multi-cut compounds). It needs focused
+stitch-assembly debugging (where a kept far face's loop is rebuilt), not a mass
+band-aid. The tractable decline classes are now cleared; the remainder is this
+deep assembly corruption plus the deferred skew-cone SSI (Add 289).
+[[minimize-declines]] [[kernel-known-limitations]] [[hit-a-wall-review-research]]
