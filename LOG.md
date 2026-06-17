@@ -9353,3 +9353,37 @@ curved robustness 9/9 (new guard `countersink_then_far_hole_no_intersection_fail
 0 gate escapes throughout. REMAINING: cone/cone INTERSECTING (the double-nappe,
 Add 289) and the cyl/sphere disjoint-union gate gap. [[minimize-declines]]
 [[kernel-known-limitations]]
+
+## Addendum 291: the post-cone residual is the green-slab MASS integrator declining on WINDING-2 curved faces (diagnosis; correct bodies, mass-unverifiable -> deferred decline) (2026-06-17)
+
+After Add 290, bug_extract dropped to 547 failing ops (from 983). The new
+dominant class (~300 hits: #1/#2/#4 `AssemblyFailed("mass != mesh")` + #3 a
+KEPT `unlocated seam component` fault) is one root cause. probe_mm built the
+repros and read the gate: the failing bodies have curved cavities (ball-cavity +
+countersink; dome + boss) and are GEOMETRICALLY CORRECT -- `mesh_volume` matches
+an independent MC truth to 0.5-0.8% -- but `mass_properties()` returns
+`Err(Precondition("green-slab: unsupported boundary winding"))`. The analytic
+mass integrator declines; the body is fine.
+
+That decline CASCADES into the residual: with mass unavailable, (a) the
+advisory-fault filter's mesh-verify (`mass == mesh_volume`) can't run -> the
+recovered-imprint fault is KEPT -> faulted decline (#3); and (b) the gate's
+mass-dependent checks fall through -> AssemblyFailed (#1/#2/#4). So a single
+mass-integrator gap drives the whole class.
+
+THE GAP (KEEL_MASS_DEBUG): the green-slab `v_base` slab anchor handles winding
+~0 (anchor v_min), sphere winding +-1 (the enclosed pole), and cone winding +-1
+(the apex). It ERRORS on winding ~+-2 -- the failing faces read `winding -2 / +2`
+with 4 boundary fins, the boundary sitting at a single latitude. That is a curved
+face (sphere/cone) whose trimmed boundary wraps the axis TWICE (two loops at one
+latitude), which arises after several booleans on one curved primitive.
+
+NEXT (a focused, careful effort -- NOT a rushed guess): extend the green-slab to
+the winding-+-2 (multi-loop, double-wrap) anchor. This is the analytic mass
+integrator, the FOUNDATION of WRONG=0: a subtly-wrong winding-2 integration would
+let the gate pass a wrong body. So it needs a derived anchor + tight per-face MC
+verification (probe_mm) + the full soak, not a plausible-looking guess. Until
+then these stay honest DECLINES (the bodies are correct but unverifiable;
+DECLINE-never-WRONG intact). Related: [[massprops-sense-region-inconsistency]],
+[[sphere-split-integration-trap]]. [[minimize-declines]] [[kernel-known-limitations]]
+[[hit-a-wall-review-research]]
