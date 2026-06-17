@@ -9167,3 +9167,60 @@ DECLINE down, FAIL=0 both seeds, 0 gate escapes, 283 + curved green. A real broa
 win. REMAINING (~half each): root cause B (`mass != mesh` on curved-compound
 bodies, the AssemblyFailed cluster) + residual imprint faults (boss-cyl union onto
 a compound body, countersink = the cone/block single-op gap). [[minimize-declines]]
+
+## Addendum 287: root cause B RESOLVED -- curved-compound `mass != mesh` declines were CORRECT bodies tripping the watertightness net AND a tight oracle mis-firing on the compound operand; both fixed, nested 40->49% (2026-06-16)
+
+Add 286 left root cause B as the dominant remaining nested-decline cluster: a
+curved-compound body (a plate with a dome, then drilled) returns the
+analytically EXACT result yet declines AssemblyFailed. `probe_massmesh` isolated
+it -- `block U dome - hole` reads mass 297.644 = `300 - 0.75*pi` (exact) against
+an independent MC truth of 297.48, yet the curved post-condition gate declined.
+TWO independent guards were firing on the correct body.
+
+B2, the watertightness net. A correct curved-compound carries a small GENUINE
+chordal-junction residual where a curved cap meets planar faces on a multi-loop
+face -- `mesh_open_ratio` 0.018 here, mass exact. The Add-277 net was 1e-2, set
+against the #48 sph/sph silent-WRONG class (which sits at 0.25+). 1e-2 is 25x
+below the wrong but ABOVE the correct compound's 0.018 -> false decline. Raised
+to 5e-2: passes the correct compound, still declines the wrong class with a 5x
+margin. Guarded both ways -- `large_offset_sphere_intersection_never_silent_wrong`
+asserts the 0.25 class still declines, and the soak's three-bucket WRONG=0 oracle
+backs it.
+
+B1, the oracle mis-fire. The tight cyl/sphere + cone/sphere op-volume oracle
+(Add 278/281, the WINDOW-class safety net) detects its operands by finding ANY
+cylinder/cone/sphere FACE. A compound operand that merely CONTAINS such a face --
+the block+dome has a sphere face -- was scored as if it were the bare sphere
+(vol 14), producing a nonsense "exact" volume that the gate's `tight_ok` then
+compared against the true compound mass (307) -> mismatch -> decline. Added a
+lone-primitive guard: the oracle fires only when each operand's OWN volume equals
+the primitive volume it was detected as.
+
+The interesting part -- the guard's volume test must use the ANALYTIC
+`mass_properties`, NOT the chordal `tessellated_volume`. A coarsely-facetted lone
+sphere/cone reads several percent under its true volume, so a tessellated test
+(my first cut, 5% band) would spuriously FAIL `prim_ok` on a GENUINE lone
+primitive -> return None. And the gate treats a None oracle as `tight_ok = true`
+(no oracle available -> skip the check), so the tessellated guard silently
+DISARMED the WRONG-catching oracle on real primitives -- looser, not safer.
+Analytic mass is exact for any quadric+planar primitive (match to ~1e-9), so the
+mass guard keeps the oracle ARMED for true primitives and disarms it ONLY for
+genuine compounds. Both more correct and strictly safer. Confirmed behavior-
+neutral on the explorer: the tessellated and mass guards give BIT-IDENTICAL soak
+results (seed1 6002/213 behaviors, seed2 6016/204), so the choice is purely a
+robustness/safety upgrade, not a behavior change.
+
+MEASURED: `probe_massmesh` / the new `curved_compound_drill_passes_not_declined`
+guard test -- `block U dome - hole` PASSES, mass = `300 - 0.75*pi` (exact), mesh
+296.29 (the genuine 0.018-ratio chordal residual, well under the 5e-2 net).
+Nested per-op recovery 40.1% -> 49.1% (8087 ops), 0 INVALID gate escapes. Full
+suite 283 + curved robustness 6/6 green; both WINDOW tests still PASS (the oracle
+still fires for lone primitives via the mass match) and `large_offset_sphere`
+still DECLINES the 0.25 silent-WRONG class. Soak FAIL=0 both seeds, 0 gate
+escapes. The win lands on the COMPOUND/nested workload, not the primitive
+explorer (which rarely builds curved compounds -- hence the bit-identical soak).
+
+REMAINING (the other ~half of nested declines): busier curved-compound bodies
+whose watertightness genuinely exceeds 0.05, plus residual imprint faults
+(boss-cyl union onto a compound body, countersink = the cone/block single-op
+gap, cross-hole). [[minimize-declines]] [[kernel-known-limitations]]

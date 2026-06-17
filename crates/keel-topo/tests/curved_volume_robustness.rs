@@ -39,6 +39,12 @@ fn cyl(pos: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
     b
 }
 
+fn blk(o: Vec3, dx: f64, dy: f64, dz: f64) -> Body {
+    let mut b = Body::new();
+    b.block(o, dx, dy, dz).unwrap();
+    b
+}
+
 #[test]
 fn cone_sphere_window_four_ops_pass_exact() {
     // A sphere grazing a cone's lateral in a single window loop. ALL 4 ops PASS
@@ -120,6 +126,37 @@ fn cyl_sphere_planar_cap_intersection_pass() {
     let mesh = r.body.mesh_volume();
     assert!((m - 2.853).abs() < 0.1, "mass {m} != ~2.853");
     assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+}
+
+#[test]
+fn curved_compound_drill_passes_not_declined() {
+    // Root cause B (Add 287): a CORRECT curved-compound body was false-declined
+    // by two independent guards firing on it. Build a plate, union a dome
+    // (-> curved-compound body), then drill a through-hole well clear of the
+    // dome. The result is analytically exact:
+    //   300 (block) + 2.25*pi (upper hemisphere) - 3*pi (bore) = 300 - 0.75*pi.
+    // It MUST pass faultless, valid, mass == exact, mass == mesh.
+    //
+    // Before the fix two things tripped it: (1) the body's genuine ~0.018
+    // chordal-junction residual (a curved cap meeting planar faces on a
+    // multi-loop face) exceeded the old 1e-2 watertightness net; (2) the tight
+    // cyl/sphere oracle matched the dome FACE on the compound operand and scored
+    // the whole block+dome as if it were the bare sphere -> a nonsense exact
+    // volume -> AssemblyFailed. The lone-primitive guard (oracle fires only when
+    // each operand's own volume matches the primitive it was detected as) and the
+    // 5e-2 net (still 5x below the #48 silent-WRONG class at 0.25+) land it.
+    let plate = blk(Vec3::ZERO, 10.0, 10.0, 3.0);
+    let dome = sph(Vec3::new(3.0, 3.0, 3.0), Vec3::new(0., 0., 1.), 1.5);
+    let b1 = boolean(&plate, &dome, BoolOp::Union, 1e-7).unwrap().body;
+    let hole = cyl(Vec3::new(7.0, 7.0, -0.5), Vec3::new(0., 0., 1.), 1.0, 4.0);
+    let r = boolean(&b1, &hole, BoolOp::Difference, 1e-7)
+        .unwrap_or_else(|e| panic!("curved-compound drill declined (root-B regression): {e:?}"));
+    assert!(r.faults.is_empty() && r.body.validate().is_ok(), "not clean: {:?}", r.faults);
+    let exact = 300.0 - 0.75 * std::f64::consts::PI;
+    let m = r.body.mass_properties().unwrap().volume;
+    let mesh = r.body.mesh_volume();
+    assert!((m - exact).abs() < 1e-2, "mass {m} != exact {exact}");
+    assert!((m - mesh).abs() < 5e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
 }
 
 /// Exact volume of the intersection lens of two spheres (radii ra, rb, centre

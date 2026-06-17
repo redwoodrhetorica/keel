@@ -4827,6 +4827,27 @@ fn cyl_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
         } else {
             return None;
         };
+    // The oracle is an exact LONE cylinder-vs-LONE sphere truth. cyl_of/sph_of
+    // match ANY face, so a COMPOUND operand that merely CONTAINS such a face (a
+    // plate with a dome, then drilled) would otherwise be scored as if it were
+    // the bare primitive -> a nonsense exact volume that false-declines a
+    // correct result (root-B). Fire only when each operand's OWN volume matches
+    // the primitive it was detected as (va is A's primitive volume, vb is B's).
+    // Use the ANALYTIC mass, not the chordal tessellated volume: a coarsely
+    // facetted lone sphere/cone reads several percent under its true volume, so
+    // a tessellated test would spuriously DISARM the oracle on a genuine lone
+    // primitive -- silently dropping a WRONG-catching constraint. Analytic mass
+    // is exact for any quadric+planar primitive, so the match is to ~1e-9 for a
+    // true primitive while a compound (block+dome 307 vs sphere 14) is rejected
+    // by a wide margin.
+    let prim_ok = |body: &Body, vprim: f64| {
+        body
+            .mass_properties()
+            .map_or(false, |m| m.volume.is_finite() && (m.volume - vprim).abs() <= 1e-2 * (1.0 + vprim))
+    };
+    if !(prim_ok(a, va) && prim_ok(b, vb)) {
+        return None;
+    }
     let inter = cyl_sphere_inter_volume(&cyl, hlo, hhi, &sph);
     Some(match op {
         BoolOp::Intersection => inter,
@@ -4928,6 +4949,20 @@ fn quadric_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
     let inter = cone_sphere_inter_volume(&cone, vlo, vhi, &sph);
     let vcone = cone_solid_volume(&cone, vlo, vhi);
     let (va, vb) = if va.is_nan() { (vcone, vb) } else { (va, vcone) };
+    // Lone-primitive guard (see cyl_sphere_op_volume): fire only when each
+    // operand IS the bare cone/sphere it was detected as, not a compound body
+    // that merely contains such a face -- else a correct compound result gets a
+    // nonsense exact volume and is false-declined (root-B). Analytic mass, not
+    // the chordal tessellated volume (which on a coarse cone/sphere would read
+    // several percent low and spuriously disarm the oracle on a real primitive).
+    let prim_ok = |body: &Body, vprim: f64| {
+        body
+            .mass_properties()
+            .map_or(false, |m| m.volume.is_finite() && (m.volume - vprim).abs() <= 1e-2 * (1.0 + vprim))
+    };
+    if !(prim_ok(a, va) && prim_ok(b, vb)) {
+        return None;
+    }
     Some(match op {
         BoolOp::Intersection => inter,
         BoolOp::Union => va + vb - inter,
@@ -5196,7 +5231,17 @@ fn assemble_boolean(
     // exact lens volume yet mass==mesh, in-bounds). The residual is built from
     // edge vectors so it is translation-invariant (no far-origin cancellation
     // that the per-component volume recenter must otherwise fix). Decline.
-    let ok = ok && body.mesh_open_ratio() <= 1e-2;
+    //
+    // THRESHOLD (Add 287): a CORRECT curved-compound body carries a small,
+    // genuine chordal-junction residual where a curved cap meets a planar face
+    // on a multi-loop face -- e.g. a plate with a dome AND a drilled hole reads
+    // 0.018, mass exact. The #48 silent WRONGs sit at 0.25+ (a 14x gap). The old
+    // 1e-2 (25x below the wrong) false-declined those correct compounds; 5e-2
+    // passes them while still catching the wrong class with a 5x margin. Guarded
+    // both ways: `large_offset_sphere_intersection_never_silent_wrong` asserts
+    // the 0.25 class still declines, and the soak's three-bucket oracle (WRONG=0)
+    // catches any wrong that the looser net would admit.
+    let ok = ok && body.mesh_open_ratio() <= 5e-2;
     if !ok {
         return Err(BoolFault::AssemblyFailed(
             "degenerate or self-inconsistent result (mass != mesh)",
