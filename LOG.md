@@ -9273,3 +9273,44 @@ lateral cannot yet imprint -- correctly DECLINED, never wrong. That cone-face SS
 support is the next target (the Add-287 "countersink single-op gap" was a
 misdiagnosis -- the single op was always correct; the gap is the cone face as an
 SSI OPERAND). [[minimize-declines]] [[kernel-known-limitations]]
+
+## Addendum 289: cone-face SSI scoped + the branch-field DOUBLE-NAPPE wall (diagnosis; WIP stashed, nothing shipped) (2026-06-17)
+
+The Add-288 frontier is `IntersectionFailed` on a cone FACE as an SSI operand: a
+2nd feature crossing an existing countersink's cone lateral (cone x cylinder,
+cone x cone). Scoped the SSI math and built the core; cone x cylinder lands, cone
+x cone hit a real engine wall. WIP stashed (`git stash list`); the boolean still
+DECLINES these (DECLINE-never-WRONG intact), nothing shipped.
+
+THE MATH (mirrors the non-coaxial cone/sphere arm, Add 280). A cone is RULED:
+`P(theta, v) = O + rad(theta)*(r0 + v*m) + z*v` is LINEAR in v (m = tan
+half_angle). The other surface's implicit is then a QUADRATIC in v along each
+ruling -- cylinder `|P_perp - cyl_O_perp|^2 = R^2`; cone `((P-A2).n2)^2 =
+cos^2(a2)|P-A2|^2` -- so it feeds the shared `quadratic_branch_field` exactly like
+cyl/sphere and cone/sphere. PARALLEL axes are the tractable rung: the leading
+coeff is CONSTANT (cone/cyl: m^2; cone/cone: `1 - cos^2(a_other)*(m_ruling^2+1)`,
+made POSITIVE by parametrizing the SHALLOWER cone). SKEW axes make the leading
+coeff vary with theta -- deferred. VERIFIED: cone/cyl parallel-offset produces
+seam curves that lie on BOTH surfaces (a unit test passed at 1e-6).
+
+THE WALL (cone/cone). A cone is a DOUBLE cone. The ruling param (v over all of R)
+and the algebraic implicit (both nappes) admit a SPURIOUS second branch on the
+WRONG nappe: for two parallel up-opening cones, the `disc > 0` wrap has branch+
+on the real upper-nappe intersection but branch- below the other cone's apex
+(verified by hand at theta=0). The shared `quadratic_branch_field` assumes BOTH
+branches are valid and fits ALL-OR-NOTHING, so the unfittable spurious branch
+ERRORS the whole pair even though the real branch is clean.
+
+THE PATH (next focused effort -- a core-engine change, so it needs full re-
+validation against EVERY branch-field class -- cyl/cyl, cyl/sphere, cone/sphere
+-- plus the soak WRONG=0). Two candidate fixes: (a) nappe-aware v-domain -- keep
+only roots whose point is on the cone's REAL nappe (r0 + v*m > 0 for the ruling
+cone; axial-from-apex sign for the implicit cone) before classifying disc runs;
+(b) per-branch fit (return the branches that fit, drop the rest), but only if the
+spurious-but-fittable case is proven harmless -- a wrong-nappe curve off the face
+extent should be trimmed by the imprint phantom-seam machinery (Add 285/286), but
+that interaction must be soak-proven, not assumed. The bulk of the #1 residual is
+likely NON-intersecting cone pairs (separate countersinks) -> the branch field
+already returns Empty there, so even the parallel rung alone should recover most
+of it once cone/cone fits cleanly. [[minimize-declines]] [[kernel-known-limitations]]
+[[hit-a-wall-review-research]]
