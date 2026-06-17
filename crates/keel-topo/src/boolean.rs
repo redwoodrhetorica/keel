@@ -3660,6 +3660,32 @@ pub fn knit(bodies: &[&Body], tol: f64) -> Result<Body, BoolFault> {
     finalize_imported_assembly(dst, rec, faces, Vec::new(), inf, solid, vtol)
 }
 
+/// Explode / unjoin: the inverse of `knit`. Split `body` into one independent
+/// SHEET body per face, each carrying that face's trimmed loop and geometry,
+/// double-sided over the void (free edges, as an open lamina). A face that
+/// cannot be re-imported as a standalone sheet is skipped, so the result has at
+/// most one body per face. (Plasticity "Unjoin Shells".)
+pub fn explode(body: &Body) -> Vec<Body> {
+    use std::collections::BTreeMap;
+    let mut out = Vec::new();
+    for fk in body.face_keys() {
+        let mut dst = Body::new();
+        let inf = dst.infinite_region();
+        let mut rec = dst.begin_op();
+        let mut vmap: BTreeMap<(Operand, u64), crate::entity::VertexKey> = BTreeMap::new();
+        let mut emap: BTreeMap<(Operand, u64), crate::entity::EdgeKey> = BTreeMap::new();
+        let Some(nf) =
+            import_face(&mut dst, body, fk, Operand::A, false, &mut rec, &mut vmap, &mut emap, inf, inf)
+        else {
+            continue;
+        };
+        if let Ok(sheet) = finalize_imported_sheet(dst, rec, vec![nf], inf, 1e-7) {
+            out.push(sheet);
+        }
+    }
+    out
+}
+
 /// Partition `faces` (kept fragments of the stitched body) into connected
 /// boundary components: faces sharing an edge are in the same component.
 /// Each component is one closed boundary shell (e.g. the outer box surface

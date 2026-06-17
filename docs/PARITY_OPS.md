@@ -34,7 +34,8 @@ boolean tests); DONE = has a focused guard test.
 | Multi-tool boolean | Boolean | `boolean::boolean_multi` (5257) | TODO |
 | Cut by sheet/plane | Cut (C) | via `boolean` Difference / `partition_by_sheet` | TODO |
 | Imprint body↔body | Imprint Body Body | `boolean::imprint` (5334), `Body::imprint_body` (6582) | TODO |
-| Knit / sew sheets → solid | Join Sheets (J) | `boolean::knit` (3629) | TODO |
+| Knit / sew sheets → solid | Join Sheets (J) | `boolean::knit` (3629) | DONE (parity_ops: explode↔knit round-trip) |
+| Explode / unjoin → sheets | Unjoin Shells (Alt+J) | `boolean::explode` | DONE (parity_ops round-trip) |
 | Imprint closed curve | Imprint Curve Body | `Body::imprint_closed_curve` (imprint.rs:35) | TODO |
 | Imprint open curve | Imprint Curve Body | `Body::imprint_open_curve` (imprint.rs:108) | TODO |
 | Imprint closed polyline | Imprint Curve Body | `Body::imprint_closed_polyline` (imprint.rs:180) | TODO |
@@ -172,7 +173,7 @@ decline-minimization soak corpus is the worklist.
 |---|---|---|
 | Untrim | Untrim (Alt+T) | recreate face from base surface's natural domain |
 | Remove Fillets (defillet) | Remove Fillets from Shell | inverse of the fillet suite: delete blend + extend-reintersect neighbors |
-| Explode / Unjoin | Unjoin Faces/Shells (Alt+J) | body → per-face sheet bodies (trivial wrapper) |
+| ~~Explode / Unjoin~~ | Unjoin Shells (Alt+J) | DONE: `boolean::explode` (body → per-face sheets) |
 | Delete Redundant Topology | Delete Redundant Topology | merge co-faces / co-edges (`simplify` covers part) |
 | Extend Sheet (solid-level) | Extend Sheet | wrap geom `extend_*` to a sheet command |
 | Remove Nominal Surface | Remove Nominal Surface | — |
