@@ -149,6 +149,40 @@ impl Body {
     /// wrong-positive class as the crossing-cylinder pair). Checks BOTH
     /// the axial band and the ANGULAR span (the original height-only
     /// test passed full circles onto quarter bands).
+    /// Overlap of `curve` with a face's TRIMMED extent, surface-type aware.
+    /// `curve_cylinder_face_overlap` defaulted a PLANE face to `All`, so a tool
+    /// plane's section of the OTHER operand's pre-existing CURVED feature -- a
+    /// phantom seam lying on that curved face but OFF this plane's trimmed
+    /// polygon -- was never dropped, and it faulted a multi-feature imprint that
+    /// otherwise assembles correctly (drill a hole, then cut a pocket elsewhere:
+    /// the pocket's side plane meets the bore cylinder in two phantom rulings).
+    /// Conservative: a plane returns `None` only when a LINE seam clips to
+    /// nothing on the face (clearly off); other curve types stay `All`.
+    pub(crate) fn curve_face_overlap(
+        &self,
+        face: FaceKey,
+        curve: &keel_geom::curve::Curve3,
+        tol: f64,
+    ) -> CurveFaceOverlap {
+        match self.face_surface3(face) {
+            Some(Surface3::Cylinder(_)) | Some(Surface3::Cone(_)) => {
+                self.curve_cylinder_face_overlap(face, curve, tol)
+            }
+            Some(Surface3::Plane(p)) => match curve {
+                keel_geom::curve::Curve3::Line(line) => {
+                    let poly = self.face_outer_loop_points(face);
+                    if clip_line_to_planar_face(line, &p, &poly).is_some() {
+                        CurveFaceOverlap::All
+                    } else {
+                        CurveFaceOverlap::None
+                    }
+                }
+                _ => CurveFaceOverlap::All,
+            },
+            _ => CurveFaceOverlap::All,
+        }
+    }
+
     pub(crate) fn curve_cylinder_face_overlap(
         &self,
         face: FaceKey,
@@ -6771,12 +6805,12 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                         let ova = if on_a {
                             CurveFaceOverlap::All
                         } else {
-                            a.curve_cylinder_face_overlap(fa, &c.curve, tol)
+                            a.curve_face_overlap(fa, &c.curve, tol)
                         };
                         let ovb = if on_b {
                             CurveFaceOverlap::All
                         } else {
-                            b.curve_cylinder_face_overlap(fb, &c.curve, tol)
+                            b.curve_face_overlap(fb, &c.curve, tol)
                         };
                         match (ova, ovb) {
                             (CurveFaceOverlap::All, CurveFaceOverlap::All) => {}

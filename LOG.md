@@ -9101,3 +9101,49 @@ classify path's exactness); taking it out is a separate, validation-heavy
 decision (the threshold margins are 0.25, so a <1e-6-agreeing FWN would be
 bucket-safe, but it warrants the three-bucket oracle, not just the soak). probe_prof
 isolates any single op's stage breakdown. [[geometry-kernel-project]]
+
+## Addendum 285: realistic-CAD-workload testing + the first compound-body fix (drill-then-pocket); the multi-feature frontier mapped, 0 gate escapes throughout (2026-06-16)
+
+User redirected validation from the adversarial novelty-search explorer (random
+primitive PAIRS, mostly ill-posed) to REALISTIC CAD workloads -- valid operations
+a user actually issues -- and demanded the tests surface ACTIONABLE bugs, not
+scores. New instruments (examples/): cad_workload (single feature on clean stock),
+cad_session_real (one evolving body through dozens of nested features, deliberate
+non-overlapping placement), bug_extract (dedupe each failure by error signature +
+DELTA-DEBUG to a minimal triggering feature sequence -> ranked paste-able repros),
+decline_triage (independent MC overlap oracle: correct-refusal vs genuine gap).
+
+FINDINGS: single feature on clean stock = 90% PASS, really 100% on 11 of 14
+feature types with 3 named gaps (countersink=block-cone, rounded-end=cyl U sphere
+cap, cross-hole=perp cyl/cyl) -- a feature TO-DO list, not flakiness. NESTED on a
+busy compound body collapses to ~24% per-op: the real-world blocker, bigger than
+the off-axis curved-SSI frontier. CRITICAL SAFETY RESULT: 0 gate escapes across
+every realistic test (single + nested + the 512k explorer) -- no broken/wrong body
+ever returned as success; DECLINE-never-WRONG holds on compound operands too. (The
+"FAIL%" first reported was a mislabel: valid bodies with a NURBS face the analytic
+mass cannot integrate -- correct bodies.)
+
+ROOT CAUSE A (~half of nested failures), FIXED: a PHANTOM seam. The new tool's
+plane meets the body's PRE-EXISTING curved feature on the INFINITE surfaces --
+a pocket's side plane x a prior hole's bore cylinder = two rulings at the bore,
+OFF the pocket's trimmed extent. `curve_cylinder_face_overlap` defaulted a PLANE
+face to `All` (handled only cyl/cone), so the phantom passed the (All,All) filter,
+was kept, and faulted the multi-component imprint ("open chain end not on
+boundary" + "unlocated seam component (non-planar multi-cut face)") -- though the
+assembly was correct (valid, mass exact). FIX: `curve_face_overlap` dispatches by
+surface type; a PLANE face's Line seam that clips to nothing on its trimmed
+polygon (the tested clip_line_to_planar_face) returns None -> dropped.
+Conservative (Line + provably clearly-off only) so it cannot over-drop needed
+seams (the Add-260 unsound-drop trap). "Drill a hole, then cut a pocket
+elsewhere" -- 100% broken before -- now assembles clean (mass exact).
+probe_multicut repros it. 283 lib + curved-robustness green; soak FAIL=0 both
+seeds, buckets BIT-IDENTICAL to baseline (the primitive-pair explorer does not
+generate the compound phantom -> zero regression; the compound case is pinned by
+probe_multicut + the nested run's 0 escapes). Nested per-op 24% -> 27%.
+
+REMAINING CLUSTER (next slices, each soak-gated, regression-prone): the SAME
+phantom from sphere/cone features (circle/ellipse seams; the fix only did Line),
+and ROOT CAUSE B -- `mass != mesh` declines on curved-compound bodies (~a third).
+The realistic test re-prioritised the worklist: sustaining a busy multi-feature
+body is the #1 real-world gap for the fieldforge swap, above the exotic
+curved-SSI classes. [[geometry-kernel-project]] [[minimize-declines]]
