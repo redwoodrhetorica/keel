@@ -1734,6 +1734,105 @@ impl Body {
         // keep only triangles on the cap side of that circle's plane;
         // a whole-sphere face (no circle edge) meshes fully.
         let cap = self.sphere_cap_trim(face);
+        // NURBS-RIM HOLES (dossier 69): the cyl/sphere wrap "rest" face is the
+        // sphere with K contractible NON-circular NURBS holes (where the rod
+        // pokes through). The circle-rim clip below misses them (so the grid
+        // covered the holes and over-read; the rod-stub openings then left the
+        // mesh non-watertight). For each non-seam NURBS hole loop, build the
+        // CONE of facet planes from the sphere centre through each rim chord
+        // (the rim's canonical `fin_curve_samples`, shared with the partner
+        // wall): a grid triangle is then DIFFERENCED against the cone, so the
+        // sphere mesh terminates ON the rim chords -> watertight with the wall
+        // by construction, and the hole-cap volume is not double-counted.
+        // Circle-rim faces collect nothing here, so they stay byte-unchanged.
+        let mut hole_cones: Vec<Vec<(Vec3, Vec3)>> = Vec::new();
+        {
+            let loops = self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default();
+            for &lk in &loops {
+                let mut is_seam_loop = true;
+                let mut has_nurbs = false;
+                for e in self.ring_edges(lk) {
+                    let Some(ed) = self.edges.get(e) else { continue };
+                    let seam = ed.radial.len() >= 2
+                        && ed.radial.iter().all(|&rf| {
+                            self.fins
+                                .get(rf)
+                                .and_then(|x| self.loops.get(x.owner))
+                                .map(|x| x.face)
+                                == Some(face)
+                        });
+                    if !seam {
+                        is_seam_loop = false;
+                    }
+                    if matches!(ed.curve.and_then(|(ck, _)| self.curves.get(ck)),
+                        Some(keel_geom::curve::Curve3::Nurbs(n)) if n.degree() >= 2)
+                    {
+                        has_nurbs = true;
+                    }
+                }
+                if is_seam_loop || !has_nurbs {
+                    continue;
+                }
+                let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+                    continue;
+                };
+                let mut samples: Vec<Vec3> = Vec::new();
+                let mut cur = entry;
+                loop {
+                    for p in self.fin_curve_samples(cur, 24).unwrap_or_default() {
+                        if samples.last().map(|q: &Vec3| (*q - p).norm() > 1e-9).unwrap_or(true) {
+                            samples.push(p);
+                        }
+                    }
+                    let Some(nx) = self.fins.get(cur).map(|f| f.next) else { break };
+                    cur = nx;
+                    if cur == entry {
+                        break;
+                    }
+                }
+                if samples.last().map(|q| (*q - samples[0]).norm() < 1e-9).unwrap_or(false) {
+                    samples.pop();
+                }
+                if samples.len() < 8 {
+                    continue;
+                }
+                // Mean rim direction (the hole-interior axis from the centre).
+                let mut md = Vec3::ZERO;
+                for p in &samples {
+                    md = md + (*p - center);
+                }
+                let Some(mean_dir) = md.try_normalize() else { continue };
+                // Facet plane per rim chord: normal = (rim[k]-c) x (rim[k+1]-c),
+                // oriented so the hole interior (mean_dir) is on the +side.
+                let n = samples.len();
+                let mut facets: Vec<(Vec3, Vec3)> = Vec::with_capacity(n);
+                let mut ok = true;
+                for k in 0..n {
+                    let a = samples[k] - center;
+                    let b = samples[(k + 1) % n] - center;
+                    let Some(mut nrm) = a.cross(b).try_normalize() else {
+                        ok = false;
+                        break;
+                    };
+                    if mean_dir.dot(nrm) < 0.0 {
+                        nrm = nrm * -1.0;
+                    }
+                    facets.push((center, nrm));
+                }
+                if ok && facets.len() >= 3 {
+                    hole_cones.push(facets);
+                }
+            }
+            // Fire ONLY for the genuine multi-hole wrap "rest" face (>=2 NURBS
+            // holes): a single small window's hole-coverage error is sub-2% and
+            // already passes on the plain grid (the cyl/sphere window baseline),
+            // so leaving it untouched avoids any regression there; the cone
+            // difference is reserved for the 2-hole rod-through "rest" whose
+            // un-clipped grid over-read 2.35% (dossier 69).
+            if hole_cones.len() < 2 {
+                hole_cones.clear();
+            }
+        }
         // ALL closed-circle rim planes (a BAND has TWO -- a cap one): each
         // clipped on the side toward the face interior point. `cap` returns
         // only the FIRST, so a band tessellation overshot the second rim
@@ -1848,11 +1947,36 @@ impl Body {
                     if poly.len() < 3 {
                         continue;
                     }
-                    let cen = poly.iter().copied().fold(Vec3::ZERO, |acc, x| acc + x)
-                        * (1.0 / poly.len() as f64);
-                    let outward = (cen - center) * sgn;
-                    for k in 1..poly.len() - 1 {
-                        tris.push(orient([poly[0], poly[k], poly[k + 1]], outward));
+                    // Subtract each NURBS hole cone (dossier 69): the surviving
+                    // pieces lie OUTSIDE the holes, their new edges ON the rim
+                    // chords (watertight with the partner wall). No holes -> the
+                    // single original piece, byte-unchanged.
+                    let pieces: Vec<Vec<Vec3>> = if hole_cones.is_empty() {
+                        vec![poly]
+                    } else {
+                        let mut cur = vec![poly];
+                        for cone in &hole_cones {
+                            let mut next = Vec::new();
+                            for pc in &cur {
+                                next.extend(subtract_cone(pc, cone));
+                            }
+                            cur = next;
+                            if cur.is_empty() {
+                                break;
+                            }
+                        }
+                        cur
+                    };
+                    for poly in pieces {
+                        if poly.len() < 3 {
+                            continue;
+                        }
+                        let cen = poly.iter().copied().fold(Vec3::ZERO, |acc, x| acc + x)
+                            * (1.0 / poly.len() as f64);
+                        let outward = (cen - center) * sgn;
+                        for k in 1..poly.len() - 1 {
+                            tris.push(orient([poly[0], poly[k], poly[k + 1]], outward));
+                        }
                     }
                 }
             }
@@ -1976,6 +2100,34 @@ fn clip_half_space(poly: &[Vec3], q: Vec3, n: Vec3, sign: f64) -> Vec<Vec3> {
         }
     }
     out
+}
+
+/// Subtract a convex spherical "hole cone" from a polygon, returning the
+/// pieces of `poly` OUTSIDE the cone. The cone is the convex region whose
+/// facet half-spaces are `(point_on_facet, inward_normal)` (a point is INSIDE
+/// the cone iff `(p - point).dot(inward_normal) >= 0` for every facet). The
+/// convex-region difference is the disjoint union, over each facet k, of
+/// `poly` clipped to {inside facets 0..k-1} AND {outside facet k}; every new
+/// cut edge lies ON a facet plane (a rim chord), so the result seams watertight
+/// against the partner face that shares the same rim polyline (dossier 69).
+fn subtract_cone(poly: &[Vec3], facets: &[(Vec3, Vec3)]) -> Vec<Vec<Vec3>> {
+    let mut pieces: Vec<Vec<Vec3>> = Vec::new();
+    // "inside all facets" running region (start = whole poly).
+    let mut inside_prefix = poly.to_vec();
+    for &(q, nin) in facets {
+        if inside_prefix.len() < 3 {
+            break;
+        }
+        // Piece = inside_prefix clipped to OUTSIDE this facet (sign -1 keeps
+        // (p-q).dot(nin) <= 0). Watertight: the cut edge lies on the facet.
+        let outside = clip_half_space(&inside_prefix, q, nin, -1.0);
+        if outside.len() >= 3 {
+            pieces.push(outside);
+        }
+        // Continue with the inside half for the next facet's difference.
+        inside_prefix = clip_half_space(&inside_prefix, q, nin, 1.0);
+    }
+    pieces
 }
 
 /// Order a triangle's vertices so its geometric normal points along

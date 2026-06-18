@@ -5752,6 +5752,142 @@ fn face_height_band(
 
 /// The axis of the latitude circle(s) bounding a sphere face (the coaxial
 /// cut axis), from the first circular loop edge.
+/// Signed solid angle a closed loop subtends at the sphere centre about the
+/// direction `dir` (Van Oosterom-Strackee / spherical winding). |omega| ~ 2*pi
+/// when the loop encircles `dir` (the point lies in the cap the loop bounds);
+/// ~ 0 when it does not. Frame-free. `samples` are the loop's 3D points.
+pub(crate) fn loop_solid_angle_about(
+    samples: &[keel_math::vec::Vec3],
+    center: keel_math::vec::Vec3,
+    dir: keel_math::vec::Vec3,
+) -> f64 {
+    use keel_math::vec::Vec3;
+    let Some(d0) = dir.try_normalize() else {
+        return 0.0;
+    };
+    // Project each sample direction onto the plane perpendicular to d0 and
+    // accumulate the swept azimuth; a full +-2*pi means the loop winds d0.
+    let t = if d0.x.abs() < 0.9 {
+        Vec3::new(1.0, 0.0, 0.0)
+    } else {
+        Vec3::new(0.0, 1.0, 0.0)
+    };
+    let Some(ex) = (t - d0 * t.dot(d0)).try_normalize() else {
+        return 0.0;
+    };
+    let ey = d0.cross(ex);
+    let mut total = 0.0;
+    let mut prev: Option<f64> = None;
+    for s in samples {
+        let w = *s - center;
+        let wp = w - d0 * w.dot(d0);
+        if wp.norm() < 1e-12 {
+            continue;
+        }
+        let th = wp.dot(ey).atan2(wp.dot(ex));
+        if let Some(pv) = prev {
+            let mut delta = th - pv;
+            while delta > core::f64::consts::PI {
+                delta -= core::f64::consts::TAU;
+            }
+            while delta < -core::f64::consts::PI {
+                delta += core::f64::consts::TAU;
+            }
+            total += delta;
+        }
+        prev = Some(th);
+    }
+    total
+}
+
+/// The sphere face (fragment) whose trimmed region contains the on-sphere point
+/// `p`, by a FRAME-FREE 3D test: for each loop, the loop bounds a spherical cap
+/// (the side its winding marks); `p` is in the region iff it is inside the
+/// outer loop's cap (or the outer loop is the degenerate meridian seam, which
+/// bounds the whole sphere) and OUTSIDE every inner-hole loop's cap. This is the
+/// robust relocation primitive for the cyl/sphere wrap, where a sphere fragment
+/// is bounded by the seam plus contractible NURBS rings (the UV winding test is
+/// degenerate on the pole-to-pole seam, so it cannot be used here).
+fn sphere_face_containing_3d(
+    body: &Body,
+    p: keel_math::vec::Vec3,
+    tol: f64,
+) -> Option<FaceKey> {
+    for fk in body.face_keys() {
+        let Some(Surface3::Sphere(sp)) = body.face_surface3(fk) else {
+            continue;
+        };
+        let center = sp.frame.origin;
+        if ((p - center).norm() - sp.radius).abs() > tol.max(1e-6) {
+            continue;
+        }
+        if body.face_covers_closed_surface(fk) {
+            return Some(fk);
+        }
+        let Some(f) = body.faces.get(fk) else { continue };
+        let pd = p - center;
+        let mut inside = true;
+        for (li, &lk) in f.loops.iter().enumerate() {
+            let Some(entry) = body.loops.get(lk).and_then(|l| l.fin) else {
+                continue;
+            };
+            // Collect this loop's 3D samples and detect whether it is the
+            // pole-to-pole meridian seam (a non-bounding outer loop).
+            let mut samples: Vec<keel_math::vec::Vec3> = Vec::new();
+            let mut is_seam = true;
+            let mut cur = entry;
+            loop {
+                let Some(fin) = body.fins.get(cur) else { break };
+                let seam_fin = body
+                    .edges
+                    .get(fin.edge)
+                    .map(|e| {
+                        e.radial.len() >= 2
+                            && e.radial.iter().all(|&rf| {
+                                body.fins
+                                    .get(rf)
+                                    .and_then(|x| body.loops.get(x.owner))
+                                    .map(|x| x.face)
+                                    == Some(fk)
+                            })
+                    })
+                    .unwrap_or(false);
+                if !seam_fin {
+                    is_seam = false;
+                }
+                if let Some(pts) = body.fin_curve_samples(cur, 24) {
+                    samples.extend(pts);
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+            if samples.len() < 4 {
+                continue;
+            }
+            let omega = loop_solid_angle_about(&samples, center, pd);
+            let encircles = omega.abs() > core::f64::consts::PI;
+            if li == 0 {
+                // Outer loop: a seam outer bounds the whole sphere (p always
+                // on the interior side); a real outer ring must encircle p.
+                if !is_seam && !encircles {
+                    inside = false;
+                    break;
+                }
+            } else if encircles {
+                // Inner hole that encircles p: p is in the hole, not the face.
+                inside = false;
+                break;
+            }
+        }
+        if inside {
+            return Some(fk);
+        }
+    }
+    None
+}
+
 fn sphere_face_cut_axis(body: &Body, fk: FaceKey) -> Option<keel_math::vec::Vec3> {
     for lk in body
         .faces
@@ -5821,6 +5957,27 @@ pub(crate) fn curved_face_containing(
             Some(Surface3::Sphere(sp)) => {
                 if ((p - sp.frame.origin).norm() - sp.radius).abs() > etol {
                     return false;
+                }
+                // A pristine full sphere (closed cover: its only edge is the
+                // meridian seam, appearing twice) contains any on-surface
+                // point. Detect it directly so the FIRST wrap-band component
+                // locates the un-imprinted sphere (the relocation otherwise
+                // failed on sphere_face_cut_axis returning the seam axis, which
+                // dropped the cyl/sphere band split entirely).
+                if body.face_covers_closed_surface(fk) {
+                    return true;
+                }
+                // NURBS-rim wrap band/cap (dossier 68): a wrap-split sphere face
+                // is bounded by an encircling NON-circular NURBS rim plus
+                // meridian sub-arcs, so sphere_face_cut_axis reads the meridian
+                // axis and the latitude-band test below is unreliable. The
+                // winding-number UV containment handles an arbitrary trim
+                // directly, so try it first for such a face.
+                if let Ok(pr) = Surface3::Sphere(sp.clone()).project(p) {
+                    let pin = body.point_in_face_uv(fk, (pr.u, pr.v), 1e-6 + etol);
+                    if matches!(pin, crate::pmc::UvClass::In | crate::pmc::UvClass::OnBoundary) {
+                        return true;
+                    }
                 }
                 let Some(axis) = sphere_face_cut_axis(body, fk) else {
                     return false;
@@ -6540,9 +6697,10 @@ fn imprint_operand(
         for comp in comps {
             let target = if multi {
                 let probe = curve_point(&seams[comp[0]].curve, 0.5);
-                match planar_face_containing(&working, probe, etol)
+                let tgt = planar_face_containing(&working, probe, etol)
                     .or_else(|| curved_face_containing(&working, probe, etol))
-                {
+                    .or_else(|| sphere_face_containing_3d(&working, probe, etol));
+                match tgt {
                     Some(fk) => fk,
                     None => {
                         faults.push(BoolFault::AssemblyFailed(
