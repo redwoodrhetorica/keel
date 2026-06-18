@@ -1378,6 +1378,74 @@ impl Body {
                     }
                 }
             }
+            // NURBS-rim band fallback (dossier 67, frame-free classify): the
+            // non-coaxial sphere-vs-{cyl,cone} WRAP splits the sphere by
+            // encircling NON-circular NURBS rims, which the circle collection
+            // above misses (so an encircling band fell to the centroid path,
+            // whose loop centroid points at a POLE -- wrong for a band that
+            // holds no pole). Collect ONE rim per non-seam loop from its 3D
+            // samples: the rim's solid-angle axis n = sum_j d_j x d_{j+1}
+            // (Van Oosterom-Strackee, d_j the unit sample directions) is the
+            // axis it encircles, well-conditioned even near a great circle and
+            // INVARIANT to the sphere's parametric frame. The existing band
+            // sweep below is frame-free in that axis. Runs ONLY when the circle
+            // path found < 2 rims, so every circle-rim band stays byte-unchanged
+            // (no regression to the Add.262/267/268 classes). Foundational: the
+            // wrap still declines downstream on mass (68) / tessellation (69).
+            if rims.len() < 2 {
+                let mut nrims: Vec<(Vec3, Vec3, f64)> = Vec::new();
+                for lp in self.faces.get(face).map(|f| f.loops.clone()).into_iter().flatten() {
+                    let Some(entry) = self.loops.get(lp).and_then(|l| l.fin) else {
+                        continue;
+                    };
+                    let mut samples: Vec<Vec3> = Vec::new();
+                    let mut cur = entry;
+                    loop {
+                        let Some(fin) = self.fins.get(cur) else { break };
+                        let is_seam = self
+                            .edges
+                            .get(fin.edge)
+                            .map(|e| {
+                                e.radial.len() >= 2
+                                    && e.radial.iter().all(|&rf| {
+                                        self.fins
+                                            .get(rf)
+                                            .and_then(|x| self.loops.get(x.owner))
+                                            .map(|x| x.face)
+                                            == Some(face)
+                                    })
+                            })
+                            .unwrap_or(false);
+                        if !is_seam
+                            && let Some(pts) = self.fin_curve_samples(cur, 24)
+                        {
+                            samples.extend(pts);
+                        }
+                        cur = fin.next;
+                        if cur == entry {
+                            break;
+                        }
+                    }
+                    let dirs: Vec<Vec3> = samples
+                        .iter()
+                        .filter_map(|p| (*p - center).try_normalize())
+                        .collect();
+                    if dirs.len() < 8 {
+                        continue;
+                    }
+                    let mut area = Vec3::ZERO;
+                    for i in 0..dirs.len() {
+                        area = area + dirs[i].cross(dirs[(i + 1) % dirs.len()]);
+                    }
+                    let Some(axis) = area.try_normalize() else { continue };
+                    let h = samples.iter().map(|p| (*p - center).dot(axis)).sum::<f64>()
+                        / samples.len() as f64;
+                    nrims.push((center + axis * h, axis, (radius * radius - h * h).max(0.0).sqrt()));
+                }
+                if nrims.len() >= 2 {
+                    rims = nrims;
+                }
+            }
             if rims.len() >= 2 {
                 let ax = rims[0].1;
                 if rims.iter().all(|(_, a, _)| a.cross(ax).norm() < 1e-6) {
