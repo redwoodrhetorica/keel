@@ -13,3 +13,8 @@ gate_launch.log
 
 # evolutionary explorer run artifacts (examples/evolve.rs)
 /evolve-out/
+
+# realistic-workflow soak run artifacts (examples/realsoak.rs)
+/realsoak-out/
+/realsoak-final.log
+/realsoak-out-run.log
