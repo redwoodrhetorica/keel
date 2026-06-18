@@ -905,6 +905,29 @@ impl Body {
 
         b.validate()
             .map_err(|_| TopoError::Precondition("fillet: result invalid"))?;
+        // DECLINE-never-WRONG floor: a fillet whose surgery leaves the analytic
+        // `mass_properties` grossly inconsistent with the tessellated volume (the
+        // blend-face/trim over-count -- a freshly created face integrating wrong
+        // while topology stays valid; realsoak seed 11400715918834829014) must
+        // DECLINE, never hand back a body whose reported volume is wrong. The
+        // mesh is the trustworthy witness (a filleted body's curved chordal
+        // deficit is well under 1%); a >25% gap is the integrator failing, which
+        // is exactly the soak oracle's curved-WRONG criterion, so the kernel
+        // declines precisely what the oracle would flag. (The real fix -- correct
+        // the surgery's face orientation so these PASS -- is the follow-up.)
+        if let Ok(mp) = b.mass_properties() {
+            let mesh = b.mesh_volume();
+            let denom = mp.volume.abs().max(mesh.abs());
+            if mp.volume.is_finite()
+                && mesh.is_finite()
+                && denom > 1e-9
+                && (mp.volume - mesh).abs() / denom > 0.25
+            {
+                return Err(TopoError::Precondition(
+                    "fillet: analytic/mesh volume inconsistent (mass-integration follow-up)",
+                ));
+            }
+        }
         Ok(b)
     }
 
@@ -1401,6 +1424,29 @@ impl Body {
 
         b.validate()
             .map_err(|_| TopoError::Precondition("fillet: result invalid"))?;
+        // DECLINE-never-WRONG floor: a fillet whose surgery leaves the analytic
+        // `mass_properties` grossly inconsistent with the tessellated volume (the
+        // blend-face/trim over-count -- a freshly created face integrating wrong
+        // while topology stays valid; realsoak seed 11400715918834829014) must
+        // DECLINE, never hand back a body whose reported volume is wrong. The
+        // mesh is the trustworthy witness (a filleted body's curved chordal
+        // deficit is well under 1%); a >25% gap is the integrator failing, which
+        // is exactly the soak oracle's curved-WRONG criterion, so the kernel
+        // declines precisely what the oracle would flag. (The real fix -- correct
+        // the surgery's face orientation so these PASS -- is the follow-up.)
+        if let Ok(mp) = b.mass_properties() {
+            let mesh = b.mesh_volume();
+            let denom = mp.volume.abs().max(mesh.abs());
+            if mp.volume.is_finite()
+                && mesh.is_finite()
+                && denom > 1e-9
+                && (mp.volume - mesh).abs() / denom > 0.25
+            {
+                return Err(TopoError::Precondition(
+                    "fillet: analytic/mesh volume inconsistent (mass-integration follow-up)",
+                ));
+            }
+        }
         Ok(b)
     }
 

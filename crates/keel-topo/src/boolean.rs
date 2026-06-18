@@ -4093,10 +4093,40 @@ pub fn boolean_with(
                     // verbatim combine (no imprint/SSI) is the curved-operand
                     // fix -- the old fall-through to the full assembly merged
                     // disconnected curved components into one broken region.
-                    return combine_disjoint(a, b, tol).map(|body| BoolResult {
-                        body,
-                        faults: Vec::new(),
-                        op,
+                    return combine_disjoint(a, b, tol).and_then(|body| {
+                        // DECLINE-never-WRONG: combine_disjoint bypasses the SSI
+                        // assembler's mass==mesh gate, and analytic mass_properties
+                        // can COLLAPSE on a disjoint CURVED union (sphere
+                        // mirror+union, realsoak seed 11400715918834829910: mass
+                        // 238 vs the true render volume 14441) while validate()
+                        // passes. Cross-check the analytic mass against the
+                        // independent render mesh; a gross (>25%, the soak oracle's
+                        // curved-WRONG criterion) gap means the reported volume is
+                        // wrong, so decline rather than hand it back. A planar
+                        // disjoint union (exact mass==mesh) is unaffected. (Real
+                        // fix: the disjoint curved mass integration -- a follow-up.)
+                        let render_mesh = body.mesh_volume();
+                        let inconsistent = body
+                            .mass_properties()
+                            .map(|m| m.volume)
+                            .ok()
+                            .is_some_and(|mass| {
+                                let denom = mass.abs().max(render_mesh.abs());
+                                mass.is_finite()
+                                    && render_mesh.is_finite()
+                                    && denom > 1e-9
+                                    && (mass - render_mesh).abs() / denom > 0.25
+                            });
+                        if inconsistent {
+                            return Err(BoolFault::AssemblyFailed(
+                                "disjoint union: analytic mass inconsistent with mesh (mass-integration follow-up)",
+                            ));
+                        }
+                        Ok(BoolResult {
+                            body,
+                            faults: Vec::new(),
+                            op,
+                        })
                     });
                 }
             }
