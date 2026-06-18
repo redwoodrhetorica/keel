@@ -106,11 +106,36 @@ fn triangle_rule() -> [([f64; 3], f64); 7] {
     ]
 }
 
+/// Chirality of an analytic surface's parametrization frame: `+1.0` for a
+/// right-handed (proper) frame, `-1.0` for a left-handed (REFLECTED) frame.
+/// The curved mass integrators build the natural surface normal from
+/// `du x dv`, whose sign tracks the frame handedness (a cross product is a
+/// pseudovector). A mirror sends a frame left-handed, flipping `du x dv` so
+/// it points INWARD; folding this factor restores the geometry-outward
+/// orientation the mesh uses (dossier 72). For every non-mirrored body the
+/// frame is right-handed and this is `+1.0` (a no-op).
+fn frame_handedness(surf: &Surface3) -> f64 {
+    let f = match surf {
+        Surface3::Plane(p) => &p.frame,
+        Surface3::Cylinder(c) => &c.frame,
+        Surface3::Cone(c) => &c.frame,
+        Surface3::Sphere(s) => &s.frame,
+        Surface3::Torus(t) => &t.frame,
+    };
+    if f.x.dot(f.y.cross(f.z)) >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    }
+}
+
 impl Body {
-    /// Mass properties of the body's solid regions (unit density).
-    pub fn mass_properties(&self) -> Result<MassProps, TopoError> {
-        let _prof = crate::profile::Scope::new(&crate::profile::MASS_NS);
-        crate::profile::count(&crate::profile::MASS_CALLS);
+    /// Accumulate the divergence-theorem moments over every solid
+    /// boundary face. The outward normal is `sense * natural`
+    /// (research file 46), folded with each face's own loop winding (and,
+    /// for curved faces, the surface-frame handedness, dossier 72);
+    /// interior partition walls cancel and are skipped.
+    fn accumulate_moments(&self) -> Result<Moments, TopoError> {
         let mut m = Moments::default();
         let faces: Vec<FaceKey> = self
             .entity_ids()
@@ -164,12 +189,35 @@ impl Body {
             let v_before = m.v;
             match surf {
                 Surface3::Plane(_) => self.integrate_planar_face(fk, surf, sense_sign, &mut m)?,
-                _ => self.integrate_curved_face(fk, surf, sense_sign, &mut m)?,
+                // CURVED faces take the surface-frame HANDEDNESS factor (dossier
+                // 72): the curved integrators build the natural normal from
+                // `du x dv`, a pseudovector that flips sign when the surface
+                // frame is REFLECTED (a mirrored operand, det < 0). The mesh
+                // path orients curved facets from GEOMETRY (e.g. `q - centre`),
+                // which does NOT flip, so without this factor a mirrored curved
+                // lump's analytic flux points inward and SUBTRACTS (the sphere
+                // mirror+union collapse). Folding `handedness = sign(det frame)`
+                // makes `handedness * (du x dv)` frame-chirality-invariant, so
+                // it agrees with the mesh for both proper (det +1, a NO-OP that
+                // leaves every existing curved case bit-identical) and reflected
+                // (det -1) frames.
+                _ => {
+                    let h = frame_handedness(surf);
+                    self.integrate_curved_face(fk, surf, sense_sign * h, &mut m)?
+                }
             }
             if std::env::var("KEEL_MASS_DEBUG").is_ok() {
                 eprintln!("  mass face {fk:?} sense {sense} dv {}", m.v - v_before);
             }
         }
+        Ok(m)
+    }
+
+    /// Mass properties of the body's solid regions (unit density).
+    pub fn mass_properties(&self) -> Result<MassProps, TopoError> {
+        let _prof = crate::profile::Scope::new(&crate::profile::MASS_NS);
+        crate::profile::count(&crate::profile::MASS_CALLS);
+        let m = self.accumulate_moments()?;
         if m.v <= 0.0 {
             // The audit itself: conventions produced a non-positive
             // volume. Fail loudly; the fix belongs in M3.

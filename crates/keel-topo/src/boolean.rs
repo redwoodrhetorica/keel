@@ -2392,6 +2392,19 @@ fn stitch_by_import(
 /// the dossier-57 disconnected-union-of-curved-bodies decline). Sound only
 /// when the operands are PROVABLY non-touching (the caller guarantees it
 /// from the AABB gap), so no missed-intersection guard is needed.
+///
+/// ORIENTATION (dossier 72): a mirror (improper isometry, det = -1) reflects
+/// each surface FRAME, so the curved mass integrator's natural normal
+/// `du x dv` (a pseudovector) flips to point INWARD while the geometry-based
+/// mesh normal `(q - centre)` still points outward. The two then disagree on
+/// which `sense` bit is outward, and the curved lump's analytic flux
+/// SUBTRACTS (sphere mirror+union collapsed to V_a - V_b ~ 0). This is fixed
+/// at the SOURCE -- the curved mass integrator now folds the surface-frame
+/// handedness so its natural normal agrees with the mesh for a reflected
+/// frame (see `integrate_curved_face`). The disjoint-union import therefore
+/// stays byte-faithful (`reversed=false`): both mass and mesh read the same
+/// outward orientation, the planar/curved baselines are untouched, and a
+/// mirrored curved lump now ADDS.
 fn combine_disjoint(a: &Body, b: &Body, tol: f64) -> Result<Body, BoolFault> {
     use crate::entity::{EdgeKey, VertexKey};
     use crate::lineage::Derivation;
