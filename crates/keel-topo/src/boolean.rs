@@ -5018,9 +5018,8 @@ fn cyl_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
     // true primitive while a compound (block+dome 307 vs sphere 14) is rejected
     // by a wide margin.
     let prim_ok = |body: &Body, vprim: f64| {
-        body.mass_properties().map_or(false, |m| {
-            m.volume.is_finite() && (m.volume - vprim).abs() <= 1e-2 * (1.0 + vprim)
-        })
+        body.mass_properties()
+            .is_ok_and(|m| m.volume.is_finite() && (m.volume - vprim).abs() <= 1e-2 * (1.0 + vprim))
     };
     if !(prim_ok(a, va) && prim_ok(b, vb)) {
         return None;
@@ -5142,9 +5141,8 @@ fn quadric_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
     // the chordal tessellated volume (which on a coarse cone/sphere would read
     // several percent low and spuriously disarm the oracle on a real primitive).
     let prim_ok = |body: &Body, vprim: f64| {
-        body.mass_properties().map_or(false, |m| {
-            m.volume.is_finite() && (m.volume - vprim).abs() <= 1e-2 * (1.0 + vprim)
-        })
+        body.mass_properties()
+            .is_ok_and(|m| m.volume.is_finite() && (m.volume - vprim).abs() <= 1e-2 * (1.0 + vprim))
     };
     if !(prim_ok(a, va) && prim_ok(b, vb)) {
         return None;
@@ -5484,7 +5482,7 @@ fn assemble_boolean(
     // keeps its honest warning (DECLINE-never-WRONG). See `fault_advisory_on_success`.
     let faults: Vec<BoolFault> = if faults.iter().any(fault_advisory_on_success)
         && body.validate().is_ok()
-        && body.mass_properties().map_or(false, |m| {
+        && body.mass_properties().is_ok_and(|m| {
             m.volume.is_finite()
                 && mesh_vol.is_finite()
                 && (m.volume - mesh_vol).abs() <= 2e-2 * (1.0 + m.volume.abs())

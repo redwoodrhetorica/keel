@@ -2023,7 +2023,7 @@ impl Body {
         let mut ubreaks = vec![umin];
         ubreaks.extend(us.iter().copied());
         ubreaks.push(umax);
-        ubreaks.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        ubreaks.sort_by(|x, y| x.partial_cmp(y).unwrap_or(core::cmp::Ordering::Equal));
 
         // Pass 1: full-height verticals (constant u).
         for &u in &us {

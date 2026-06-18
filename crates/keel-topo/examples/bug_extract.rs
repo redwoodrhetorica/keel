@@ -122,10 +122,7 @@ fn reproduces(stock: &Tool, prefix: &[Feat], fail: &Feat) -> bool {
     let Some(body) = replay(stock, prefix) else {
         return false; // prefix no longer builds -> not a clean repro
     };
-    match boolean(&body, &fail.tool.build(), fail.op, TOL) {
-        Ok(r) if r.faults.is_empty() && r.body.validate().is_ok() => false,
-        _ => true,
-    }
+    !matches!(boolean(&body, &fail.tool.build(), fail.op, TOL), Ok(r) if r.faults.is_empty() && r.body.validate().is_ok())
 }
 
 /// Greedily drop prior features that aren't needed to trigger the failure.
@@ -166,7 +163,7 @@ fn err_sig(stock: &Tool, prefix: &[Feat], fail: &Feat) -> String {
 // Coarse signature key: collapse instance ids so duplicates merge.
 fn sig_key(raw: &str, label: &str, op: BoolOp) -> String {
     let head: String = raw
-        .split(|c: char| c == '(' || c == '[')
+        .split(['(', '['])
         .next()
         .unwrap_or(raw)
         .trim()
@@ -389,7 +386,7 @@ fn main() {
         }
     }
     let mut v: Vec<(&String, &Hit)> = hits.iter().collect();
-    v.sort_by(|a, b| b.1.count.cmp(&a.1.count));
+    v.sort_by_key(|x| std::cmp::Reverse(x.1.count));
     println!(
         "=== BUG EXTRACT ({parts} parts, seed {seed}): {total_fail} failing ops, {} distinct gaps ===\n",
         v.len()

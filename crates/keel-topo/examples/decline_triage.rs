@@ -190,7 +190,7 @@ fn main() {
     );
     println!("--- top INADEQUACY signatures ---");
     let mut sigs: Vec<_> = overlap_sig.into_iter().collect();
-    sigs.sort_by(|a, b| b.1.cmp(&a.1));
+    sigs.sort_by_key(|x| std::cmp::Reverse(x.1));
     for (sig, n) in sigs.into_iter().take(20) {
         println!("  {n:>6}  {sig}");
     }

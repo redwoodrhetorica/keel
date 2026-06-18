@@ -651,11 +651,11 @@ fn next_unsaturated(kv: &KnotVector) -> Option<f64> {
 /// `target + 1`, each interior break at multiplicity `target`.
 fn elevated_knots(breaks: &[f64], target: usize) -> Result<KnotVector, GeomError> {
     let mut knots: Vec<f64> = Vec::new();
-    knots.extend(std::iter::repeat(breaks[0]).take(target + 1));
+    knots.extend(std::iter::repeat_n(breaks[0], target + 1));
     for &bk in &breaks[1..breaks.len() - 1] {
-        knots.extend(std::iter::repeat(bk).take(target));
+        knots.extend(std::iter::repeat_n(bk, target));
     }
-    knots.extend(std::iter::repeat(breaks[breaks.len() - 1]).take(target + 1));
+    knots.extend(std::iter::repeat_n(breaks[breaks.len() - 1], target + 1));
     KnotVector::new(target, knots)
 }
 
