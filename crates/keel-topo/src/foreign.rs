@@ -594,7 +594,9 @@ mod tests {
 
         // DECLINE checks: a downgrade and an analytic face both err.
         assert!(
-            sheet.raise_face_degree(face, du.saturating_sub(1), dv).is_err(),
+            sheet
+                .raise_face_degree(face, du.saturating_sub(1), dv)
+                .is_err(),
             "target below current degree must DECLINE"
         );
         let mut block = Body::new();

@@ -1693,7 +1693,10 @@ fn cone_cone(a: &Surface3, b: &Surface3, tol: f64) -> Result<SsiResult, GeomErro
         let dir = rad * mr + z;
         let u = cr.frame.origin + rad * r0 - apex_i; // P0 - apex_i
         let (un, dn) = (u.dot(ni), dir.dot(ni));
-        (2.0 * un * dn - 2.0 * cos2 * u.dot(dir), un * un - cos2 * u.dot(u))
+        (
+            2.0 * un * dn - 2.0 * cos2 * u.dot(dir),
+            un * un - cos2 * u.dot(u),
+        )
     };
     quadratic_branch_field(&point_at, q2, &coeffs, tol)
 }
@@ -1724,7 +1727,9 @@ fn cylinder_sphere(cyl: &Surface3, sph: &Surface3, tol: f64) -> Result<SsiResult
             (2.0 * g.dot(z), g.dot(g) - s.radius * s.radius)
         };
         let point_at = |theta: f64, v: f64| -> Vec3 {
-            cy.frame.origin + (cy.frame.x * theta.cos() + cy.frame.y * theta.sin()) * cy.radius + z * v
+            cy.frame.origin
+                + (cy.frame.x * theta.cos() + cy.frame.y * theta.sin()) * cy.radius
+                + z * v
         };
         return quadratic_branch_field(&point_at, 1.0, &coeffs, tol);
     }
@@ -1908,15 +1913,29 @@ mod tests {
         // window. The non-coaxial branch must produce seam curve(s) that lie on
         // BOTH surfaces (the cone-face SSI gap the countersink residual exposed).
         let cone = Surface3::Cone(
-            Cone3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 1.0, 0.4).unwrap(),
+            Cone3::new(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                1.0,
+                0.4,
+            )
+            .unwrap(),
         );
         let cyl = Surface3::Cylinder(
-            Cylinder3::new(Frame3::from_z(Vec3::new(1.0, 0., 0.), Vec3::new(0., 0., 1.)).unwrap(), 0.5)
-                .unwrap(),
+            Cylinder3::new(
+                Frame3::from_z(Vec3::new(1.0, 0., 0.), Vec3::new(0., 0., 1.)).unwrap(),
+                0.5,
+            )
+            .unwrap(),
         );
-        let r = intersect_surfaces(&SurfaceRef::Analytic(&cone), &SurfaceRef::Analytic(&cyl), 1e-7)
-            .unwrap();
-        let SsiResult::Curves(cs) = r else { panic!("expected curves, got {r:?}") };
+        let r = intersect_surfaces(
+            &SurfaceRef::Analytic(&cone),
+            &SurfaceRef::Analytic(&cyl),
+            1e-7,
+        )
+        .unwrap();
+        let SsiResult::Curves(cs) = r else {
+            panic!("expected curves, got {r:?}")
+        };
         assert!(!cs.is_empty());
         for c in &cs {
             check_curve_on_both_tol(&cone, &cyl, &c.curve, 40, 1e-6);
@@ -1932,11 +1951,20 @@ mod tests {
         // curve it does produce must lie on BOTH surfaces (never a spurious
         // wrong-nappe curve that would imprint a wrong body).
         let a = Surface3::Cone(
-            Cone3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 1.0, 0.4).unwrap(),
+            Cone3::new(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                1.0,
+                0.4,
+            )
+            .unwrap(),
         );
         let b = Surface3::Cone(
-            Cone3::new(Frame3::from_z(Vec3::new(0.5, 0., 0.), Vec3::new(0., 0., 1.)).unwrap(), 0.8, 0.7)
-                .unwrap(),
+            Cone3::new(
+                Frame3::from_z(Vec3::new(0.5, 0., 0.), Vec3::new(0., 0., 1.)).unwrap(),
+                0.8,
+                0.7,
+            )
+            .unwrap(),
         );
         if let Ok(SsiResult::Curves(cs)) =
             intersect_surfaces(&SurfaceRef::Analytic(&a), &SurfaceRef::Analytic(&b), 1e-7)
@@ -2167,8 +2195,11 @@ mod tests {
         // theta) >= 0 only near theta = 0, so the seam is ONE closed window
         // loop. Every sampled point must lie on both surfaces.
         let cyl = Surface3::Cylinder(
-            Cylinder3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 1.0)
-                .unwrap(),
+            Cylinder3::new(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                1.0,
+            )
+            .unwrap(),
         );
         let sph = Surface3::Sphere(
             Sphere3::new(
@@ -2177,14 +2208,21 @@ mod tests {
             )
             .unwrap(),
         );
-        let r = intersect_surfaces(&SurfaceRef::Analytic(&cyl), &SurfaceRef::Analytic(&sph), 1e-6)
-            .unwrap();
+        let r = intersect_surfaces(
+            &SurfaceRef::Analytic(&cyl),
+            &SurfaceRef::Analytic(&sph),
+            1e-6,
+        )
+        .unwrap();
         let SsiResult::Curves(cs) = r else {
             panic!("expected window curve, got {r:?}")
         };
         assert_eq!(cs.len(), 1, "non-coaxial bite is a single window loop");
         assert!(cs[0].closed, "window loop must be closed");
-        assert!(matches!(cs[0].curve, Curve3::Nurbs(_)), "quartic seam is a NURBS");
+        assert!(
+            matches!(cs[0].curve, Curve3::Nurbs(_)),
+            "quartic seam is a NURBS"
+        );
         check_curve_on_both_tol(&cyl, &sph, &cs[0].curve, 48, 1e-5);
     }
 
@@ -2195,8 +2233,11 @@ mod tests {
         // centre 1.3 < R = 1.5), so disc(theta) > 0 everywhere and the seam
         // is TWO closed wrap loops (upper and lower branch).
         let cyl = Surface3::Cylinder(
-            Cylinder3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 1.0)
-                .unwrap(),
+            Cylinder3::new(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                1.0,
+            )
+            .unwrap(),
         );
         let sph = Surface3::Sphere(
             Sphere3::new(
@@ -2205,8 +2246,12 @@ mod tests {
             )
             .unwrap(),
         );
-        let r = intersect_surfaces(&SurfaceRef::Analytic(&cyl), &SurfaceRef::Analytic(&sph), 1e-6)
-            .unwrap();
+        let r = intersect_surfaces(
+            &SurfaceRef::Analytic(&cyl),
+            &SurfaceRef::Analytic(&sph),
+            1e-6,
+        )
+        .unwrap();
         let SsiResult::Curves(cs) = r else {
             panic!("expected wrap curves, got {r:?}")
         };
@@ -2223,14 +2268,25 @@ mod tests {
         // (never route through the new branch field). Sphere R 1.5 centred
         // on the cylinder axis -> two circles at z = +-sqrt(1.25).
         let cyl = Surface3::Cylinder(
-            Cylinder3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 1.0)
-                .unwrap(),
+            Cylinder3::new(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                1.0,
+            )
+            .unwrap(),
         );
         let sph = Surface3::Sphere(
-            Sphere3::new(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 1.5).unwrap(),
+            Sphere3::new(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                1.5,
+            )
+            .unwrap(),
         );
-        let r = intersect_surfaces(&SurfaceRef::Analytic(&cyl), &SurfaceRef::Analytic(&sph), 1e-6)
-            .unwrap();
+        let r = intersect_surfaces(
+            &SurfaceRef::Analytic(&cyl),
+            &SurfaceRef::Analytic(&sph),
+            1e-6,
+        )
+        .unwrap();
         let SsiResult::Curves(cs) = r else {
             panic!("{r:?}")
         };

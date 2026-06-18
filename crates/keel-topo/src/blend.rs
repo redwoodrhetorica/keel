@@ -940,7 +940,11 @@ impl Body {
                 Some(x) => (x.prev, x.next),
                 None => return Err(TopoError::StaleKey),
             };
-            let owner = self.fins.get(f).map(|x| x.owner).ok_or(TopoError::StaleKey)?;
+            let owner = self
+                .fins
+                .get(f)
+                .map(|x| x.owner)
+                .ok_or(TopoError::StaleKey)?;
             if fp == f && fnx == f {
                 if let Some(l) = self.loops.get_mut(owner) {
                     l.fin = None;
@@ -1002,11 +1006,7 @@ impl Body {
 
     /// Any fin incident to vertex `v` (start or end), excluding the fins
     /// in `skip`. Re-homes a dangling vertex.fin reference after a fuse.
-    fn any_fin_at_vertex(
-        &self,
-        v: crate::entity::VertexKey,
-        skip: &[FinKey],
-    ) -> Option<FinKey> {
+    fn any_fin_at_vertex(&self, v: crate::entity::VertexKey, skip: &[FinKey]) -> Option<FinKey> {
         for (fk, _) in self.fins.iter() {
             if skip.contains(&fk) {
                 continue;
@@ -1043,7 +1043,9 @@ impl Body {
             self.face_surface_geom(fillet_face),
             Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
         ) {
-            return Err(TopoError::Precondition("remove_fillet: not a cylinder face"));
+            return Err(TopoError::Precondition(
+                "remove_fillet: not a cylinder face",
+            ));
         }
         let edges = self
             .face_loop_edges(fillet_face)
@@ -4987,13 +4989,10 @@ mod tests {
         );
         // No cylinder face survives.
         assert!(
-            restored
-                .face_keys()
-                .into_iter()
-                .all(|f| !matches!(
-                    restored.face_surface_geom(f),
-                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
-                )),
+            restored.face_keys().into_iter().all(|f| !matches!(
+                restored.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+            )),
             "a cylinder face remained"
         );
         // Topology back to the block.
@@ -5029,10 +5028,17 @@ mod tests {
                 )
             })
             .expect("no cylinder blend face (vertical)");
-        let rest2 = fil2.remove_fillet(cyl2).expect("remove_fillet declined (vertical)");
+        let rest2 = fil2
+            .remove_fillet(cyl2)
+            .expect("remove_fillet declined (vertical)");
         assert!(rest2.validate().is_ok(), "vertical restored invalid");
         let c2 = rest2.counts();
-        assert_eq!((c2.v, c2.e, c2.f), (8, 12, 6), "vertical counts {:?}", (c2.v, c2.e, c2.f));
+        assert_eq!(
+            (c2.v, c2.e, c2.f),
+            (8, 12, 6),
+            "vertical counts {:?}",
+            (c2.v, c2.e, c2.f)
+        );
         let m2 = rest2.mass_properties().unwrap().volume;
         assert!((m2 - 8.0).abs() < 1e-9, "vertical restored mass {m2} != 8");
     }

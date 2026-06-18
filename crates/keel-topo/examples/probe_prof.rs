@@ -28,7 +28,9 @@ fn main() {
     eprintln!("{}", keel_topo::profile::report());
 
     // Where does mass_properties time go? Box vs cylinder vs holed result.
-    let result = boolean(&plate, &drill, BoolOp::Difference, 1e-7).unwrap().body;
+    let result = boolean(&plate, &drill, BoolOp::Difference, 1e-7)
+        .unwrap()
+        .body;
     let mass_ms = |lbl: &str, b: &Body| {
         let _ = b.mass_properties();
         let t = Instant::now();
@@ -36,7 +38,10 @@ fn main() {
         for _ in 0..r {
             let _ = b.mass_properties();
         }
-        eprintln!("  mass {lbl}: {:.4} ms/call", t.elapsed().as_secs_f64() * 1000.0 / r as f64);
+        eprintln!(
+            "  mass {lbl}: {:.4} ms/call",
+            t.elapsed().as_secs_f64() * 1000.0 / r as f64
+        );
     };
     mass_ms("plate(box)", &plate);
     mass_ms("drill(cyl)", &drill);
@@ -47,7 +52,10 @@ fn main() {
         for _ in 0..r {
             let _ = b.facets(None);
         }
-        eprintln!("  facets {lbl}: {:.4} ms/call", t.elapsed().as_secs_f64() * 1000.0 / r as f64);
+        eprintln!(
+            "  facets {lbl}: {:.4} ms/call",
+            t.elapsed().as_secs_f64() * 1000.0 / r as f64
+        );
     };
     tess_ms("plate(box)", &plate);
     tess_ms("holed result", &result);

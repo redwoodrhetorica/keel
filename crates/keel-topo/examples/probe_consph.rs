@@ -14,12 +14,21 @@ use keel_topo::boolean::{BoolOp, boolean};
 
 fn cone(r: f64, h: f64) -> Body {
     let mut b = Body::new();
-    b.cone(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), r, h).unwrap();
+    b.cone(
+        Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+        r,
+        h,
+    )
+    .unwrap();
     b
 }
 fn sphere(zc: f64, r: f64) -> Body {
     let mut b = Body::new();
-    b.sphere(Frame3::from_z(Vec3::new(0., 0., zc), Vec3::new(0., 0., 1.)).unwrap(), r).unwrap();
+    b.sphere(
+        Frame3::from_z(Vec3::new(0., 0., zc), Vec3::new(0., 0., 1.)).unwrap(),
+        r,
+    )
+    .unwrap();
     b
 }
 
@@ -73,7 +82,13 @@ fn main() {
     let sp = sphere(1.5, 1.0);
     println!("== coaxial cone(r2,h3) + sphere(zc1.5,R1) ==  inter={inter:.4}");
     run("cone n sph", &cn, &sp, BoolOp::Intersection, inter);
-    run("cone u sph", &cn, &sp, BoolOp::Union, cone_v + sphere_v - inter);
+    run(
+        "cone u sph",
+        &cn,
+        &sp,
+        BoolOp::Union,
+        cone_v + sphere_v - inter,
+    );
     run("cone - sph", &cn, &sp, BoolOp::Difference, cone_v - inter);
     run("sph - cone", &sp, &cn, BoolOp::Difference, sphere_v - inter);
 }

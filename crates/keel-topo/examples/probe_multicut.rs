@@ -17,7 +17,8 @@ fn blk(o: Vec3, dx: f64, dy: f64, dz: f64) -> Body {
 }
 fn cyl(pos: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
     let mut b = Body::new();
-    b.cylinder(Frame3::from_z(pos, axis).unwrap(), r, h).unwrap();
+    b.cylinder(Frame3::from_z(pos, axis).unwrap(), r, h)
+        .unwrap();
     b
 }
 

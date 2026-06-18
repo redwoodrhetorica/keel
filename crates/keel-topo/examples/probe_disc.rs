@@ -30,7 +30,8 @@ fn sph(r: f64) -> Body {
 }
 fn slab(zlo: f64, zhi: f64) -> Body {
     let mut b = Body::new();
-    b.block(Vec3::new(-5.0, -5.0, zlo), 10.0, 10.0, zhi - zlo).unwrap();
+    b.block(Vec3::new(-5.0, -5.0, zlo), 10.0, 10.0, zhi - zlo)
+        .unwrap();
     b
 }
 
@@ -63,19 +64,59 @@ fn run(label: &str, a: &Body, b: &Body, op: BoolOp, truth: f64) {
 fn main() {
     let pi = std::f64::consts::PI;
     // cone(r2,h3) - mid slab -> frustum + tip (disconnected). [locked test]
-    run("cone - slab (frustum+tip)", &cone(2.0, 3.0), &slab(0.8, 1.8), BoolOp::Difference, 8.413);
+    run(
+        "cone - slab (frustum+tip)",
+        &cone(2.0, 3.0),
+        &slab(0.8, 1.8),
+        BoolOp::Difference,
+        8.413,
+    );
     // cone(r2,h3) ∩ mid slab -> middle frustum band (connected).
-    run("cone ∩ slab (mid band)   ", &cone(2.0, 3.0), &slab(0.8, 1.8), BoolOp::Intersection, 12.566 - 7.609 - 0.804);
+    run(
+        "cone ∩ slab (mid band)   ",
+        &cone(2.0, 3.0),
+        &slab(0.8, 1.8),
+        BoolOp::Intersection,
+        12.566 - 7.609 - 0.804,
+    );
     // cylinder(r1,h4) - mid slab -> two cylinders (disconnected).
-    run("cyl  - slab (two cyls)   ", &cyl(1.0, 4.0), &slab(1.0, 2.0), BoolOp::Difference, 3.0 * pi);
+    run(
+        "cyl  - slab (two cyls)   ",
+        &cyl(1.0, 4.0),
+        &slab(1.0, 2.0),
+        BoolOp::Difference,
+        3.0 * pi,
+    );
     // cylinder ∩ mid slab -> middle cylinder (connected).
-    run("cyl  ∩ slab (mid cyl)    ", &cyl(1.0, 4.0), &slab(1.0, 2.0), BoolOp::Intersection, pi);
+    run(
+        "cyl  ∩ slab (mid cyl)    ",
+        &cyl(1.0, 4.0),
+        &slab(1.0, 2.0),
+        BoolOp::Intersection,
+        pi,
+    );
     // sphere(r2) - mid slab -> two caps (disconnected).
     let cap = pi * 1.5 * 1.5 * (3.0 * 2.0 - 1.5) / 3.0;
-    run("sph  - slab (two caps)   ", &sph(2.0), &slab(-0.5, 0.5), BoolOp::Difference, 2.0 * cap);
+    run(
+        "sph  - slab (two caps)   ",
+        &sph(2.0),
+        &slab(-0.5, 0.5),
+        BoolOp::Difference,
+        2.0 * cap,
+    );
     // cone(r2,h3) - two slabs -> three pieces.
     let mut twoslabs = Body::new();
-    twoslabs.block(Vec3::new(-5.0, -5.0, 0.6), 10.0, 10.0, 0.4).unwrap();
+    twoslabs
+        .block(Vec3::new(-5.0, -5.0, 0.6), 10.0, 10.0, 0.4)
+        .unwrap();
     let cone_one_slab = boolean(&cone(2.0, 3.0), &twoslabs, BoolOp::Difference, 1e-7);
-    println!("cone - 1 thin slab: {:?}", cone_one_slab.map(|r| (r.body.mass_properties().map(|m| (m.volume * 1e3).round() / 1e3), r.faults.len())));
+    println!(
+        "cone - 1 thin slab: {:?}",
+        cone_one_slab.map(|r| (
+            r.body
+                .mass_properties()
+                .map(|m| (m.volume * 1e3).round() / 1e3),
+            r.faults.len()
+        ))
+    );
 }

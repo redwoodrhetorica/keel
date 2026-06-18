@@ -29,8 +29,12 @@ fn cyl(r: f64, h: f64) -> Body {
 }
 fn cyl_at(z0: f64, r: f64, h: f64) -> Body {
     let mut b = Body::new();
-    b.cylinder(Frame3::from_z(Vec3::new(0., 0., z0), Vec3::new(0., 0., 1.)).unwrap(), r, h)
-        .unwrap();
+    b.cylinder(
+        Frame3::from_z(Vec3::new(0., 0., z0), Vec3::new(0., 0., 1.)).unwrap(),
+        r,
+        h,
+    )
+    .unwrap();
     b
 }
 
@@ -72,7 +76,13 @@ fn main() {
     let cl = cyl(1.0, 2.0);
     println!("== coaxial cone (r2,h3) + cylinder (r1,h2), SHARED base z=0 ==");
     run("cone n cyl", &cn, &cl, BoolOp::Intersection, inter);
-    run("cone u cyl", &cn, &cl, BoolOp::Union, cone_v + cyl_v - inter);
+    run(
+        "cone u cyl",
+        &cn,
+        &cl,
+        BoolOp::Union,
+        cone_v + cyl_v - inter,
+    );
     run("cone - cyl", &cn, &cl, BoolOp::Difference, cone_v - inter);
     run("cyl - cone", &cl, &cn, BoolOp::Difference, cyl_v - inter);
 
@@ -83,7 +93,13 @@ fn main() {
     let cl2 = cyl_at(0.3, 1.0, 1.7);
     println!("== coaxial cone + cylinder z in [0.3,2], OFFSET base ==");
     run("cone n cyl", &cn, &cl2, BoolOp::Intersection, inter2);
-    run("cone u cyl", &cn, &cl2, BoolOp::Union, cone_v + cyl2_v - inter2);
+    run(
+        "cone u cyl",
+        &cn,
+        &cl2,
+        BoolOp::Union,
+        cone_v + cyl2_v - inter2,
+    );
     run("cone - cyl", &cn, &cl2, BoolOp::Difference, cone_v - inter2);
     run("cyl - cone", &cl2, &cn, BoolOp::Difference, cyl2_v - inter2);
 }

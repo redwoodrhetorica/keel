@@ -13,7 +13,8 @@ use keel_topo::boolean::{BoolOp, boolean};
 
 fn cyl(pos: Vec3, r: f64, h: f64) -> Body {
     let mut b = Body::new();
-    b.cylinder(Frame3::from_z(pos, Vec3::new(0., 0., 1.)).unwrap(), r, h).unwrap();
+    b.cylinder(Frame3::from_z(pos, Vec3::new(0., 0., 1.)).unwrap(), r, h)
+        .unwrap();
     b
 }
 fn blk(o: Vec3, dx: f64, dy: f64, dz: f64) -> Body {
@@ -50,7 +51,10 @@ fn run(label: &str, mut body: Body, tools: Vec<(Body, BoolOp)>) {
         }
     }
     let vf = body.mass_properties().map(|m| m.volume).unwrap_or(f64::NAN);
-    println!("{label}: landed {landed}/{n}  vol {v0:.2} -> {vf:.2}  {}", first_fail.unwrap_or_default());
+    println!(
+        "{label}: landed {landed}/{n}  vol {v0:.2} -> {vf:.2}  {}",
+        first_fail.unwrap_or_default()
+    );
 }
 
 fn main() {

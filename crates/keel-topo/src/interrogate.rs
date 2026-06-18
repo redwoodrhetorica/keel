@@ -846,8 +846,7 @@ impl Body {
             if tris.is_empty() {
                 continue;
             }
-            let r =
-                tris.iter().flatten().fold(Vec3::ZERO, |a, &p| a + p) / (3 * tris.len()) as f64;
+            let r = tris.iter().flatten().fold(Vec3::ZERO, |a, &p| a + p) / (3 * tris.len()) as f64;
             total += tris
                 .iter()
                 .map(|t| (t[0] - r).dot((t[1] - r).cross(t[2] - r)))

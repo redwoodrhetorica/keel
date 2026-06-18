@@ -41,7 +41,9 @@ fn in_sph(s: &Sph, p: Vec3) -> bool {
 fn mc_volume(lo: Vec3, hi: Vec3, n: usize, inside: impl Fn(Vec3) -> bool) -> f64 {
     let mut st = 0x1234_5678_9abc_def0u64;
     let mut next = || {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (st >> 11) as f64 / (1u64 << 53) as f64
     };
     let vol_box = (hi.x - lo.x) * (hi.y - lo.y) * (hi.z - lo.z);
@@ -63,7 +65,8 @@ fn run(label: &str, c: &Cyl, s: &Sph, op: BoolOp) {
     let mut ba = Body::new();
     ba.cone_or_cyl(c);
     let mut bb = Body::new();
-    bb.sphere(Frame3::from_z(s.pos, Vec3::new(0., 0., 1.)).unwrap(), s.r).unwrap();
+    bb.sphere(Frame3::from_z(s.pos, Vec3::new(0., 0., 1.)).unwrap(), s.r)
+        .unwrap();
     // MC truth over the union AABB (sphere is the smaller; cylinder bounds it).
     let pad = 0.05;
     let lo = Vec3::new(
@@ -90,11 +93,15 @@ fn run(label: &str, c: &Cyl, s: &Sph, op: BoolOp) {
             match r.body.mass_properties() {
                 Ok(m) => println!(
                     "mass={:.4} mesh={mesh:.4} valid={valid} faults={:?} | mass-vs-truth={:.4} mass-vs-mesh={:.4}",
-                    m.volume, r.faults,
+                    m.volume,
+                    r.faults,
                     (m.volume - truth).abs() / (1.0 + truth),
                     (m.volume - mesh).abs() / (1.0 + m.volume),
                 ),
-                Err(e) => println!("mass DECLINED {e:?} mesh={mesh:.4} valid={valid} faults={:?}", r.faults),
+                Err(e) => println!(
+                    "mass DECLINED {e:?} mesh={mesh:.4} valid={valid} faults={:?}",
+                    r.faults
+                ),
             }
         }
     }
@@ -105,7 +112,8 @@ trait MakeCyl {
 }
 impl MakeCyl for Body {
     fn cone_or_cyl(&mut self, c: &Cyl) {
-        self.cylinder(Frame3::from_z(c.pos, c.axis).unwrap(), c.r, c.h).unwrap();
+        self.cylinder(Frame3::from_z(c.pos, c.axis).unwrap(), c.r, c.h)
+            .unwrap();
     }
 }
 
@@ -117,7 +125,10 @@ fn main() {
         r: 2.964423919723465,
         h: 1.796689666271305,
     };
-    let s1 = Sph { pos: Vec3::new(-0.8752042306236147, 1.904556614958362, -1.1882431622168834), r: 0.9596500794485675 };
+    let s1 = Sph {
+        pos: Vec3::new(-0.8752042306236147, 1.904556614958362, -1.1882431622168834),
+        r: 0.9596500794485675,
+    };
     run("F1 I cyl/sph", &c1, &s1, BoolOp::Intersection);
 
     // Failure 2: D cyl/sph
@@ -127,6 +138,9 @@ fn main() {
         r: 2.128908685039337,
         h: 0.9959355834482874,
     };
-    let s2 = Sph { pos: Vec3::new(0.3415645037649271, 1.1172203853690066, 2.6228008161874143), r: 1.813092620620746 };
+    let s2 = Sph {
+        pos: Vec3::new(0.3415645037649271, 1.1172203853690066, 2.6228008161874143),
+        r: 1.813092620620746,
+    };
     run("F2 D cyl/sph", &c2, &s2, BoolOp::Difference);
 }

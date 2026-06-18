@@ -13,12 +13,17 @@ use keel_topo::boolean::{BoolOp, boolean};
 
 fn sphere(r: f64) -> Body {
     let mut b = Body::new();
-    b.sphere(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), r).unwrap();
+    b.sphere(
+        Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+        r,
+    )
+    .unwrap();
     b
 }
 fn slab(zlo: f64, zhi: f64) -> Body {
     let mut b = Body::new();
-    b.block(Vec3::new(-5.0, -5.0, zlo), 10.0, 10.0, zhi - zlo).unwrap();
+    b.block(Vec3::new(-5.0, -5.0, zlo), 10.0, 10.0, zhi - zlo)
+        .unwrap();
     b
 }
 
@@ -54,12 +59,42 @@ fn main() {
     let full = 32.0 * pi / 3.0;
     // ONE cut: upper half-space removes z>0 -> lower hemisphere.
     println!("== one cut (half-space) ==");
-    run("sph - upper   (lower hemi)", &sphere(2.0), &slab(0.0, 5.0), BoolOp::Difference, half);
-    run("sph n upper   (upper hemi)", &sphere(2.0), &slab(0.0, 5.0), BoolOp::Intersection, half);
-    run("upper - sph   (block-bite)", &slab(0.0, 5.0), &sphere(2.0), BoolOp::Difference, 10.0 * 10.0 * 5.0 - half);
+    run(
+        "sph - upper   (lower hemi)",
+        &sphere(2.0),
+        &slab(0.0, 5.0),
+        BoolOp::Difference,
+        half,
+    );
+    run(
+        "sph n upper   (upper hemi)",
+        &sphere(2.0),
+        &slab(0.0, 5.0),
+        BoolOp::Intersection,
+        half,
+    );
+    run(
+        "upper - sph   (block-bite)",
+        &slab(0.0, 5.0),
+        &sphere(2.0),
+        BoolOp::Difference,
+        10.0 * 10.0 * 5.0 - half,
+    );
     // TWO cuts: a thin mid slab -> two caps (diff) / mid band (inter).
     let cap = pi * 1.5 * 1.5 * (3.0 * 2.0 - 1.5) / 3.0; // spherical cap height 1.5
     println!("== two cuts (mid slab z[-0.5,0.5]) ==");
-    run("sph - slab    (two caps)  ", &sphere(2.0), &slab(-0.5, 0.5), BoolOp::Difference, 2.0 * cap);
-    run("sph n slab    (mid band)  ", &sphere(2.0), &slab(-0.5, 0.5), BoolOp::Intersection, full - 2.0 * cap);
+    run(
+        "sph - slab    (two caps)  ",
+        &sphere(2.0),
+        &slab(-0.5, 0.5),
+        BoolOp::Difference,
+        2.0 * cap,
+    );
+    run(
+        "sph n slab    (mid band)  ",
+        &sphere(2.0),
+        &slab(-0.5, 0.5),
+        BoolOp::Intersection,
+        full - 2.0 * cap,
+    );
 }

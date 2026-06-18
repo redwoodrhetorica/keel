@@ -1,13 +1,25 @@
 name: CI
+# Cost-frugal: every push/PR runs ONLY the ubuntu test job (1x Actions minutes).
+# The cross-OS matrix (windows 2x, macos 10x billing) and the fuzz build run on a
+# weekly schedule and on-demand (workflow_dispatch) -- NOT on every push -- so a
+# routine push costs ~5 min instead of ~50+. Docs-only changes skip CI entirely.
 on:
-  push: { branches: [master, main] }
-  pull_request: {}
+  push:
+    branches: [master, main]
+    paths-ignore: ["**/*.md", "docs/**", "LOG.md"]
+  pull_request:
+    paths-ignore: ["**/*.md", "docs/**", "LOG.md"]
+  schedule:
+    - cron: "0 6 * * 1"   # weekly Monday 06:00 UTC: cross-OS + fuzz
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -15,7 +27,21 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+
+  # Expensive legs: weekly + manual only, never per-push.
+  cross-os:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
+
   fuzz-build:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

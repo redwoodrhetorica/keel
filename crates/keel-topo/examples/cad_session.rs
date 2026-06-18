@@ -33,7 +33,8 @@ impl Rng {
 }
 fn cyl(pos: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
     let mut b = Body::new();
-    b.cylinder(Frame3::from_z(pos, axis).unwrap(), r, h).unwrap();
+    b.cylinder(Frame3::from_z(pos, axis).unwrap(), r, h)
+        .unwrap();
     b
 }
 fn blk(o: Vec3, dx: f64, dy: f64, dz: f64) -> Body {
@@ -48,7 +49,8 @@ fn cone(pos: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
 }
 fn sph(c: Vec3, r: f64) -> Body {
     let mut b = Body::new();
-    b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r).unwrap();
+    b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r)
+        .unwrap();
     b
 }
 
@@ -83,50 +85,91 @@ fn feature(rng: &mut Rng, w: f64, d: f64, h: f64) -> (&'static str, Body, BoolOp
         0 => {
             let r = rng.r(0.25, w.min(d) / 4.0);
             let (x, y) = (rng.r(r + 0.2, w - r - 0.2), rng.r(r + 0.2, d - r - 0.2));
-            ("through-hole", cyl(Vec3::new(x, y, -0.5), z, r, h + 1.0), BoolOp::Difference)
+            (
+                "through-hole",
+                cyl(Vec3::new(x, y, -0.5), z, r, h + 1.0),
+                BoolOp::Difference,
+            )
         }
         1 => {
             let r = rng.r(0.25, w.min(d) / 4.0);
             let (x, y) = (rng.r(r + 0.2, w - r - 0.2), rng.r(r + 0.2, d - r - 0.2));
             let dep = rng.r(0.3, h * 0.7);
-            ("blind-hole", cyl(Vec3::new(x, y, h - dep), z, r, dep + 0.6), BoolOp::Difference)
+            (
+                "blind-hole",
+                cyl(Vec3::new(x, y, h - dep), z, r, dep + 0.6),
+                BoolOp::Difference,
+            )
         }
         2 => {
             let (pw, pd) = (rng.r(0.8, w * 0.4), rng.r(0.8, d * 0.4));
             let dep = rng.r(0.3, h * 0.7);
             let (px, py) = (rng.r(0.2, w - pw - 0.2), rng.r(0.2, d - pd - 0.2));
-            ("pocket", blk(Vec3::new(px, py, h - dep), pw, pd, dep + 0.6), BoolOp::Difference)
+            (
+                "pocket",
+                blk(Vec3::new(px, py, h - dep), pw, pd, dep + 0.6),
+                BoolOp::Difference,
+            )
         }
         3 => {
             let sw = rng.r(0.5, 1.6);
             let px = rng.r(0.2, w - sw - 0.2);
-            ("slot", blk(Vec3::new(px, -0.5, -0.5), sw, d + 1.0, h + 1.0), BoolOp::Difference)
+            (
+                "slot",
+                blk(Vec3::new(px, -0.5, -0.5), sw, d + 1.0, h + 1.0),
+                BoolOp::Difference,
+            )
         }
         4 => {
             let r = rng.r(0.4, w.min(d) / 5.0);
             let (x, y) = (rng.r(r + 0.2, w - r - 0.2), rng.r(r + 0.2, d - r - 0.2));
-            ("boss-cyl", cyl(Vec3::new(x, y, h - 0.02), z, r, rng.r(0.6, 2.5)), BoolOp::Union)
+            (
+                "boss-cyl",
+                cyl(Vec3::new(x, y, h - 0.02), z, r, rng.r(0.6, 2.5)),
+                BoolOp::Union,
+            )
         }
         5 => {
             let (bw, bd) = (rng.r(0.8, w * 0.35), rng.r(0.8, d * 0.35));
             let (x, y) = (rng.r(0.2, w - bw - 0.2), rng.r(0.2, d - bd - 0.2));
-            ("boss-block", blk(Vec3::new(x, y, h - 0.02), bw, bd, rng.r(0.6, 2.5)), BoolOp::Union)
+            (
+                "boss-block",
+                blk(Vec3::new(x, y, h - 0.02), bw, bd, rng.r(0.6, 2.5)),
+                BoolOp::Union,
+            )
         }
         6 => {
             let (cw, ch) = (rng.r(0.6, w * 0.35), rng.r(0.4, h * 0.9));
-            ("corner-notch", blk(Vec3::new(w - cw, -0.3, h - ch), cw + 0.4, d + 0.6, ch + 0.4), BoolOp::Difference)
+            (
+                "corner-notch",
+                blk(Vec3::new(w - cw, -0.3, h - ch), cw + 0.4, d + 0.6, ch + 0.4),
+                BoolOp::Difference,
+            )
         }
         7 => {
             let r = rng.r(0.6, w.min(d) / 4.0);
             let (x, y) = (rng.r(r + 0.3, w - r - 0.3), rng.r(r + 0.3, d - r - 0.3));
             let dep = rng.r(0.4, h * 0.6);
-            ("countersink", cone(Vec3::new(x, y, h + 0.05), Vec3::new(0., 0., -1.), r, dep + 0.05), BoolOp::Difference)
+            (
+                "countersink",
+                cone(
+                    Vec3::new(x, y, h + 0.05),
+                    Vec3::new(0., 0., -1.),
+                    r,
+                    dep + 0.05,
+                ),
+                BoolOp::Difference,
+            )
         }
         8 => {
             let r = rng.r(0.25, h / 2.5);
             let zc = rng.r(r + 0.2, h - r - 0.2);
             let yy = rng.r(d * 0.3, d * 0.7);
-            ("cross-hole", cyl(Vec3::new(-0.5, yy, zc), Vec3::new(1., 0., 0.), r, w + 1.0), BoolOp::Difference)
+            (
+                "cross-hole",
+                cyl(Vec3::new(-0.5, yy, zc), Vec3::new(1., 0., 0.), r, w + 1.0),
+                BoolOp::Difference,
+            )
         }
         9 => {
             let r = rng.r(0.6, w.min(d) / 4.0);
@@ -136,14 +179,24 @@ fn feature(rng: &mut Rng, w: f64, d: f64, h: f64) -> (&'static str, Body, BoolOp
         _ => {
             let r = rng.r(0.5, (w.min(d) / 4.0).min(h));
             let (x, y) = (rng.r(r + 0.2, w - r - 0.2), rng.r(r + 0.2, d - r - 0.2));
-            ("ball-cavity", sph(Vec3::new(x, y, h - r * 0.4), r), BoolOp::Difference)
+            (
+                "ball-cavity",
+                sph(Vec3::new(x, y, h - r * 0.4), r),
+                BoolOp::Difference,
+            )
         }
     }
 }
 
 fn main() {
-    let parts: usize = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(500);
-    let seed: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(1);
+    let parts: usize = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(500);
+    let seed: u64 = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
     let mut rng = Rng(seed.wrapping_mul(0x9e3779b97f4a7c15) | 1);
     let mut pass: HashMap<&str, u64> = HashMap::new();
     let mut decl: HashMap<&str, u64> = HashMap::new();
@@ -219,10 +272,23 @@ fn main() {
     let mut labels: Vec<&str> = tot.keys().copied().collect();
     labels.sort();
     println!("=== NESTED CAD SESSIONS ({parts} parts, seed {seed}, 12..36 features each) ===");
-    println!("{:<15} {:>7} {:>7} {:>9}", "feature", "ops", "PASS%", "DECLINE%");
+    println!(
+        "{:<15} {:>7} {:>7} {:>9}",
+        "feature", "ops", "PASS%", "DECLINE%"
+    );
     for l in &labels {
-        let (t, p, dc) = (tot[l], *pass.get(l).unwrap_or(&0), *decl.get(l).unwrap_or(&0));
-        println!("{:<15} {:>7} {:>6.1} {:>8.1}", l, t, 100.0 * p as f64 / t as f64, 100.0 * dc as f64 / t as f64);
+        let (t, p, dc) = (
+            tot[l],
+            *pass.get(l).unwrap_or(&0),
+            *decl.get(l).unwrap_or(&0),
+        );
+        println!(
+            "{:<15} {:>7} {:>6.1} {:>8.1}",
+            l,
+            t,
+            100.0 * p as f64 / t as f64,
+            100.0 * dc as f64 / t as f64
+        );
     }
     println!("---");
     println!(

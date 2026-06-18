@@ -12,12 +12,14 @@ use keel_topo::boolean::{BoolOp, boolean};
 
 fn cyl(origin: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
     let mut b = Body::new();
-    b.cylinder(Frame3::from_z(origin, axis).unwrap(), r, h).unwrap();
+    b.cylinder(Frame3::from_z(origin, axis).unwrap(), r, h)
+        .unwrap();
     b
 }
 fn sph(c: Vec3, r: f64) -> Body {
     let mut b = Body::new();
-    b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r).unwrap();
+    b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r)
+        .unwrap();
     b
 }
 
@@ -45,9 +47,19 @@ fn main() {
     let az = cyl(Vec3::new(0., 0., -2.), Vec3::new(0., 0., 1.), 1.0, 4.0);
     let ax = cyl(Vec3::new(-2., 0., 0.), Vec3::new(1., 0., 0.), 1.0, 4.0);
     println!("== perpendicular cylinders (Steinmetz) ==");
-    run("cyl ∩ cyl (Steinmetz=16/3=5.333)", &az, &ax, BoolOp::Intersection);
+    run(
+        "cyl ∩ cyl (Steinmetz=16/3=5.333)",
+        &az,
+        &ax,
+        BoolOp::Intersection,
+    );
     run("cyl ∪ cyl                       ", &az, &ax, BoolOp::Union);
-    run("cyl - cyl                       ", &az, &ax, BoolOp::Difference);
+    run(
+        "cyl - cyl                       ",
+        &az,
+        &ax,
+        BoolOp::Difference,
+    );
 
     // Sphere-sphere control (known to work).
     let s1 = sph(Vec3::ZERO, 1.5);

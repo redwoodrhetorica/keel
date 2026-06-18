@@ -559,7 +559,12 @@ impl Body {
         // planar/conic-trimmed cylinder face is byte-unchanged.
         let nurbs_trimmed = {
             let mut found = false;
-            'scan: for lk in self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default() {
+            'scan: for lk in self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default()
+            {
                 let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
                     continue;
                 };
@@ -760,7 +765,12 @@ impl Body {
         };
         let mut segs: Vec<((f64, f64), (f64, f64))> = Vec::new();
         if nurbs_trimmed {
-            for lk in self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default() {
+            for lk in self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default()
+            {
                 let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
                     continue;
                 };
@@ -860,7 +870,11 @@ impl Body {
             let mut cur = entry;
             loop {
                 for p in self.fin_curve_samples(cur, m).unwrap_or_default() {
-                    if pts.last().map(|q: &Vec3| (*q - p).norm() > 1e-9).unwrap_or(true) {
+                    if pts
+                        .last()
+                        .map(|q: &Vec3| (*q - p).norm() > 1e-9)
+                        .unwrap_or(true)
+                    {
                         pts.push(p);
                     }
                 }
@@ -998,7 +1012,10 @@ impl Body {
             return None;
         }
         u = u * (1.0 / un);
-        let min_rim = b.iter().map(|&p| dir(p).dot(u)).fold(f64::INFINITY, f64::min);
+        let min_rim = b
+            .iter()
+            .map(|&p| dir(p).dot(u))
+            .fold(f64::INFINITY, f64::min);
         if dir(anchor).dot(u) >= min_rim - 1e-9 {
             Some(anchor)
         } else {
@@ -1082,7 +1099,12 @@ impl Body {
         // are byte-unchanged.
         let nurbs_trimmed = {
             let mut found = false;
-            'scan: for lk in self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default() {
+            'scan: for lk in self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default()
+            {
                 let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
                     continue;
                 };
@@ -1227,7 +1249,12 @@ impl Body {
         };
         let mut segs: Vec<((f64, f64), (f64, f64))> = Vec::new();
         if nurbs_trimmed {
-            for lk in self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default() {
+            for lk in self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default()
+            {
                 let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
                     continue;
                 };
@@ -1747,12 +1774,18 @@ impl Body {
         // Circle-rim faces collect nothing here, so they stay byte-unchanged.
         let mut hole_cones: Vec<Vec<(Vec3, Vec3)>> = Vec::new();
         {
-            let loops = self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default();
+            let loops = self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default();
             for &lk in &loops {
                 let mut is_seam_loop = true;
                 let mut has_nurbs = false;
                 for e in self.ring_edges(lk) {
-                    let Some(ed) = self.edges.get(e) else { continue };
+                    let Some(ed) = self.edges.get(e) else {
+                        continue;
+                    };
                     let seam = ed.radial.len() >= 2
                         && ed.radial.iter().all(|&rf| {
                             self.fins
@@ -1780,17 +1813,27 @@ impl Body {
                 let mut cur = entry;
                 loop {
                     for p in self.fin_curve_samples(cur, 24).unwrap_or_default() {
-                        if samples.last().map(|q: &Vec3| (*q - p).norm() > 1e-9).unwrap_or(true) {
+                        if samples
+                            .last()
+                            .map(|q: &Vec3| (*q - p).norm() > 1e-9)
+                            .unwrap_or(true)
+                        {
                             samples.push(p);
                         }
                     }
-                    let Some(nx) = self.fins.get(cur).map(|f| f.next) else { break };
+                    let Some(nx) = self.fins.get(cur).map(|f| f.next) else {
+                        break;
+                    };
                     cur = nx;
                     if cur == entry {
                         break;
                     }
                 }
-                if samples.last().map(|q| (*q - samples[0]).norm() < 1e-9).unwrap_or(false) {
+                if samples
+                    .last()
+                    .map(|q| (*q - samples[0]).norm() < 1e-9)
+                    .unwrap_or(false)
+                {
                     samples.pop();
                 }
                 if samples.len() < 8 {
@@ -1801,7 +1844,9 @@ impl Body {
                 for p in &samples {
                     md = md + (*p - center);
                 }
-                let Some(mean_dir) = md.try_normalize() else { continue };
+                let Some(mean_dir) = md.try_normalize() else {
+                    continue;
+                };
                 // Facet plane per rim chord: normal = (rim[k]-c) x (rim[k+1]-c),
                 // oriented so the hole interior (mean_dir) is on the +side.
                 let n = samples.len();
@@ -1841,9 +1886,16 @@ impl Body {
         if cap.is_some()
             && let Some(ip) = self.face_interior_point(face)
         {
-            for lk in self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default() {
+            for lk in self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .unwrap_or_default()
+            {
                 for e in self.ring_edges(lk) {
-                    let Some(ed) = self.edges.get(e) else { continue };
+                    let Some(ed) = self.edges.get(e) else {
+                        continue;
+                    };
                     if !ed.is_closed() {
                         continue;
                     }
@@ -2005,7 +2057,11 @@ impl Body {
                     && let Some((center_c, ax)) = crate::boolean::closed_curve_center_axis(cv)
                 {
                     let apex = self.face_interior_point(face)?;
-                    let side = if (apex - center_c).dot(ax) >= 0.0 { 1.0 } else { -1.0 };
+                    let side = if (apex - center_c).dot(ax) >= 0.0 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
                     return Some((center_c, ax, side));
                 }
                 cur = fin.next;
@@ -2071,7 +2127,11 @@ impl Body {
         }
         let (center_c, ax, _) = rim?;
         let apex = self.face_interior_point(face)?;
-        let side = if (apex - center_c).dot(ax) >= 0.0 { 1.0 } else { -1.0 };
+        let side = if (apex - center_c).dot(ax) >= 0.0 {
+            1.0
+        } else {
+            -1.0
+        };
         Some((center_c, ax, side))
     }
 }

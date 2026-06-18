@@ -1208,18 +1208,28 @@ impl Body {
             let sig = |fc: &FinCurve| -> [Vec3; 3] {
                 match fc {
                     FinCurve::Seg(a, b) => [*a, (*a + *b) * 0.5, *b],
-                    FinCurve::Circ(c, t0, t1) => [c.point(*t0), c.point(0.5 * (t0 + t1)), c.point(*t1)],
-                    FinCurve::Ell(e, t0, t1) => [e.point(*t0), e.point(0.5 * (t0 + t1)), e.point(*t1)],
-                    FinCurve::Nurbs(n, t0, t1) => [n.point(*t0), n.point(0.5 * (t0 + t1)), n.point(*t1)],
+                    FinCurve::Circ(c, t0, t1) => {
+                        [c.point(*t0), c.point(0.5 * (t0 + t1)), c.point(*t1)]
+                    }
+                    FinCurve::Ell(e, t0, t1) => {
+                        [e.point(*t0), e.point(0.5 * (t0 + t1)), e.point(*t1)]
+                    }
+                    FinCurve::Nurbs(n, t0, t1) => {
+                        [n.point(*t0), n.point(0.5 * (t0 + t1)), n.point(*t1)]
+                    }
                 }
             };
             let mut kept: Vec<(usize, FinCurve)> = Vec::with_capacity(fins_c.len());
             let mut sigs: Vec<(usize, [Vec3; 3])> = Vec::new();
             for (li, fc) in fins_c.into_iter() {
                 let s = sig(&fc);
-                let dup = sigs
-                    .iter()
-                    .any(|(kli, ks)| *kli == li && ks.iter().zip(s.iter()).all(|(a, b)| (*a - *b).norm() < 1e-7));
+                let dup = sigs.iter().any(|(kli, ks)| {
+                    *kli == li
+                        && ks
+                            .iter()
+                            .zip(s.iter())
+                            .all(|(a, b)| (*a - *b).norm() < 1e-7)
+                });
                 if dup {
                     continue;
                 }

@@ -11,7 +11,11 @@ fn main() {
     a.cylinder(
         Frame3::from_z(
             Vec3::new(1.3064377801479816, 0.5832084997504405, -0.6807861100727424),
-            Vec3::new(0.2744426133693232, -0.9798475776504711, -0.41869765869072206),
+            Vec3::new(
+                0.2744426133693232,
+                -0.9798475776504711,
+                -0.41869765869072206,
+            ),
         )
         .unwrap(),
         1.2460690422398706,
@@ -36,7 +40,11 @@ fn main() {
         match boolean(&a, &b, op, 1e-7) {
             Err(e) => println!("{lbl}: DECLINED {e:?}"),
             Ok(r) => {
-                let m = r.body.mass_properties().map(|x| x.volume).unwrap_or(f64::NAN);
+                let m = r
+                    .body
+                    .mass_properties()
+                    .map(|x| x.volume)
+                    .unwrap_or(f64::NAN);
                 println!(
                     "{lbl}: mass={m:.4} mesh={:.4} valid={} faults={:?}",
                     r.body.mesh_volume(),
