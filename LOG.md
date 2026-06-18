@@ -9457,3 +9457,37 @@ stitch-assembly debugging (where a kept far face's loop is rebuilt), not a mass
 band-aid. The tractable decline classes are now cleared; the remainder is this
 deep assembly corruption plus the deferred skew-cone SSI (Add 289).
 [[minimize-declines]] [[kernel-known-limitations]] [[hit-a-wall-review-research]]
+
+## Addendum 294: the dominant multi-cut mass!=mesh residual ROOT-CAUSED and fixed -- phantom cap-plane sections on far curved faces; +506 soak passes (2026-06-17)
+
+Add 293 left the dominant residual as a "deep STITCH-ASSEMBLY corruption" (a
+distant multi-cut op rebuilding a far curved face's loop into a doubled rim).
+Focused debugging (probe_mm #1: block - ball - hole - cone, then a far blind-
+hole) localized it ONE layer EARLIER than the stitch, in SSI seam generation.
+
+ROOT CAUSE. `curve_face_overlap` -- the SSI clip that drops a seam lying off a
+finite face -- handles Cylinder/Cone (axial+angular band) and Plane (winding on
+the loop polygon), but a CIRCULAR-DISK plane (a cylinder/cone CAP) has a single
+circular edge, so `face_outer_loop_points` returns < 3 vertices and the arm
+bailed to `All`. A multi-cut tool's cap PLANE therefore KEPT the section circle
+it cuts on a FAR cylinder or sphere: that circle lies IN the cap's plane but
+OUTSIDE its finite disk (centre ~10 units away). The phantom seam imprinted onto
+the far cavity/hole and DOUBLED its boundary loop -> the green-slab read winding
++-2 -> mass declined (mesh also ~2% off: genuinely malformed, honestly
+DECLINED). probe_mm's four "sphere" unlocated-seam faults and two "cylinder"
+ones were all the SAME mechanism on different far faces.
+
+So Add 291-293's doubled loop is a SYMPTOM; the cap-disk overlap stub is the
+SOURCE. The three prior fixes (forward+backward mass dedup, reverse-pair remove,
+the heal_spur_edges kev) all patched the symptom downstream and were proven
+unsafe. This fixes GENERATION: when a planar face's outer loop has < 3 vertices,
+sample its boundary edges into a polygon so the winding test runs and rejects an
+off-disk section. Both phantom families (cap x sphere, cap x cylinder) vanish.
+
+VERIFIED. probe_mm #1 now mass 1165.24 == mesh 1165.32 == MC 1165.21 (was mass
+NaN, mesh 1139.9); #4 mesh tightened 1733.7 -> 1724.6 (MC 1724.7). Workspace
+release suite 540 passed / 0 failed; curved_volume_robustness 11/11 (new guard
+multicut_blind_hole_no_phantom_cap_seam). evolve soak 2x20000 FAIL=0, PASS
+6535->6666 (seed 1, +131) and 6405->6780 (seed 2, +375): +506 passes, -506
+declines, WRONG=0. The dominant decline class is CLOSED; DECLINE-never-WRONG
+intact. Commit 83487c3. [[minimize-declines]] [[kernel-known-limitations]]

@@ -159,13 +159,15 @@ boolean tests); DONE = has a focused guard test.
 
 ## Parity GAPS — kernel ops to build (priority order)
 
-**C. Robustness (highest priority — the real parity blocker).** Not a new op:
-make the booleans + fillet suite reliable on messy multi-feature input. Open #1:
-the multi-cut **stitch-assembly corruption** (a far curved face's loop gets a
-forward+backward edge spur during multi-cut ops -> mass declines -> correct
-DECLINE of a malformed body). Three downstream patches proven unsafe (LOG Add
-292/293/294); needs the ROOT fix in the stitch, not a heal-after. The
-decline-minimization soak corpus is the worklist.
+**C. Robustness (highest priority, the real parity blocker).** Not a new op:
+make the booleans + fillet suite reliable on messy multi-feature input. The
+multi-cut **mass != mesh residual** (a far curved face's loop DOUBLED by a
+phantom seam during multi-cut ops -> mass declines -> correct DECLINE of a
+malformed body) is ROOT-CAUSED and FIXED (LOG Add 294, commit 83487c3): a
+circular-disk cap plane no longer defaults its SSI overlap to `All`, so a tool
+cap's section of a FAR cylinder/sphere is clipped before it can imprint a
+phantom rim. Soak +506 passes (FAIL=0, WRONG=0). Remaining robustness tail: the
+deferred skew-cone SSI (Add 289) and the decline-minimization soak corpus.
 
 **B. Topology editing / healing.** Untrim, defillet, delete-redundant, and
 extend-sheet landed in 943ac28 (gate: 540 release tests + soak 2x20000 seeds 1/2
