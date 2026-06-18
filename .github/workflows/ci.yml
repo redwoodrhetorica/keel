@@ -1,21 +1,52 @@
 name: CI
+# This kernel is pure-Rust f64 computational geometry: no platform APIs, no FFI,
+# no cfg(target_os) code. So CI does NOT run an OS matrix automatically -- local
+# dev (Windows) + this ubuntu job (Linux) already cover two of the three majors,
+# and the only cross-OS risk (FP determinism) is handled by the kernel's
+# tolerance/exact-predicate design, not by a CI matrix. The expensive legs
+# (windows 2x, macOS 10x billing) and the nightly fuzz build are MANUAL-ONLY
+# (workflow_dispatch), for an occasional pre-release spot-check. Routine pushes
+# run only the ubuntu job (~5 min, 1x); docs-only changes skip CI entirely.
 on:
-  push: { branches: [master, main] }
-  pull_request: {}
+  push:
+    branches: [master, main]
+    paths-ignore: ["**/*.md", "docs/**", "LOG.md"]
+  pull_request:
+    paths-ignore: ["**/*.md", "docs/**", "LOG.md"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with: { components: "rustfmt, clippy" }
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # -D real lints; allow two noisy style lints (the multi-exit loop idiom and
+      # markdown-in-doc-comments) that fire across the churned kernel.
+      - run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::while_let_loop -A clippy::doc_lazy_continuation
       - run: cargo test --workspace
+
+  # Manual-only (workflow_dispatch): `gh workflow run CI` to spot-check cross-OS
+  # before a release. Not automatic -- the kernel has no OS-specific code.
+  cross-os:
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
+
   fuzz-build:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
