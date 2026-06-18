@@ -170,7 +170,30 @@ impl Body {
             }
             Some(Surface3::Plane(p)) => {
                 use keel_geom::curve::Curve3;
-                let poly3 = self.face_outer_loop_points(face);
+                let mut poly3 = self.face_outer_loop_points(face);
+                if poly3.len() < 3 {
+                    // A disk/cap face (one circular edge) has too few loop
+                    // VERTICES for a winding test, so it used to default to `All`
+                    // -- and a multi-cut tool's cap plane then "kept" the section
+                    // circle it cuts on a FAR cylinder/sphere (the unbounded
+                    // section lies in the cap's plane but outside its finite
+                    // disk). That phantom imprinted onto the far curved feature
+                    // and DOUBLED its loop (the green-slab then declines mass !=
+                    // mesh: the dominant multi-cut residual). Sample the boundary
+                    // edges into a polygon so the winding test below rejects a
+                    // section lying off the finite disk.
+                    let mut pts: Vec<keel_math::vec::Vec3> = Vec::new();
+                    for e in self.face_loop_edges(face).unwrap_or_default() {
+                        if let Some(ck) = self.edges.get(e).and_then(|x| x.curve).map(|(k, _)| k)
+                            && let Some(cv) = self.curves.get(ck)
+                        {
+                            for s in 0..32 {
+                                pts.push(curve_point(cv, s as f64 / 32.0));
+                            }
+                        }
+                    }
+                    poly3 = pts;
+                }
                 if poly3.len() < 3 {
                     return CurveFaceOverlap::All;
                 }

@@ -333,3 +333,34 @@ fn large_offset_sphere_intersection_never_silent_wrong() {
         }
     }
 }
+
+#[test]
+fn multicut_blind_hole_no_phantom_cap_seam() {
+    // Root fix for the dominant multi-cut mass!=mesh residual. A blind-hole cut
+    // FAR from a pre-existing ball cavity + through-hole + countersink used to
+    // raise 6 "unlocated seam component" faults and decline (mass NaN, mesh
+    // ~2.2% low). Cause: the blind-hole's circular CAP planes default-reported
+    // `All` curve-face overlap (a disk has too few loop vertices for the winding
+    // test), so the cap planes' SSI sections of the far sphere AND the far
+    // through-hole cylinder -- circles lying in a cap's plane but OUTSIDE its
+    // finite disk -- survived the clip and imprinted phantom DOUBLED rims onto
+    // those far faces. Sampling the cap disk's boundary edge drops the phantoms,
+    // so the far faces stay clean and the body PASSES (mass == mesh == MC).
+    let plate = blk(Vec3::ZERO, 22.5, 13.5, 3.923);
+    let ball = sph(Vec3::new(2.244, 2.120, 3.434), Vec3::new(0., 0., 1.), 1.221);
+    let b0 = boolean(&plate, &ball, BoolOp::Difference, 1e-7).unwrap().body;
+    let hole = cyl(Vec3::new(2.555, 6.236, -0.5), Vec3::new(0., 0., 1.), 1.189, 4.923);
+    let b1 = boolean(&b0, &hole, BoolOp::Difference, 1e-7).unwrap().body;
+    let csink = cone(Vec3::new(2.540, 11.469, 3.973), Vec3::new(0., 0., -1.), 1.010, 1.479);
+    let b2 = boolean(&b1, &csink, BoolOp::Difference, 1e-7).unwrap().body;
+    let blind = cyl(Vec3::new(6.793, 11.515, 2.928), Vec3::new(0., 0., 1.), 0.703, 1.595);
+    let r = boolean(&b2, &blind, BoolOp::Difference, 1e-7)
+        .unwrap_or_else(|e| panic!("blind-hole declined (phantom-cap regression): {e:?}"));
+    assert!(r.faults.is_empty(), "phantom cap seams (unlocated-seam faults): {:?}", r.faults);
+    assert!(r.body.validate().is_ok(), "invalid shell");
+    let m = r.body.mass_properties().unwrap().volume;
+    let mesh = r.body.mesh_volume();
+    // MC truth 1165.21 (14M samples). Pre-fix: mass NaN, mesh 1139.9 (2.2% low).
+    assert!((m - 1165.2).abs() < 3.0, "mass {m} != ~1165.2 (MC 1165.21)");
+    assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+}
