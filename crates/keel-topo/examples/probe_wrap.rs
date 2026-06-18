@@ -28,7 +28,8 @@ fn main() {
     // lands near the sphere's (u,v) equator, away from its pole singularity
     // (an axis-aligned poke-out would pass through the pole -- a degenerate
     // parametrization sub-case, not representative of the generic soak wrap).
-    b.sphere(Frame3::from_z(sc, Vec3::new(1., 0., 0.)).unwrap(), sr).unwrap();
+    b.sphere(Frame3::from_z(sc, Vec3::new(1., 0., 0.)).unwrap(), sr)
+        .unwrap();
 
     let in_cyl = |p: Vec3| -> bool {
         let r = ((p.x - cx).powi(2) + p.y * p.y).sqrt();
@@ -69,7 +70,11 @@ fn main() {
         match boolean(&a, &b, op, 1e-7) {
             Err(e) => println!("DECLINED {e:?}"),
             Ok(r) => {
-                let m = r.body.mass_properties().map(|x| x.volume).unwrap_or(f64::NAN);
+                let m = r
+                    .body
+                    .mass_properties()
+                    .map(|x| x.volume)
+                    .unwrap_or(f64::NAN);
                 println!(
                     "mass={m:.4} mesh={:.4} valid={} faults={:?} | m-truth={:.3}",
                     r.body.mesh_volume(),

@@ -25,14 +25,21 @@ impl Prim {
             Prim::Blk { o, d } => b.block(o, d.x, d.y, d.z).unwrap(),
             Prim::Cyl { p, ax, r, h } => b.cylinder(Frame3::from_z(p, ax).unwrap(), r, h).unwrap(),
             Prim::Cone { p, ax, r, h } => b.cone(Frame3::from_z(p, ax).unwrap(), r, h).unwrap(),
-            Prim::Sph { c, r } => b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r).unwrap(),
+            Prim::Sph { c, r } => b
+                .sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r)
+                .unwrap(),
         };
         b
     }
     fn contains(&self, q: Vec3) -> bool {
         match *self {
             Prim::Blk { o, d } => {
-                q.x >= o.x && q.x <= o.x + d.x && q.y >= o.y && q.y <= o.y + d.y && q.z >= o.z && q.z <= o.z + d.z
+                q.x >= o.x
+                    && q.x <= o.x + d.x
+                    && q.y >= o.y
+                    && q.y <= o.y + d.y
+                    && q.z >= o.z
+                    && q.z <= o.z + d.z
             }
             Prim::Cyl { p, ax, r, h } => {
                 let t = (q - p).dot(ax);
@@ -54,7 +61,9 @@ struct Seq {
 }
 
 fn mc(s: &Seq) -> f64 {
-    let Prim::Blk { o, d } = s.stock else { panic!() };
+    let Prim::Blk { o, d } = s.stock else {
+        panic!()
+    };
     let lo = o - Vec3::new(0.3, 0.3, 0.3);
     let hi = o + d + Vec3::new(0.3, 0.3, 1.5);
     let vb = (hi.x - lo.x) * (hi.y - lo.y) * (hi.z - lo.z);
@@ -68,7 +77,11 @@ fn mc(s: &Seq) -> f64 {
     let n = 14_000_000usize;
     let mut hit = 0usize;
     for _ in 0..n {
-        let p = Vec3::new(lo.x + (hi.x - lo.x) * nx(), lo.y + (hi.y - lo.y) * nx(), lo.z + (hi.z - lo.z) * nx());
+        let p = Vec3::new(
+            lo.x + (hi.x - lo.x) * nx(),
+            lo.y + (hi.y - lo.y) * nx(),
+            lo.z + (hi.z - lo.z) * nx(),
+        );
         let mut m = s.stock.contains(p);
         for (t, op) in &s.feats {
             let ti = t.contains(p);
@@ -92,14 +105,22 @@ fn run(s: &Seq) {
     for (i, (t, op)) in s.feats.iter().enumerate() {
         match boolean(&body, &t.body(), *op, 1e-7) {
             Err(e) => {
-                println!("{:<22} op {i}/{n}: DECLINED {e:?}  (MC truth of full seq = {:.3})", s.label, mc(s));
+                println!(
+                    "{:<22} op {i}/{n}: DECLINED {e:?}  (MC truth of full seq = {:.3})",
+                    s.label,
+                    mc(s)
+                );
                 return;
             }
             Ok(r) => {
                 let mok = r.body.mass_properties().is_ok();
                 eprintln!("  step {i}: faults={} mass_ok={mok}", r.faults.len());
                 if i + 1 == n {
-                    let m = r.body.mass_properties().map(|x| x.volume).unwrap_or(f64::NAN);
+                    let m = r
+                        .body
+                        .mass_properties()
+                        .map(|x| x.volume)
+                        .unwrap_or(f64::NAN);
                     println!(
                         "{:<22} OK faults={:?} valid={} mass={:.3} mesh={:.3} MC={:.3}",
                         s.label,
@@ -124,22 +145,80 @@ fn main() {
     // face's loop into the degenerate fwd+bwd rim.
     run(&Seq {
         label: "#1 blind(ball+hole+cone)",
-        stock: Prim::Blk { o: Vec3::ZERO, d: Vec3::new(22.5, 13.5, 3.923) },
+        stock: Prim::Blk {
+            o: Vec3::ZERO,
+            d: Vec3::new(22.5, 13.5, 3.923),
+        },
         feats: vec![
-            (Prim::Sph { c: Vec3::new(2.244, 2.120, 3.434), r: 1.221 }, BoolOp::Difference),
-            (Prim::Cyl { p: Vec3::new(2.555, 6.236, -0.5), ax: z, r: 1.189, h: 4.923 }, BoolOp::Difference),
-            (Prim::Cone { p: Vec3::new(2.540, 11.469, 3.973), ax: zd, r: 1.010, h: 1.479 }, BoolOp::Difference),
-            (Prim::Cyl { p: Vec3::new(6.793, 11.515, 2.928), ax: z, r: 0.703, h: 1.595 }, BoolOp::Difference),
+            (
+                Prim::Sph {
+                    c: Vec3::new(2.244, 2.120, 3.434),
+                    r: 1.221,
+                },
+                BoolOp::Difference,
+            ),
+            (
+                Prim::Cyl {
+                    p: Vec3::new(2.555, 6.236, -0.5),
+                    ax: z,
+                    r: 1.189,
+                    h: 4.923,
+                },
+                BoolOp::Difference,
+            ),
+            (
+                Prim::Cone {
+                    p: Vec3::new(2.540, 11.469, 3.973),
+                    ax: zd,
+                    r: 1.010,
+                    h: 1.479,
+                },
+                BoolOp::Difference,
+            ),
+            (
+                Prim::Cyl {
+                    p: Vec3::new(6.793, 11.515, 2.928),
+                    ax: z,
+                    r: 0.703,
+                    h: 1.595,
+                },
+                BoolOp::Difference,
+            ),
         ],
     });
     // #4: block + dome - through-hole, then boss-cyl union FAILS mass!=mesh.
     run(&Seq {
         label: "#4 boss after dome+hole",
-        stock: Prim::Blk { o: Vec3::ZERO, d: Vec3::new(22.5, 22.5, 3.408) },
+        stock: Prim::Blk {
+            o: Vec3::ZERO,
+            d: Vec3::new(22.5, 22.5, 3.408),
+        },
         feats: vec![
-            (Prim::Sph { c: Vec3::new(2.469, 6.636, 3.408), r: 1.332 }, BoolOp::Union),
-            (Prim::Cyl { p: Vec3::new(2.441, 20.581, -0.5), ax: z, r: 0.853, h: 4.408 }, BoolOp::Difference),
-            (Prim::Cyl { p: Vec3::new(6.519, 1.743, 3.388), ax: z, r: 0.926, h: 0.826 }, BoolOp::Union),
+            (
+                Prim::Sph {
+                    c: Vec3::new(2.469, 6.636, 3.408),
+                    r: 1.332,
+                },
+                BoolOp::Union,
+            ),
+            (
+                Prim::Cyl {
+                    p: Vec3::new(2.441, 20.581, -0.5),
+                    ax: z,
+                    r: 0.853,
+                    h: 4.408,
+                },
+                BoolOp::Difference,
+            ),
+            (
+                Prim::Cyl {
+                    p: Vec3::new(6.519, 1.743, 3.388),
+                    ax: z,
+                    r: 0.926,
+                    h: 0.826,
+                },
+                BoolOp::Union,
+            ),
         ],
     });
 }

@@ -98,7 +98,9 @@ fn main() {
                 let mesh = r.body.mesh_volume();
                 match r.body.mass_properties() {
                     Ok(m) => println!("OK mass={:.4} mesh={mesh:.4}", m.volume),
-                    Err(e) => println!("mass DECLINED {e:?}  mesh={mesh:.4} (MALFORMED: mass declines, mesh lies)"),
+                    Err(e) => println!(
+                        "mass DECLINED {e:?}  mesh={mesh:.4} (MALFORMED: mass declines, mesh lies)"
+                    ),
                 }
             }
         }

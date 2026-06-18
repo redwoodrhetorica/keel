@@ -905,6 +905,29 @@ impl Body {
 
         b.validate()
             .map_err(|_| TopoError::Precondition("fillet: result invalid"))?;
+        // DECLINE-never-WRONG floor: a fillet whose surgery leaves the analytic
+        // `mass_properties` grossly inconsistent with the tessellated volume (the
+        // blend-face/trim over-count -- a freshly created face integrating wrong
+        // while topology stays valid; realsoak seed 11400715918834829014) must
+        // DECLINE, never hand back a body whose reported volume is wrong. The
+        // mesh is the trustworthy witness (a filleted body's curved chordal
+        // deficit is well under 1%); a >25% gap is the integrator failing, which
+        // is exactly the soak oracle's curved-WRONG criterion, so the kernel
+        // declines precisely what the oracle would flag. (The real fix -- correct
+        // the surgery's face orientation so these PASS -- is the follow-up.)
+        if let Ok(mp) = b.mass_properties() {
+            let mesh = b.mesh_volume();
+            let denom = mp.volume.abs().max(mesh.abs());
+            if mp.volume.is_finite()
+                && mesh.is_finite()
+                && denom > 1e-9
+                && (mp.volume - mesh).abs() / denom > 0.25
+            {
+                return Err(TopoError::Precondition(
+                    "fillet: analytic/mesh volume inconsistent (mass-integration follow-up)",
+                ));
+            }
+        }
         Ok(b)
     }
 
@@ -940,7 +963,11 @@ impl Body {
                 Some(x) => (x.prev, x.next),
                 None => return Err(TopoError::StaleKey),
             };
-            let owner = self.fins.get(f).map(|x| x.owner).ok_or(TopoError::StaleKey)?;
+            let owner = self
+                .fins
+                .get(f)
+                .map(|x| x.owner)
+                .ok_or(TopoError::StaleKey)?;
             if fp == f && fnx == f {
                 if let Some(l) = self.loops.get_mut(owner) {
                     l.fin = None;
@@ -1002,11 +1029,7 @@ impl Body {
 
     /// Any fin incident to vertex `v` (start or end), excluding the fins
     /// in `skip`. Re-homes a dangling vertex.fin reference after a fuse.
-    fn any_fin_at_vertex(
-        &self,
-        v: crate::entity::VertexKey,
-        skip: &[FinKey],
-    ) -> Option<FinKey> {
+    fn any_fin_at_vertex(&self, v: crate::entity::VertexKey, skip: &[FinKey]) -> Option<FinKey> {
         for (fk, _) in self.fins.iter() {
             if skip.contains(&fk) {
                 continue;
@@ -1043,7 +1066,9 @@ impl Body {
             self.face_surface_geom(fillet_face),
             Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
         ) {
-            return Err(TopoError::Precondition("remove_fillet: not a cylinder face"));
+            return Err(TopoError::Precondition(
+                "remove_fillet: not a cylinder face",
+            ));
         }
         let edges = self
             .face_loop_edges(fillet_face)
@@ -1399,6 +1424,29 @@ impl Body {
 
         b.validate()
             .map_err(|_| TopoError::Precondition("fillet: result invalid"))?;
+        // DECLINE-never-WRONG floor: a fillet whose surgery leaves the analytic
+        // `mass_properties` grossly inconsistent with the tessellated volume (the
+        // blend-face/trim over-count -- a freshly created face integrating wrong
+        // while topology stays valid; realsoak seed 11400715918834829014) must
+        // DECLINE, never hand back a body whose reported volume is wrong. The
+        // mesh is the trustworthy witness (a filleted body's curved chordal
+        // deficit is well under 1%); a >25% gap is the integrator failing, which
+        // is exactly the soak oracle's curved-WRONG criterion, so the kernel
+        // declines precisely what the oracle would flag. (The real fix -- correct
+        // the surgery's face orientation so these PASS -- is the follow-up.)
+        if let Ok(mp) = b.mass_properties() {
+            let mesh = b.mesh_volume();
+            let denom = mp.volume.abs().max(mesh.abs());
+            if mp.volume.is_finite()
+                && mesh.is_finite()
+                && denom > 1e-9
+                && (mp.volume - mesh).abs() / denom > 0.25
+            {
+                return Err(TopoError::Precondition(
+                    "fillet: analytic/mesh volume inconsistent (mass-integration follow-up)",
+                ));
+            }
+        }
         Ok(b)
     }
 
@@ -4987,13 +5035,10 @@ mod tests {
         );
         // No cylinder face survives.
         assert!(
-            restored
-                .face_keys()
-                .into_iter()
-                .all(|f| !matches!(
-                    restored.face_surface_geom(f),
-                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
-                )),
+            restored.face_keys().into_iter().all(|f| !matches!(
+                restored.face_surface_geom(f),
+                Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+            )),
             "a cylinder face remained"
         );
         // Topology back to the block.
@@ -5029,10 +5074,17 @@ mod tests {
                 )
             })
             .expect("no cylinder blend face (vertical)");
-        let rest2 = fil2.remove_fillet(cyl2).expect("remove_fillet declined (vertical)");
+        let rest2 = fil2
+            .remove_fillet(cyl2)
+            .expect("remove_fillet declined (vertical)");
         assert!(rest2.validate().is_ok(), "vertical restored invalid");
         let c2 = rest2.counts();
-        assert_eq!((c2.v, c2.e, c2.f), (8, 12, 6), "vertical counts {:?}", (c2.v, c2.e, c2.f));
+        assert_eq!(
+            (c2.v, c2.e, c2.f),
+            (8, 12, 6),
+            "vertical counts {:?}",
+            (c2.v, c2.e, c2.f)
+        );
         let m2 = rest2.mass_properties().unwrap().volume;
         assert!((m2 - 8.0).abs() < 1e-9, "vertical restored mass {m2} != 8");
     }

@@ -68,7 +68,11 @@ fn tilted_cone_disjoint_block_is_fast_and_correct_task47() {
         .unwrap();
     let mut blk = Body::new();
     blk.block(
-        Vec3::new(-0.15174651733833588, 0.8677412594822895, -2.3397407903158065),
+        Vec3::new(
+            -0.15174651733833588,
+            0.8677412594822895,
+            -2.3397407903158065,
+        ),
         2.7717690470589265,
         2.2579544930304674,
         1.576714175012244,
@@ -81,7 +85,10 @@ fn tilted_cone_disjoint_block_is_fast_and_correct_task47() {
     // Cliff guard: the phantom-ellipse path took ~1.7 s, the bound makes it
     // ~1 ms. One second is a generous separator (1000x headroom) that still
     // catches a regression back to the giant-ellipse sampling.
-    assert!(dt.as_secs_f64() < 1.0, "task47 perf cliff regressed: {dt:?}");
+    assert!(
+        dt.as_secs_f64() < 1.0,
+        "task47 perf cliff regressed: {dt:?}"
+    );
     assert!(inter.body.validate().is_ok());
     // Disjoint AABBs: the intersection is empty.
     assert_eq!(

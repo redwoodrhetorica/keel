@@ -22,14 +22,23 @@ fn explode_then_knit_round_trips_a_block() {
     let v0 = block.mass_properties().unwrap().volume;
 
     let sheets = explode(&block);
-    assert_eq!(sheets.len(), 6, "a block must explode into 6 face sheets, got {}", sheets.len());
+    assert_eq!(
+        sheets.len(),
+        6,
+        "a block must explode into 6 face sheets, got {}",
+        sheets.len()
+    );
     for s in &sheets {
         assert!(s.validate().is_ok(), "an exploded face sheet is invalid");
     }
 
     let refs: Vec<&Body> = sheets.iter().collect();
-    let rejoined = knit(&refs, 1e-7).unwrap_or_else(|e| panic!("knit of the 6 sheets declined: {e:?}"));
+    let rejoined =
+        knit(&refs, 1e-7).unwrap_or_else(|e| panic!("knit of the 6 sheets declined: {e:?}"));
     assert!(rejoined.validate().is_ok(), "knit result invalid");
     let v1 = rejoined.mass_properties().unwrap().volume;
-    assert!((v1 - v0).abs() < 1e-6 * (1.0 + v0), "knit volume {v1} != block volume {v0}");
+    assert!(
+        (v1 - v0).abs() < 1e-6 * (1.0 + v0),
+        "knit volume {v1} != block volume {v0}"
+    );
 }

@@ -31,7 +31,8 @@ impl Rng {
 }
 fn cyl(pos: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
     let mut b = Body::new();
-    b.cylinder(Frame3::from_z(pos, axis).unwrap(), r, h).unwrap();
+    b.cylinder(Frame3::from_z(pos, axis).unwrap(), r, h)
+        .unwrap();
     b
 }
 fn blk(o: Vec3, dx: f64, dy: f64, dz: f64) -> Body {
@@ -46,7 +47,8 @@ fn cone(pos: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
 }
 fn sph(c: Vec3, r: f64) -> Body {
     let mut b = Body::new();
-    b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r).unwrap();
+    b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r)
+        .unwrap();
     b
 }
 
@@ -83,36 +85,79 @@ fn feature(rng: &mut Rng, cx: f64, cy: f64, s: f64, h: f64) -> (&'static str, Bo
     match t {
         0 => {
             let r = rng.r(0.3, rmax);
-            ("through-hole", cyl(Vec3::new(x, y, -0.5), z, r, h + 1.0), BoolOp::Difference)
+            (
+                "through-hole",
+                cyl(Vec3::new(x, y, -0.5), z, r, h + 1.0),
+                BoolOp::Difference,
+            )
         }
         1 => {
             let r = rng.r(0.3, rmax);
             let dep = rng.r(0.3, h * 0.7);
-            ("blind-hole", cyl(Vec3::new(x, y, h - dep), z, r, dep + 0.6), BoolOp::Difference)
+            (
+                "blind-hole",
+                cyl(Vec3::new(x, y, h - dep), z, r, dep + 0.6),
+                BoolOp::Difference,
+            )
         }
         2 => {
             let (pw, pd) = (rng.r(0.6, s), rng.r(0.6, s));
             let dep = rng.r(0.3, h * 0.7);
-            ("pocket", blk(Vec3::new(x - pw / 2.0, y - pd / 2.0, h - dep), pw, pd, dep + 0.6), BoolOp::Difference)
+            (
+                "pocket",
+                blk(
+                    Vec3::new(x - pw / 2.0, y - pd / 2.0, h - dep),
+                    pw,
+                    pd,
+                    dep + 0.6,
+                ),
+                BoolOp::Difference,
+            )
         }
         3 => {
             let r = rng.r(0.3, rmax);
-            ("boss-cyl", cyl(Vec3::new(x, y, h - 0.02), z, r, rng.r(0.6, 2.5)), BoolOp::Union)
+            (
+                "boss-cyl",
+                cyl(Vec3::new(x, y, h - 0.02), z, r, rng.r(0.6, 2.5)),
+                BoolOp::Union,
+            )
         }
         4 => {
             let (bw, bd) = (rng.r(0.6, s), rng.r(0.6, s));
-            ("boss-block", blk(Vec3::new(x - bw / 2.0, y - bd / 2.0, h - 0.02), bw, bd, rng.r(0.6, 2.5)), BoolOp::Union)
+            (
+                "boss-block",
+                blk(
+                    Vec3::new(x - bw / 2.0, y - bd / 2.0, h - 0.02),
+                    bw,
+                    bd,
+                    rng.r(0.6, 2.5),
+                ),
+                BoolOp::Union,
+            )
         }
         5 => {
             // counterbore proxy: a larger shallow hole (single op here)
             let r = rng.r(0.5, rmax);
             let dep = rng.r(0.3, h * 0.5);
-            ("counterbore", cyl(Vec3::new(x, y, h - dep), z, r, dep + 0.6), BoolOp::Difference)
+            (
+                "counterbore",
+                cyl(Vec3::new(x, y, h - dep), z, r, dep + 0.6),
+                BoolOp::Difference,
+            )
         }
         6 => {
             let r = rng.r(0.5, rmax);
             let dep = rng.r(0.4, h * 0.6);
-            ("countersink", cone(Vec3::new(x, y, h + 0.05), Vec3::new(0., 0., -1.), r, dep + 0.05), BoolOp::Difference)
+            (
+                "countersink",
+                cone(
+                    Vec3::new(x, y, h + 0.05),
+                    Vec3::new(0., 0., -1.),
+                    r,
+                    dep + 0.05,
+                ),
+                BoolOp::Difference,
+            )
         }
         7 => {
             let r = rng.r(0.5, rmax);
@@ -120,24 +165,44 @@ fn feature(rng: &mut Rng, cx: f64, cy: f64, s: f64, h: f64) -> (&'static str, Bo
         }
         8 => {
             let r = rng.r(0.5, rmax.min(h));
-            ("ball-cavity", sph(Vec3::new(x, y, h - r * 0.4), r), BoolOp::Difference)
+            (
+                "ball-cavity",
+                sph(Vec3::new(x, y, h - r * 0.4), r),
+                BoolOp::Difference,
+            )
         }
         _ => {
             let r = rng.r(0.25, (rmax).min(h / 2.5));
             let zc = rng.r(r + 0.2, h - r - 0.2).max(r + 0.2);
-            ("cross-hole", cyl(Vec3::new(x - s - 0.5, y, zc), Vec3::new(1., 0., 0.), r, 2.0 * s + 1.0), BoolOp::Difference)
+            (
+                "cross-hole",
+                cyl(
+                    Vec3::new(x - s - 0.5, y, zc),
+                    Vec3::new(1., 0., 0.),
+                    r,
+                    2.0 * s + 1.0,
+                ),
+                BoolOp::Difference,
+            )
         }
     }
 }
 
 fn main() {
-    let parts: usize = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(400);
-    let seed: u64 = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(1);
+    let parts: usize = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(400);
+    let seed: u64 = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
     let mut rng = Rng(seed.wrapping_mul(0x9e3779b97f4a7c15) | 1);
     let mut pass: HashMap<&str, u64> = HashMap::new();
     let mut decl: HashMap<&str, u64> = HashMap::new();
     let mut tot: HashMap<&str, u64> = HashMap::new();
-    let (mut ops, mut p_ok, mut p_dec, mut invalid, mut unmassable) = (0u64, 0u64, 0u64, 0u64, 0u64);
+    let (mut ops, mut p_ok, mut p_dec, mut invalid, mut unmassable) =
+        (0u64, 0u64, 0u64, 0u64, 0u64);
     let mut dump: Option<String> = None;
     let mut full = 0u64;
     let mut depth_sum = 0f64;
@@ -173,11 +238,14 @@ fn main() {
                             invalid += 1;
                             broke = true;
                             if dump.is_none() {
-                                dump = Some(format!("part {part_i} ({label} {op:?}): validate ERR {e:?}"));
+                                dump = Some(format!(
+                                    "part {part_i} ({label} {op:?}): validate ERR {e:?}"
+                                ));
                             }
                         }
                         Ok(()) => {
-                            let massable = matches!(r.body.mass_properties(), Ok(m) if m.volume > 0.0);
+                            let massable =
+                                matches!(r.body.mass_properties(), Ok(m) if m.volume > 0.0);
                             if !massable {
                                 unmassable += 1;
                             } else {
@@ -199,10 +267,23 @@ fn main() {
     let mut labels: Vec<&str> = tot.keys().copied().collect();
     labels.sort();
     println!("=== REALISTIC NESTED CAD (deliberate placement; {parts} parts, seed {seed}) ===");
-    println!("{:<14} {:>7} {:>7} {:>9}", "feature", "ops", "PASS%", "DECLINE%");
+    println!(
+        "{:<14} {:>7} {:>7} {:>9}",
+        "feature", "ops", "PASS%", "DECLINE%"
+    );
     for l in &labels {
-        let (t, p, dc) = (tot[l], *pass.get(l).unwrap_or(&0), *decl.get(l).unwrap_or(&0));
-        println!("{:<14} {:>7} {:>6.1} {:>8.1}", l, t, 100.0 * p as f64 / t as f64, 100.0 * dc as f64 / t as f64);
+        let (t, p, dc) = (
+            tot[l],
+            *pass.get(l).unwrap_or(&0),
+            *decl.get(l).unwrap_or(&0),
+        );
+        println!(
+            "{:<14} {:>7} {:>6.1} {:>8.1}",
+            l,
+            t,
+            100.0 * p as f64 / t as f64,
+            100.0 * dc as f64 / t as f64
+        );
     }
     println!("---");
     println!(

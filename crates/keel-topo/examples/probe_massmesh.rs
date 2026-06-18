@@ -16,12 +16,14 @@ fn blk(o: Vec3, dx: f64, dy: f64, dz: f64) -> Body {
 }
 fn cyl(pos: Vec3, r: f64, h: f64) -> Body {
     let mut b = Body::new();
-    b.cylinder(Frame3::from_z(pos, Vec3::new(0., 0., 1.)).unwrap(), r, h).unwrap();
+    b.cylinder(Frame3::from_z(pos, Vec3::new(0., 0., 1.)).unwrap(), r, h)
+        .unwrap();
     b
 }
 fn sph(c: Vec3, r: f64) -> Body {
     let mut b = Body::new();
-    b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r).unwrap();
+    b.sphere(Frame3::from_z(c, Vec3::new(0., 0., 1.)).unwrap(), r)
+        .unwrap();
     b
 }
 
@@ -31,13 +33,18 @@ fn main() {
     let plate = blk(Vec3::ZERO, w, d, h);
     let dome = sph(Vec3::new(3.0, 3.0, h), 1.5);
     let b1 = boolean(&plate, &dome, BoolOp::Union, 1e-7).unwrap().body;
-    println!("after dome: valid={} mass={:?}", b1.body_valid(), b1.mass_properties().map(|m| m.volume));
+    println!(
+        "after dome: valid={} mass={:?}",
+        b1.body_valid(),
+        b1.mass_properties().map(|m| m.volume)
+    );
     let hole = cyl(Vec3::new(7.0, 7.0, -0.5), 1.0, h + 1.0);
 
     // Independent MC truth of (block U dome) - hole.
     let in_blk = |p: Vec3| p.x >= 0. && p.x <= w && p.y >= 0. && p.y <= d && p.z >= 0. && p.z <= h;
     let in_dome = |p: Vec3| (p - Vec3::new(3., 3., h)).norm() <= 1.5;
-    let in_hole = |p: Vec3| ((p.x - 7.).powi(2) + (p.y - 7.).powi(2)).sqrt() <= 1.0 && p.z >= 0. && p.z <= h;
+    let in_hole =
+        |p: Vec3| ((p.x - 7.).powi(2) + (p.y - 7.).powi(2)).sqrt() <= 1.0 && p.z >= 0. && p.z <= h;
     let mut st = 0x1234_5678u64;
     let mut nx = || {
         st ^= st << 13;
@@ -50,7 +57,11 @@ fn main() {
     let n = 8_000_000usize;
     let mut hit = 0usize;
     for _ in 0..n {
-        let p = Vec3::new(lo.x + (hi.x - lo.x) * nx(), lo.y + (hi.y - lo.y) * nx(), lo.z + (hi.z - lo.z) * nx());
+        let p = Vec3::new(
+            lo.x + (hi.x - lo.x) * nx(),
+            lo.y + (hi.y - lo.y) * nx(),
+            lo.z + (hi.z - lo.z) * nx(),
+        );
         if (in_blk(p) || in_dome(p)) && !in_hole(p) {
             hit += 1;
         }

@@ -13,7 +13,8 @@ use keel_topo::boolean::{BoolOp, boolean};
 
 fn cyl(origin: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
     let mut b = Body::new();
-    b.cylinder(Frame3::from_z(origin, axis).unwrap(), r, h).unwrap();
+    b.cylinder(Frame3::from_z(origin, axis).unwrap(), r, h)
+        .unwrap();
     b
 }
 
@@ -22,8 +23,8 @@ fn cyl(origin: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
 /// curved gate already pins mass == mesh within its band, so a returned Ok
 /// with the right mass is a genuine, self-consistent PASS.
 fn assert_pass(a: &Body, b: &Body, op: BoolOp, want: f64) {
-    let r = boolean(a, b, op, 1e-7)
-        .unwrap_or_else(|e| panic!("{op:?} declined unexpectedly: {e:?}"));
+    let r =
+        boolean(a, b, op, 1e-7).unwrap_or_else(|e| panic!("{op:?} declined unexpectedly: {e:?}"));
     assert!(r.body.validate().is_ok(), "{op:?}: invalid shell");
     let m = r
         .body

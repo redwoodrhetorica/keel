@@ -22,14 +22,20 @@ fn mc(o: Vec3, ax: Vec3, r0: f64, h: f64, sc: Vec3, sr: f64, op: BoolOp) -> f64 
     let hi = Vec3::new(3.0, 3.0, 3.5);
     let mut st = 0xabcdef0123456789u64;
     let mut nx = || {
-        st = st.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        st = st
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (st >> 11) as f64 / (1u64 << 53) as f64
     };
     let vb = (hi.x - lo.x) * (hi.y - lo.y) * (hi.z - lo.z);
     let n = 5_000_000usize;
     let mut hit = 0usize;
     for _ in 0..n {
-        let p = Vec3::new(lo.x + (hi.x - lo.x) * nx(), lo.y + (hi.y - lo.y) * nx(), lo.z + (hi.z - lo.z) * nx());
+        let p = Vec3::new(
+            lo.x + (hi.x - lo.x) * nx(),
+            lo.y + (hi.y - lo.y) * nx(),
+            lo.z + (hi.z - lo.z) * nx(),
+        );
         let (ia, ib) = (in_cone(o, ax, r0, h, p), in_sph(sc, sr, p));
         let inside = match op {
             BoolOp::Intersection => ia && ib,
@@ -50,7 +56,8 @@ fn main() {
     let mut a = Body::new();
     a.cone(Frame3::from_z(o, ax).unwrap(), r0, h).unwrap();
     let mut b = Body::new();
-    b.sphere(Frame3::from_z(sc, Vec3::new(0., 0., 1.)).unwrap(), sr).unwrap();
+    b.sphere(Frame3::from_z(sc, Vec3::new(0., 0., 1.)).unwrap(), sr)
+        .unwrap();
     let run = |lbl: &str, x: &Body, y: &Body, op: BoolOp, truth: f64| {
         print!("{lbl}: MC-truth={truth:.4} -> ");
         match boolean(x, y, op, 1e-7) {
@@ -58,7 +65,10 @@ fn main() {
             Ok(r) => match r.body.mass_properties() {
                 Ok(m) => println!(
                     "valid={} faults={:?} mass={:.4} mesh={:.4} | m-truth={:.3}",
-                    r.body.validate().is_ok(), r.faults, m.volume, r.body.mesh_volume(),
+                    r.body.validate().is_ok(),
+                    r.faults,
+                    m.volume,
+                    r.body.mesh_volume(),
                     (m.volume - truth).abs() / (1.0 + truth)
                 ),
                 Err(e) => println!("mass ERR({e:?}) faults={:?}", r.faults),

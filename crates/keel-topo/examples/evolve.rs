@@ -98,11 +98,19 @@ struct Genome {
 fn rand_prim(rng: &mut Lcg) -> Prim {
     Prim {
         shape: Shape::from_u(rng.pick(4)),
-        pos: Vec3::new(rng.range(-3.0, 3.0), rng.range(-3.0, 3.0), rng.range(-3.0, 3.0)),
+        pos: Vec3::new(
+            rng.range(-3.0, 3.0),
+            rng.range(-3.0, 3.0),
+            rng.range(-3.0, 3.0),
+        ),
         a: rng.range(0.4, 3.0),
         b: rng.range(0.4, 3.0),
         c: rng.range(0.4, 3.0),
-        axis: Vec3::new(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0), rng.range(-1.0, 1.0)),
+        axis: Vec3::new(
+            rng.range(-1.0, 1.0),
+            rng.range(-1.0, 1.0),
+            rng.range(-1.0, 1.0),
+        ),
     }
 }
 
@@ -153,8 +161,12 @@ fn build(p: &Prim) -> Option<Body> {
     let frame = || Frame3::from_z(p.pos, p.axis).ok();
     let ok = match p.shape {
         Shape::Block => b.block(p.pos, p.a, p.b, p.c).is_ok(),
-        Shape::Cylinder => frame().map(|f| b.cylinder(f, p.a, p.b).is_ok()).unwrap_or(false),
-        Shape::Cone => frame().map(|f| b.cone(f, p.a, p.b).is_ok()).unwrap_or(false),
+        Shape::Cylinder => frame()
+            .map(|f| b.cylinder(f, p.a, p.b).is_ok())
+            .unwrap_or(false),
+        Shape::Cone => frame()
+            .map(|f| b.cone(f, p.a, p.b).is_ok())
+            .unwrap_or(false),
         Shape::Sphere => frame().map(|f| b.sphere(f, p.a).is_ok()).unwrap_or(false),
     };
     if ok { Some(b) } else { None }
@@ -338,7 +350,15 @@ fn genome_json(g: &Genome) -> String {
         format!(
             "{{\"shape\":\"{}\",\"pos\":[{},{},{}],\"a\":{},\"b\":{},\"c\":{},\"axis\":[{},{},{}]}}",
             p.shape.tag(),
-            p.pos.x, p.pos.y, p.pos.z, p.a, p.b, p.c, p.axis.x, p.axis.y, p.axis.z
+            p.pos.x,
+            p.pos.y,
+            p.pos.z,
+            p.a,
+            p.b,
+            p.c,
+            p.axis.x,
+            p.axis.y,
+            p.axis.z
         )
     };
     format!(
@@ -372,7 +392,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let evals: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(20000);
     let seed: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
-    let outdir = args.get(3).cloned().unwrap_or_else(|| "evolve-out".to_string());
+    let outdir = args
+        .get(3)
+        .cloned()
+        .unwrap_or_else(|| "evolve-out".to_string());
     std::fs::create_dir_all(&outdir).unwrap();
     // Quiet the panic firehose; the genome replays any panic on demand.
     std::panic::set_hook(Box::new(|_| {}));
@@ -508,7 +531,11 @@ fn main() {
             } else {
                 (if novel { 3.0 } else { 0.0 })
                     + e.risk
-                    + if matches!(e.class, Class::Decline(_)) { 0.3 } else { 0.0 }
+                    + if matches!(e.class, Class::Decline(_)) {
+                        0.3
+                    } else {
+                        0.0
+                    }
             };
             scored.push((fit, *g));
         }

@@ -213,11 +213,15 @@ impl Body {
                 // real in-face arc is never dropped.
                 let tau = core::f64::consts::TAU;
                 let samples: Vec<keel_math::vec::Vec3> = match curve {
-                    Curve3::Circle(ci) => (0..32).map(|k| ci.point(tau * k as f64 / 32.0)).collect(),
+                    Curve3::Circle(ci) => {
+                        (0..32).map(|k| ci.point(tau * k as f64 / 32.0)).collect()
+                    }
                     Curve3::Ellipse(e) => (0..32).map(|k| e.point(tau * k as f64 / 32.0)).collect(),
                     Curve3::Nurbs(n) => {
                         let (t0, t1) = n.domain();
-                        (0..=24).map(|k| n.point(t0 + (t1 - t0) * k as f64 / 24.0)).collect()
+                        (0..=24)
+                            .map(|k| n.point(t0 + (t1 - t0) * k as f64 / 24.0))
+                            .collect()
                     }
                     Curve3::Line(_) => unreachable!(),
                 };
@@ -1242,7 +1246,11 @@ impl Body {
         // cone/sphere graze). The circle-rim path below finds no circle and
         // returns None; use the loop's own (theta, v) bbox centre, interior to
         // the convex window (theta NOT wrapping the full ring => a window).
-        let loops = self.faces.get(face).map(|f| f.loops.clone()).unwrap_or_default();
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
         if loops.len() == 1
             && let Some(entry) = self.loops.get(loops[0]).and_then(|l| l.fin)
         {
@@ -1341,7 +1349,13 @@ impl Body {
             // cap / lens / rest faces (one circle, however many arcs) stay at
             // ONE distinct rim and never enter the band path.
             let mut rims: Vec<(Vec3, Vec3, f64)> = Vec::new();
-            for lp in self.faces.get(face).map(|f| f.loops.clone()).into_iter().flatten() {
+            for lp in self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .into_iter()
+                .flatten()
+            {
                 let Some(entry) = self.loops.get(lp).and_then(|l| l.fin) else {
                     continue;
                 };
@@ -1394,7 +1408,13 @@ impl Body {
             // wrap still declines downstream on mass (68) / tessellation (69).
             if rims.len() < 2 {
                 let mut nrims: Vec<(Vec3, Vec3, f64)> = Vec::new();
-                for lp in self.faces.get(face).map(|f| f.loops.clone()).into_iter().flatten() {
+                for lp in self
+                    .faces
+                    .get(face)
+                    .map(|f| f.loops.clone())
+                    .into_iter()
+                    .flatten()
+                {
                     let Some(entry) = self.loops.get(lp).and_then(|l| l.fin) else {
                         continue;
                     };
@@ -1416,9 +1436,7 @@ impl Body {
                                     })
                             })
                             .unwrap_or(false);
-                        if !is_seam
-                            && let Some(pts) = self.fin_curve_samples(cur, 24)
-                        {
+                        if !is_seam && let Some(pts) = self.fin_curve_samples(cur, 24) {
                             samples.extend(pts);
                         }
                         cur = fin.next;
@@ -1437,10 +1455,16 @@ impl Body {
                     for i in 0..dirs.len() {
                         area = area + dirs[i].cross(dirs[(i + 1) % dirs.len()]);
                     }
-                    let Some(axis) = area.try_normalize() else { continue };
+                    let Some(axis) = area.try_normalize() else {
+                        continue;
+                    };
                     let h = samples.iter().map(|p| (*p - center).dot(axis)).sum::<f64>()
                         / samples.len() as f64;
-                    nrims.push((center + axis * h, axis, (radius * radius - h * h).max(0.0).sqrt()));
+                    nrims.push((
+                        center + axis * h,
+                        axis,
+                        (radius * radius - h * h).max(0.0).sqrt(),
+                    ));
                 }
                 if nrims.len() >= 2 {
                     rims = nrims;
@@ -1630,11 +1654,20 @@ impl Body {
         // an INNER ring) opposite. Verified against the trimmed (u, v) domain.
         {
             use keel_math::vec::Vec3;
-            for lp in self.faces.get(face).map(|f| f.loops.clone()).into_iter().flatten() {
+            for lp in self
+                .faces
+                .get(face)
+                .map(|f| f.loops.clone())
+                .into_iter()
+                .flatten()
+            {
                 let Some(entry) = self.loops.get(lp).and_then(|l| l.fin) else {
                     continue;
                 };
-                let inner = self.loops.get(lp).map(|l| l.kind == crate::entity::LoopKind::Inner)
+                let inner = self
+                    .loops
+                    .get(lp)
+                    .map(|l| l.kind == crate::entity::LoopKind::Inner)
                     == Some(true);
                 let mut sum = Vec3::ZERO;
                 let mut n = 0u32;
@@ -3765,9 +3798,18 @@ pub fn explode(body: &Body) -> Vec<Body> {
         let mut rec = dst.begin_op();
         let mut vmap: BTreeMap<(Operand, u64), crate::entity::VertexKey> = BTreeMap::new();
         let mut emap: BTreeMap<(Operand, u64), crate::entity::EdgeKey> = BTreeMap::new();
-        let Some(nf) =
-            import_face(&mut dst, body, fk, Operand::A, false, &mut rec, &mut vmap, &mut emap, inf, inf)
-        else {
+        let Some(nf) = import_face(
+            &mut dst,
+            body,
+            fk,
+            Operand::A,
+            false,
+            &mut rec,
+            &mut vmap,
+            &mut emap,
+            inf,
+            inf,
+        ) else {
             continue;
         };
         if let Ok(sheet) = finalize_imported_sheet(dst, rec, vec![nf], inf, 1e-7) {
@@ -4051,10 +4093,40 @@ pub fn boolean_with(
                     // verbatim combine (no imprint/SSI) is the curved-operand
                     // fix -- the old fall-through to the full assembly merged
                     // disconnected curved components into one broken region.
-                    return combine_disjoint(a, b, tol).map(|body| BoolResult {
-                        body,
-                        faults: Vec::new(),
-                        op,
+                    return combine_disjoint(a, b, tol).and_then(|body| {
+                        // DECLINE-never-WRONG: combine_disjoint bypasses the SSI
+                        // assembler's mass==mesh gate, and analytic mass_properties
+                        // can COLLAPSE on a disjoint CURVED union (sphere
+                        // mirror+union, realsoak seed 11400715918834829910: mass
+                        // 238 vs the true render volume 14441) while validate()
+                        // passes. Cross-check the analytic mass against the
+                        // independent render mesh; a gross (>25%, the soak oracle's
+                        // curved-WRONG criterion) gap means the reported volume is
+                        // wrong, so decline rather than hand it back. A planar
+                        // disjoint union (exact mass==mesh) is unaffected. (Real
+                        // fix: the disjoint curved mass integration -- a follow-up.)
+                        let render_mesh = body.mesh_volume();
+                        let inconsistent = body
+                            .mass_properties()
+                            .map(|m| m.volume)
+                            .ok()
+                            .is_some_and(|mass| {
+                                let denom = mass.abs().max(render_mesh.abs());
+                                mass.is_finite()
+                                    && render_mesh.is_finite()
+                                    && denom > 1e-9
+                                    && (mass - render_mesh).abs() / denom > 0.25
+                            });
+                        if inconsistent {
+                            return Err(BoolFault::AssemblyFailed(
+                                "disjoint union: analytic mass inconsistent with mesh (mass-integration follow-up)",
+                            ));
+                        }
+                        Ok(BoolResult {
+                            body,
+                            faults: Vec::new(),
+                            op,
+                        })
                     });
                 }
             }
@@ -4144,8 +4216,11 @@ pub fn boolean_with(
                     .any(|&f| !matches!(x.face_surface3(f), Some(Surface3::Plane(_))))
             };
             if curved(a) || curved(b) {
-                let opvol =
-                    |x: &Body| x.mass_properties().map(|m| m.volume).unwrap_or_else(|_| x.mesh_volume());
+                let opvol = |x: &Body| {
+                    x.mass_properties()
+                        .map(|m| m.volume)
+                        .unwrap_or_else(|_| x.mesh_volume())
+                };
                 let (va, vb) = (opvol(a), opvol(b));
                 if va.is_finite() && vb.is_finite() && va >= 0.0 && vb >= 0.0 {
                     let (lo, hi) = match op {
@@ -4862,8 +4937,12 @@ fn two_disc_lens_area(r1: f64, r2: f64, d: f64) -> f64 {
         let r = r1.min(r2);
         return core::f64::consts::PI * r * r;
     }
-    let a1 = ((d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1)).clamp(-1.0, 1.0).acos();
-    let a2 = ((d * d + r2 * r2 - r1 * r1) / (2.0 * d * r2)).clamp(-1.0, 1.0).acos();
+    let a1 = ((d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1))
+        .clamp(-1.0, 1.0)
+        .acos();
+    let a2 = ((d * d + r2 * r2 - r1 * r1) / (2.0 * d * r2))
+        .clamp(-1.0, 1.0)
+        .acos();
     let tri = 0.5
         * ((-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2))
             .max(0.0)
@@ -4912,10 +4991,13 @@ fn cyl_sphere_inter_volume(
 /// oracle-less cyl/sphere window class.
 fn cyl_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
     let cyl_of = |body: &Body| -> Option<(keel_geom::surface::Cylinder3, f64, f64)> {
-        let c = body.face_keys().into_iter().find_map(|f| match body.face_surface3(f) {
-            Some(Surface3::Cylinder(c)) => Some(c),
-            _ => None,
-        })?;
+        let c = body
+            .face_keys()
+            .into_iter()
+            .find_map(|f| match body.face_surface3(f) {
+                Some(Surface3::Cylinder(c)) => Some(c),
+                _ => None,
+            })?;
         let axis = c.frame.z;
         let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
         for t in body.facets(None) {
@@ -4928,22 +5010,30 @@ fn cyl_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
         (lo.is_finite() && hi > lo).then_some((c, lo, hi))
     };
     let sph_of = |body: &Body| -> Option<keel_geom::surface::Sphere3> {
-        body.face_keys().into_iter().find_map(|f| match body.face_surface3(f) {
-            Some(Surface3::Sphere(s)) => Some(s),
-            _ => None,
-        })
+        body.face_keys()
+            .into_iter()
+            .find_map(|f| match body.face_surface3(f) {
+                Some(Surface3::Sphere(s)) => Some(s),
+                _ => None,
+            })
     };
     let pi = core::f64::consts::PI;
-    let (cyl, hlo, hhi, sph, va, vb) =
-        if let (Some((c, lo, hi)), Some(s)) = (cyl_of(a), sph_of(b)) {
-            let (vc, vs) = (pi * c.radius * c.radius * (hi - lo), 4.0 / 3.0 * pi * s.radius.powi(3));
-            (c, lo, hi, s, vc, vs)
-        } else if let (Some(s), Some((c, lo, hi))) = (sph_of(a), cyl_of(b)) {
-            let (vc, vs) = (pi * c.radius * c.radius * (hi - lo), 4.0 / 3.0 * pi * s.radius.powi(3));
-            (c, lo, hi, s, vs, vc) // operand A is the sphere here
-        } else {
-            return None;
-        };
+    let (cyl, hlo, hhi, sph, va, vb) = if let (Some((c, lo, hi)), Some(s)) = (cyl_of(a), sph_of(b))
+    {
+        let (vc, vs) = (
+            pi * c.radius * c.radius * (hi - lo),
+            4.0 / 3.0 * pi * s.radius.powi(3),
+        );
+        (c, lo, hi, s, vc, vs)
+    } else if let (Some(s), Some((c, lo, hi))) = (sph_of(a), cyl_of(b)) {
+        let (vc, vs) = (
+            pi * c.radius * c.radius * (hi - lo),
+            4.0 / 3.0 * pi * s.radius.powi(3),
+        );
+        (c, lo, hi, s, vs, vc) // operand A is the sphere here
+    } else {
+        return None;
+    };
     // The oracle is an exact LONE cylinder-vs-LONE sphere truth. cyl_of/sph_of
     // match ANY face, so a COMPOUND operand that merely CONTAINS such a face (a
     // plate with a dome, then drilled) would otherwise be scored as if it were
@@ -4958,9 +5048,8 @@ fn cyl_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
     // true primitive while a compound (block+dome 307 vs sphere 14) is rejected
     // by a wide margin.
     let prim_ok = |body: &Body, vprim: f64| {
-        body
-            .mass_properties()
-            .map_or(false, |m| m.volume.is_finite() && (m.volume - vprim).abs() <= 1e-2 * (1.0 + vprim))
+        body.mass_properties()
+            .is_ok_and(|m| m.volume.is_finite() && (m.volume - vprim).abs() <= 1e-2 * (1.0 + vprim))
     };
     if !(prim_ok(a, va) && prim_ok(b, vb)) {
         return None;
@@ -5031,10 +5120,13 @@ fn quadric_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
         return Some(v);
     }
     let cone_of = |body: &Body| -> Option<(keel_geom::surface::Cone3, f64, f64)> {
-        let c = body.face_keys().into_iter().find_map(|f| match body.face_surface3(f) {
-            Some(Surface3::Cone(c)) => Some(c),
-            _ => None,
-        })?;
+        let c = body
+            .face_keys()
+            .into_iter()
+            .find_map(|f| match body.face_surface3(f) {
+                Some(Surface3::Cone(c)) => Some(c),
+                _ => None,
+            })?;
         let axis = c.frame.z;
         let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
         for t in body.facets(None) {
@@ -5047,10 +5139,12 @@ fn quadric_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
         (lo.is_finite() && hi > lo).then_some((c, lo, hi))
     };
     let sph_of = |body: &Body| -> Option<keel_geom::surface::Sphere3> {
-        body.face_keys().into_iter().find_map(|f| match body.face_surface3(f) {
-            Some(Surface3::Sphere(s)) => Some(s),
-            _ => None,
-        })
+        body.face_keys()
+            .into_iter()
+            .find_map(|f| match body.face_surface3(f) {
+                Some(Surface3::Sphere(s)) => Some(s),
+                _ => None,
+            })
     };
     let pi = core::f64::consts::PI;
     let (cone, vlo, vhi, sph, va, vb) =
@@ -5065,7 +5159,11 @@ fn quadric_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
         };
     let inter = cone_sphere_inter_volume(&cone, vlo, vhi, &sph);
     let vcone = cone_solid_volume(&cone, vlo, vhi);
-    let (va, vb) = if va.is_nan() { (vcone, vb) } else { (va, vcone) };
+    let (va, vb) = if va.is_nan() {
+        (vcone, vb)
+    } else {
+        (va, vcone)
+    };
     // Lone-primitive guard (see cyl_sphere_op_volume): fire only when each
     // operand IS the bare cone/sphere it was detected as, not a compound body
     // that merely contains such a face -- else a correct compound result gets a
@@ -5073,9 +5171,8 @@ fn quadric_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
     // the chordal tessellated volume (which on a coarse cone/sphere would read
     // several percent low and spuriously disarm the oracle on a real primitive).
     let prim_ok = |body: &Body, vprim: f64| {
-        body
-            .mass_properties()
-            .map_or(false, |m| m.volume.is_finite() && (m.volume - vprim).abs() <= 1e-2 * (1.0 + vprim))
+        body.mass_properties()
+            .is_ok_and(|m| m.volume.is_finite() && (m.volume - vprim).abs() <= 1e-2 * (1.0 + vprim))
     };
     if !(prim_ok(a, va) && prim_ok(b, vb)) {
         return None;
@@ -5228,8 +5325,11 @@ fn assemble_boolean(
         // mesh is ~0, slipping the post-condition gate entirely (the one
         // residual silent-malformed escape, dossier 62 bucket c). DECLINE it
         // rather than emit the malformed Ok (DECLINE-never-WRONG).
-        let opvol =
-            |x: &Body| x.mass_properties().map(|m| m.volume).unwrap_or_else(|_| x.mesh_volume());
+        let opvol = |x: &Body| {
+            x.mass_properties()
+                .map(|m| m.volume)
+                .unwrap_or_else(|_| x.mesh_volume())
+        };
         let (va, vb) = (opvol(a), opvol(b));
         let lo = if op == BoolOp::Difference {
             (va - vb).max(0.0)
@@ -5292,7 +5392,10 @@ fn assemble_boolean(
         }
         let self_consistent = match bm {
             Ok(mv) => {
-                mv.is_finite() && mv > 0.0 && v.is_finite() && (mv - v).abs() <= 2e-2 * (1.0 + mv.abs())
+                mv.is_finite()
+                    && mv > 0.0
+                    && v.is_finite()
+                    && (mv - v).abs() <= 2e-2 * (1.0 + mv.abs())
             }
             Err(_) => v.is_finite() && v > 1e-9 * (1.0 + v.abs()),
         };
@@ -5311,8 +5414,11 @@ fn assemble_boolean(
         // estimate). The fallback keeps the bound APPLICABLE even when an
         // operand's OWN mass declines -- exactly the sphere case where an
         // otherwise-malformed result would slip the gate.
-        let opvol =
-            |x: &Body| x.mass_properties().map(|m| m.volume).unwrap_or_else(|_| x.mesh_volume());
+        let opvol = |x: &Body| {
+            x.mass_properties()
+                .map(|m| m.volume)
+                .unwrap_or_else(|_| x.mesh_volume())
+        };
         let (va, vb) = (opvol(a), opvol(b));
         let bound_ok = if va.is_finite() && vb.is_finite() && va >= 0.0 && vb >= 0.0 {
             let (lo, hi) = match op {
@@ -5406,12 +5512,15 @@ fn assemble_boolean(
     // keeps its honest warning (DECLINE-never-WRONG). See `fault_advisory_on_success`.
     let faults: Vec<BoolFault> = if faults.iter().any(fault_advisory_on_success)
         && body.validate().is_ok()
-        && body.mass_properties().map_or(false, |m| {
+        && body.mass_properties().is_ok_and(|m| {
             m.volume.is_finite()
                 && mesh_vol.is_finite()
                 && (m.volume - mesh_vol).abs() <= 2e-2 * (1.0 + m.volume.abs())
         }) {
-        faults.into_iter().filter(|f| !fault_advisory_on_success(f)).collect()
+        faults
+            .into_iter()
+            .filter(|f| !fault_advisory_on_success(f))
+            .collect()
     } else {
         faults
     };
@@ -5534,7 +5643,11 @@ fn curve_encircles_axis(
 }
 
 /// Distance from point `p` to the segment `a`-`b` in 3D.
-pub(crate) fn seg_dist3(p: keel_math::vec::Vec3, a: keel_math::vec::Vec3, b: keel_math::vec::Vec3) -> f64 {
+pub(crate) fn seg_dist3(
+    p: keel_math::vec::Vec3,
+    a: keel_math::vec::Vec3,
+    b: keel_math::vec::Vec3,
+) -> f64 {
     let ab = b - a;
     let len2 = ab.dot(ab);
     let t = if len2 < 1e-300 {
@@ -5808,11 +5921,7 @@ pub(crate) fn loop_solid_angle_about(
 /// robust relocation primitive for the cyl/sphere wrap, where a sphere fragment
 /// is bounded by the seam plus contractible NURBS rings (the UV winding test is
 /// degenerate on the pole-to-pole seam, so it cannot be used here).
-fn sphere_face_containing_3d(
-    body: &Body,
-    p: keel_math::vec::Vec3,
-    tol: f64,
-) -> Option<FaceKey> {
+fn sphere_face_containing_3d(body: &Body, p: keel_math::vec::Vec3, tol: f64) -> Option<FaceKey> {
     for fk in body.face_keys() {
         let Some(Surface3::Sphere(sp)) = body.face_surface3(fk) else {
             continue;
@@ -5824,7 +5933,9 @@ fn sphere_face_containing_3d(
         if body.face_covers_closed_surface(fk) {
             return Some(fk);
         }
-        let Some(f) = body.faces.get(fk) else { continue };
+        let Some(f) = body.faces.get(fk) else {
+            continue;
+        };
         let pd = p - center;
         let mut inside = true;
         for (li, &lk) in f.loops.iter().enumerate() {
@@ -5975,7 +6086,10 @@ pub(crate) fn curved_face_containing(
                 // directly, so try it first for such a face.
                 if let Ok(pr) = Surface3::Sphere(sp.clone()).project(p) {
                     let pin = body.point_in_face_uv(fk, (pr.u, pr.v), 1e-6 + etol);
-                    if matches!(pin, crate::pmc::UvClass::In | crate::pmc::UvClass::OnBoundary) {
+                    if matches!(
+                        pin,
+                        crate::pmc::UvClass::In | crate::pmc::UvClass::OnBoundary
+                    ) {
                         return true;
                     }
                 }
@@ -6763,8 +6877,7 @@ fn imprint_operand(
                 // uses the dossier-64 periodic-domain band split (close each
                 // band through the seam-slit sub-edge), not the antipode spur
                 // that collapses it. Routed before the synthesize/spur path.
-                let wrap_nurbs =
-                    wraps && matches!(curve, keel_geom::curve::Curve3::Nurbs(_));
+                let wrap_nurbs = wraps && matches!(curve, keel_geom::curve::Curve3::Nurbs(_));
                 if wraps
                     && !wrap_nurbs
                     && !working.closed_curve_crosses_boundary(target, curve, tol)
@@ -8089,7 +8202,8 @@ mod tests {
         )
         .unwrap();
         let mut slab = Body::new();
-        slab.block(Vec3::new(-3.0, -3.0, 0.8), 6.0, 6.0, 1.0).unwrap();
+        slab.block(Vec3::new(-3.0, -3.0, 0.8), 6.0, 6.0, 1.0)
+            .unwrap();
         let r = boolean(&cone, &slab, BoolOp::Difference, 1e-7).unwrap();
         assert!(r.faults.is_empty(), "faults {:?}", r.faults);
         assert!(r.body.validate().is_ok(), "invalid body");
@@ -8101,7 +8215,10 @@ mod tests {
         let frustum = pi / 3.0 * 0.8 * (4.0 + 2.0 * r08 + r08 * r08);
         let tip = pi / 3.0 * 0.8 * 0.8 * 1.2;
         let truth = frustum + tip;
-        assert!((mass - truth).abs() < 2e-2 * truth, "mass {mass} vs truth {truth}");
+        assert!(
+            (mass - truth).abs() < 2e-2 * truth,
+            "mass {mass} vs truth {truth}"
+        );
         assert!(
             (mass - mesh).abs() < 3e-2 * (1.0 + mass),
             "mass {mass} mesh {mesh}"
@@ -8126,8 +8243,12 @@ mod tests {
         // mass == mesh == analytic truth.
         let pi = core::f64::consts::PI;
         let mut cone = Body::new();
-        cone.cone(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0, 3.0)
-            .unwrap();
+        cone.cone(
+            Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+            2.0,
+            3.0,
+        )
+        .unwrap();
         let mut cyl = Body::new();
         cyl.cylinder(
             Frame3::from_z(Vec3::new(0., 0., 0.3), Vec3::new(0., 0., 1.)).unwrap(),
@@ -8202,11 +8323,18 @@ mod tests {
         let cone_v = 4.0 * pi;
         let sphere_v = 4.0 / 3.0 * pi;
         let mut cn = Body::new();
-        cn.cone(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0, 3.0)
-            .unwrap();
+        cn.cone(
+            Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+            2.0,
+            3.0,
+        )
+        .unwrap();
         let mut sp = Body::new();
-        sp.sphere(Frame3::from_z(Vec3::new(0., 0., 1.5), Vec3::new(0., 0., 1.)).unwrap(), 1.0)
-            .unwrap();
+        sp.sphere(
+            Frame3::from_z(Vec3::new(0., 0., 1.5), Vec3::new(0., 0., 1.)).unwrap(),
+            1.0,
+        )
+        .unwrap();
         let check = |a: &Body, b: &Body, op: BoolOp, truth: f64| {
             let r = boolean(a, b, op, 1e-7).unwrap_or_else(|e| panic!("declined {e:?}"));
             assert!(r.faults.is_empty(), "faults {:?}", r.faults);
@@ -8241,8 +8369,11 @@ mod tests {
         let sphere_v = 32.0 * pi / 3.0;
         let cyl_v = 6.0 * pi;
         let mut sp = Body::new();
-        sp.sphere(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0)
-            .unwrap();
+        sp.sphere(
+            Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+            2.0,
+        )
+        .unwrap();
         let mut cl = Body::new();
         cl.cylinder(
             Frame3::from_z(Vec3::new(0., 0., -3.0), Vec3::new(0., 0., 1.)).unwrap(),
@@ -8282,10 +8413,14 @@ mod tests {
         // FULL-sphere mass (classify mis-kept the band).
         let mut sphere = Body::new();
         sphere
-            .sphere(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0)
+            .sphere(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                2.0,
+            )
             .unwrap();
         let mut slab = Body::new();
-        slab.block(Vec3::new(-5.0, -5.0, -0.5), 10.0, 10.0, 1.0).unwrap();
+        slab.block(Vec3::new(-5.0, -5.0, -0.5), 10.0, 10.0, 1.0)
+            .unwrap();
         let pi = core::f64::consts::PI;
         let cap = pi * 1.5 * 1.5 * (3.0 * 2.0 - 1.5) / 3.0; // cap of height 1.5, R=2
         let full = 32.0 * pi / 3.0;
@@ -8319,10 +8454,14 @@ mod tests {
         // rims, point_in_face_uv-verified) returns a mid-latitude point.
         let mut sphere = Body::new();
         sphere
-            .sphere(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), 2.0)
+            .sphere(
+                Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+                2.0,
+            )
             .unwrap();
         let mut slab = Body::new();
-        slab.block(Vec3::new(-5.0, -5.0, -0.5), 10.0, 10.0, 1.0).unwrap();
+        slab.block(Vec3::new(-5.0, -5.0, -0.5), 10.0, 10.0, 1.0)
+            .unwrap();
         let (ia, _ib, _f) = imprint_pair(&sphere, &slab, 1e-7);
         // The band is the sphere face whose tessellation stays inside the slab
         // (|z| < 0.9); the two caps reach the poles at z = +-2.
@@ -8341,8 +8480,15 @@ mod tests {
             .body
             .sphere_face_interior_point(band)
             .expect("band face has no interior point");
-        assert!(p.z.abs() < 0.5, "band interior point z={} is not on the band", p.z);
-        assert!((p.norm() - 2.0).abs() < 1e-6, "interior point off the sphere");
+        assert!(
+            p.z.abs() < 0.5,
+            "band interior point z={} is not on the band",
+            p.z
+        );
+        assert!(
+            (p.norm() - 2.0).abs() < 1e-6,
+            "interior point off the sphere"
+        );
     }
 
     #[test]

@@ -9,11 +9,18 @@ use keel_topo::boolean::{BoolOp, boolean};
 
 fn main() {
     let mut a = Body::new();
-    a.cylinder(Frame3::from_z(Vec3::new(0., 0., -3.), Vec3::new(0., 0., 1.)).unwrap(), 1.0, 6.0)
-        .unwrap();
+    a.cylinder(
+        Frame3::from_z(Vec3::new(0., 0., -3.), Vec3::new(0., 0., 1.)).unwrap(),
+        1.0,
+        6.0,
+    )
+    .unwrap();
     let mut b = Body::new();
-    b.sphere(Frame3::from_z(Vec3::new(0., 1.5, 0.), Vec3::new(0., 0., 1.)).unwrap(), 1.2)
-        .unwrap();
+    b.sphere(
+        Frame3::from_z(Vec3::new(0., 1.5, 0.), Vec3::new(0., 0., 1.)).unwrap(),
+        1.2,
+    )
+    .unwrap();
     for (lbl, x, y, op) in [
         ("cyl - sph", &a, &b, BoolOp::Difference),
         ("sph - cyl", &b, &a, BoolOp::Difference),

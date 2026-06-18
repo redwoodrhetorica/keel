@@ -446,9 +446,7 @@ impl Body {
                     );
                     let a = self.vertices.get(e.bounds.0).map(|v| v.point);
                     let b = self.vertices.get(e.bounds.1).map(|v| v.point);
-                    if is_line
-                        && let (Some(a), Some(b)) = (a, b)
-                    {
+                    if is_line && let (Some(a), Some(b)) = (a, b) {
                         for i in 0..N {
                             let t = i as f64 / N as f64;
                             let pp = crate::boolean::curve_point(curve, t);
@@ -474,9 +472,10 @@ impl Body {
                 }
             }
         }
-        best.map(|(e, p, t, _)| (e, p, t)).ok_or(TopoError::Precondition(
-            "wrap imprint: no seam-line crossing for non-planar seam",
-        ))
+        best.map(|(e, p, t, _)| (e, p, t))
+            .ok_or(TopoError::Precondition(
+                "wrap imprint: no seam-line crossing for non-planar seam",
+            ))
     }
 
     /// Imprint an encircling NON-planar NURBS seam on a cylinder lateral by
@@ -496,8 +495,7 @@ impl Body {
     ) -> Result<ImprintReport, TopoError> {
         let surf = self.face_analytic_surface(face)?;
         let (pcurve, _seam3) = self.curve_pcurve_on(face, curve, &surf, tol)?;
-        let (slit_edge, p, _tp) =
-            self.find_curve_seam_line_crossing(face, curve, tol.max(1e-7))?;
+        let (slit_edge, p, _tp) = self.find_curve_seam_line_crossing(face, curve, tol.max(1e-7))?;
         let se = self.split_edge(slit_edge, p)?;
         // The slit sub-edges meet at S in WHICHEVER loop the crossed edge
         // belonged to (loops[0] on a pristine wall, a band loop on a wall
@@ -1962,8 +1960,12 @@ impl Body {
                 "imprint_isoparams: degenerate face loop",
             ));
         }
-        let (mut umin, mut umax, mut vmin, mut vmax) =
-            (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
+        let (mut umin, mut umax, mut vmin, mut vmax) = (
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        );
         for p in &pts {
             let (u, v) = to_uv(*p);
             umin = umin.min(u);
@@ -2021,7 +2023,7 @@ impl Body {
         let mut ubreaks = vec![umin];
         ubreaks.extend(us.iter().copied());
         ubreaks.push(umax);
-        ubreaks.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        ubreaks.sort_by(|x, y| x.partial_cmp(y).unwrap_or(core::cmp::Ordering::Equal));
 
         // Pass 1: full-height verticals (constant u).
         for &u in &us {
@@ -2094,7 +2096,11 @@ impl Body {
                 {
                     return Ok(v);
                 }
-                cur = me.fins.get(cur).map(|f| f.next).ok_or(TopoError::StaleKey)?;
+                cur = me
+                    .fins
+                    .get(cur)
+                    .map(|f| f.next)
+                    .ok_or(TopoError::StaleKey)?;
                 if cur == entry {
                     break;
                 }

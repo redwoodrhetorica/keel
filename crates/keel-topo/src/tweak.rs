@@ -736,8 +736,7 @@ impl Body {
                     continue;
                 }
                 let (fa, fb) = (nbrs[0], nbrs[1]);
-                let (Some((pa, _)), Some((pb, _))) =
-                    (self.face_plane(fa), self.face_plane(fb))
+                let (Some((pa, _)), Some((pb, _))) = (self.face_plane(fa), self.face_plane(fb))
                 else {
                     continue;
                 };
@@ -797,11 +796,7 @@ impl Body {
             return Ok(false);
         }
         // Not a vertex-loop anchor (an isolated vertex inside a face).
-        if self
-            .loops
-            .iter()
-            .any(|(_, l)| l.vertex == Some(v))
-        {
+        if self.loops.iter().any(|(_, l)| l.vertex == Some(v)) {
             return Ok(false);
         }
         let inc = self.edges_of_vertex(v);
@@ -922,13 +917,25 @@ impl Body {
         let e_new = self.new_edge(&mut rec, (a, b), derivation);
         let mut new_fins: Vec<FinKey> = Vec::new();
         for &(f_in, f_out) in &pairs {
-            let owner = self.fins.get(f_in).map(|f| f.owner).ok_or(TopoError::StaleKey)?;
+            let owner = self
+                .fins
+                .get(f_in)
+                .map(|f| f.owner)
+                .ok_or(TopoError::StaleKey)?;
             // The merged fin traverses start(f_in) -> end(f_out). It is
             // FORWARD on e_new (a -> b) iff start(f_in) == a.
             let forward = self.fin_start_vertex(f_in) == Some(a);
             let g = self.new_fin(&mut rec, e_new, forward, owner, Derivation::Created);
-            let in_prev = self.fins.get(f_in).map(|f| f.prev).ok_or(TopoError::StaleKey)?;
-            let out_next = self.fins.get(f_out).map(|f| f.next).ok_or(TopoError::StaleKey)?;
+            let in_prev = self
+                .fins
+                .get(f_in)
+                .map(|f| f.prev)
+                .ok_or(TopoError::StaleKey)?;
+            let out_next = self
+                .fins
+                .get(f_out)
+                .map(|f| f.next)
+                .ok_or(TopoError::StaleKey)?;
             // Splice g where the pair sat: in_prev -> g -> out_next.
             if let Some(x) = self.fins.get_mut(in_prev) {
                 x.next = g;
@@ -967,7 +974,9 @@ impl Body {
                 let repl = new_fins
                     .iter()
                     .copied()
-                    .find(|&g| self.fin_start_vertex(g) == Some(fv) || self.fin_end_vertex(g) == Some(fv))
+                    .find(|&g| {
+                        self.fin_start_vertex(g) == Some(fv) || self.fin_end_vertex(g) == Some(fv)
+                    })
                     .or_else(|| {
                         self.edges_of_vertex(fv).into_iter().find_map(|ek| {
                             self.edges
@@ -1001,9 +1010,7 @@ impl Body {
         self.vertices.remove(v);
         let _ = rec.finish();
         // Attach the straight carrier now that e_new is wired in.
-        if line_carrier
-            && let Ok(l) = Line3::new(pa, pb - pa)
-        {
+        if line_carrier && let Ok(l) = Line3::new(pa, pb - pa) {
             self.attach_edge_curve(e_new, Curve3::Line(l), true);
         }
         self.debug_validate();
@@ -1311,8 +1318,12 @@ mod tests {
         let r = 1.0;
         let h = 2.0;
         let mut main = Body::new();
-        main.cylinder(Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap(), r, h)
-            .unwrap();
+        main.cylinder(
+            Frame3::from_z(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0)).unwrap(),
+            r,
+            h,
+        )
+        .unwrap();
         let mut bore = Body::new();
         bore.cylinder(
             Frame3::from_z(Vec3::new(-2.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 0.0)).unwrap(),
@@ -1427,7 +1438,11 @@ mod tests {
         let (merged, dissolved) = b.delete_redundant_topology().unwrap();
         assert_eq!(merged, 1, "the two coplanar top halves merge (1 kef)");
         assert_eq!(dissolved, 2, "the two collinear scar vertices dissolve");
-        assert!(b.validate().is_ok(), "cleaned body invalid: {:?}", b.validate());
+        assert!(
+            b.validate().is_ok(),
+            "cleaned body invalid: {:?}",
+            b.validate()
+        );
         let c2 = b.counts();
         assert_eq!(
             (c2.v, c2.e, c2.f),

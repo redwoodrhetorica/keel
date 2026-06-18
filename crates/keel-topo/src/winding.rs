@@ -145,9 +145,18 @@ mod tests {
         let exact = pi / 3.0 * 3.13 * 3.13 * 0.2;
         let near = cone(0.0).mesh_volume();
         let far = cone(-50.0).mesh_volume();
-        assert!((near - exact).abs() < 1e-2 * exact, "near {near} vs exact {exact}");
-        assert!((far - exact).abs() < 1e-2 * exact, "far {far} vs exact {exact}");
-        assert!((near - far).abs() < 1e-3 * exact, "not translation-invariant: {near} vs {far}");
+        assert!(
+            (near - exact).abs() < 1e-2 * exact,
+            "near {near} vs exact {exact}"
+        );
+        assert!(
+            (far - exact).abs() < 1e-2 * exact,
+            "far {far} vs exact {exact}"
+        );
+        assert!(
+            (near - far).abs() < 1e-3 * exact,
+            "not translation-invariant: {near} vs {far}"
+        );
     }
 
     // ---- Task 0 (MANDATE): winding-number soundness -------------------

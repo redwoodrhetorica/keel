@@ -35,7 +35,8 @@ fn sph(pos: Vec3, axis: Vec3, r: f64) -> Body {
 
 fn cyl(pos: Vec3, axis: Vec3, r: f64, h: f64) -> Body {
     let mut b = Body::new();
-    b.cylinder(Frame3::from_z(pos, axis).unwrap(), r, h).unwrap();
+    b.cylinder(Frame3::from_z(pos, axis).unwrap(), r, h)
+        .unwrap();
     b
 }
 
@@ -58,11 +59,17 @@ fn cone_sphere_window_four_ops_pass_exact() {
     let b = sph(Vec3::new(2.0, 0., 1.0), Vec3::new(0., 0., 1.), 0.8);
     let pass = |x: &Body, y: &Body, op: BoolOp, want: f64| {
         let r = boolean(x, y, op, 1e-7).unwrap_or_else(|e| panic!("{op:?} declined: {e:?}"));
-        assert!(r.faults.is_empty() && r.body.validate().is_ok(), "{op:?} not clean");
+        assert!(
+            r.faults.is_empty() && r.body.validate().is_ok(),
+            "{op:?} not clean"
+        );
         let m = r.body.mass_properties().unwrap().volume;
         let mesh = r.body.mesh_volume();
         assert!((m - want).abs() < 0.1, "{op:?} mass {m} != ~{want}");
-        assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "{op:?} mass {m} mesh {mesh} not watertight");
+        assert!(
+            (m - mesh).abs() < 2e-2 * (1.0 + m),
+            "{op:?} mass {m} mesh {mesh} not watertight"
+        );
     };
     pass(&a, &b, BoolOp::Difference, 12.45); // cone with a spherical bite
     pass(&b, &a, BoolOp::Difference, 2.03); // sphere with a conical bite
@@ -87,7 +94,10 @@ fn cyl_sphere_window_four_ops_pass_exact() {
         let m = r.body.mass_properties().unwrap().volume;
         let mesh = r.body.mesh_volume();
         assert!((m - want).abs() < 0.12, "{op:?} mass {m} != ~{want}");
-        assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "{op:?} mass {m} mesh {mesh} not watertight");
+        assert!(
+            (m - mesh).abs() < 2e-2 * (1.0 + m),
+            "{op:?} mass {m} mesh {mesh} not watertight"
+        );
     };
     pass(&a, &b, BoolOp::Difference, 17.78); // cyl with a spherical bite
     pass(&b, &a, BoolOp::Difference, 6.17); // sphere with a cylindrical bite
@@ -121,11 +131,18 @@ fn cyl_sphere_planar_cap_intersection_pass() {
     );
     let r = boolean(&a, &b, BoolOp::Intersection, 1e-7)
         .unwrap_or_else(|e| panic!("intersection declined: {e:?}"));
-    assert!(r.faults.is_empty() && r.body.validate().is_ok(), "not clean: {:?}", r.faults);
+    assert!(
+        r.faults.is_empty() && r.body.validate().is_ok(),
+        "not clean: {:?}",
+        r.faults
+    );
     let m = r.body.mass_properties().unwrap().volume;
     let mesh = r.body.mesh_volume();
     assert!((m - 2.853).abs() < 0.1, "mass {m} != ~2.853");
-    assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+    assert!(
+        (m - mesh).abs() < 2e-2 * (1.0 + m),
+        "mass {m} mesh {mesh} not watertight"
+    );
 }
 
 #[test]
@@ -151,12 +168,19 @@ fn curved_compound_drill_passes_not_declined() {
     let hole = cyl(Vec3::new(7.0, 7.0, -0.5), Vec3::new(0., 0., 1.), 1.0, 4.0);
     let r = boolean(&b1, &hole, BoolOp::Difference, 1e-7)
         .unwrap_or_else(|e| panic!("curved-compound drill declined (root-B regression): {e:?}"));
-    assert!(r.faults.is_empty() && r.body.validate().is_ok(), "not clean: {:?}", r.faults);
+    assert!(
+        r.faults.is_empty() && r.body.validate().is_ok(),
+        "not clean: {:?}",
+        r.faults
+    );
     let exact = 300.0 - 0.75 * std::f64::consts::PI;
     let m = r.body.mass_properties().unwrap().volume;
     let mesh = r.body.mesh_volume();
     assert!((m - exact).abs() < 1e-2, "mass {m} != exact {exact}");
-    assert!((m - mesh).abs() < 5e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+    assert!(
+        (m - mesh).abs() < 5e-2 * (1.0 + m),
+        "mass {m} mesh {mesh} not watertight"
+    );
 }
 
 #[test]
@@ -169,15 +193,27 @@ fn countersink_cone_reports_clean_no_advisory_fault() {
     // ~1369-hit residual class). Reaching the gate's success return verifies the
     // body, so that advisory fault now drops. Must be faultless, valid, exact.
     let block = blk(Vec3::ZERO, 22.5, 13.5, 2.982);
-    let csink = cone(Vec3::new(2.731, 2.159, 3.032), Vec3::new(0., 0., -1.), 0.601, 1.428);
+    let csink = cone(
+        Vec3::new(2.731, 2.159, 3.032),
+        Vec3::new(0., 0., -1.),
+        0.601,
+        1.428,
+    );
     let r = boolean(&block, &csink, BoolOp::Difference, 1e-7)
         .unwrap_or_else(|e| panic!("countersink declined: {e:?}"));
-    assert!(r.faults.is_empty(), "advisory fault leaked on a correct body: {:?}", r.faults);
+    assert!(
+        r.faults.is_empty(),
+        "advisory fault leaked on a correct body: {:?}",
+        r.faults
+    );
     assert!(r.body.validate().is_ok(), "countersink invalid shell");
     let m = r.body.mass_properties().unwrap().volume;
     let mesh = r.body.mesh_volume();
     assert!((m - 905.30).abs() < 0.3, "countersink mass {m} != ~905.30");
-    assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+    assert!(
+        (m - mesh).abs() < 2e-2 * (1.0 + m),
+        "mass {m} mesh {mesh} not watertight"
+    );
 }
 
 #[test]
@@ -189,17 +225,34 @@ fn second_through_hole_reports_clean_no_coincident_fault() {
     let plate = blk(Vec3::ZERO, 18.0, 22.5, 2.562);
     let dome = sph(Vec3::new(1.914, 2.292, 2.562), Vec3::new(0., 0., 1.), 0.935);
     let b1 = boolean(&plate, &dome, BoolOp::Union, 1e-7).unwrap().body;
-    let h1 = cyl(Vec3::new(2.724, 6.862, -0.5), Vec3::new(0., 0., 1.), 1.089, 3.562);
+    let h1 = cyl(
+        Vec3::new(2.724, 6.862, -0.5),
+        Vec3::new(0., 0., 1.),
+        1.089,
+        3.562,
+    );
     let b2 = boolean(&b1, &h1, BoolOp::Difference, 1e-7).unwrap().body;
-    let h2 = cyl(Vec3::new(2.618, 11.029, -0.5), Vec3::new(0., 0., 1.), 0.691, 3.562);
+    let h2 = cyl(
+        Vec3::new(2.618, 11.029, -0.5),
+        Vec3::new(0., 0., 1.),
+        0.691,
+        3.562,
+    );
     let r = boolean(&b2, &h2, BoolOp::Difference, 1e-7)
         .unwrap_or_else(|e| panic!("2nd hole declined: {e:?}"));
-    assert!(r.faults.is_empty(), "Coincident fault leaked on a correct body: {:?}", r.faults);
+    assert!(
+        r.faults.is_empty(),
+        "Coincident fault leaked on a correct body: {:?}",
+        r.faults
+    );
     assert!(r.body.validate().is_ok(), "invalid shell");
     let m = r.body.mass_properties().unwrap().volume;
     let mesh = r.body.mesh_volume();
     assert!((m - 1025.65).abs() < 0.5, "mass {m} != ~1025.65");
-    assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+    assert!(
+        (m - mesh).abs() < 2e-2 * (1.0 + m),
+        "mass {m} mesh {mesh} not watertight"
+    );
 }
 
 #[test]
@@ -211,19 +264,36 @@ fn countersink_then_far_hole_no_intersection_failed() {
     // the non-overlapping pair, so the independent feature lands. Must PASS:
     // faultless, valid, mass == exact (905.78 block - cone plug - cyl bore).
     let block = blk(Vec3::ZERO, 22.5, 13.5, 2.982);
-    let csink = cone(Vec3::new(2.731, 2.159, 3.032), Vec3::new(0., 0., -1.), 0.601, 1.428);
+    let csink = cone(
+        Vec3::new(2.731, 2.159, 3.032),
+        Vec3::new(0., 0., -1.),
+        0.601,
+        1.428,
+    );
     let b1 = boolean(&block, &csink, BoolOp::Difference, 1e-7)
         .unwrap_or_else(|e| panic!("countersink declined: {e:?}"));
     assert!(b1.faults.is_empty(), "countersink faults: {:?}", b1.faults);
-    let hole = cyl(Vec3::new(1.742, 6.870, -0.5), Vec3::new(0., 0., 1.), 1.082, 3.982);
+    let hole = cyl(
+        Vec3::new(1.742, 6.870, -0.5),
+        Vec3::new(0., 0., 1.),
+        1.082,
+        3.982,
+    );
     let r = boolean(&b1.body, &hole, BoolOp::Difference, 1e-7)
         .unwrap_or_else(|e| panic!("far hole declined: {e:?}"));
-    assert!(r.faults.is_empty(), "far-hole faults (broad-phase regression): {:?}", r.faults);
+    assert!(
+        r.faults.is_empty(),
+        "far-hole faults (broad-phase regression): {:?}",
+        r.faults
+    );
     assert!(r.body.validate().is_ok(), "invalid shell");
     let m = r.body.mass_properties().unwrap().volume;
     let mesh = r.body.mesh_volume();
     assert!((m - 894.33).abs() < 0.3, "mass {m} != ~894.33");
-    assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+    assert!(
+        (m - mesh).abs() < 2e-2 * (1.0 + m),
+        "mass {m} mesh {mesh} not watertight"
+    );
 }
 
 #[test]
@@ -236,18 +306,37 @@ fn curved_cavity_doubled_loop_mass_passes() {
     // +-1 -> the pole anchor -> mass computes and matches MC, so the body PASSES.
     let plate = blk(Vec3::ZERO, 22.5, 13.5, 3.923);
     let ball = sph(Vec3::new(2.244, 2.120, 3.434), Vec3::new(0., 0., 1.), 1.221);
-    let b1 = boolean(&plate, &ball, BoolOp::Difference, 1e-7).unwrap().body;
-    let csink = cone(Vec3::new(2.540, 11.469, 3.973), Vec3::new(0., 0., -1.), 1.010, 1.479);
+    let b1 = boolean(&plate, &ball, BoolOp::Difference, 1e-7)
+        .unwrap()
+        .body;
+    let csink = cone(
+        Vec3::new(2.540, 11.469, 3.973),
+        Vec3::new(0., 0., -1.),
+        1.010,
+        1.479,
+    );
     let b2 = boolean(&b1, &csink, BoolOp::Difference, 1e-7).unwrap().body;
-    let hole = cyl(Vec3::new(6.793, 11.515, 2.928), Vec3::new(0., 0., 1.), 0.703, 1.595);
+    let hole = cyl(
+        Vec3::new(6.793, 11.515, 2.928),
+        Vec3::new(0., 0., 1.),
+        0.703,
+        1.595,
+    );
     let r = boolean(&b2, &hole, BoolOp::Difference, 1e-7)
         .unwrap_or_else(|e| panic!("blind-hole declined (winding-2 regression): {e:?}"));
-    assert!(r.faults.is_empty(), "faults on a correct curved-cavity body: {:?}", r.faults);
+    assert!(
+        r.faults.is_empty(),
+        "faults on a correct curved-cavity body: {:?}",
+        r.faults
+    );
     assert!(r.body.validate().is_ok(), "invalid shell");
     let m = r.body.mass_properties().unwrap().volume;
     let mesh = r.body.mesh_volume();
     assert!((m - 1181.0).abs() < 3.0, "mass {m} != ~1181 (MC 1182.7)");
-    assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+    assert!(
+        (m - mesh).abs() < 2e-2 * (1.0 + m),
+        "mass {m} mesh {mesh} not watertight"
+    );
 }
 
 /// Exact volume of the intersection lens of two spheres (radii ra, rb, centre
@@ -260,7 +349,8 @@ fn lens_volume(ra: f64, rb: f64, d: f64) -> f64 {
         let r = ra.min(rb);
         return 4.0 / 3.0 * std::f64::consts::PI * r * r * r;
     }
-    std::f64::consts::PI * (ra + rb - d).powi(2)
+    std::f64::consts::PI
+        * (ra + rb - d).powi(2)
         * (d * d + 2.0 * d * rb - 3.0 * rb * rb + 2.0 * d * ra + 6.0 * rb * ra - 3.0 * ra * ra)
         / (12.0 * d)
 }
@@ -271,7 +361,11 @@ fn disjoint_spread_cone_union_mesh_matches_mass() {
     // cone B very flat (r3.16 h0.24), centres ~6.7 apart.
     let a = cone(
         Vec3::new(-1.2929110357621996, 1.70471865332388, 1.4703300892471765),
-        Vec3::new(-1.1434365476291544, -1.5613004696224582, -0.0747842240441019),
+        Vec3::new(
+            -1.1434365476291544,
+            -1.5613004696224582,
+            -0.0747842240441019,
+        ),
         1.059625480296504,
         1.4306518583642935,
     );
@@ -321,7 +415,7 @@ fn large_offset_sphere_intersection_never_silent_wrong() {
         let b = sph(pb, ab, rb);
         let exact = lens_volume(ra, rb, (pa - pb).norm());
         match boolean(&a, &b, BoolOp::Intersection, 1e-7) {
-            Err(_) => {} // declined: contract honoured (DECLINE-never-WRONG)
+            Err(_) => {}                        // declined: contract honoured (DECLINE-never-WRONG)
             Ok(r) if !r.faults.is_empty() => {} // faulted decline: honoured
             Ok(r) => {
                 let mass = r.body.mass_properties().map(|m| m.volume).unwrap_or(exact);
@@ -348,19 +442,43 @@ fn multicut_blind_hole_no_phantom_cap_seam() {
     // so the far faces stay clean and the body PASSES (mass == mesh == MC).
     let plate = blk(Vec3::ZERO, 22.5, 13.5, 3.923);
     let ball = sph(Vec3::new(2.244, 2.120, 3.434), Vec3::new(0., 0., 1.), 1.221);
-    let b0 = boolean(&plate, &ball, BoolOp::Difference, 1e-7).unwrap().body;
-    let hole = cyl(Vec3::new(2.555, 6.236, -0.5), Vec3::new(0., 0., 1.), 1.189, 4.923);
+    let b0 = boolean(&plate, &ball, BoolOp::Difference, 1e-7)
+        .unwrap()
+        .body;
+    let hole = cyl(
+        Vec3::new(2.555, 6.236, -0.5),
+        Vec3::new(0., 0., 1.),
+        1.189,
+        4.923,
+    );
     let b1 = boolean(&b0, &hole, BoolOp::Difference, 1e-7).unwrap().body;
-    let csink = cone(Vec3::new(2.540, 11.469, 3.973), Vec3::new(0., 0., -1.), 1.010, 1.479);
+    let csink = cone(
+        Vec3::new(2.540, 11.469, 3.973),
+        Vec3::new(0., 0., -1.),
+        1.010,
+        1.479,
+    );
     let b2 = boolean(&b1, &csink, BoolOp::Difference, 1e-7).unwrap().body;
-    let blind = cyl(Vec3::new(6.793, 11.515, 2.928), Vec3::new(0., 0., 1.), 0.703, 1.595);
+    let blind = cyl(
+        Vec3::new(6.793, 11.515, 2.928),
+        Vec3::new(0., 0., 1.),
+        0.703,
+        1.595,
+    );
     let r = boolean(&b2, &blind, BoolOp::Difference, 1e-7)
         .unwrap_or_else(|e| panic!("blind-hole declined (phantom-cap regression): {e:?}"));
-    assert!(r.faults.is_empty(), "phantom cap seams (unlocated-seam faults): {:?}", r.faults);
+    assert!(
+        r.faults.is_empty(),
+        "phantom cap seams (unlocated-seam faults): {:?}",
+        r.faults
+    );
     assert!(r.body.validate().is_ok(), "invalid shell");
     let m = r.body.mass_properties().unwrap().volume;
     let mesh = r.body.mesh_volume();
     // MC truth 1165.21 (14M samples). Pre-fix: mass NaN, mesh 1139.9 (2.2% low).
     assert!((m - 1165.2).abs() < 3.0, "mass {m} != ~1165.2 (MC 1165.21)");
-    assert!((m - mesh).abs() < 2e-2 * (1.0 + m), "mass {m} mesh {mesh} not watertight");
+    assert!(
+        (m - mesh).abs() < 2e-2 * (1.0 + m),
+        "mass {m} mesh {mesh} not watertight"
+    );
 }

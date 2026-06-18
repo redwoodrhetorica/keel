@@ -13,13 +13,21 @@ use keel_topo::boolean::{BoolOp, boolean};
 
 fn sphere(r: f64) -> Body {
     let mut b = Body::new();
-    b.sphere(Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(), r).unwrap();
+    b.sphere(
+        Frame3::from_z(Vec3::ZERO, Vec3::new(0., 0., 1.)).unwrap(),
+        r,
+    )
+    .unwrap();
     b
 }
 fn cyl(z0: f64, r: f64, h: f64) -> Body {
     let mut b = Body::new();
-    b.cylinder(Frame3::from_z(Vec3::new(0., 0., z0), Vec3::new(0., 0., 1.)).unwrap(), r, h)
-        .unwrap();
+    b.cylinder(
+        Frame3::from_z(Vec3::new(0., 0., z0), Vec3::new(0., 0., 1.)).unwrap(),
+        r,
+        h,
+    )
+    .unwrap();
     b
 }
 
@@ -59,7 +67,13 @@ fn main() {
     let cl = cyl(-3.0, 1.0, 6.0);
     println!("== coaxial sphere(R2) + cylinder(r1, z[-3,3]) ==  inter={inter:.4}");
     run("sph n cyl", &sp, &cl, BoolOp::Intersection, inter);
-    run("sph u cyl", &sp, &cl, BoolOp::Union, sphere_v + cyl_v - inter);
+    run(
+        "sph u cyl",
+        &sp,
+        &cl,
+        BoolOp::Union,
+        sphere_v + cyl_v - inter,
+    );
     run("sph - cyl", &sp, &cl, BoolOp::Difference, sphere_v - inter);
     run("cyl - sph", &cl, &sp, BoolOp::Difference, cyl_v - inter);
 }

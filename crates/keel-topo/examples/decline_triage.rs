@@ -23,7 +23,11 @@ struct Prim {
 }
 fn unit(v: Vec3) -> Vec3 {
     let n = v.norm();
-    if n < 1e-12 { Vec3::new(0., 0., 1.) } else { v * (1.0 / n) }
+    if n < 1e-12 {
+        Vec3::new(0., 0., 1.)
+    } else {
+        v * (1.0 / n)
+    }
 }
 impl Prim {
     fn vol(&self) -> f64 {
@@ -38,9 +42,12 @@ impl Prim {
     fn contains(&self, p: Vec3) -> bool {
         match self.shape {
             0 => {
-                p.x >= self.pos.x && p.x <= self.pos.x + self.a
-                    && p.y >= self.pos.y && p.y <= self.pos.y + self.b
-                    && p.z >= self.pos.z && p.z <= self.pos.z + self.c
+                p.x >= self.pos.x
+                    && p.x <= self.pos.x + self.a
+                    && p.y >= self.pos.y
+                    && p.y <= self.pos.y + self.b
+                    && p.z >= self.pos.z
+                    && p.z <= self.pos.z + self.c
             }
             1 => {
                 let ax = unit(self.axis);
@@ -52,7 +59,9 @@ impl Prim {
                 let ax = unit(self.axis);
                 let w = p - self.pos;
                 let t = w.dot(ax);
-                t >= 0.0 && t <= self.b && (w - ax * t).norm() <= self.a * (1.0 - t / self.b).max(0.0)
+                t >= 0.0
+                    && t <= self.b
+                    && (w - ax * t).norm() <= self.a * (1.0 - t / self.b).max(0.0)
             }
             _ => (p - self.pos).norm() <= self.a,
         }
@@ -67,7 +76,10 @@ impl Prim {
             1 | 2 => {
                 let ax = unit(self.axis);
                 let c = self.pos + ax * (self.b * 0.5);
-                (c, (self.a * self.a + (self.b * 0.5) * (self.b * 0.5)).sqrt())
+                (
+                    c,
+                    (self.a * self.a + (self.b * 0.5) * (self.b * 0.5)).sqrt(),
+                )
             }
             _ => (self.pos, self.a),
         };
@@ -91,7 +103,14 @@ fn prim(v: &serde_json::Value) -> Prim {
         "cone" => 2,
         _ => 3,
     };
-    Prim { shape, pos: arr("pos"), a: f("a"), b: f("b"), c: f("c"), axis: arr("axis") }
+    Prim {
+        shape,
+        pos: arr("pos"),
+        a: f("a"),
+        b: f("b"),
+        c: f("c"),
+        axis: arr("axis"),
+    }
 }
 
 fn main() {
@@ -103,13 +122,16 @@ fn main() {
         (st >> 11) as f64 / (1u64 << 53) as f64
     };
     let n_samp = 20000usize;
-    let (mut degen, mut disjoint, mut nested, mut overlap, mut total) = (0u64, 0u64, 0u64, 0u64, 0u64);
+    let (mut degen, mut disjoint, mut nested, mut overlap, mut total) =
+        (0u64, 0u64, 0u64, 0u64, 0u64);
     let mut overlap_sig: HashMap<String, u64> = HashMap::new();
     for path in std::env::args().skip(1) {
         let file = std::fs::File::open(&path).unwrap();
         for line in std::io::BufReader::new(file).lines() {
             let Ok(line) = line else { continue };
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
             let g = &v["genome"];
             let (pa, pb) = (prim(&g["a"]), prim(&g["b"]));
             let sig = v["sig"].as_str().unwrap_or("?").to_string();
@@ -156,13 +178,19 @@ fn main() {
     println!("=== DECLINE TRIAGE ({total} declines, MC {n_samp}/genome) ===");
     println!("CORRECT (not kernel inadequacy):");
     println!("  degenerate primitive   {degen:>7} ({:.1}%)", pct(degen));
-    println!("  disjoint / no overlap  {disjoint:>7} ({:.1}%)", pct(disjoint));
+    println!(
+        "  disjoint / no overlap  {disjoint:>7} ({:.1}%)",
+        pct(disjoint)
+    );
     println!("  nested (trivial result){nested:>7} ({:.1}%)", pct(nested));
     println!("INADEQUACY (genuine partial overlap, the worklist):");
-    println!("  partial overlap        {overlap:>7} ({:.1}%)", pct(overlap));
+    println!(
+        "  partial overlap        {overlap:>7} ({:.1}%)",
+        pct(overlap)
+    );
     println!("--- top INADEQUACY signatures ---");
     let mut sigs: Vec<_> = overlap_sig.into_iter().collect();
-    sigs.sort_by(|a, b| b.1.cmp(&a.1));
+    sigs.sort_by_key(|x| std::cmp::Reverse(x.1));
     for (sig, n) in sigs.into_iter().take(20) {
         println!("  {n:>6}  {sig}");
     }
