@@ -6560,42 +6560,71 @@ impl Body {
         }
     }
 
-    /// Seam-crosses-hole arrangement split (dossier 73c). When an open seam
-    /// chain on a planar face whose boundary has an inner HOLE loop runs from
-    /// the outer boundary, THROUGH the hole's void interior, and back to the
-    /// outer boundary, the plain `split_face` cut would route the whole hole to
-    /// one side and strand the hole-boundary fragments on the other (the
-    /// seed-715 `unmatched coedge` residual). This resolves the TRACTABLE
-    /// structure -- exactly ONE inner loop, crossed at exactly TWO points, the
-    /// chain portion between them lying inside the hole -- by:
-    ///   1. splitting the hole loop at the two crossing points P1, P2;
-    ///   2. `mekr`-bridging the hole into the outer loop along the first
-    ///      material sub-chain (outer-end -> P1), merging hole into outer;
-    ///   3. `mef`-splitting the face along the second material sub-chain
-    ///      (P2 -> outer-end), now both endpoints on the merged loop.
-    /// The result is two sub-faces each carrying the correct portion of the hole
-    /// boundary, watertight (every seam edge radial-2 within this operand).
+    /// Unified per-face planar-overlay imprint (dossier 76). When an open seam
+    /// chain on a PLANAR compound face (an outer loop plus zero-or-more inner
+    /// HOLE loops) runs from the outer boundary to the outer boundary, possibly
+    /// carrying MATERIAL interior vertices (a sibling-seam T-junction) AND
+    /// dipping through one-or-more holes' void interiors, the per-chain
+    /// `split_face` cannot resolve the stacked case: it routes each crossed hole
+    /// WHOLESALE to one side and strands the hole-boundary fragments (the
+    /// seed-715 `unmatched coedge` residual). This computes the planar
+    /// arrangement of {outer loop, hole loops, the seam chain} and re-forms the
+    /// correct sub-faces in ONE pass, built ENTIRELY from proven Euler operators
+    /// (so validity and lineage hold by construction).
     ///
-    /// Returns `Ok(None)` (fall through to the unchanged split) for any shape it
-    /// does not recognize -- more than one crossed loop, not exactly two
-    /// crossings, a non-planar carrier, a material sub-chain that itself re-
-    /// enters the hole, or a missing topological precondition. DECLINE-never-
-    /// WRONG: it only ever performs a provably-valid Euler re-knit on the exact
-    /// structure above, else declines via the existing path. It never moves
-    /// geometry (crossing points lie on the existing hole edges within tol).
-    fn try_imprint_chain_through_hole(
+    /// The construction walks the chain once. Each chain vertex is classified
+    /// material (outside every hole) or strictly inside exactly one hole; the
+    /// two extreme endpoints must be material and on the outer loop. The walk
+    /// emits, in chain order, a sequence of EVENTS:
+    ///   - a MATERIAL interior vertex -> a `mev` spur on the current loop;
+    ///   - a HOLE DIP (the chain enters hole H at P_enter, runs through its void,
+    ///     and exits at P_exit) -> a `mekr` bridge from the current tip to
+    ///     P_enter, MERGING hole H into the outer/working loop; the in-hole run
+    ///     is discarded (void) and the tip resumes at P_exit, now on the merged
+    ///     loop.
+    /// A final `split_face` from the last tip to the chain's far endpoint divides
+    /// the (now simply-connected w.r.t. every crossed hole) face into the two
+    /// correct sub-faces, each carrying its portion of every merged hole
+    /// boundary. Holes the chain does NOT cross stay inner loops and route
+    /// wholesale to whichever sub-face contains them (which `mef` handles).
+    ///
+    /// This SUBSUMES dossier 73c (one hole, the dip on the first and last chain
+    /// segment, no material interior vertex: the walk emits a single hole-dip
+    /// event with no spurs, identical to the landed `mekr` + `split_face`) and
+    /// dossier 73b's open-chain (no holes crossed: the walk is pure spurs + a
+    /// final `split_face`, identical to `imprint_open_chain`'s plain path).
+    ///
+    /// Returns `Ok(None)` (fall through to the unchanged split / decline) for any
+    /// structure it does not certify: a non-planar carrier; an extreme endpoint
+    /// not on the outer loop; a chain vertex inside more than one hole at once; a
+    /// hole entered more than once; an in-hole run whose midpoint is not actually
+    /// inside the hole (a graze, not a traversal); a material run that cannot be
+    /// realized vertex-to-vertex; or any missing topological precondition.
+    /// DECLINE-never-WRONG: it only ever performs provably-valid Euler re-knits
+    /// on a certified structure, and never moves geometry (crossing points lie on
+    /// the existing hole edges within tol; spur/bridge/cut endpoints are exact
+    /// chain points).
+    fn try_imprint_chain_arrangement(
         &mut self,
         face: FaceKey,
         chain: &[keel_math::vec::Vec3],
         tol: f64,
     ) -> Result<Option<Vec<crate::entity::EdgeKey>>, TopoError> {
+        use crate::euler::MevSite;
         use keel_math::vec::Vec3;
+        let trace = std::env::var("KEEL_ARR_DEBUG").is_ok();
         let etol = tol.max(1e-7);
         let last = chain.len() - 1;
-        // PLANAR carrier only: the 2D crossing arithmetic below (and the hole
-        // point-in-polygon test) assume a plane frame. A curved carrier with a
-        // hole is out of this routine's tractable scope.
+        if last < 1 {
+            return Ok(None);
+        }
+        // PLANAR carrier only: the 2D crossing arithmetic and point-in-polygon
+        // tests below assume a plane frame. A curved carrier with a hole is out
+        // of this routine's tractable scope (falls through to decline).
         let Some(Surface3::Plane(pl)) = self.face_surface3(face) else {
+            if trace {
+                eprintln!("ARR: non-planar carrier -> None");
+            }
             return Ok(None);
         };
         let o = pl.frame.origin;
@@ -6605,8 +6634,7 @@ impl Body {
             (w.dot(ex), w.dot(ey))
         };
 
-        // The chain's two extreme endpoints must be on the OUTER loop; a chain
-        // that begins or ends ON the hole is a different (T-into-hole) case.
+        // Both extreme endpoints must be on the OUTER loop.
         let outer_lp = self
             .faces
             .get(face)
@@ -6619,149 +6647,271 @@ impl Body {
                 .loop_fin_on_loop_ending_at(outer_lp, chain[last], etol)
                 .is_none()
         {
+            if trace {
+                eprintln!("ARR: endpoint not on outer loop -> None");
+            }
             return Ok(None);
         }
 
-        // Find the inner loop(s) the chain crosses and the crossing points.
-        // A crossing is a transversal intersection of a chain segment with an
-        // inner-loop edge, strictly interior to BOTH (an endpoint touch is a
-        // vertex incidence, handled by the plain split). Record, per inner loop,
-        // each crossing's point and its scalar position along the whole chain
-        // (segment index + local t) so the two material sub-chains can be cut.
+        // Gather the inner hole loops and their 2D polygons.
         let inner_loops: Vec<crate::entity::LoopKey> = self
             .faces
             .get(face)
             .map(|f| f.loops.iter().skip(1).copied().collect())
             .unwrap_or_default();
-        // Where does chain segment i cross a hole boundary edge? Return ALL
-        // intersection positions (segment-local t in [0,1], inclusive within
-        // tol so a crossing AT a hole VERTEX is caught -- the pre-split already
-        // turned each tool corner into a hole vertex, so the chain typically
-        // enters/exits exactly at a hole vertex, not an edge interior). The
-        // point is on the chain segment.
-        let edge_hits = |a: (f64, f64), b: (f64, f64), poly2: &[(f64, f64)]| -> Vec<f64> {
-            let mut ts = Vec::new();
-            let r = (b.0 - a.0, b.1 - a.1);
-            let m = poly2.len();
-            for k in 0..m {
-                let c = poly2[k];
-                let d = poly2[(k + 1) % m];
-                let s = (d.0 - c.0, d.1 - c.1);
-                let rxs = r.0 * s.1 - r.1 * s.0;
-                if rxs.abs() < 1e-12 {
-                    continue;
-                }
-                let qp = (c.0 - a.0, c.1 - a.1);
-                let t = (qp.0 * s.1 - qp.1 * s.0) / rxs;
-                let u = (qp.0 * r.1 - qp.1 * r.0) / rxs;
-                if (-1e-7..=1.0 + 1e-7).contains(&t) && (-1e-7..=1.0 + 1e-7).contains(&u) {
-                    ts.push(t.clamp(0.0, 1.0));
+        if inner_loops.is_empty() {
+            // No holes: nothing for the arrangement to do beyond the plain
+            // open-chain path. Fall through so the caller's spur + split runs.
+            return Ok(None);
+        }
+        let hole_polys: Vec<Vec<(f64, f64)>> = inner_loops
+            .iter()
+            .map(|&lk| self.loop_polygon(lk).iter().map(|&q| to2(q)).collect())
+            .collect();
+        // Reject a degenerate hole polygon (a curved hole, or a collapsed loop).
+        if hole_polys.iter().any(|p| p.len() < 3) {
+            return Ok(None);
+        }
+
+        // Classify each chain vertex: None = material (outside every hole), or
+        // Some(h) = strictly inside hole h. A vertex inside MORE than one hole is
+        // ambiguous (overlapping holes are not a planar arrangement we certify).
+        let classify = |q: Vec3| -> Option<Option<usize>> {
+            let q2 = to2(q);
+            let mut hit: Option<usize> = None;
+            for (h, poly) in hole_polys.iter().enumerate() {
+                if winding_nonzero(poly, q2) {
+                    if hit.is_some() {
+                        return None; // inside two holes -> ambiguous
+                    }
+                    hit = Some(h);
                 }
             }
-            ts
+            Some(hit)
         };
-        let mut crossed_loop: Option<crate::entity::LoopKey> = None;
-        // (chain-position scalar, 3D point)
-        let mut xs: Vec<(f64, Vec3)> = Vec::new();
-        for &lk in &inner_loops {
-            let poly = self.loop_polygon(lk);
-            if poly.len() < 3 {
-                continue;
-            }
-            let poly2: Vec<(f64, f64)> = poly.iter().map(|&q| to2(q)).collect();
-            // Does the chain enter this hole at all? (any interior chain vertex
-            // strictly inside, OR any segment dipping in). Detect the boundary
-            // crossings as inside/outside transitions along the chain.
-            let inside = |q: Vec3| winding_nonzero(&poly2, to2(q));
-            let mut here: Vec<(f64, Vec3)> = Vec::new();
-            for i in 0..last {
-                let ain = inside(chain[i]);
-                let bin = inside(chain[i + 1]);
-                if ain == bin {
-                    // No net transition on this segment; but a segment can still
-                    // clip a corner (out->out grazing). Such a graze is not a
-                    // traversal and is ignored (no enclosed in-hole run).
-                    continue;
+        let mut cls: Vec<Option<usize>> = Vec::with_capacity(chain.len());
+        for &p in chain {
+            match classify(p) {
+                Some(c) => cls.push(c),
+                None => {
+                    if trace {
+                        eprintln!("ARR: vertex inside >1 hole -> None");
+                    }
+                    return Ok(None);
                 }
-                // outside<->inside transition: take the boundary crossing point.
-                let (a2, b2) = (to2(chain[i]), to2(chain[i + 1]));
-                let mut ts = edge_hits(a2, b2, &poly2);
+            }
+        }
+        if trace {
+            eprintln!(
+                "ARR: nholes={} chain.len={} cls={:?}",
+                hole_polys.len(),
+                chain.len(),
+                cls
+            );
+        }
+        // The endpoints must be material (they are on the outer loop, so this
+        // should hold, but a tiny hole touching the boundary could fool the
+        // winding test; certify explicitly).
+        if cls[0].is_some() || cls[last].is_some() {
+            if trace {
+                eprintln!("ARR: endpoint inside a hole -> None");
+            }
+            return Ok(None);
+        }
+
+        // The transversal crossing point of chain segment a->b with hole `poly`.
+        // Returns the segment-local t in [0,1] of the FIRST boundary hit going
+        // from a (so an inside->outside / outside->inside transition takes the
+        // correct crossing). Inclusive within tol so a crossing AT a hole VERTEX
+        // is caught (the Phase-1 pre-split typically turns each tool corner that
+        // lands on a hole into a hole vertex).
+        let edge_hit =
+            |a: (f64, f64), b: (f64, f64), poly: &[(f64, f64)], from_inside: bool| -> Option<f64> {
+                let r = (b.0 - a.0, b.1 - a.1);
+                let m = poly.len();
+                let mut ts: Vec<f64> = Vec::new();
+                for k in 0..m {
+                    let c = poly[k];
+                    let d = poly[(k + 1) % m];
+                    let s = (d.0 - c.0, d.1 - c.1);
+                    let rxs = r.0 * s.1 - r.1 * s.0;
+                    if rxs.abs() < 1e-12 {
+                        continue;
+                    }
+                    let qp = (c.0 - a.0, c.1 - a.1);
+                    let t = (qp.0 * s.1 - qp.1 * s.0) / rxs;
+                    let u = (qp.0 * r.1 - qp.1 * r.0) / rxs;
+                    if (-1e-7..=1.0 + 1e-7).contains(&t) && (-1e-7..=1.0 + 1e-7).contains(&u) {
+                        ts.push(t.clamp(0.0, 1.0));
+                    }
+                }
                 ts.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
-                // Going from a to b, the FIRST boundary hit is the transition.
-                let t = if ain {
+                if from_inside {
                     ts.first().copied()
                 } else {
                     ts.last().copied()
-                };
-                if let Some(t) = t {
-                    let p3 = chain[i] + (chain[i + 1] - chain[i]) * t;
-                    here.push((i as f64 + t, p3));
                 }
-            }
-            if here.is_empty() {
+            };
+
+        // Walk the chain and build the event list. Events are kept in chain
+        // order. A material run is a maximal sub-sequence of material vertices;
+        // a hole dip is a maximal sub-sequence inside one hole, flanked by an
+        // entry and an exit crossing.
+        #[derive(Clone)]
+        enum Event {
+            // a material interior chain vertex -> a spur to this point
+            Spur(Vec3),
+            // a hole dip: bridge to P_enter, merge hole `h`, resume at P_exit
+            Dip {
+                h: usize,
+                p_enter: Vec3,
+                p_exit: Vec3,
+            },
+        }
+        let mut events: Vec<Event> = Vec::new();
+        let mut holes_dipped: Vec<usize> = Vec::new();
+        let mut i = 0usize;
+        while i < last {
+            // Material segment chain[i] -> chain[i+1] (both material): the next
+            // vertex is either an interior material spur or the final endpoint.
+            if cls[i].is_none() && cls[i + 1].is_none() {
+                if i + 1 < last {
+                    events.push(Event::Spur(chain[i + 1]));
+                }
+                i += 1;
                 continue;
             }
-            // Only the single-hole / two-crossing structure is tractable.
-            if crossed_loop.is_some() || here.len() != 2 {
+            // Transition material -> hole h on segment i (entry into a dip).
+            if cls[i].is_none()
+                && let Some(h) = cls[i + 1]
+            {
+                // The hole must not have been dipped already (single dip per
+                // hole is the certified structure).
+                if holes_dipped.contains(&h) {
+                    if trace {
+                        eprintln!("ARR: hole {h} dipped twice -> None");
+                    }
+                    return Ok(None);
+                }
+                let (a2, b2) = (to2(chain[i]), to2(chain[i + 1]));
+                let Some(t_in) = edge_hit(a2, b2, &hole_polys[h], false) else {
+                    if trace {
+                        eprintln!("ARR: no entry crossing on seg {i} hole {h} -> None");
+                    }
+                    return Ok(None);
+                };
+                let p_enter = chain[i] + (chain[i + 1] - chain[i]) * t_in;
+                // Advance through the in-hole run: every interior vertex must be
+                // inside the SAME hole h, until the chain exits back to material.
+                let mut j = i + 1;
+                while j < last && cls[j] == Some(h) {
+                    j += 1;
+                }
+                // chain[j] must be the first material vertex after the dip; the
+                // exit crossing is on segment (j-1) -> j.
+                if j > last || cls[j].is_some() {
+                    if trace {
+                        eprintln!(
+                            "ARR: dip exit not material (j={j} cls={:?}) -> None",
+                            cls.get(j)
+                        );
+                    }
+                    return Ok(None);
+                }
+                let (c2, d2) = (to2(chain[j - 1]), to2(chain[j]));
+                let Some(t_out) = edge_hit(c2, d2, &hole_polys[h], true) else {
+                    if trace {
+                        eprintln!("ARR: no exit crossing on seg {} hole {h} -> None", j - 1);
+                    }
+                    return Ok(None);
+                };
+                let p_exit = chain[j - 1] + (chain[j] - chain[j - 1]) * t_out;
+                // The in-hole run midpoint must actually be inside the hole (a
+                // genuine traversal, not a double graze of the boundary).
+                let mid = (p_enter + p_exit) * 0.5;
+                if !winding_nonzero(&hole_polys[h], to2(mid)) {
+                    if trace {
+                        eprintln!("ARR: dip midpoint not in hole {h} -> None");
+                    }
+                    return Ok(None);
+                }
+                events.push(Event::Dip { h, p_enter, p_exit });
+                holes_dipped.push(h);
+                i = j; // resume the material walk from the exit material vertex
+                continue;
+            }
+            // Any other transition (a vertex inside a hole that is not flanked by
+            // material as above, e.g. the chain STARTS inside a hole) is not a
+            // certified structure.
+            if trace {
+                eprintln!("ARR: uncertified transition at i={i} -> None");
+            }
+            return Ok(None);
+        }
+        // Nothing to do if the chain crosses no hole: let the plain path handle
+        // it (this routine only earns its keep on a hole-crossing chain).
+        if holes_dipped.is_empty() {
+            if trace {
+                eprintln!("ARR: no hole dipped -> None (plain path)");
+            }
+            return Ok(None);
+        }
+
+        // Signed area of a 2D polygon (shoelace). Used to compare each dipped
+        // hole's winding to the outer loop's. mekr bridges a hole into the outer
+        // loop as a SIMPLE loop only when the hole is wound OPPOSITE the outer
+        // (the B-rep convention: an inner ring winds against its face's outer
+        // loop). A boolean-built operand can store an inner loop in EITHER
+        // winding (consumers like massprops normalize by relative sign, but the
+        // stored fin ring is whatever the stitch produced). For a CO-WOUND hole
+        // mekr's forward traversal would enclose the void as MATERIAL (a
+        // self-touching figure-8 face), and reversing a live inner loop in place
+        // is not a valid local operation (it flips every shared edge's manifold
+        // pairing with the adjacent faces). So the overlay certifies only the
+        // conventional counter-wound hole and DECLINES a co-wound one cleanly,
+        // BEFORE any mutation (so the fall-through plain path sees an untouched
+        // face). The seed-715 op's own hole is co-wound: characterized in dossier
+        // 76 as the next rung. DECLINE-never-WRONG.
+        let signed_area2 = |poly: &[(f64, f64)]| -> f64 {
+            let n = poly.len();
+            (0..n)
+                .map(|i| {
+                    let a = poly[i];
+                    let b = poly[(i + 1) % n];
+                    a.0 * b.1 - b.0 * a.1
+                })
+                .sum::<f64>()
+                * 0.5
+        };
+        let outer_sign = signed_area2(
+            &self
+                .loop_polygon(outer_lp)
+                .iter()
+                .map(|&q| to2(q))
+                .collect::<Vec<_>>(),
+        )
+        .signum();
+        for &h in &holes_dipped {
+            if signed_area2(&hole_polys[h]).signum() == outer_sign {
+                if trace {
+                    eprintln!("ARR: co-wound hole {h} -> None (decline, pre-mutation)");
+                }
                 return Ok(None);
             }
-            crossed_loop = Some(lk);
-            xs = here;
         }
-        let Some(hole_lp) = crossed_loop else {
-            return Ok(None);
-        };
-        xs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-        let (pos1, p1) = xs[0];
-        let (pos2, p2) = xs[1];
-
-        // The chain portion strictly BETWEEN the two crossings must lie inside
-        // the hole (it is the discarded void run). Sample its midpoint and test
-        // point-in-polygon against the hole loop. If it is NOT inside, the chain
-        // merely grazes the hole boundary twice without traversing it -- not the
-        // structure this routine resolves.
-        let hole_poly2: Vec<(f64, f64)> =
-            self.loop_polygon(hole_lp).iter().map(|&q| to2(q)).collect();
-        let mid_pos = 0.5 * (pos1 + pos2);
-        let mid_seg = mid_pos.floor() as usize;
-        let mid_t = mid_pos - mid_seg as f64;
-        let mid3 = if mid_seg < last {
-            chain[mid_seg] + (chain[mid_seg + 1] - chain[mid_seg]) * mid_t
-        } else {
-            chain[last]
-        };
-        if !winding_nonzero(&hole_poly2, to2(mid3)) {
-            return Ok(None);
+        if trace {
+            eprintln!(
+                "ARR: FIRING events={} dipped={:?}",
+                events.len(),
+                holes_dipped
+            );
         }
-
-        // TRACTABLE STRUCTURE (the only one this routine resolves): the chain
-        // ENTERS the hole on its FIRST segment and EXITS on its LAST segment, so
-        // every interior chain vertex lies INSIDE the hole (discarded void run)
-        // and the two material parts are SINGLE segments -- chain[0] -> P1 and
-        // P2 -> chain[last]. This is the seed-715 / corner-clip "L or U dips into
-        // the hole" shape. A chain with a MATERIAL interior vertex (e.g. one that
-        // also T-junctions a sibling seam on this same compound face) is a
-        // genuinely harder compound arrangement; this routine declines it (falls
-        // through, leaving the existing shell-closure decline) rather than
-        // attempting a partial re-knit -- DECLINE-never-WRONG.
-        let seg1 = pos1.floor() as usize; // first crossing on chain segment seg1
-        let seg2i = pos2.floor() as usize; // second crossing on chain segment seg2i
-        if seg1 != 0 || seg2i != last - 1 {
-            return Ok(None);
-        }
-        // Confirm every interior chain vertex is inside the hole (the discarded
-        // run). For the first/last-segment structure this is implied, but verify
-        // explicitly so a grazing chain cannot slip through.
-        if (1..last).any(|k| !winding_nonzero(&hole_poly2, to2(chain[k]))) {
-            return Ok(None);
-        }
-        let v0 = chain[0];
-        let vlast = chain[last];
 
         // --- Topological re-knit (all provably-valid Euler ops) -------------
-        // 1. Pre-split the OUTER loop at the chain's two extreme endpoints if
-        //    they fall mid-edge (a fresh tool-corner that is not yet a vertex).
-        for &end in [v0, vlast].iter() {
+        // Pre-split the OUTER loop at the chain's two extreme endpoints if they
+        // fall mid-edge (a fresh tool corner not yet a vertex). Provably on the
+        // boundary within etol; never moves geometry.
+        for &end in [chain[0], chain[last]].iter() {
             if self
                 .loop_fin_on_loop_ending_at(outer_lp, end, etol)
                 .is_none()
@@ -6770,69 +6920,130 @@ impl Body {
                 let _ = self.split_edge_raw(ek, end);
             }
         }
-        // 2. Split the HOLE loop at P1 and P2 so the bridge/cut attach to real
-        //    vertices on the hole boundary. (Usually a no-op: the Phase-1
-        //    pre-split already turned each tool corner that falls on the hole
-        //    into a hole vertex, so the crossings are existing vertices.)
-        for &p in [p1, p2].iter() {
-            if self.loop_fin_on_loop_ending_at(hole_lp, p, etol).is_none()
-                && let Some(ek) = self.loop_edge_containing(hole_lp, p, etol)
-            {
-                let _ = self.split_edge_raw(ek, p);
+        // Pre-split each dipped hole loop at its entry/exit crossings (usually a
+        // no-op: the Phase-1 pre-split already made each crossing a hole vertex).
+        for ev in &events {
+            if let Event::Dip { h, p_enter, p_exit } = ev {
+                let hlp = inner_loops[*h];
+                for &p in [*p_enter, *p_exit].iter() {
+                    if self.loop_fin_on_loop_ending_at(hlp, p, etol).is_none()
+                        && let Some(ek) = self.loop_edge_containing(hlp, p, etol)
+                    {
+                        let _ = self.split_edge_raw(ek, p);
+                    }
+                }
             }
         }
-        // The hole loop key is stable across split_edge_raw (it splits an edge in
-        // place, never re-creating the loop). Verify all four endpoints exist; a
-        // missing one means a geometry/tolerance mismatch -> decline (no mutation
-        // has changed the face topology destructively yet beyond benign splits).
+
+        // Verify every endpoint we need now exists (a missing one means a
+        // geometry/tolerance mismatch -> decline; only benign splits have run).
         if self
-            .loop_fin_on_loop_ending_at(outer_lp, v0, etol)
+            .loop_fin_on_loop_ending_at(outer_lp, chain[0], etol)
             .is_none()
             || self
-                .loop_fin_on_loop_ending_at(outer_lp, vlast, etol)
+                .loop_fin_on_loop_ending_at(outer_lp, chain[last], etol)
                 .is_none()
-            || self.loop_fin_on_loop_ending_at(hole_lp, p1, etol).is_none()
-            || self.loop_fin_on_loop_ending_at(hole_lp, p2, etol).is_none()
         {
             return Ok(None);
         }
-
-        let mut edges = Vec::new();
-        // 3. Bridge material sub-chain A (outer v0 -> hole P1, a single segment)
-        //    via mekr: the hole merges into the outer loop, becoming part of its
-        //    boundary. The face is now simply-connected (one loop).
-        let fin_outer = self
-            .loop_fin_on_loop_ending_at(outer_lp, v0, etol)
-            .ok_or(TopoError::Precondition("through-hole: outer start lost"))?;
-        let fin_ring = self
-            .loop_fin_on_loop_ending_at(hole_lp, p1, etol)
-            .ok_or(TopoError::Precondition("through-hole: hole P1 lost"))?;
-        let bridge = self.mekr(fin_outer, fin_ring)?;
-        if let Some(curve) = seg_curve(v0, p1) {
-            self.attach_seam_geometry(bridge.edge, face, &curve, tol);
+        for ev in &events {
+            if let Event::Dip { h, p_enter, p_exit } = ev {
+                let hlp = inner_loops[*h];
+                if self
+                    .loop_fin_on_loop_ending_at(hlp, *p_enter, etol)
+                    .is_none()
+                    || self
+                        .loop_fin_on_loop_ending_at(hlp, *p_exit, etol)
+                        .is_none()
+                {
+                    return Ok(None);
+                }
+            }
         }
-        edges.push(bridge.edge);
 
-        // 4. Cut material sub-chain B (hole P2 -> outer vlast, a single segment)
-        //    via split_face: both endpoints now lie on the single merged loop, so
-        //    the cut divides the face into the two correct sub-faces, each
-        //    carrying its portion of the (now-merged) hole boundary.
+        let mut edges: Vec<crate::entity::EdgeKey> = Vec::new();
+        let mut tip = chain[0];
+        for ev in events.iter() {
+            match ev {
+                Event::Spur(v) => {
+                    // A material interior vertex: spur from the current tip on
+                    // the working (outer/merged) loop. The tip fin is the
+                    // outer-loop fin ending at `tip` (a prior spur far-vertex or
+                    // a merged-in hole vertex both live on the outer loop).
+                    let fin = self
+                        .loop_fin_on_loop_ending_at(outer_lp, tip, etol)
+                        .ok_or(TopoError::Precondition("arrangement: spur tip lost"))?;
+                    let m = self.mev(MevSite::AfterFin(fin), *v)?;
+                    if let Some(curve) = seg_curve(tip, *v) {
+                        self.attach_seam_geometry(m.edge, face, &curve, tol);
+                    }
+                    edges.push(m.edge);
+                    tip = *v;
+                }
+                Event::Dip { h, p_enter, p_exit } => {
+                    // Bridge the current tip to the hole entry P_enter via mekr;
+                    // the hole merges into the outer loop. The discarded in-hole
+                    // run carries no edge (it is void). Resume at the exit
+                    // crossing P_exit, now a vertex on the merged loop.
+                    //
+                    // mekr traverses the ring FORWARD from the bridged fin, so a
+                    // simple (non-self-touching) merged loop results only when the
+                    // hole is wound OPPOSITE the outer loop -- the B-rep
+                    // convention (an inner ring winds against its face's outer
+                    // loop). A boolean-built operand can store an inner loop in
+                    // EITHER winding (consumers like massprops normalize by
+                    // relative sign, but the stored fin ring is whatever the
+                    // stitch produced). For a CO-WOUND hole the forward traversal
+                    // would enclose the void as MATERIAL (a figure-8 merged loop),
+                    // and reversing a live inner loop's traversal in place is not
+                    // a valid local operation (it would flip every shared edge's
+                    // manifold pairing with the adjacent boss faces). So the
+                    // overlay certifies only the conventional counter-wound hole
+                    // here and DECLINES the co-wound one cleanly (the seed-715
+                    // op's own hole is co-wound: characterized in dossier 76 sec 5
+                    // as the next rung). DECLINE-never-WRONG: a co-wound dip falls
+                    // through to the existing shell-closure decline rather than
+                    // shipping a self-touching face.
+                    let hlp = inner_loops[*h];
+                    let fin_outer = self
+                        .loop_fin_on_loop_ending_at(outer_lp, tip, etol)
+                        .ok_or(TopoError::Precondition("arrangement: bridge tip lost"))?;
+                    let fin_ring = self
+                        .loop_fin_on_loop_ending_at(hlp, *p_enter, etol)
+                        .ok_or(TopoError::Precondition("arrangement: hole entry lost"))?;
+                    let bridge = self.mekr(fin_outer, fin_ring)?;
+                    if let Some(curve) = seg_curve(tip, *p_enter) {
+                        self.attach_seam_geometry(bridge.edge, face, &curve, tol);
+                    }
+                    edges.push(bridge.edge);
+                    tip = *p_exit;
+                }
+            }
+        }
+        // Final cut: from the last tip to the chain's far endpoint, now both on
+        // the single merged loop, dividing the face into the two sub-faces.
         let fa = self
-            .loop_fin_on_loop_ending_at(outer_lp, p2, etol)
-            .ok_or(TopoError::Precondition("through-hole: merged P2 lost"))?;
+            .loop_fin_on_loop_ending_at(outer_lp, tip, etol)
+            .ok_or(TopoError::Precondition("arrangement: final cut start lost"))?;
         let fb = self
-            .loop_fin_on_loop_ending_at(outer_lp, vlast, etol)
-            .ok_or(TopoError::Precondition("through-hole: cut end lost"))?;
+            .loop_fin_on_loop_ending_at(outer_lp, chain[last], etol)
+            .ok_or(TopoError::Precondition("arrangement: final cut end lost"))?;
         let out = self.split_face(fa, fb, None)?;
         if let Some(surf) = self.faces.get(face).and_then(|f| f.surface)
             && let Some(nf) = self.faces.get_mut(out.face_new)
         {
             nf.surface = Some(surf);
         }
-        if let Some(curve) = seg_curve(p2, vlast) {
+        if let Some(curve) = seg_curve(tip, chain[last]) {
             self.attach_seam_geometry(out.edge, face, &curve, tol);
         }
         edges.push(out.edge);
+        if trace {
+            eprintln!(
+                "ARR: DONE counter-wound arrangement re-knit ({} edges)",
+                edges.len()
+            );
+        }
         Ok(Some(edges))
     }
 
@@ -6873,20 +7084,21 @@ impl Body {
                 let _ = self.split_edge_raw(ek, end);
             }
         }
-        // Seam-crosses-hole split (dossier 73c): if this face carries an inner
-        // hole loop and the chain's path CROSSES that hole (enters one hole
-        // edge, runs through the void interior, exits another hole edge), the
-        // plain boundary-to-boundary split below would route the whole hole to
-        // one side and strand the hole-boundary fragments on the other (the
-        // seed-715 residual). Resolve it as a face-with-hole arrangement: split
-        // the hole at the two crossings and bridge it into the outer loop, so
-        // both result sub-faces carry the correct portion of the hole boundary.
-        // Returns Some(edges) only when the tractable single-hole / two-crossing
-        // structure is present and the re-knit succeeds; otherwise falls through
-        // to the unchanged split (DECLINE-never-WRONG: a structure this routine
-        // does not recognize is left to decline at the existing checks).
+        // Unified per-face planar-overlay (dossier 76): if this face carries an
+        // inner hole loop and the chain crosses one-or-more holes (possibly while
+        // also carrying MATERIAL interior vertices from a sibling-seam
+        // T-junction), the plain boundary-to-boundary split below would route
+        // each crossed hole WHOLESALE to one side and strand the hole-boundary
+        // fragments (the seed-715 residual). Resolve it by computing the planar
+        // arrangement of {outer loop, hole loops, chain} and re-forming the
+        // sub-faces in one pass: spur the material interior vertices, mekr-bridge
+        // each hole dip into the outer loop, then split_face. This SUBSUMES the
+        // dossier-73c single-hole-dip routine. Returns Some(edges) only when the
+        // certified structure is present and the re-knit succeeds; otherwise
+        // falls through to the unchanged split (DECLINE-never-WRONG: a structure
+        // it does not certify is left to decline at the existing checks).
         if self.faces.get(face).map(|f| f.loops.len()).unwrap_or(0) > 1
-            && let Some(edges) = self.try_imprint_chain_through_hole(face, chain, tol)?
+            && let Some(edges) = self.try_imprint_chain_arrangement(face, chain, tol)?
         {
             self.debug_validate();
             return Ok(edges);
@@ -10069,6 +10281,150 @@ mod tests {
         assert!(
             assembled >= 2,
             "battery should assemble at least the two clean hole-crossing cases"
+        );
+    }
+
+    // ---- dossier 76: unified per-face planar overlay ----------------------
+
+    /// Exact volume of the axis-aligned-box intersection a INTER b (empty -> 0).
+    fn box_inter_vol(a: (Vec3, Vec3), b: (Vec3, Vec3)) -> f64 {
+        let lo = Vec3::new(a.0.x.max(b.0.x), a.0.y.max(b.0.y), a.0.z.max(b.0.z));
+        let hi = Vec3::new(a.1.x.min(b.1.x), a.1.y.min(b.1.y), a.1.z.min(b.1.z));
+        let d = hi - lo;
+        if d.x <= 0.0 || d.y <= 0.0 || d.z <= 0.0 {
+            0.0
+        } else {
+            d.x * d.y * d.z
+        }
+    }
+
+    #[test]
+    fn overlay_material_vertex_plus_hole_dip_assembles_at_exact_oracle() {
+        // Dossier 76: the seed-715 STRUCTURE -- a chain on a compound face that
+        // carries a MATERIAL interior vertex (a sibling-seam T-junction) AND dips
+        // through the boss-footprint HOLE, the case dossier 73c could NOT resolve
+        // (its single-dip routine excluded a material interior vertex). The
+        // unified planar overlay spurs the material vertex, mekr-bridges the hole
+        // dip, then split_faces. Here the body's +x-face hole is COUNTER-wound
+        // (the conventional B-rep winding a clean Union produces), the certified
+        // case. The seed-715 body+tool reproduced exactly; ALL-PLANAR, so mass ==
+        // mesh and both equal the exact box-CSG closed form.
+        let x0 = 9.551779708383604;
+        let y0 = 11.665942029090884;
+        let z0 = 15.281438357132698;
+        let base_box = (Vec3::new(-x0, -y0, -z0), Vec3::new(x0, y0, z0));
+        let boss_box = (
+            Vec3::new(x0, -7.088981022063896, -9.647871036389681),
+            Vec3::new(23.805674267424912, 6.118691584333003, 3.1315919809062702),
+        );
+        let base = block(base_box.0, base_box.1 - base_box.0);
+        let boss = block(boss_box.0, boss_box.1 - boss_box.0);
+        let body = boolean(&base, &boss, BoolOp::Union, 1e-7)
+            .expect("boss union")
+            .body;
+        // The +x face (x = x0) carries the boss-footprint hole; the body is the
+        // two-boolean compound seed-715 reaches. Tool: the seed-715 failing
+        // Difference box, whose +x-face cut is the material-vertex + hole-dip U.
+        let tool_box = (
+            Vec3::new(0.8416865823442778, -3.4814833444455537, -9.166169799785951),
+            Vec3::new(15.50577871691214, 27.197447619469333, 8.974436478810794),
+        );
+        let tool = block(tool_box.0, tool_box.1 - tool_box.0);
+
+        // Exact oracle: vol(body) - vol(body INTER tool), body = base UNION boss.
+        // vol(body INTER tool) = vol(base INTER tool) + vol(boss INTER tool)
+        //   - vol(base INTER boss INTER tool); base INTER boss is empty (they
+        //   meet only on the x=x0 plane), so the last term is 0.
+        let v_body =
+            (base_box.1 - base_box.0).x * (base_box.1 - base_box.0).y * (base_box.1 - base_box.0).z
+                + (boss_box.1 - boss_box.0).x
+                    * (boss_box.1 - boss_box.0).y
+                    * (boss_box.1 - boss_box.0).z;
+        let v_cut = box_inter_vol(base_box, tool_box) + box_inter_vol(boss_box, tool_box);
+        let oracle = v_body - v_cut;
+
+        let r = boolean(&body, &tool, BoolOp::Difference, 1e-7)
+            .expect("seed-715-structure difference must assemble (dossier 76)");
+        assert!(r.faults.is_empty(), "unexpected faults: {:?}", r.faults);
+        assert!(r.body.validate().is_ok(), "result not valid");
+        let mass = r.body.mass_properties().unwrap().volume;
+        let mesh = r.body.mesh_volume();
+        assert!(
+            (mass - oracle).abs() <= 1e-6 * (1.0 + oracle),
+            "mass {mass} != exact box-CSG oracle {oracle}"
+        );
+        assert!(
+            (mass - mesh).abs() <= 1e-6 * (1.0 + mass),
+            "all-planar mass {mass} must equal mesh {mesh} exactly (watertight)"
+        );
+
+        // The Intersection direction of the same pair (the seed-715 booleanI)
+        // must also assemble exactly: vol = vol(body INTER tool).
+        let oracle_i = v_cut;
+        let ri = boolean(&body, &tool, BoolOp::Intersection, 1e-7)
+            .expect("seed-715-structure intersection must assemble");
+        assert!(
+            ri.faults.is_empty(),
+            "unexpected faults (I): {:?}",
+            ri.faults
+        );
+        assert!(ri.body.validate().is_ok(), "result (I) not valid");
+        let mass_i = ri.body.mass_properties().unwrap().volume;
+        let mesh_i = ri.body.mesh_volume();
+        assert!(
+            (mass_i - oracle_i).abs() <= 1e-6 * (1.0 + oracle_i),
+            "intersection mass {mass_i} != exact oracle {oracle_i}"
+        );
+        assert!(
+            (mass_i - mesh_i).abs() <= 1e-6 * (1.0 + mass_i),
+            "all-planar intersection mass {mass_i} must equal mesh {mesh_i}"
+        );
+    }
+
+    #[test]
+    fn overlay_battery_is_decline_never_wrong() {
+        // The DECLINE-never-WRONG floor for the unified overlay: a battery of
+        // tools against the box+boss body that produce material-vertex and/or
+        // hole-dip chains in BOTH boolean directions. EVERY assembled result is a
+        // watertight all-planar body whose mass equals its mesh EXACTLY; anything
+        // the overlay cannot certify (e.g. a co-wound hole, a multi-dip chain) is
+        // a clean decline. The overlay must NEVER ship a body with mass != mesh,
+        // faults, or invalid topology, regardless of hole winding.
+        let body = box_with_boss();
+        let mut assembled = 0;
+        for &(ox, oy, oz, dx, dy, dz) in &[
+            (7., 1., 5., 7., 6., 7.), // U: outer edge -> material -> hole dip
+            (7., 5., 1., 7., 7., 6.), // U dipping the hole from the other side
+            (6., 2., 4., 8., 6., 4.), // material corner + hole dip
+            (7., 4., 4., 7., 9., 2.), // U through hole in z (the 73c case)
+            (7., 5., 5., 7., 7., 7.), // corner-clip (73c)
+            (8., 1., 1., 5., 8., 8.), // large overlap with material corners
+            (6., 6., 1., 8., 1., 9.), // thin slab grazing the hole
+        ] {
+            for op in [BoolOp::Difference, BoolOp::Intersection] {
+                let tool = block(Vec3::new(ox, oy, oz), Vec3::new(dx, dy, dz));
+                if let Ok(r) = boolean(&body, &tool, op, 1e-7) {
+                    if !r.faults.is_empty() {
+                        continue; // faulted partial -> a decline here
+                    }
+                    assert!(
+                        r.body.validate().is_ok(),
+                        "assembled body must be valid ({op:?} o=({ox},{oy},{oz}))"
+                    );
+                    let mass = r.body.mass_properties().unwrap().volume;
+                    let mesh = r.body.mesh_volume();
+                    assert!(
+                        (mass - mesh).abs() <= 1e-6 * (1.0 + mass.abs()),
+                        "WRONG: watertight-claimed body mass {mass} != mesh {mesh} \
+                         ({op:?} o=({ox},{oy},{oz}) d=({dx},{dy},{dz}))"
+                    );
+                    assembled += 1;
+                }
+            }
+        }
+        assert!(
+            assembled >= 1,
+            "overlay battery should assemble at least one compound case"
         );
     }
 }
