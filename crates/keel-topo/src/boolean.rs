@@ -6673,6 +6673,38 @@ impl Body {
             return Ok(None);
         }
 
+        // Signed area of a 2D polygon (shoelace), used to compare each hole's
+        // STORED fin-traversal winding to the outer loop's. `loop_polygon` walks
+        // the fin ring in next-order, so this sign IS the direction `mekr` will
+        // splice. A hole wound OPPOSITE the outer loop (the conventional B-rep
+        // inner-ring winding) merges via the plain forward `mekr` into a simple
+        // loop; a CO-WOUND hole (same sign as the outer loop, as a boolean-built
+        // compound operand can store) cannot be merged by a local Euler re-knit
+        // and DECLINES (the tractability boundary; see the decline below).
+        let signed_area2 = |poly: &[(f64, f64)]| -> f64 {
+            let n = poly.len();
+            (0..n)
+                .map(|k| {
+                    let a = poly[k];
+                    let b = poly[(k + 1) % n];
+                    a.0 * b.1 - b.0 * a.1
+                })
+                .sum::<f64>()
+                * 0.5
+        };
+        let outer_sign = signed_area2(
+            &self
+                .loop_polygon(outer_lp)
+                .iter()
+                .map(|&q| to2(q))
+                .collect::<Vec<_>>(),
+        )
+        .signum();
+        let hole_cowound: Vec<bool> = hole_polys
+            .iter()
+            .map(|p| signed_area2(p).signum() == outer_sign)
+            .collect();
+
         // Classify each chain vertex: None = material (outside every hole), or
         // Some(h) = strictly inside hole h. A vertex inside MORE than one hole is
         // ambiguous (overlapping holes are not a planar arrangement we certify).
@@ -6857,47 +6889,54 @@ impl Body {
             return Ok(None);
         }
 
-        // Signed area of a 2D polygon (shoelace). Used to compare each dipped
-        // hole's winding to the outer loop's. mekr bridges a hole into the outer
-        // loop as a SIMPLE loop only when the hole is wound OPPOSITE the outer
-        // (the B-rep convention: an inner ring winds against its face's outer
-        // loop). A boolean-built operand can store an inner loop in EITHER
-        // winding (consumers like massprops normalize by relative sign, but the
-        // stored fin ring is whatever the stitch produced). For a CO-WOUND hole
-        // mekr's forward traversal would enclose the void as MATERIAL (a
-        // self-touching figure-8 face), and reversing a live inner loop in place
-        // is not a valid local operation (it flips every shared edge's manifold
-        // pairing with the adjacent faces). So the overlay certifies only the
-        // conventional counter-wound hole and DECLINES a co-wound one cleanly,
-        // BEFORE any mutation (so the fall-through plain path sees an untouched
-        // face). The seed-715 op's own hole is co-wound: characterized in dossier
-        // 76 as the next rung. DECLINE-never-WRONG.
-        let signed_area2 = |poly: &[(f64, f64)]| -> f64 {
-            let n = poly.len();
-            (0..n)
-                .map(|i| {
-                    let a = poly[i];
-                    let b = poly[(i + 1) % n];
-                    a.0 * b.1 - b.0 * a.1
-                })
-                .sum::<f64>()
-                * 0.5
-        };
-        let outer_sign = signed_area2(
-            &self
-                .loop_polygon(outer_lp)
-                .iter()
-                .map(|&q| to2(q))
-                .collect::<Vec<_>>(),
-        )
-        .signum();
-        for &h in &holes_dipped {
-            if signed_area2(&hole_polys[h]).signum() == outer_sign {
-                if trace {
-                    eprintln!("ARR: co-wound hole {h} -> None (decline, pre-mutation)");
-                }
-                return Ok(None);
+        if trace {
+            for &h in &holes_dipped {
+                eprintln!(
+                    "ARR: dipped hole {h} cowound={} (outer_sign={outer_sign})",
+                    hole_cowound[h]
+                );
             }
+        }
+        // Winding tractability (dossier 76 sec 4, re-derived and HARDENED here).
+        // `mekr` splices the merged outer ring to traverse the bridged hole
+        // FORWARD (in fin-next order) from the bridge vertex. The merged loop is
+        // a SIMPLE polygon (the hole's void left OUTSIDE the face material) only
+        // when that forward traversal runs the hole CLOCKWISE relative to the
+        // CCW outer loop -- i.e. the hole is stored COUNTER-wound, the
+        // conventional B-rep inner-ring winding.
+        //
+        // A boolean-built operand can store an inner loop CO-wound (same sense as
+        // the outer loop). For such a hole NO bridge-vertex choice and NO local
+        // Euler sequence yields a simple merged loop, for a structural reason:
+        //   - The hole's inner-loop fins are the radial-2 MANIFOLD PARTNERS of the
+        //     adjacent wall faces' fins (each shared hole edge carries exactly one
+        //     fin on the +x face and one on a wall face, with OPPOSITE `forward`).
+        //   - A co-wound storage means those +x-face fins wind CCW, so material on
+        //     their left is the hole INTERIOR: the forward mekr merges the void IN
+        //     as material (a figure-8 whose two sub-faces' areas sum to
+        //     outer PLUS hole, measured directly on seed 715: 713 + 169 ~= 882).
+        //   - Reversing the live ring (flipping those fins' `forward`) breaks the
+        //     manifold pairing with the wall faces; flipping the wall fins too
+        //     turns the boss walls inside out. Rebuilding the arc fins "the other
+        //     way" is impossible because the only opposite-orientation fins on
+        //     those shared edges ARE the wall fins (radial-2 is full).
+        // So a co-wound dip cannot be resolved by a local Euler re-knit on the
+        // as-stored operand; it needs an upstream inner-loop winding
+        // canonicalization in the import/stitch (sec 4 option a, file 47's
+        // territory) or a full DCEL re-extraction that RE-STITCHES the hole
+        // neighborhood (option b), both beyond this routine's local scope.
+        // The overlay therefore CERTIFIES the counter-wound hole and DECLINES the
+        // co-wound one cleanly, BEFORE any mutation (the fall-through plain path
+        // then sees an untouched face and declines at the existing shell-closure
+        // check). DECLINE-never-WRONG: even were the co-wound merge forced, the
+        // all-planar mass == mesh gate and the shell-closure net both reject the
+        // figure-8 (verified by forcing the path on seed 715), so the floor holds
+        // regardless. Seed 715's own +x-face hole is co-wound: this is its rung.
+        if holes_dipped.iter().any(|&h| hole_cowound[h]) {
+            if trace {
+                eprintln!("ARR: co-wound dipped hole -> None (decline, pre-mutation)");
+            }
+            return Ok(None);
         }
         if trace {
             eprintln!(
@@ -6982,28 +7021,11 @@ impl Body {
                 }
                 Event::Dip { h, p_enter, p_exit } => {
                     // Bridge the current tip to the hole entry P_enter via mekr;
-                    // the hole merges into the outer loop. The discarded in-hole
-                    // run carries no edge (it is void). Resume at the exit
-                    // crossing P_exit, now a vertex on the merged loop.
-                    //
-                    // mekr traverses the ring FORWARD from the bridged fin, so a
-                    // simple (non-self-touching) merged loop results only when the
-                    // hole is wound OPPOSITE the outer loop -- the B-rep
-                    // convention (an inner ring winds against its face's outer
-                    // loop). A boolean-built operand can store an inner loop in
-                    // EITHER winding (consumers like massprops normalize by
-                    // relative sign, but the stored fin ring is whatever the
-                    // stitch produced). For a CO-WOUND hole the forward traversal
-                    // would enclose the void as MATERIAL (a figure-8 merged loop),
-                    // and reversing a live inner loop's traversal in place is not
-                    // a valid local operation (it would flip every shared edge's
-                    // manifold pairing with the adjacent boss faces). So the
-                    // overlay certifies only the conventional counter-wound hole
-                    // here and DECLINES the co-wound one cleanly (the seed-715
-                    // op's own hole is co-wound: characterized in dossier 76 sec 5
-                    // as the next rung). DECLINE-never-WRONG: a co-wound dip falls
-                    // through to the existing shell-closure decline rather than
-                    // shipping a self-touching face.
+                    // the hole merges into the outer/working loop. The discarded
+                    // in-hole run carries no edge (it is void). Resume at the exit
+                    // crossing P_exit, now a vertex on the merged loop. Only the
+                    // counter-wound hole reaches here (the co-wound dip declined
+                    // above), so the forward mekr yields a simple merged loop.
                     let hlp = inner_loops[*h];
                     let fin_outer = self
                         .loop_fin_on_loop_ending_at(outer_lp, tip, etol)
