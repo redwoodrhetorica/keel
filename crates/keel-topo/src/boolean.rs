@@ -5608,7 +5608,41 @@ fn assemble_boolean(
                 .unwrap_or(false),
             None => true,
         };
-        self_consistent && bound_ok && tight_ok
+        // USER-FACING mesh self-consistency (the curved-gate hole, seed
+        // 11400715918834827198): `self_consistent` above checks mass against
+        // `tessellated_volume` (a SINGLE global-reference signed-tetra sum). For
+        // a MALFORMED multi-component union -- the shell->mirror->fillet->union
+        // chain that leaves three components topologically disjoint with a
+        // spurious genus-1 handle -- the single-reference tess can AGREE with
+        // mass (both ~10009, the true |A u B|, confirmed by Monte-Carlo) while
+        // the USER-FACING `mesh_volume` (summed PER CONNECTED COMPONENT, each
+        // recentred on its own centroid) COLLAPSES to ~5242 (a 48% deficit).
+        // The op-bound passed it (the collapsed value squeaked above the union
+        // floor) and the watertight net passed it (open_ratio 0.03 < 0.05), so
+        // the body shipped Ok with mass != mesh -- a DECLINE-never-WRONG
+        // violation the realsoak oracle flags `FAIL mass!=mesh-curved`.
+        //
+        // The gate must DECLINE exactly the bodies that oracle calls WRONG, no
+        // more. The oracle's curved-WRONG condition (realsoak.rs `audit`) is a
+        // GROSS relative disagreement, `|mass-mesh| / max(|mass|,|mesh|) > 0.25`
+        // -- a deficit far beyond any legitimate chordal/junction tessellation
+        // loss (the worst correct curved primitive meshes ~4% under; a correct
+        // small bicylinder lens reaches ~20%, still < 25%). Mirror it EXACTLY,
+        // against the same user-facing `mesh_volume`, so a body the oracle would
+        // accept (a coarse-but-correct curved mesh, <=25% deficit, mass in
+        // band) still assembles while the malformed >25% collapse declines.
+        // A mass-declined curved result keeps the positive-volume floor (mesh
+        // cannot be cross-checked; the other gates carry it). PURELY ADDITIVE:
+        // can only DECLINE more, never admit a body the prior gates rejected.
+        let mesh_consistent = match bm {
+            Ok(mv) if mv > 0.0 => {
+                let mesh = body.mesh_volume();
+                let rel = (mv - mesh).abs() / mv.abs().max(mesh.abs()).max(1e-9);
+                mesh.is_finite() && rel <= 0.25
+            }
+            _ => true,
+        };
+        self_consistent && bound_ok && tight_ok && mesh_consistent
     } else if let Ok(m) = body.mass_properties() {
         // SELF-CONSISTENCY gate (research file 47): for a well-formed
         // all-planar body the sense-exact mass_properties and the
