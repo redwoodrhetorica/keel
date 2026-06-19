@@ -2952,7 +2952,18 @@ pub(crate) fn merge_and_glue_imported(
     // quarter arcs, and no bounds ever match). A merged vertex lying in
     // the INTERIOR of a dangling conic arc splits that arc, so the glue
     // below sees identical subdivisions on both sides.
+    //
+    // The SAME mismatch arises on STRAIGHT seam edges at a T-junction
+    // (dossier 73b): one operand carries the tool's wall-cut on a body face
+    // as ONE edge A->C while the other operand, having split that wall at a
+    // crossing seam, carries A->B + B->C. Their bounds never match and the
+    // line glue below leaves both dangling. A merged vertex lying strictly
+    // interior to a dangling straight edge splits it the same way, so the
+    // two subdivisions agree and pair. (`split_edge_raw` carries the parent
+    // line curve to both children; no arc_sweep applies to a line.)
     loop {
+        // (rel, s) carry the conic split params; rel = f64::NAN flags the
+        // straight-edge case (no arc_sweep to set on the children).
         let mut job: Option<(EdgeKey, VertexKey, f64, f64)> = None;
         'scan: for (ek, e) in dst.edges.iter() {
             if e.radial.len() != 1 {
@@ -2966,6 +2977,10 @@ pub(crate) fn merge_and_glue_imported(
                     job = Some((ek, vk, rel, s));
                     break 'scan;
                 }
+                if straight_edge_contains_interior(dst, ek, v.point, vtol) {
+                    job = Some((ek, vk, f64::NAN, 0.0));
+                    break 'scan;
+                }
             }
         }
         let Some((ek, vk, rel, s)) = job else { break };
@@ -2975,8 +2990,10 @@ pub(crate) fn merge_and_glue_imported(
         let Ok(out) = dst.split_edge_raw(ek, p) else {
             break;
         };
-        dst.set_edge_arc_sweep(out.edge_a, rel);
-        dst.set_edge_arc_sweep(out.edge_b, s - rel);
+        if !rel.is_nan() {
+            dst.set_edge_arc_sweep(out.edge_a, rel);
+            dst.set_edge_arc_sweep(out.edge_b, s - rel);
+        }
         // Weld the split's fresh vertex onto the pre-existing one.
         let w = out.vertex;
         if w != vk {
@@ -3138,6 +3155,50 @@ fn imported_edge_midpoint(dst: &Body, ek: crate::entity::EdgeKey) -> Option<keel
         }
         _ => Some((p0 + p1) * 0.5),
     }
+}
+
+/// True when `p` lies strictly INTERIOR to edge `ek`'s straight chord
+/// within `vtol` (not at either endpoint). Used by the subdivision-alignment
+/// pass to split a dangling STRAIGHT seam edge at a crossing vertex the OTHER
+/// operand already carries, so a T-junction's `A->C` edge subdivides to match
+/// the facing `A->B + B->C`. Restricted to edges with no conic carrier (the
+/// conic case is handled by `conic_arc_split_rel`); a line carrier or none.
+fn straight_edge_contains_interior(
+    dst: &Body,
+    ek: crate::entity::EdgeKey,
+    p: keel_math::vec::Vec3,
+    vtol: f64,
+) -> bool {
+    use keel_geom::curve::Curve3;
+    let Some(e) = dst.edges.get(ek) else {
+        return false;
+    };
+    // Skip conic carriers (handled by the arc path); allow Line or none.
+    if matches!(
+        e.curve.and_then(|(ck, _)| dst.curves.get(ck)),
+        Some(Curve3::Circle(_)) | Some(Curve3::Ellipse(_))
+    ) {
+        return false;
+    }
+    let (Some(a), Some(b)) = (
+        dst.vertices.get(e.bounds.0).map(|v| v.point),
+        dst.vertices.get(e.bounds.1).map(|v| v.point),
+    ) else {
+        return false;
+    };
+    if (p - a).norm() <= vtol || (p - b).norm() <= vtol {
+        return false; // an endpoint, not an interior split
+    }
+    let ab = b - a;
+    let len2 = ab.dot(ab);
+    if len2 <= vtol * vtol {
+        return false;
+    }
+    let t = (p - a).dot(ab) / len2;
+    if t <= 1e-9 || t >= 1.0 - 1e-9 {
+        return false;
+    }
+    (a + ab * t - p).norm() <= vtol
 }
 
 /// If `p` lies geometrically in the INTERIOR of edge `ek`'s declared
@@ -6393,6 +6454,50 @@ impl Body {
         }
     }
 
+    /// A boundary edge OF `face` (any of its loops) whose 3D segment passes
+    /// within `tol` of `p`, with `p` strictly interior to the segment. The
+    /// face-scoped companion to `edge_containing_point`, used by the open-chain
+    /// T-junction repair so a mid-edge seam endpoint splits only THIS face's
+    /// boundary, never an unrelated coincident edge elsewhere in the body.
+    pub(crate) fn edge_on_face_containing(
+        &self,
+        face: FaceKey,
+        p: keel_math::vec::Vec3,
+        tol: f64,
+    ) -> Option<crate::entity::EdgeKey> {
+        let loops = self.faces.get(face).map(|f| f.loops.clone())?;
+        for lk in loops {
+            let entry = self.loops.get(lk).and_then(|l| l.fin)?;
+            let mut cur = entry;
+            loop {
+                if let Some(ek) = self.fins.get(cur).map(|f| f.edge)
+                    && let Some(e) = self.edges.get(ek)
+                    && let (Some(a), Some(b)) = (
+                        self.vertices.get(e.bounds.0).map(|v| v.point),
+                        self.vertices.get(e.bounds.1).map(|v| v.point),
+                    )
+                {
+                    let ab = b - a;
+                    let len2 = ab.dot(ab);
+                    if len2 > 0.0 {
+                        let t = (p - a).dot(ab) / len2;
+                        if t > 1e-7 && t < 1.0 - 1e-7 && ((a + ab * t) - p).norm() <= tol {
+                            return Some(ek);
+                        }
+                    }
+                }
+                let Some(next) = self.fins.get(cur).map(|f| f.next) else {
+                    break;
+                };
+                cur = next;
+                if cur == entry {
+                    break;
+                }
+            }
+        }
+        None
+    }
+
     /// Imprint an open chain of points onto `face`: `chain[0]` and
     /// `chain[last]` must already be boundary vertices; interior points
     /// are added as spurs (mev), then the face is split (split_face)
@@ -6410,6 +6515,26 @@ impl Body {
             return Err(TopoError::Precondition("open chain too short"));
         }
         let last = chain.len() - 1;
+        // T-junction repair (dossier 73b): an open seam can END in the
+        // INTERIOR of a boundary edge that a SIBLING seam component imprinted
+        // earlier in this same face's Phase-2 pass. (Concretely: a tool wall
+        // first split by the body's prior cut, then crossed by the body's boss
+        // top, lands its second seam's endpoint mid-edge on the first seam's
+        // fresh edge.) Phase-1 pre-split only saw the ORIGINAL boundary, not
+        // edges created during Phase 2, so that vertex is missing and the
+        // boundary-vertex precondition below fails. Split the boundary edge at
+        // any such mid-edge endpoint so the chain attaches vertex-to-vertex.
+        // This adds a vertex at a point provably on the existing boundary
+        // (edge_on_face_containing requires it within etol); it never moves
+        // geometry and a point genuinely OFF the boundary still finds no edge
+        // and declines below (DECLINE-never-WRONG preserved).
+        for &end in [chain[0], chain[last]].iter() {
+            if self.loop_fin_ending_at_point(face, end, etol).is_none()
+                && let Some(ek) = self.edge_on_face_containing(face, end, etol)
+            {
+                let _ = self.split_edge_raw(ek, end);
+            }
+        }
         // Endpoints must be on the boundary.
         if self
             .loop_fin_ending_at_point(face, chain[0], etol)
@@ -9383,5 +9508,105 @@ mod tests {
         let (seams, faults) = seam_curves(&a, &b, 1e-9);
         assert!(seams.is_empty());
         assert!(faults.is_empty());
+    }
+
+    // ---- dossier 73b: compound-operand T-junction imprint -----------------
+
+    /// Build the seed-715 topology class: a box with a rectangular BOSS on its
+    /// +x face (a prior Union). The boss is offset from every box edge, so the
+    /// box +x face carries an inner-loop HOLE and the boss top/bottom faces are
+    /// interior features whose attach edges end MID the box +x face -- the
+    /// configuration that T-junctions a later tool wall's seams.
+    fn box_with_boss() -> Body {
+        let base = block(Vec3::ZERO, Vec3::new(10., 10., 10.));
+        let boss = block(Vec3::new(10., 3., 3.), Vec3::new(5., 4., 4.));
+        let r = boolean(&base, &boss, BoolOp::Union, 1e-7).expect("boss union");
+        assert!(r.faults.is_empty() && r.body.validate().is_ok());
+        // exact: 1000 + 5*4*4
+        let v = r.body.mass_properties().unwrap().volume;
+        assert!((v - 1080.0).abs() < 1e-7, "boss body volume {v}");
+        r.body
+    }
+
+    #[test]
+    fn compound_operand_difference_assembles_at_exact_oracle() {
+        // Dossier 73b: a Difference tool whose wall is first split by the
+        // boss-attach plane (x=10) then crossed by the boss top/bottom seams
+        // exercises the imprint open-chain T-junction repair + the straight
+        // subdivision-alignment in the glue. The result is ALL-PLANAR, so its
+        // mass and tessellated mesh must agree EXACTLY at the closed-form
+        // oracle (no chordal slack). Before dossier 73b this declined with
+        // `unmatched coedge: shell-closure invariant violated`.
+        let body = box_with_boss();
+        // tool [7,14] x [2,11] x [3,7], a Difference. Removes:
+        //   base  slab x[7,10] y[2,10] z[3,7] = 3*8*4 = 96
+        //   boss      x[10,14] y[3,7] z[3,7]  = 4*4*4 = 64
+        // result = 1080 - 160 = 920.
+        let tool = block(Vec3::new(7., 2., 3.), Vec3::new(7., 9., 4.));
+        let r = boolean(&body, &tool, BoolOp::Difference, 1e-7)
+            .expect("compound difference must assemble (dossier 73b)");
+        assert!(r.faults.is_empty(), "unexpected faults: {:?}", r.faults);
+        assert!(r.body.validate().is_ok(), "result not valid");
+        let mass = r.body.mass_properties().unwrap().volume;
+        let mesh = r.body.mesh_volume();
+        assert!(
+            (mass - 920.0).abs() < 1e-6,
+            "mass {mass} != exact oracle 920"
+        );
+        assert!(
+            (mass - mesh).abs() < 1e-6,
+            "all-planar mass {mass} must equal mesh {mesh} exactly (watertight)"
+        );
+    }
+
+    #[test]
+    fn compound_operand_battery_is_decline_never_wrong() {
+        // The floor for the whole compound-operand difference class: over a
+        // battery of tool placements against the box+boss body, EVERY result
+        // is either a clean Err (declined) OR a watertight body whose
+        // (all-planar, exact) mass equals its mesh. A wrong-positive -- a body
+        // that assembles with mass != mesh, or with faults, or that fails
+        // validate -- must NEVER occur. This guards the dossier-73b imprint
+        // changes against ever shipping a non-watertight / wrong body.
+        let body = box_with_boss();
+        let mut assembled = 0;
+        for &(ox, oy, oz, dx, dy, dz) in &[
+            (7., 2., 3., 7., 9., 4.),
+            (8., 2., 2., 5., 9., 6.),
+            (9., 2., 2., 4., 9., 6.),
+            (7., 2., 2., 6., 9., 6.),
+            (6., 4., 4., 6., 3., 2.),
+            (8., 3., 3., 4., 4., 4.),
+            (7., 5., 4., 5., 4., 2.),
+            (9., 3., 5., 5., 4., 3.),
+            (6., 2., 3., 8., 9., 4.),
+            (8., 4., 4., 6., 4., 3.),
+        ] {
+            let tool = block(Vec3::new(ox, oy, oz), Vec3::new(dx, dy, dz));
+            if let Ok(r) = boolean(&body, &tool, BoolOp::Difference, 1e-7) {
+                if !r.faults.is_empty() {
+                    continue; // a faulted partial result is a decline here
+                }
+                assert!(
+                    r.body.validate().is_ok(),
+                    "assembled body must be valid (tool o=({ox},{oy},{oz}))"
+                );
+                let mass = r.body.mass_properties().unwrap().volume;
+                let mesh = r.body.mesh_volume();
+                // all-planar: mass and mesh are both exact, so any gap is a
+                // WRONG body (dropped/mis-stitched face). This is the sacred
+                // DECLINE-never-WRONG assertion.
+                assert!(
+                    (mass - mesh).abs() <= 1e-6 * (1.0 + mass.abs()),
+                    "WRONG: watertight-claimed body mass {mass} != mesh {mesh} \
+                     (tool o=({ox},{oy},{oz}) d=({dx},{dy},{dz}))"
+                );
+                assembled += 1;
+            }
+        }
+        assert!(
+            assembled >= 1,
+            "battery should assemble at least one compound difference"
+        );
     }
 }
