@@ -341,6 +341,23 @@ impl Body {
             .map(|(k, _)| k)
     }
 
+    /// The loop of `face` (outer OR an inner ring) that uses edge `e`, if any.
+    fn face_loop_with_edge(
+        &self,
+        face: crate::entity::FaceKey,
+        e: EdgeKey,
+    ) -> Option<crate::entity::LoopKey> {
+        let edge = self.edges.get(e)?;
+        edge.radial.iter().find_map(|&rf| {
+            let owner = self.fins.get(rf)?.owner;
+            if self.loops.get(owner).map(|l| l.face) == Some(face) {
+                Some(owner)
+            } else {
+                None
+            }
+        })
+    }
+
     /// Does `face` use edge `e` in one of its loops?
     fn face_has_edge(&self, face: crate::entity::FaceKey, e: EdgeKey) -> bool {
         self.edges
@@ -365,23 +382,32 @@ impl Body {
         v: crate::entity::VertexKey,
         exclude: EdgeKey,
     ) -> Option<EdgeKey> {
-        let lp = self.faces.get(face).map(|f| f.loops[0])?;
-        let entry = self.loops.get(lp).and_then(|l| l.fin)?;
-        let mut cur = entry;
-        loop {
-            let fin = self.fins.get(cur)?;
-            let e = fin.edge;
-            if e != exclude
-                && let Some(edge) = self.edges.get(e)
-            {
-                let (a, c) = edge.bounds;
-                if a == v || c == v {
-                    return Some(e);
+        // Scan EVERY loop of the face, not only the outer one: a fillet on the
+        // rim of a HOLE (the sharp edge lies on an inner loop of a boolean-
+        // built support that carries a bore/window) has its cap edge on that
+        // same inner loop, so an outer-loop-only scan spuriously reports "no
+        // cap edge".
+        let loops = self.faces.get(face).map(|f| f.loops.clone())?;
+        for lp in loops {
+            let Some(entry) = self.loops.get(lp).and_then(|l| l.fin) else {
+                continue;
+            };
+            let mut cur = entry;
+            loop {
+                let Some(fin) = self.fins.get(cur) else { break };
+                let e = fin.edge;
+                if e != exclude
+                    && let Some(edge) = self.edges.get(e)
+                {
+                    let (a, c) = edge.bounds;
+                    if a == v || c == v {
+                        return Some(e);
+                    }
                 }
-            }
-            cur = fin.next;
-            if cur == entry {
-                break;
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
             }
         }
         None
@@ -417,10 +443,24 @@ impl Body {
         b_end: crate::entity::VertexKey,
         arc: Curve3,
     ) -> Result<EdgeKey, TopoError> {
-        let lp = self
+        // Split on whichever loop of the cap carries BOTH end vertices (the
+        // outer loop for a box cap, an inner ring when the cap is a multiply-
+        // connected boolean face whose blended rim is a hole boundary), not
+        // blindly loops[0] -- otherwise a hole-rim split reports "no fin ends
+        // at vertex" though the fins live on an inner loop.
+        let loops = self
             .faces
             .get(cap)
-            .map(|f| f.loops[0])
+            .map(|f| f.loops.clone())
+            .ok_or(TopoError::StaleKey)?;
+        let lp = loops
+            .iter()
+            .copied()
+            .find(|&lk| {
+                self.fin_ending_at_vertex(lk, a_end).is_ok()
+                    && self.fin_ending_at_vertex(lk, b_end).is_ok()
+            })
+            .or_else(|| loops.first().copied())
             .ok_or(TopoError::StaleKey)?;
         let fin_a = self.fin_ending_at_vertex(lp, a_end)?;
         let fin_b = self.fin_ending_at_vertex(lp, b_end)?;
@@ -482,10 +522,13 @@ impl Body {
                 ))?;
         let sva = self.split_edge(e_va, aa_pt)?;
         let svb = self.split_edge(e_vb, ab_pt)?;
+        // The loop to split is the one carrying the sharp edge (the rim being
+        // filleted), which is the OUTER loop for the common box edge but an
+        // INNER loop when the fillet is on a hole rim of a multiply-connected
+        // support. Fall back to loops[0] if not found.
         let lp = self
-            .faces
-            .get(face)
-            .map(|f| f.loops[0])
+            .face_loop_with_edge(face, sharp)
+            .or_else(|| self.faces.get(face).map(|f| f.loops[0]))
             .ok_or(TopoError::StaleKey)?;
         let fa = self.fin_ending_at_vertex(lp, sva.vertex)?;
         let fb = self.fin_ending_at_vertex(lp, svb.vertex)?;
@@ -638,6 +681,56 @@ impl Body {
         }
     }
 
+    /// Before a `kef(edge)` that merges the two faces sharing `edge`, move
+    /// every INNER (hole) loop off whichever face kef will DISSOLVE onto the
+    /// face kef will KEEP. kef keeps the owner of `edge.radial[0]` and kills
+    /// the owner of `edge.radial[1]` (euler.rs), and requires the dying face
+    /// to have exactly one loop. A multiply-connected support leaves the dying
+    /// face holed; the holes lie within the kept merged region, so this rehome
+    /// preserves them on the survivor and lets kef proceed. A no-op when the
+    /// dying face is already simply connected (the common cap-rim fillet).
+    fn rehome_dying_face_holes(&mut self, edge: EdgeKey) {
+        let Some(ed) = self.edges.get(edge) else {
+            return;
+        };
+        let [g, h] = ed.radial[..] else {
+            return;
+        };
+        let keep = self
+            .fins
+            .get(g)
+            .map(|f| f.owner)
+            .and_then(|lp| self.loops.get(lp).map(|l| l.face));
+        let kill = self
+            .fins
+            .get(h)
+            .map(|f| f.owner)
+            .and_then(|lp| self.loops.get(lp).map(|l| l.face));
+        let (Some(keep), Some(kill)) = (keep, kill) else {
+            return;
+        };
+        if keep == kill {
+            return;
+        }
+        // Inner loops of the dying face (skip its first / outer loop).
+        let movers: Vec<crate::entity::LoopKey> = self
+            .faces
+            .get(kill)
+            .map(|f| f.loops.iter().skip(1).copied().collect())
+            .unwrap_or_default();
+        for lk in movers {
+            if let Some(f) = self.faces.get_mut(kill) {
+                f.loops.retain(|&x| x != lk);
+            }
+            if let Some(l) = self.loops.get_mut(lk) {
+                l.face = keep;
+            }
+            if let Some(f) = self.faces.get_mut(keep) {
+                f.loops.push(lk);
+            }
+        }
+    }
+
     /// Imprint a closed ring `curve` onto `face`, dispatching to the
     /// seam-crossing variant for periodic faces (a circle on a cylinder
     /// crosses the seam) and the interior variant otherwise.
@@ -737,10 +830,19 @@ impl Body {
             .copied()
             .find(|&lk| loop_has_edge(&b, lk, edge))
             .ok_or(TopoError::Precondition("fillet_rim: no rim loop"))?;
+        // The spring-hole loop is the one carrying the just-imprinted spring
+        // circle (rep_cap.edge), NOT merely "any other loop": a cap face that
+        // was already multiply-connected (a boolean-built cap with a drilled
+        // bore or a window) carries EXTRA loops besides the rim and the new
+        // spring hole, and picking "the first other loop" grabs that stray
+        // hole (or the outer boundary, when the rim is itself an inner
+        // hole-rim), which mekr then rejects as "not an inner ring". Select by
+        // the spring edge so the bridge always joins the rim to the spring
+        // hole regardless of how many pre-existing holes the cap carried.
         let ring_loop = alps
             .iter()
             .copied()
-            .find(|&lk| lk != rim_loop)
+            .find(|&lk| lk != rim_loop && loop_has_edge(&b, lk, spring_plane_edge))
             .ok_or(TopoError::Precondition("fillet_rim: no spring hole loop"))?;
         let fin_outer = b
             .loops
@@ -754,6 +856,15 @@ impl Body {
             .ok_or(TopoError::StaleKey)?;
         b.mekr(fin_outer, fin_ring)?;
 
+        // A multiply-connected support (a boolean-built cap or cylinder band
+        // carrying a pre-existing bore/window) leaves the face that `kef` is
+        // about to DISSOLVE with more than its one outer loop, which kef
+        // rejects ("dying face must have one loop"). The pre-existing hole(s)
+        // lie inside the region the merge keeps, so relocate every inner loop
+        // off the dying face onto the surviving face BEFORE the kef (the
+        // cap-rim analog of `redistribute_inner_loops`): kef then sees a
+        // single-loop dying face and the holes ride along on the merged ring.
+        b.rehome_dying_face_holes(edge);
         // Merge the cap annulus and the cylinder top band across the rim.
         b.kef(edge)?;
         // The torus ring is the face on the plane-spring edge that is not
@@ -932,13 +1043,15 @@ impl Body {
                     Ok(EndPlan::Single)
                 }
                 [c0, c1] => {
-                    // Match each cap face to the spring end on its loop.
+                    // Match each cap face to the spring end on ANY of its loops
+                    // (an inner ring too, for a multiply-connected cap).
                     let holds = |b: &Body, f: crate::entity::FaceKey, v| -> bool {
                         b.faces
                             .get(f)
-                            .map(|x| x.loops[0])
-                            .map(|lp| b.fin_ending_at_vertex(lp, v).is_ok())
-                            .unwrap_or(false)
+                            .map(|x| x.loops.clone())
+                            .unwrap_or_default()
+                            .iter()
+                            .any(|&lp| b.fin_ending_at_vertex(lp, v).is_ok())
                     };
                     let (cap_a, cap_b) = if holds(b, c0, a_end) {
                         (c0, c1)
