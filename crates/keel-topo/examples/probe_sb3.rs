@@ -51,11 +51,24 @@ fn main() {
         3.1315919809062702 - (-9.647871036389681),
     );
     let boss = blk(boss_o, boss_d);
-    let r1 = boolean(&base, &boss, BoolOp::Union, 1e-7).expect("boss union");
+    // Two Union operand orders. The stored inner-loop (hole) winding on the
+    // shared +x face can differ between them: one yields a CONVENTIONAL
+    // counter-wound hole, the other a CO-wound hole (the seed-715 storage that
+    // the soak hits). Probe BOTH so the co-wound dossier-76-sec-4 rung is
+    // exercised against the exact oracle, not only the counter-wound beachhead.
+    let order = std::env::var("PROBE_ORDER").unwrap_or_else(|_| "base_boss".into());
+    let r1 = if order == "boss_base" {
+        boolean(&boss, &base, BoolOp::Union, 1e-7).expect("boss union")
+    } else {
+        boolean(&base, &boss, BoolOp::Union, 1e-7).expect("boss union")
+    };
     assert!(r1.faults.is_empty(), "boss union faults {:?}", r1.faults);
     let body = r1.body;
     let c = body.counts();
-    println!("body g{} f{} (realsoak target: g0 f11)", c.genus, c.f);
+    println!(
+        "order={order} body g{} f{} (realsoak target: g0 f11)",
+        c.genus, c.f
+    );
 
     // Tool f6 (box), the failing Difference. Bounds reconstructed from the
     // chain/loop dump (x in {0.8417,15.5058}, y up to 27.197, z in {-9.166,8.974}).

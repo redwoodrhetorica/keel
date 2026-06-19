@@ -22,18 +22,34 @@ the first-and-last chain segment with NO material interior vertex) and dossier 7
 interior vertex stacked with a hole dip on one chain) now assembles WATERTIGHT at
 the exact box-CSG oracle, mass == mesh, for a counter-wound hole.
 
-The precise tractability boundary: the merge step (`mekr`) produces a SIMPLE
-merged loop only when the inner hole loop is wound OPPOSITE the outer loop (the
-B-rep convention). A boolean-built operand can store an inner loop in EITHER
-winding, and seed 715's OWN +x-face hole is CO-WOUND (the failing op's body comes
-from an `extrude`-built compound, not a clean Union). For a co-wound hole the
-forward `mekr` traversal would enclose the void as MATERIAL (a self-touching
-figure-8 face), and reversing a live inner loop in place is NOT a valid local
-operation (it flips every shared edge's manifold pairing with the adjacent boss
-faces). So the overlay DECLINES the co-wound dip cleanly (before any mutation,
-falling through to the existing shell-closure decline), never shipping a
-self-touching body. Seed 715 therefore still declines its specific op; it is the
-co-wound-hole rung, characterized in section 5 and left for a dedicated round.
+UPDATE (this round, the co-wound rung CLOSED): the co-wound hole now ASSEMBLES.
+The merge step (`mekr`) produces a SIMPLE merged loop only when the inner hole
+loop is wound OPPOSITE the outer loop (the B-rep convention). A boolean-built
+operand can store an inner loop in EITHER winding, and seed 715's OWN +x-face
+hole is CO-WOUND (the failing op's body comes from an `extrude`-built compound).
+The prior round believed reversing the live inner loop was UNSAFE (that flipping
+the hole fins' `forward` would break the manifold pairing with the adjacent boss
+walls). Instrumenting the operand (`KEEL_COWOUND_PROBE`, retained env gate)
+REFUTED that: each shared hole edge carries exactly two fins (the +x-face hole
+fin and the wall-face fin), and the kernel's radial invariant
+(`check_radial_cycles`) requires only that each fin sit in exactly ONE radial
+cycle -- it does NOT constrain the two fins' relative `forward`. A wall face
+reads its OWN fin's direction for its material side, never the hole loop's fin.
+So reversing the hole loop in place (swap each loop fin's `next`<->`prev`, flip
+each `forward`) is a VALID local operation: it touches only the hole loop's own
+fins, leaves every wall loop and every edge's radial set byte-identical, and
+preserves fin-ring continuity, boundary-chain continuity, and the radial cycles
+(verified by `debug_validate` on the real co-wound seed-715 body). After the
+subsequent `mekr` the hole ceases to be an inner loop at all (it merges into the
++x outer loop), so no co-wound inner loop survives to mislead a downstream
+consumer. The overlay therefore CANONICALIZES a co-wound dipped hole to
+counter-wound (`reverse_inner_loop`) BEFORE the re-knit and then runs the proven
+counter-wound path unchanged. Seed 715's own failing Difference now assembles
+WATERTIGHT at the exact box-CSG oracle (mass == mesh == 12932.10); the
+Intersection direction is exact too (3096.32). DECLINE-never-WRONG is preserved:
+the reversal is purely combinatorial (no geometry moves), and if it ever produced
+a malformed body the all-planar mass==mesh gate would still reject it (the floor
+is unchanged). See section 4 (rewritten) and section 5b (this round's validation).
 
 House style: no em-dashes; ranges written with "to".
 
@@ -169,7 +185,7 @@ arrangement falls through to the plain spur + split path, unchanged).
 
 ---
 
-## 4. The tractability boundary: hole winding
+## 4. The hole-winding boundary: now RESOLVED by local loop reversal
 
 mekr bridges an inner ring into the outer loop by splicing the merged ring to
 traverse the hole FORWARD from the bridged fin. The result is a SIMPLE loop
@@ -180,28 +196,59 @@ produced, and consumers normalize by relative sign (e.g. `massprops.rs` reverses
 hole polygon for integration when `signed_area(inner).signum() ==
 outer_sign`). Seed 715's +x-face hole, built by the `extrude` Union, is CO-WOUND;
 the clean-Union box+boss (dossiers 73b/73c, `box_with_boss`) is counter-wound,
-which is why those isolated cases assembled.
+which is why those isolated cases assembled out of the box.
 
 For a co-wound hole the forward mekr merge folds the void IN as material. The
 measured signature on seed 715: the two split sub-faces' tessellated areas sum to
-~882 = outer (713) PLUS hole (169), versus the correct ~544 = outer MINUS hole
-(the counter-wound probe gives 544 exactly). Reversing the live inner loop to fix
-this is NOT a valid local operation: the hole-loop edges are shared (radial-2)
-with the adjacent boss faces, and flipping the hole-loop fins' direction breaks
-those edges' manifold pairing (the kernel's boundary-chain-continuity invariant,
-`validate::check_boundary_chains`, then fails, or the downstream orientation
-consumers read the wrong side). Reversing the whole face flips outer AND hole
-together, leaving the RELATIVE winding unchanged. So a co-wound dip cannot be
-bridged into a simple loop by a local Euler sequence on the as-stored operand.
+outer PLUS hole, versus the correct outer MINUS hole.
 
-The overlay therefore CERTIFIES the counter-wound hole and DECLINES the co-wound
-one. This is the honest boundary. Resolving the co-wound case needs one of:
-(a) the boolean import/stitch producing inner loops in the canonical (counter-
-wound) winding (a `merge_and_glue_imported` orientation pass, the natural place,
-out of this round's imprint scope); or (b) a non-Euler arrangement re-extraction
-that rebuilds both sub-faces' fin rings from the 2D arrangement directly (a
-larger DCEL-to-B-rep import, rather than the in-place Euler re-knit landed here).
-Both are the next rung; the all-planar exact oracle still applies.
+The prior round believed this was unfixable by a local operation, on the premise
+that reversing the live inner loop would break the hole edges' manifold pairing
+with the boss walls. **That premise was wrong, and this round refuted it with
+direct instrumentation.** `KEEL_COWOUND_PROBE` (retained env gate) dumps each
+co-wound dipped hole's fin ring on the real seed-715 operand. The data
+(reproduced below) shows each shared hole edge carries exactly TWO fins -- the
++x-face hole fin and the wall-face fin -- and BOTH are stored `forward = true`
+(same direction), yet the body validates. The reason: the kernel's radial
+invariant `validate::check_radial_cycles` requires only that each fin sit in
+exactly ONE radial cycle; it imposes NO constraint on the two fins' relative
+`forward`. And `check_boundary_chains` is a PER-LOOP continuity check (each fin's
+end vertex equals the next fin's start vertex WITHIN its own loop); it never
+relates a hole-loop fin to a wall-loop fin. A wall face reads its OWN fin's
+direction for its material side. So reversing the hole loop touches nothing the
+wall faces depend on.
+
+```
+COWOUND: hole 0 loop ... cowound=true
+  fin .. fwd=true radial=2 (..,6.12,3.13)->(..,-3.48,3.13) others=[(.., fwd=true, wall face 6)]
+  fin .. fwd=true radial=2 (..,-3.48,3.13)->(..,-7.09,3.13) others=[(.., fwd=true, wall face 6)]
+  ... (every hole edge: radial-2, the OTHER fin on a boss wall, same fwd)
+```
+
+`reverse_inner_loop(lp)` performs the reversal as a purely combinatorial local
+op: for every fin in the inner loop, swap `next` <-> `prev` (reverse the cycle)
+and flip `forward` (so the fin traverses its edge the other way; a reversed
+fin's start/end vertices swap, keeping the now-reversed chain end-to-start
+continuous). It touches ONLY this loop's own fins; each shared edge keeps its
+exact radial set (the same fin keys), so `check_radial_cycles` is preserved, and
+the adjacent wall loops are untouched. After the reversal the hole is
+counter-wound and the proven counter-wound re-knit (mev spurs + mekr bridge +
+split_face) runs unchanged; the mekr then MERGES the hole into the +x outer
+loop, so no co-wound inner loop survives. `debug_validate` runs through the
+reversal and the full re-knit on the real co-wound seed-715 body with no panic
+(every invariant holds), and the result is mass == mesh == the exact oracle.
+
+DECLINE-never-WRONG is preserved with margin: the reversal moves NO geometry
+(crossing/spur/bridge/cut points are exact chain or existing-edge points), and
+the result still passes the load-bearing dual mass-vs-tessellation gate. If the
+reversal ever produced a malformed body (it does not), that gate plus the
+shell-closure net would DECLINE it, never ship it. This is dossier 76 sec 4
+option (a) -- inner-loop winding canonicalization -- realized at the cheapest
+correct site (the imprint's working operand, exactly where the dip is detected),
+rather than a global stitch pass that would have to reverse loops it cannot prove
+need reversing. The decline path remains for any hole the reversal helper cannot
+form a well-formed loop from (returns None -> fall through to the existing
+shell-closure decline).
 
 ---
 
@@ -252,23 +299,85 @@ Regression tests (in `boolean.rs`):
 
 ---
 
+## 5b. This round (co-wound rung): validation, WRONG = 0, the seed-715 op CLOSED
+
+Apples-to-apples, SAME base (this worktree's fork commit, the prior co-wound-
+HARDENING HEAD), deterministic seed 1, the FULL 10000-project soak (not 3000):
+
+| metric | baseline (decline co-wound) | with reversal | delta |
+|---|---:|---:|---:|
+| WRONG (decline-never-wrong) | 0 | 0 | **0** (invariant HELD) |
+| PASS (10000 projects) | 7970 | 7984 | **+14** |
+| KERNEL-FRONTIER declines | 65945 | 65677 | **-268** |
+| failing attempts: unmatched-coedge | 16253 | 15776 | **-477** |
+| failing attempts: UnassemblableSeam | 24378 | 24459 | +81 |
+| failing attempts: degenerate(mass!=mesh) | 62848 | 62912 | +64 |
+| total declines | 108538 | 108348 | **-190** |
+
+The co-wound canonicalization converts the dominant compound-operand residual:
+the `unmatched-coedge` class (the shell-closure decline the seed-715 op hit)
+drops by 477 attempts, the kernel-frontier decline count by 268, and PASS rises
+by 14 with WRONG = 0. The small `UnassemblableSeam +81` / `degenerate +64` are the
+same downstream shift 73b/73c/76 documented: a now-completing co-wound imprint
+lets a chain progress to LATER ops that decline on their own merits (a different
+tool, a genuine mass!=mesh), not a regression. WRONG = 0 across all 10000
+projects (both lanes) is the decisive floor signal.
+
+Seed 715's OWN failing op is now CLOSED. `KEEL_REPRO=11400715918834826715`
+replays it; its compound-operand Difference now ASSEMBLES at mass == mesh ==
+12932.10 (`ARR: co-wound dipped hole 0 -> reversing to counter-wound` ->
+`ARR: DONE counter-wound arrangement re-knit`), where it previously declined
+`unmatched coedge`. (The seed's later ops, run on the now-evolved body, still
+decline on their own merits; the realized-op count is unchanged at 3, the
+compound Difference being the one this round converts.)
+
+New regression test (in `boolean.rs`):
+- `overlay_cowound_hole_dip_assembles_at_exact_oracle`: builds the seed-715
+  box+boss body, FORCES the +x-face hole CO-wound (via `reverse_inner_loop`, the
+  seed-715 storage), asserts it is co-wound and still validates, then asserts the
+  overlay canonicalizes it and assembles BOTH Difference and Intersection at the
+  EXACT box-CSG oracle with mass == mesh (no slack). The `debug` build runs the
+  reversal and the full re-knit under `debug_validate` with no panic.
+- `overlay_battery_is_decline_never_wrong` (extended): the same battery now runs
+  against BOTH a counter-wound and a forced-co-wound body; every assembled result
+  is a watertight all-planar body whose mass equals its mesh exactly, in both
+  windings. The sacred-floor guard, now covering the co-wound path.
+
+Suite: `cargo test --release` GREEN (keel-topo lib 296 passed = 295 prior + 1
+new co-wound test; all binaries 0 failed). `cargo fmt --all --check` exit 0.
+`cargo clippy --release --all-targets -- -D warnings -A clippy::while_let_loop -A
+clippy::doc_lazy_continuation` exit 0. The change is confined to
+`crates/keel-topo/src/boolean.rs` (`reverse_inner_loop` + the dispatch in
+`try_imprint_chain_arrangement`); `massprops.rs` and `blend.rs` untouched; every
+floor gate unchanged.
+
+---
+
 ## 6. Reproduction
 
 ```
 cargo build --release --example realsoak
 
-# Seed 715 still declines its co-wound-hole op, cleanly (the overlay fires,
-# detects the co-wound hole, and declines before mutating):
+# Seed 715's co-wound-hole op now ASSEMBLES: the overlay fires, detects the
+# co-wound hole, REVERSES it to counter-wound, and the Difference completes at
+# mass == mesh == 12932.10 (look for "reversing to counter-wound" then "DONE"):
 KEEL_REPRO=11400715918834826715 KEEL_ARR_DEBUG=1 ./target/release/examples/realsoak.exe
 
-# The reconstructed body+tool with a counter-wound hole ASSEMBLES exactly
+# Optional: dump a co-wound dipped hole's fin ring (the data that refuted the
+# prior "reversal is unsafe" obstruction -- each shared edge is radial-2, the
+# other fin on a wall face, and the radial invariant ignores relative `forward`):
+KEEL_REPRO=11400715918834826715 KEEL_ARR_DEBUG=1 KEEL_COWOUND_PROBE=1 \
+  ./target/release/examples/realsoak.exe
+
+# The reconstructed clean-Union body+tool (counter-wound hole) assembles exactly
 # (mass == mesh == box-CSG, matches the independent Monte-Carlo truth):
 cargo run --release -p keel-topo --example probe_sb3
 
-# Population: WRONG = 0, total failing attempts 32856 (vs 32912 baseline):
-KEEL_FAULT_CENSUS=1 ./target/release/examples/realsoak.exe 3000 1 out
+# Population: WRONG = 0; PASS 7984 (vs 7970 baseline), kernel-frontier 65677
+# (vs 65945), unmatched-coedge attempts 15776 (vs 16253):
+KEEL_FAULT_CENSUS=1 ./target/release/examples/realsoak.exe 10000 1 out
 
-# The landed slice (regression tests):
+# The landed slice (regression tests, incl. the new co-wound oracle):
 cargo test -p keel-topo --lib -- overlay_ seam_crosses_hole compound_operand
 ```
 
@@ -279,15 +388,19 @@ cargo test -p keel-topo --lib -- overlay_ seam_crosses_hole compound_operand
 - **73c** -- the single-hole-dip routine this overlay subsumes and generalizes
   (its first-and-last-segment trigger excluded a material interior vertex; the
   overlay handles the stacked material-vertex + dip). 73c section 5 named exactly
-  this compound case as the next rung; landed here for the counter-wound hole and
-  characterized for the co-wound one.
+  this compound case as the next rung; landed for the counter-wound hole, and now
+  CLOSED for the co-wound hole too (section 4, this round).
 - **73b** -- the open-chain T-junction repair; its plain spur + split path is the
   D = 0 (no hole dipped) case of the overlay's walk, unchanged.
 - **73** -- the attribution that isolated the 16% `unmatched-coedge` slice and
   named seed 715.
 - **47** -- the import-and-glue / shell-closure invariant, confirmed CORRECT
-  again: it fires on a genuinely incomplete face set (the co-wound dip the overlay
-  declines), exactly as its "carry identity, assert closure, never silently drop"
-  doctrine intends. The co-wound-hole fix belongs upstream in
-  `merge_and_glue_imported`'s orientation handling (section 4 option a), 47's
-  territory, not the imprint's.
+  throughout: it correctly declined the co-wound dip before this round (a then-
+  genuinely-unmergeable face set), and the fix is the dossier-76 sec-4 option (a)
+  inner-loop winding canonicalization. This round realizes that canonicalization
+  at the cheapest correct site -- the imprint's working operand, exactly where the
+  co-wound dip is detected (`reverse_inner_loop`) -- rather than a global
+  `merge_and_glue_imported` orientation pass that would have to reverse loops it
+  cannot prove need reversing. 47's "carry identity, assert closure, never
+  silently drop" doctrine is intact; the imprint now hands the stitch a mergeable
+  face set, so the closure check passes instead of declining.

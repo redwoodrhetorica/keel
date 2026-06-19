@@ -6560,6 +6560,60 @@ impl Body {
         }
     }
 
+    /// Reverse the fin-traversal direction of an INNER (hole) loop in place,
+    /// flipping a co-wound hole to the conventional counter-wound winding so the
+    /// arrangement's forward `mekr` bridge merges it into a SIMPLE loop
+    /// (dossier 76 sec 4 option a). The operation is purely combinatorial:
+    ///   - swap every loop fin's `next` <-> `prev` (reverse the cycle), and
+    ///   - flip every loop fin's `forward` (so it traverses its edge the other
+    ///     way; a fin's start/end vertices swap, keeping the now-reversed chain
+    ///     end-to-start continuous).
+    /// It touches ONLY this loop's own fins. Each shared hole edge keeps its
+    /// exact radial set (the same fin keys), so `check_radial_cycles` is
+    /// preserved; the adjacent wall faces' loops are untouched (a wall face
+    /// reads its OWN fin's direction, never the hole loop's), so no manifold
+    /// pairing or downstream orientation is disturbed. Returns `Some(())` on
+    /// success, `None` if the loop is not a well-formed inner fin loop (decline).
+    /// Re-validates in debug (`debug_validate`).
+    fn reverse_inner_loop(&mut self, lp: crate::entity::LoopKey) -> Option<()> {
+        use crate::entity::LoopKind;
+        // Must be an inner fin loop.
+        let entry = match self.loops.get(lp) {
+            Some(l) if l.kind == LoopKind::Inner => l.fin?,
+            _ => return None,
+        };
+        // Collect the loop's fins in traversal order (bounded by a cycle guard).
+        let mut fins: Vec<crate::entity::FinKey> = Vec::new();
+        let mut cur = entry;
+        loop {
+            fins.push(cur);
+            let f = self.fins.get(cur)?;
+            if f.owner != lp {
+                return None;
+            }
+            cur = f.next;
+            if cur == entry {
+                break;
+            }
+            if fins.len() > self.fins.len() {
+                return None; // malformed (non-terminating) ring
+            }
+        }
+        // Reverse each fin: swap next/prev and flip forward. After this the ring
+        // is traversed in the opposite sense; the radial sets are unchanged and
+        // every fin remains live, so existing vertex `.fin` back-pointers stay
+        // valid (they need only reference SOME incident fin, not one that starts
+        // at the vertex -- `validate` and the loop walks do not require that).
+        for &fk in &fins {
+            if let Some(f) = self.fins.get_mut(fk) {
+                std::mem::swap(&mut f.next, &mut f.prev);
+                f.forward = !f.forward;
+            }
+        }
+        self.debug_validate();
+        Some(())
+    }
+
     /// Unified per-face planar-overlay imprint (dossier 76). When an open seam
     /// chain on a PLANAR compound face (an outer loop plus zero-or-more inner
     /// HOLE loops) runs from the outer boundary to the outer boundary, possibly
@@ -6897,46 +6951,57 @@ impl Body {
                 );
             }
         }
-        // Winding tractability (dossier 76 sec 4, re-derived and HARDENED here).
+        // Winding canonicalization (dossier 76 sec 4 option a, re-derived and
+        // RESOLVED here, superseding the prior pre-mutation decline).
+        //
         // `mekr` splices the merged outer ring to traverse the bridged hole
         // FORWARD (in fin-next order) from the bridge vertex. The merged loop is
         // a SIMPLE polygon (the hole's void left OUTSIDE the face material) only
         // when that forward traversal runs the hole CLOCKWISE relative to the
         // CCW outer loop -- i.e. the hole is stored COUNTER-wound, the
-        // conventional B-rep inner-ring winding.
+        // conventional B-rep inner-ring winding. A boolean-built operand can
+        // store an inner loop CO-wound (same sense as the outer loop); the
+        // forward mekr would then fold the void IN as material (a figure-8 whose
+        // two sub-faces' areas sum to outer PLUS hole, measured on seed 715:
+        // 713 + 169 ~= 882, the dominant residual of this class).
         //
-        // A boolean-built operand can store an inner loop CO-wound (same sense as
-        // the outer loop). For such a hole NO bridge-vertex choice and NO local
-        // Euler sequence yields a simple merged loop, for a structural reason:
-        //   - The hole's inner-loop fins are the radial-2 MANIFOLD PARTNERS of the
-        //     adjacent wall faces' fins (each shared hole edge carries exactly one
-        //     fin on the +x face and one on a wall face, with OPPOSITE `forward`).
-        //   - A co-wound storage means those +x-face fins wind CCW, so material on
-        //     their left is the hole INTERIOR: the forward mekr merges the void IN
-        //     as material (a figure-8 whose two sub-faces' areas sum to
-        //     outer PLUS hole, measured directly on seed 715: 713 + 169 ~= 882).
-        //   - Reversing the live ring (flipping those fins' `forward`) breaks the
-        //     manifold pairing with the wall faces; flipping the wall fins too
-        //     turns the boss walls inside out. Rebuilding the arc fins "the other
-        //     way" is impossible because the only opposite-orientation fins on
-        //     those shared edges ARE the wall fins (radial-2 is full).
-        // So a co-wound dip cannot be resolved by a local Euler re-knit on the
-        // as-stored operand; it needs an upstream inner-loop winding
-        // canonicalization in the import/stitch (sec 4 option a, file 47's
-        // territory) or a full DCEL re-extraction that RE-STITCHES the hole
-        // neighborhood (option b), both beyond this routine's local scope.
-        // The overlay therefore CERTIFIES the counter-wound hole and DECLINES the
-        // co-wound one cleanly, BEFORE any mutation (the fall-through plain path
-        // then sees an untouched face and declines at the existing shell-closure
-        // check). DECLINE-never-WRONG: even were the co-wound merge forced, the
-        // all-planar mass == mesh gate and the shell-closure net both reject the
-        // figure-8 (verified by forcing the path on seed 715), so the floor holds
-        // regardless. Seed 715's own +x-face hole is co-wound: this is its rung.
-        if holes_dipped.iter().any(|&h| hole_cowound[h]) {
-            if trace {
-                eprintln!("ARR: co-wound dipped hole -> None (decline, pre-mutation)");
+        // The fix is to CANONICALIZE the co-wound hole loop to counter-wound
+        // BEFORE the re-knit, by reversing that loop's fin cycle in place. The
+        // prior dossier (sec 4) believed this was unsafe -- that flipping the
+        // hole fins' `forward` would break the radial pairing with the adjacent
+        // wall faces. The instrumented operand (KEEL_COWOUND_PROBE, seed 715)
+        // refuted that: each shared hole edge carries exactly two fins (the
+        // +x-face hole fin and the wall-face fin) and the kernel's radial
+        // invariant (`check_radial_cycles`) only requires each fin to sit in
+        // exactly ONE radial cycle -- it does NOT constrain the two fins'
+        // relative `forward`. A wall face reads its OWN fin's direction for its
+        // material side, never the hole loop's fin; reversing the hole loop
+        // touches only the hole loop's own fins (their `forward`, `next`,
+        // `prev`) and leaves every wall loop, and every edge's radial set,
+        // byte-identical. So the reversal is a valid local operation that
+        // preserves fin-ring continuity, boundary-chain continuity, and the
+        // radial cycles; and after the subsequent mekr the hole ceases to be an
+        // inner loop at all (it merges into the +x outer loop), so no co-wound
+        // inner loop survives to mislead a downstream consumer.
+        //
+        // DECLINE-never-WRONG: the reversal is purely combinatorial (no geometry
+        // moves); if it ever produced a malformed body the all-planar mass==mesh
+        // gate and the shell-closure net would still reject it (the floor is
+        // unchanged). `reverse_inner_loop` re-validates in debug and the result
+        // is gated exactly as the counter-wound case. Seed 715's own +x-face hole
+        // is co-wound: this is its rung, now CLOSED.
+        for &h in &holes_dipped {
+            if hole_cowound[h] {
+                if trace {
+                    eprintln!("ARR: co-wound dipped hole {h} -> reversing to counter-wound");
+                }
+                if self.reverse_inner_loop(inner_loops[h]).is_none() {
+                    if trace {
+                        eprintln!("ARR: hole {h} reversal failed -> None (decline)");
+                    }
+                    return Ok(None);
+                }
             }
-            return Ok(None);
         }
         if trace {
             eprintln!(
@@ -10403,44 +10468,192 @@ mod tests {
         );
     }
 
+    /// The signed area of `face`'s first inner (hole) loop in the face plane,
+    /// minus the sign of its outer loop: returns (cowound, inner_loop_key) where
+    /// `cowound` is true iff the hole is stored with the SAME winding sense as
+    /// the outer loop. None if the face has no inner loop. Test helper for the
+    /// co-wound rung.
+    fn first_hole_winding(body: &Body, face: FaceKey) -> Option<(bool, crate::entity::LoopKey)> {
+        let Some(Surface3::Plane(pl)) = body.face_surface3(face) else {
+            return None;
+        };
+        let (o, ex, ey) = (pl.frame.origin, pl.frame.x, pl.frame.y);
+        let to2 = |q: Vec3| ((q - o).dot(ex), (q - o).dot(ey));
+        let sa = |lk: crate::entity::LoopKey| -> f64 {
+            let poly: Vec<(f64, f64)> = body.loop_polygon(lk).iter().map(|&q| to2(q)).collect();
+            let n = poly.len();
+            (0..n)
+                .map(|k| {
+                    let a = poly[k];
+                    let b = poly[(k + 1) % n];
+                    a.0 * b.1 - b.0 * a.1
+                })
+                .sum::<f64>()
+                * 0.5
+        };
+        let loops = body.faces.get(face).map(|f| f.loops.clone())?;
+        let outer = *loops.first()?;
+        let inner = *loops.get(1)?;
+        Some((sa(inner).signum() == sa(outer).signum(), inner))
+    }
+
+    /// The single PLANAR face of `body` that carries an inner hole loop (on the
+    /// box+boss bodies this is the boss-attach +x face; there is exactly one).
+    fn plus_x_holed_face(body: &Body) -> Option<FaceKey> {
+        body.face_keys().into_iter().find(|&f| {
+            let has_hole = body
+                .faces
+                .get(f)
+                .map(|x| x.loops.len() > 1)
+                .unwrap_or(false);
+            let planar = matches!(body.face_surface3(f), Some(Surface3::Plane(_)));
+            has_hole && planar
+        })
+    }
+
+    #[test]
+    fn overlay_cowound_hole_dip_assembles_at_exact_oracle() {
+        // Dossier 76 sec 4 (the co-wound rung, RESOLVED): the SAME seed-715
+        // structure (material vertex + hole dip) but with the +x-face hole stored
+        // CO-WOUND (same winding sense as the outer loop), which is the storage
+        // seed 715's own `extrude`-Union compound actually produces and which the
+        // prior overlay DECLINED. Here we force the co-wound storage by reversing
+        // the hole loop of the clean-Union body, then assert the overlay detects
+        // the co-wound hole, canonicalizes it (reverse_inner_loop), and assembles
+        // BOTH boolean directions at the EXACT same box-CSG oracle as the
+        // counter-wound case -- mass == mesh, all-planar, no slack.
+        let x0 = 9.551779708383604;
+        let y0 = 11.665942029090884;
+        let z0 = 15.281438357132698;
+        let base_box = (Vec3::new(-x0, -y0, -z0), Vec3::new(x0, y0, z0));
+        let boss_box = (
+            Vec3::new(x0, -7.088981022063896, -9.647871036389681),
+            Vec3::new(23.805674267424912, 6.118691584333003, 3.1315919809062702),
+        );
+        let base = block(base_box.0, base_box.1 - base_box.0);
+        let boss = block(boss_box.0, boss_box.1 - boss_box.0);
+        let mut body = boolean(&base, &boss, BoolOp::Union, 1e-7)
+            .expect("boss union")
+            .body;
+
+        // Force the +x-face hole CO-wound (the seed-715 storage).
+        let face = plus_x_holed_face(&body).expect("+x holed face");
+        let (was_cowound, hole) = first_hole_winding(&body, face).expect("hole winding");
+        if !was_cowound {
+            body.reverse_inner_loop(hole)
+                .expect("reverse hole to co-wound");
+        }
+        let (now_cowound, _) = first_hole_winding(&body, face).expect("hole winding 2");
+        assert!(
+            now_cowound,
+            "test setup: +x-face hole must be CO-wound to exercise the rung"
+        );
+        assert!(body.validate().is_ok(), "co-wound body must still validate");
+
+        let tool_box = (
+            Vec3::new(0.8416865823442778, -3.4814833444455537, -9.166169799785951),
+            Vec3::new(15.50577871691214, 27.197447619469333, 8.974436478810794),
+        );
+        let tool = block(tool_box.0, tool_box.1 - tool_box.0);
+
+        let v_body =
+            (base_box.1 - base_box.0).x * (base_box.1 - base_box.0).y * (base_box.1 - base_box.0).z
+                + (boss_box.1 - boss_box.0).x
+                    * (boss_box.1 - boss_box.0).y
+                    * (boss_box.1 - boss_box.0).z;
+        let v_cut = box_inter_vol(base_box, tool_box) + box_inter_vol(boss_box, tool_box);
+        let oracle_d = v_body - v_cut;
+
+        let r = boolean(&body, &tool, BoolOp::Difference, 1e-7)
+            .expect("co-wound seed-715-structure difference must assemble (dossier 76 sec 4)");
+        assert!(r.faults.is_empty(), "unexpected faults: {:?}", r.faults);
+        assert!(r.body.validate().is_ok(), "result not valid");
+        let mass = r.body.mass_properties().unwrap().volume;
+        let mesh = r.body.mesh_volume();
+        assert!(
+            (mass - oracle_d).abs() <= 1e-6 * (1.0 + oracle_d),
+            "co-wound difference mass {mass} != exact box-CSG oracle {oracle_d}"
+        );
+        assert!(
+            (mass - mesh).abs() <= 1e-6 * (1.0 + mass),
+            "all-planar mass {mass} must equal mesh {mesh} exactly (watertight)"
+        );
+
+        let oracle_i = v_cut;
+        let ri = boolean(&body, &tool, BoolOp::Intersection, 1e-7)
+            .expect("co-wound seed-715-structure intersection must assemble");
+        assert!(
+            ri.faults.is_empty(),
+            "unexpected faults (I): {:?}",
+            ri.faults
+        );
+        assert!(ri.body.validate().is_ok(), "result (I) not valid");
+        let mass_i = ri.body.mass_properties().unwrap().volume;
+        let mesh_i = ri.body.mesh_volume();
+        assert!(
+            (mass_i - oracle_i).abs() <= 1e-6 * (1.0 + oracle_i),
+            "co-wound intersection mass {mass_i} != exact oracle {oracle_i}"
+        );
+        assert!(
+            (mass_i - mesh_i).abs() <= 1e-6 * (1.0 + mass_i),
+            "all-planar intersection mass {mass_i} must equal mesh {mesh_i}"
+        );
+    }
+
     #[test]
     fn overlay_battery_is_decline_never_wrong() {
         // The DECLINE-never-WRONG floor for the unified overlay: a battery of
         // tools against the box+boss body that produce material-vertex and/or
         // hole-dip chains in BOTH boolean directions. EVERY assembled result is a
         // watertight all-planar body whose mass equals its mesh EXACTLY; anything
-        // the overlay cannot certify (e.g. a co-wound hole, a multi-dip chain) is
-        // a clean decline. The overlay must NEVER ship a body with mass != mesh,
-        // faults, or invalid topology, regardless of hole winding.
-        let body = box_with_boss();
+        // the overlay cannot certify (e.g. a multi-dip chain) is a clean decline.
+        // The overlay must NEVER ship a body with mass != mesh, faults, or
+        // invalid topology, regardless of hole winding (co- or counter-wound).
+        // Both hole windings: the conventional counter-wound body AND the same
+        // body with its +x-face hole reversed to CO-wound (the seed-715 storage,
+        // now canonicalized by the overlay). The floor must hold for both.
+        let counter = box_with_boss();
+        let cowound = {
+            let mut b = box_with_boss();
+            if let Some(face) = plus_x_holed_face(&b)
+                && let Some((cw, hole)) = first_hole_winding(&b, face)
+                && !cw
+            {
+                b.reverse_inner_loop(hole).expect("force co-wound");
+            }
+            b
+        };
+        assert!(cowound.validate().is_ok(), "co-wound battery body valid");
         let mut assembled = 0;
-        for &(ox, oy, oz, dx, dy, dz) in &[
-            (7., 1., 5., 7., 6., 7.), // U: outer edge -> material -> hole dip
-            (7., 5., 1., 7., 7., 6.), // U dipping the hole from the other side
-            (6., 2., 4., 8., 6., 4.), // material corner + hole dip
-            (7., 4., 4., 7., 9., 2.), // U through hole in z (the 73c case)
-            (7., 5., 5., 7., 7., 7.), // corner-clip (73c)
-            (8., 1., 1., 5., 8., 8.), // large overlap with material corners
-            (6., 6., 1., 8., 1., 9.), // thin slab grazing the hole
-        ] {
-            for op in [BoolOp::Difference, BoolOp::Intersection] {
-                let tool = block(Vec3::new(ox, oy, oz), Vec3::new(dx, dy, dz));
-                if let Ok(r) = boolean(&body, &tool, op, 1e-7) {
-                    if !r.faults.is_empty() {
-                        continue; // faulted partial -> a decline here
+        for body in [&counter, &cowound] {
+            for &(ox, oy, oz, dx, dy, dz) in &[
+                (7., 1., 5., 7., 6., 7.), // U: outer edge -> material -> hole dip
+                (7., 5., 1., 7., 7., 6.), // U dipping the hole from the other side
+                (6., 2., 4., 8., 6., 4.), // material corner + hole dip
+                (7., 4., 4., 7., 9., 2.), // U through hole in z (the 73c case)
+                (7., 5., 5., 7., 7., 7.), // corner-clip (73c)
+                (8., 1., 1., 5., 8., 8.), // large overlap with material corners
+                (6., 6., 1., 8., 1., 9.), // thin slab grazing the hole
+            ] {
+                for op in [BoolOp::Difference, BoolOp::Intersection] {
+                    let tool = block(Vec3::new(ox, oy, oz), Vec3::new(dx, dy, dz));
+                    if let Ok(r) = boolean(body, &tool, op, 1e-7) {
+                        if !r.faults.is_empty() {
+                            continue; // faulted partial -> a decline here
+                        }
+                        assert!(
+                            r.body.validate().is_ok(),
+                            "assembled body must be valid ({op:?} o=({ox},{oy},{oz}))"
+                        );
+                        let mass = r.body.mass_properties().unwrap().volume;
+                        let mesh = r.body.mesh_volume();
+                        assert!(
+                            (mass - mesh).abs() <= 1e-6 * (1.0 + mass.abs()),
+                            "WRONG: watertight-claimed body mass {mass} != mesh {mesh} \
+                             ({op:?} o=({ox},{oy},{oz}) d=({dx},{dy},{dz}))"
+                        );
+                        assembled += 1;
                     }
-                    assert!(
-                        r.body.validate().is_ok(),
-                        "assembled body must be valid ({op:?} o=({ox},{oy},{oz}))"
-                    );
-                    let mass = r.body.mass_properties().unwrap().volume;
-                    let mesh = r.body.mesh_volume();
-                    assert!(
-                        (mass - mesh).abs() <= 1e-6 * (1.0 + mass.abs()),
-                        "WRONG: watertight-claimed body mass {mass} != mesh {mesh} \
-                         ({op:?} o=({ox},{oy},{oz}) d=({dx},{dy},{dz}))"
-                    );
-                    assembled += 1;
                 }
             }
         }
