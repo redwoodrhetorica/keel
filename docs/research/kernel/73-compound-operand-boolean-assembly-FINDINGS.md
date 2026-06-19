@@ -365,3 +365,118 @@ Verified: full suite 553 passed / 0 failed; `cargo fmt --all --check` exit 0;
   fault on a `mass == tess` body whose `mesh` disagreed unmasked a defective body),
   which deliberately kept BOTH tessellation references. This finding completes the
   symmetry and proves the dual reference is load-bearing in both directions.
+
+---
+
+## 10. ADDENDUM (instrumented, GWN witness): seed 719 is NOT a mass bug -- the mesh OVER-reads a malformed body, the analytic mass is correct. The watertight `mass != mesh` slice is a genuine MIX, not uniformly dossier-71.
+
+Section 3 (and section 6/7) attributed seed 11400715918834826719 to the
+dossier-71 green-slab mass-integration class ("watertight, `tess == mesh`,
+`mass` off 18% ... the analytic `mass_properties` mis-integrates a curved trimmed
+face"). A follow-up round instrumented that body with the dossier-71 method (a
+per-face flux witness PLUS an INDEPENDENT witness) and **refutes that
+attribution**. The 18% gap is the MESH over-reading a geometrically malformed
+body; the analytic mass is correct.
+
+### 10.1 The independent witness that settles it
+
+The premise "tess == mesh == 6647 agree, so the mesh is the truth and the
+analytic mass (5480) under-reads" has a hidden flaw: `tessellated_volume`
+(`winding.rs`) and `mesh_volume` (`interrogate.rs`) are the SAME signed-tetra
+divergence sum over the SAME `tessellate_face` triangles, so their agreement is
+not two independent measurements -- it is one measurement reported twice. The
+analytic mass is a DIFFERENT integrator (a per-face boundary x-flux), so the
+real question is which of the two integrators is right, and that needs a THIRD,
+independent integrator. The generalized winding number is exactly that: it sums
+signed solid angles (Van Oosterom-Strackee, `winding.rs::gwn_over`), depending on
+NO divergence/flux reduction. A Monte-Carlo GWN-membership volume over the
+assembled body's AABB (400k samples) reads:
+
+```
+GWN_WITNESS  analytic_mass 5480.68   gwn_vol 5474.17   (NOT 6647.56)
+```
+
+The GWN volume matches the ANALYTIC mass to 0.12%, not the mesh. Three further
+instrumented facts agree, each independently decisive:
+
+1. **Per-face flux self-consistency.** Each of the three cylinder lateral bands
+   the body carries (axial `v` bands of a full-`2*pi` cylinder, radius 8.502,
+   z in [-12.07, 12.07]) has an analytic flux that equals its OWN tessellated
+   x-flux to < 0.2% (band dv 3045.66 vs face-local tess flux 3040.77; 1618.56 vs
+   1615.96; 816.46 vs 815.15). The green-slab / iso-rectangle integrator reads
+   every band CORRECTLY. There is no under-integrated face.
+
+2. **GWN is ~0 inside the box protrusion.** The `extrudeU` tool is a slab that
+   crosses the cylinder and protrudes far in +y (to y = 22.58, well past the
+   cylinder's y = 8.5 rim). Probing GWN at points inside that protrusion
+   (`(0, 15, 0)`, `(0, 20, 0)`) gives `-0.0003` and `-0.0002` -- the body encloses
+   NO solid there. The protrusion's planar walls are a dangling open sheet.
+
+3. **Nine radial-1 edges.** The protrusion's walls (faces 5..8) are bounded by
+   NINE edges with `radial == 1` (a single incident face) -- the topological
+   signature of an open shell. The body is genuinely NON-watertight; the gate's
+   `mesh_open_ratio` reading 0.00 is a coincidental net-area-vector cancellation
+   (the tube-like sheet's opposite walls have near-cancelling area vectors), a
+   FALSE NEGATIVE of the `open_ratio <= 5e-2` watertightness net.
+
+So the analytic mass (5480) integrates the only genuinely-enclosed region (the
+closed cylinder, `pi * 8.502^2 * 24.135 = 5481`), the GWN confirms it (5474),
+and the signed-tetra `mesh_volume` (6647) over-reads because the dangling sheet's
+triangles contribute spurious tetra volume that GWN correctly ignores. This is
+the SAME shape as dossier 71's OWN resolution (`tests/post_fillet_mass.rs`): the
+integrator was correct and the SURGERY handed it a non-watertight body. Here the
+ASSEMBLER (boolean.rs, the union of a crossing slab into a cylinder) handed the
+integrator a non-watertight body. **It is NOT a `massprops` integration bug.**
+Forcing the analytic mass up to 6647 would report a WRONG volume for a WRONG body
+and break DECLINE-never-WRONG. The gate's decline is correct.
+
+### 10.2 The slice is a genuine MIX (refines section 4.1's 36%)
+
+A population census (`KEEL_GWN_CENSUS`, ~1180 watertight `mass != mesh` events
+over a 500-project soak) compared, per event, whether the independent GWN tracks
+the ANALYTIC mass (=> mesh over-reads, NOT a mass bug, seed-719-like) or the MESH
+(=> analytic genuinely mis-integrates, the real dossier-71 class). It splits
+roughly evenly, and the genuine-mis-integration cases run in BOTH directions,
+GWN-confirmed (e.g. analytic 985.7 vs mesh/gwn ~1438, a 31% UNDER; analytic 816.8
+vs mesh/gwn ~223, a 266% OVER). So the section-4.1 "36% watertight `mass != mesh`
+= dossier-71 green-slab" bucket is really two classes:
+- a large seed-719-like sub-class where the body is malformed (open sheet that
+  passes the `open_ratio` net) and the MESH over-reads -- an ASSEMBLER /
+  watertightness-net frontier, NOT massprops;
+- a genuine, heterogeneous green-slab over/under-integration remainder (the
+  dossier-71 target proper), which is NOT a single tractable fix -- the cases span
+  many distinct trimmed-face configurations and both error directions.
+
+### 10.3 Consequence for the #73 follow-up priority
+
+Section 7 ranked "the dossier-71 green-slab mass integration (36%)" as the single
+biggest recoverable slice, to be fixed in `massprops.rs` with "NO assembler change
+needed." This addendum corrects that: a large part of that 36% is the
+assembler/watertightness-net frontier (seed 719 is the clean repro), where the
+fix is NOT in `massprops.rs` (the integrator is already exact and GWN-consistent
+on the cylinder bands -- see `tests/cyl_union_mass_witness.rs`). The genuine
+green-slab remainder is real but smaller and heterogeneous. Two concrete leads
+the GWN witness surfaces for the next round:
+1. **A watertightness net that catches radial-1 sheets.** The `open_ratio`
+   net-area-vector test false-negatived seed 719's open protrusion. A
+   radial-count check (every edge `radial >= 2`) or a GWN-based interior probe
+   would decline these malformed bodies on a CORRECT signal rather than letting
+   the `mass != mesh` gate decline them for the wrong stated reason. (Still a
+   DECLINE -- the body IS wrong -- but attributed to the assembler, where the
+   real fix lives.) `boolean.rs` / watertightness territory, not massprops.
+2. **GWN as the gate's independent correctness witness** (section 7 item 3): the
+   Monte-Carlo GWN volume IS the WRONG-safe witness the gate lacks. It already
+   discriminates the seed-719 malformed class (GWN tracks analytic) from a genuine
+   integrator error (GWN tracks mesh); a (faster, e.g. importance-sampled or
+   deterministic-quadrature) GWN volume could let the gate ACCEPT a watertight
+   `mass == gwn` body even when the chord-mesh disagrees, and DECLINE a malformed
+   one -- closing the dossier-73 tractability gap that a pure `mass == mesh`
+   relaxation could not (it admitted WRONG = 1).
+
+Reproduce: `KEEL_REPRO=11400715918834826719 KEEL_BOOL_DEBUG=1` (the gate values),
+plus the env-gated witnesses used here (a per-face flux witness and a Monte-Carlo
+GWN-membership volume; reverted after the attribution, the dossier-71 method).
+Regression lock: `crates/keel-topo/tests/cyl_union_mass_witness.rs` asserts the
+curved-band integrator is exact and GWN-consistent on the multi-band cylinder
+seed 719 exercises (a tube and a stepped shaft), the positive invariant behind
+this finding.
