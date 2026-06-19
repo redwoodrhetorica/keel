@@ -430,6 +430,12 @@ impl Body {
         {
             nf.surface = Some(surf);
         }
+        // A blended edge whose END cap is a MULTIPLY-CONNECTED face (a top/side
+        // face carrying a drilled bore or window) splits here along the end
+        // arc; the bore must follow the child that contains it, not stay
+        // stranded on `face_old` (the corner sliver) and migrate into the blend
+        // via the later kef. See `redistribute_inner_loops`.
+        self.redistribute_inner_loops(split.face_old, split.face_new);
         self.attach_edge_curve(split.edge, arc, true);
         Ok(split.edge)
     }
@@ -491,6 +497,11 @@ impl Body {
         {
             nf.surface = Some(surf);
         }
+        // INNER-LOOP redistribution (multiply-connected support): see
+        // `redistribute_inner_loops`. The spring-line split divides only the
+        // support's OUTER loop; its inner-hole loops must follow the child that
+        // geometrically contains them, not stay stranded on `face_old`.
+        self.redistribute_inner_loops(split.face_old, split.face_new);
         let (strip, kept) = if self.face_has_edge(split.face_new, sharp) {
             (split.face_new, split.face_old)
         } else {
@@ -498,6 +509,133 @@ impl Body {
         };
         self.attach_edge_curve(split.edge, Curve3::Line(*spring), true);
         Ok((split.edge, strip, kept, sva.vertex, svb.vertex))
+    }
+
+    /// Reassign each INNER (hole) loop of a just-split face to whichever child
+    /// (`face_old`, `face_new`) geometrically CONTAINS it. `split_face`
+    /// (`mef_impl`) only divides the OUTER loop and leaves every inner loop on
+    /// `face_old`; when a fillet/chamfer splits a MULTIPLY-CONNECTED support
+    /// (a face carrying a drilled bore or a window), a hole stranded on the
+    /// wrong child (the thin spring strip, or the corner cap sliver) is then
+    /// pulled into the blend by the later `kef`. The blend face then owns loops
+    /// that lie OFF its surface, the mesh goes non-watertight, and the analytic
+    /// `mass_properties` (a boundary x-flux integral, exact only on a CLOSED
+    /// shell) over-reads grossly (realsoak seed 11400715918834829014: a tiny
+    /// R=0.397 blend cylinder inherited the R=3.68 support's bore + a window,
+    /// analytic 8405 vs the true ~6170). Containment is tested in the support
+    /// surface's (u, v) plane by an even-odd ray cast of the hole's centroid
+    /// against each child's outer-loop polygon (periodic u unwrapped about the
+    /// test point), so it is correct for planar AND cylindrical supports and a
+    /// no-op for a simply-connected face (the common fillet).
+    fn redistribute_inner_loops(
+        &mut self,
+        face_old: crate::entity::FaceKey,
+        face_new: crate::entity::FaceKey,
+    ) {
+        // Collect inner loops currently on EITHER child (mef_impl leaves them
+        // all on face_old, but be robust to either placement).
+        let mut inner: Vec<crate::entity::LoopKey> = Vec::new();
+        for fk in [face_old, face_new] {
+            if let Some(f) = self.faces.get(fk) {
+                inner.extend(f.loops.iter().skip(1).copied());
+            }
+        }
+        if inner.is_empty() {
+            return;
+        }
+        let surf = match self.faces.get(face_old).and_then(|f| f.surface) {
+            Some((sk, _)) => match self.surfaces.get(sk) {
+                Some(SurfaceGeom::Analytic(s)) => s.clone(),
+                _ => return,
+            },
+            None => return,
+        };
+        // Outer-loop (u, v) polygons of each child.
+        let outer_uv = |me: &Self, fk: crate::entity::FaceKey| -> Vec<(f64, f64)> {
+            let Some(lk) = me.faces.get(fk).and_then(|f| f.loops.first().copied()) else {
+                return Vec::new();
+            };
+            me.loop_polygon(lk)
+                .into_iter()
+                .filter_map(|p| surf.project(p).ok().map(|pr| (pr.u, pr.v)))
+                .collect()
+        };
+        let poly_old = outer_uv(self, face_old);
+        let poly_new = outer_uv(self, face_new);
+        let tau = core::f64::consts::TAU;
+        // Even-odd containment with periodic-u unwrap about the test point.
+        let inside = |poly: &[(f64, f64)], (pu, pv): (f64, f64)| -> bool {
+            if poly.len() < 3 {
+                return false;
+            }
+            let adj = |u: f64| -> f64 {
+                let mut d = u - pu;
+                while d > tau * 0.5 {
+                    d -= tau;
+                }
+                while d < -tau * 0.5 {
+                    d += tau;
+                }
+                pu + d
+            };
+            let mut c = false;
+            let n = poly.len();
+            let mut j = n - 1;
+            for i in 0..n {
+                let (ui, vi) = (adj(poly[i].0), poly[i].1);
+                let (uj, vj) = (adj(poly[j].0), poly[j].1);
+                if ((vi > pv) != (vj > pv)) && (pu < (uj - ui) * (pv - vi) / (vj - vi) + ui) {
+                    c = !c;
+                }
+                j = i;
+            }
+            c
+        };
+        for lk in inner {
+            // Centroid of the hole loop in (u, v).
+            let pts: Vec<(f64, f64)> = self
+                .loop_polygon(lk)
+                .into_iter()
+                .filter_map(|p| surf.project(p).ok().map(|pr| (pr.u, pr.v)))
+                .collect();
+            if pts.is_empty() {
+                continue;
+            }
+            let cu = pts.iter().map(|p| p.0).sum::<f64>() / pts.len() as f64;
+            let cv = pts.iter().map(|p| p.1).sum::<f64>() / pts.len() as f64;
+            // Choose the child whose outer polygon contains the centroid; if
+            // ambiguous, prefer the larger (bulk) face.
+            let in_old = inside(&poly_old, (cu, cv));
+            let in_new = inside(&poly_new, (cu, cv));
+            let target = match (in_old, in_new) {
+                (true, false) => face_old,
+                (false, true) => face_new,
+                _ => {
+                    // Tie / neither (periodic-seam or sliver ambiguity): keep
+                    // the hole on the child with the longer outer loop.
+                    if poly_old.len() >= poly_new.len() {
+                        face_old
+                    } else {
+                        face_new
+                    }
+                }
+            };
+            let current = self.loops.get(lk).map(|l| l.face);
+            if current == Some(target) {
+                continue;
+            }
+            if let Some(src) = current
+                && let Some(f) = self.faces.get_mut(src)
+            {
+                f.loops.retain(|&x| x != lk);
+            }
+            if let Some(l) = self.loops.get_mut(lk) {
+                l.face = target;
+            }
+            if let Some(f) = self.faces.get_mut(target) {
+                f.loops.push(lk);
+            }
+        }
     }
 
     /// Imprint a closed ring `curve` onto `face`, dispatching to the
