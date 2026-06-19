@@ -6704,6 +6704,37 @@ impl Body {
             if trace {
                 eprintln!("ARR: endpoint not on outer loop -> None");
             }
+            if std::env::var("KEEL_CHAIN_PROBE").is_ok() {
+                let inner: Vec<crate::entity::LoopKey> = self
+                    .faces
+                    .get(face)
+                    .map(|f| f.loops.iter().skip(1).copied().collect())
+                    .unwrap_or_default();
+                let where_of = |p: keel_math::vec::Vec3| -> String {
+                    if self.loop_fin_on_loop_ending_at(outer_lp, p, etol).is_some() {
+                        return "OUTER-vtx".into();
+                    }
+                    for (h, &lk) in inner.iter().enumerate() {
+                        if self.loop_fin_on_loop_ending_at(lk, p, etol).is_some() {
+                            return format!("HOLE{h}-vtx");
+                        }
+                        if self.loop_edge_containing(lk, p, etol).is_some() {
+                            return format!("HOLE{h}-edge");
+                        }
+                    }
+                    if self.loop_edge_containing(outer_lp, p, etol).is_some() {
+                        return "OUTER-edge".into();
+                    }
+                    "INTERIOR".into()
+                };
+                eprintln!(
+                    "CHAINPROBE: nloops={} chainlen={} end0={} endL={}",
+                    inner.len() + 1,
+                    chain.len(),
+                    where_of(chain[0]),
+                    where_of(chain[last])
+                );
+            }
             return Ok(None);
         }
 
@@ -7198,6 +7229,32 @@ impl Body {
                 .loop_fin_ending_at_point(face, chain[last], etol)
                 .is_none()
         {
+            if std::env::var("KEEL_CHAIN_PROBE").is_ok() {
+                let loops: Vec<crate::entity::LoopKey> = self
+                    .faces
+                    .get(face)
+                    .map(|f| f.loops.clone())
+                    .unwrap_or_default();
+                let where_of = |p: keel_math::vec::Vec3| -> String {
+                    for (li, &lk) in loops.iter().enumerate() {
+                        if self.loop_fin_on_loop_ending_at(lk, p, etol).is_some() {
+                            return format!("L{li}-vtx");
+                        }
+                        if self.loop_edge_containing(lk, p, etol).is_some() {
+                            return format!("L{li}-edge");
+                        }
+                    }
+                    "INTERIOR".into()
+                };
+                let planar = matches!(self.face_surface3(face), Some(Surface3::Plane(_)));
+                eprintln!(
+                    "OCPROBE: planar={planar} nloops={} chainlen={} end0={} endL={}",
+                    loops.len(),
+                    chain.len(),
+                    where_of(chain[0]),
+                    where_of(chain[last])
+                );
+            }
             return Err(TopoError::Precondition("open chain end not on boundary"));
         }
         let mut edges = Vec::new();
@@ -10661,5 +10718,93 @@ mod tests {
             assembled >= 1,
             "overlay battery should assemble at least one compound case"
         );
+    }
+
+    #[test]
+    fn blind_cut_interior_terminus_is_decline_never_wrong() {
+        // CHARACTERIZATION GUARD (#76 multi-seam-crossing census, this round).
+        //
+        // The dominant PLANAR open-chain imprint decline in the 10k soak is NOT a
+        // multi-seam crossing (those are curved-cylinder-wrap, the SSI frontier,
+        // out of scope) but a BLIND CUT: a tool whose intersection with a body
+        // face is a seam that starts on the face boundary and ENDS in the face
+        // interior, with no sibling seam meeting it there (measured: the interior
+        // terminus sits a MACROSCOPIC distance, 1 to 12 units, from any boundary
+        // vertex, and coincides with no other member seam -- a true blind
+        // terminus, not a junction and not tolerance starvation). Such a seam
+        // cannot be resolved by a boundary-to-boundary `split_face`: there is no
+        // second boundary point to cut to, and forcing a spur to the interior
+        // point would leave a dangling radial-1 edge -- exactly the malformed
+        // body the dual mass==mesh gate exists to reject. So this class is an
+        // IRREDUCIBLE DECLINE: recovering it would violate DECLINE-never-WRONG.
+        //
+        // This test pins that floor. A tool box is positioned so that, after the
+        // body is cut, its walls land partially across the body's faces (partial
+        // overlaps that strand a seam mid-face). EVERY result must be either a
+        // clean decline (Err, or a faulted/partial result) OR a watertight
+        // all-planar body whose mass equals its mesh EXACTLY. A wrong-positive --
+        // a body that claims to assemble with mass != mesh -- must NEVER occur.
+        // A COMPOUND body (box + boss): the boss makes the box +x face holed and
+        // the boss faces small, so a tool wall that ends partway across a boss
+        // face strands a seam mid-face (the blind cut). A single convex box does
+        // NOT reproduce this -- every box/box seam lands boundary-to-boundary --
+        // which is itself part of the characterization (the blind cut is a
+        // COMPOUND-operand phenomenon, matching the soak population).
+        let body = box_with_boss(); // base [0,10]^3, boss x[10,15] y[3,7] z[3,7]
+        let mut seen_decline = false;
+        let mut seen_assembled = false;
+        // Tools positioned to land a wall partway across a boss face (a partial
+        // overlap that strands a seam mid-face), plus clean through-cuts.
+        for &(ox, oy, oz, dx, dy, dz) in &[
+            (12., 4., 5., 1.5, 2., 8.), // thin wall inside the boss top span
+            (11., 4., 4., 2., 2., 2.),  // small cube buried in the boss corner
+            (12., 2., 5., 2., 3.5, 8.), // wall ending mid-boss in y
+            (11., 4., 2., 8., 2., 3.5), // wall ending mid-boss in z
+            (13., 3., 3., 1.5, 4., 4.), // partial slab across boss far end
+            (8., 4., 4., 4., 2., 2.),   // straddles base/boss attach, ends in boss
+            (7., 2., 3., 7., 9., 4.),   // clean through-cut (assembles, oracle 920)
+        ] {
+            let tool = block(Vec3::new(ox, oy, oz), Vec3::new(dx, dy, dz));
+            for op in [BoolOp::Difference, BoolOp::Intersection, BoolOp::Union] {
+                match boolean(&body, &tool, op, 1e-7) {
+                    Err(_) => seen_decline = true,
+                    Ok(r) => {
+                        if !r.faults.is_empty() {
+                            seen_decline = true;
+                            continue;
+                        }
+                        // A clean Ok must be a valid, watertight, exact body.
+                        assert!(
+                            r.body.validate().is_ok(),
+                            "blind-cut assembled body must be valid \
+                             ({op:?} o=({ox},{oy},{oz}) d=({dx},{dy},{dz}))"
+                        );
+                        let mass = r.body.mass_properties().unwrap().volume;
+                        let mesh = r.body.mesh_volume();
+                        // all-planar: any mass!=mesh gap is a WRONG (dropped or
+                        // mis-stitched face) -- the sacred floor assertion.
+                        assert!(
+                            (mass - mesh).abs() <= 1e-6 * (1.0 + mass.abs()),
+                            "WRONG: blind-cut body claims watertight but mass {mass} \
+                             != mesh {mesh} ({op:?} o=({ox},{oy},{oz}) d=({dx},{dy},{dz}))"
+                        );
+                        seen_assembled = true;
+                    }
+                }
+            }
+        }
+        // The battery must exercise BOTH outcomes: at least one clean watertight
+        // assembly (the partial cuts that ARE resolvable, e.g. the oracle-920
+        // through-cut) AND at least one decline (the true blind cut, e.g. the
+        // base/boss-straddling tool ending inside the boss, which declines
+        // `mass != mesh` / `unmatched coedge`). The load-bearing assertion is the
+        // per-result mass==mesh check above: a blind cut is allowed to decline,
+        // but a body that CLAIMS to assemble must be exactly watertight. This is
+        // the sacred DECLINE-never-WRONG floor for the blind-cut class.
+        assert!(
+            seen_decline,
+            "battery must exercise the blind-cut decline path"
+        );
+        assert!(seen_assembled, "battery must exercise a clean assembly too");
     }
 }

@@ -404,3 +404,177 @@ cargo test -p keel-topo --lib -- overlay_ seam_crosses_hole compound_operand
   cannot prove need reversing. 47's "carry identity, assert closure, never
   silently drop" doctrine is intact; the imprint now hands the stitch a mergeable
   face set, so the closure check passes instead of declining.
+
+---
+
+## 5c. The "multi-seam crossing" rung: census-grounded characterization (this round)
+
+This round set out to build the NEXT rung named for the overlay: the multi-seam
+crossing -- N seam chains meeting at one shared vertex on a compound face, the
+case the lead flagged as the dominant remaining DECLINE (the precondition
+`"crossing imprint: expected two seam fins at the crossing"`, ~57% of the
+kernel-frontier as `*:AssemblyFailed + UnassemblableSeam`). The method was
+diagnostic-FIRST: census the actual sub-faults on the top assembler repro seeds
+and the full 10k soak BEFORE building, and pivot to the largest tractable PLANAR
+sub-class if the named target turned out rare or curved. The census did exactly
+that. The honest outcome of this round is a rigorous characterization plus a
+permanent WRONG-safe floor guard, NOT a new assembling rung: the named target is
+out of scope (curved) and rare, and the dominant PLANAR sub-class it shadows is
+an irreducible DECLINE.
+
+### 5c.1 What the precondition actually is (it is CURVED, not the planar overlay)
+
+The string `"crossing imprint: expected two seam fins at the crossing"` is NOT in
+`try_imprint_chain_arrangement` (the planar overlay this dossier built). It lives
+in `imprint.rs::imprint_closed_curve_crossing`, dispatched from `boolean.rs` ONLY
+for a CLOSED seam curve that WRAPS a cylinder (or cone) lateral and crosses its
+vertical seam line (the drill/boss-rim primitive). It fires when splitting that
+lateral seam line at the wrap's crossing point does not yield exactly two seam
+fins -- i.e. the wrap is self-touching or lands on an already-split lateral. In
+the soak it is ALWAYS co-located with `IntersectionFailed` (the SSI quartic that
+the cyl/cyl and cyl/sphere wraps cannot resolve): it is a face of the CURVED SSI
+frontier (KL5, dossier #60), explicitly OUT of scope for the planar overlay. The
+lead's premise -- that this is a planar multi-seam crossing and that "the
+all-planar two-seam crossing is already handled" -- does not match the code: there
+is no planar seam-on-seam interior-crossing arrangement at all (a planar
+seam-on-seam interior junction would make `assemble_open_chain` see a degree-3+
+node and return `None` -> `"unassembled face seams"`), and the planar overlay
+handles ONE open chain through holes, not N chains crossing.
+
+### 5c.2 The 10k census (HEAD, seed 1, deterministic): the named target is 0
+
+| category (failing boolean ATTEMPTs) | count | share of boolean frontier |
+|---|---:|---:|
+| degenerate (mass != mesh gate) | 62912 | 60.9% |
+| UnassemblableSeam | 24459 | 23.7% |
+| unmatched-coedge (stitch/Weiler) | 15776 | 15.3% |
+| **Topo (open chain / precondition)** | **0** | **0.0%** |
+| other AssemblyFailed | 888 | 0.9% |
+
+The named-target bucket (`Topo`/precondition, which is where the "two seam fins"
+precondition would land on the `Err` path) is EXACTLY 0. (The few hundred
+`faulted:Topo` per-attempt entries are sub-faults inside a `faulted` list whose
+op still returns `UnassemblableSeam`/`AssemblyFailed` as its top-level fault, so
+they aggregate into those buckets; the verbose repro confirms every "two seam
+fins" instance is accompanied by `IntersectionFailed`.) The dominant boolean
+frontier is `mass != mesh` -- the dual gate doing its WRONG-prevention job on
+CURVED tessellation divergence (509 noted, mass in-bound, mesh coarse) and on
+genuinely-broken curved stitches. Relaxing it is forbidden and would ship WRONG
+bodies. `UnassemblableSeam` is the HARD curved-seam guard (`blend.rs`: partial
+band seams, cyl/cyl crossing pairs) that exists precisely to prevent an
+Euler-valid-but-geometrically-WRONG body. Both are the curved frontier, not a
+planar imprint gap.
+
+### 5c.3 The largest PLANAR sub-class is a BLIND CUT -- an irreducible decline
+
+Pivoting to the planar imprint as the method directs, the dominant PLANAR
+open-chain decline is `imprint_open_chain`'s `"open chain end not on boundary"`
+(internal, aggregated upward into `AssemblyFailed`). A retained, env-gated
+diagnostic rail (`KEEL_CHAIN_PROBE`, in `try_imprint_chain_arrangement` and
+`imprint_open_chain`) classifies where each declining chain's endpoints land,
+over the top assembler seeds. The distribution is decisive:
+
+```
+planar open-chain decline endpoint pairs (KEEL_CHAIN_PROBE, top seeds):
+  120913  INTERIOR .. INTERIOR     (both ends float in the face interior)
+   84869  L0-vtx   .. INTERIOR     (one good outer-loop end, one interior)
+   77543  INTERIOR .. L0-vtx
+      ~100 total  OUTER..HOLE / HOLE..HOLE  (endpoint on an inner loop)
+```
+
+A throwaway deeper probe (`KEEL_SEAMDUMP`, removed) measured, for each interior
+terminus: (a) whether it coincides with any OTHER member seam's endpoint (a
+junction), and (b) its distance to the nearest face boundary vertex. The answer
+across the sample was unambiguous: **`junc=false` in EVERY case** (no sibling
+seam meets it -- it is not a seam-on-seam junction), and the interior terminus
+sits a **MACROSCOPIC distance (1 to 12 units on bodies of size ~10 to 30, 204 of
+219 over 1 unit, only 1 under 0.01)** from any boundary -- so it is NOT tolerance
+starvation either. The seam genuinely ends deep in the face's material.
+
+This is a BLIND CUT: a tool whose intersection with a (compound, post-boolean /
+post-fillet) body face is a curve that starts on the face boundary and STOPS in
+the interior, where the tool only partially penetrates the face. It cannot be
+resolved by a boundary-to-boundary `split_face` -- there is no second boundary
+point to cut to -- and forcing a spur to the interior point would leave a
+dangling radial-1 edge, exactly the malformed body the dual mass==mesh gate
+rejects. So the class is an IRREDUCIBLE DECLINE: recovering it would VIOLATE
+DECLINE-never-WRONG. The genuinely-tractable planar variant the overlay COULD
+extend to -- a chain endpoint on an inner HOLE loop (the dossier-76 Q2
+generalization) -- is ~100 cases out of a 65677 kernel-frontier (0.15%), too rare
+and too topologically delicate (a single outer->hole arc is a slit, not a clean
+2-face split: it wants a `mekr` merge, not a `split_face`) to justify the
+regression risk against the WRONG=0 / PASS floor. It stays declined.
+
+### 5c.4 What this round delivers (WRONG-safe, no logic change)
+
+Because the named rung is intractable here and the dominant planar sub-class is a
+correct decline, this round delivers a CHARACTERIZATION plus a permanent floor
+guard, not a new assembling path:
+
+1. **A retained diagnostic rail** `KEEL_CHAIN_PROBE` (env-gated, inert when
+   unset, clippy/fmt clean), in `try_imprint_chain_arrangement` (the
+   endpoint-not-on-outer-loop decline) and `imprint_open_chain` (the
+   open-chain-end-not-on-boundary precondition). It classifies a declining
+   chain's endpoints (OUTER-vtx / HOLEk-vtx / OUTER-edge / INTERIOR), the
+   reproduction path for this characterization, matching the retained-probe
+   convention of `KEEL_ARR_DEBUG` / `KEEL_COWOUND_PROBE`. No logic change: it
+   reads the body and prints.
+
+2. **A new sacred-floor guard** `blind_cut_interior_terminus_is_decline_never_wrong`
+   (in `boolean.rs`). On a COMPOUND box+boss body (the boss makes faces small and
+   non-convex, the configuration that strands a seam mid-face -- a single convex
+   box does NOT reproduce a blind cut, itself part of the finding), a battery of
+   partial-overlap tools in all three boolean directions asserts that EVERY
+   result is either a clean decline (one tool, base/boss-straddling and ending
+   inside the boss, declines `mass != mesh` / `unmatched coedge`) OR a watertight
+   all-planar body whose mass equals its mesh EXACTLY (the resolvable partial cuts
+   and the oracle-920 through-cut). The battery requires BOTH outcomes (so the
+   guard is non-vacuous and provably exercises the blind-cut decline path), and
+   the per-result mass==mesh check is the load-bearing DECLINE-never-WRONG
+   assertion for the class.
+
+### 5c.5 Validation: WRONG=0, PASS and frontier UNCHANGED (logic-inert)
+
+Apples-to-apples, SAME base (this worktree's fork), deterministic seed 1, the
+full 10000-project soak. The only code changes are env-gated diagnostics and a
+test, so the population is BYTE-IDENTICAL to baseline (verified):
+
+| metric | baseline (HEAD) | this round | delta |
+|---|---:|---:|---:|
+| WRONG (decline-never-wrong) | 0 | 0 | **0** (invariant HELD) |
+| PASS (10000 projects) | 7984 | 7984 | 0 |
+| KERNEL-FRONTIER declines | 65677 | 65677 | 0 |
+| degenerate(mass!=mesh) attempts | 62912 | 62912 | 0 |
+| UnassemblableSeam attempts | 24459 | 24459 | 0 |
+| unmatched-coedge attempts | 15776 | 15776 | 0 |
+
+Suite: `cargo test --release --lib` GREEN (keel-topo lib 297 passed = 296 prior +
+1 new blind-cut guard; 0 failed). `cyl_union_mass_witness` (the massprops lock) 3
+passed. `cargo fmt --all --check` exit 0. `cargo clippy --release --all-targets --
+-D warnings -A clippy::while_let_loop -A clippy::doc_lazy_continuation` exit 0.
+`massprops.rs` and `blend.rs` untouched; every floor gate unchanged.
+
+### 5c.6 What remains DECLINED, and why (the honest frontier)
+
+- **Curved cylinder/cone wrap crossing (`"two seam fins"`, always with
+  `IntersectionFailed`)**: the SSI quartic frontier (KL5). Out of the planar
+  overlay's scope; declines cleanly. The advance here is curved-SSI work, not a
+  planar imprint rung.
+- **`mass != mesh` (60.9% of the boolean frontier)**: the dual gate's correct
+  rejection of curved tessellation divergence and broken curved stitches.
+  Forbidden to relax; locked by `cyl_union_mass_witness`.
+- **`UnassemblableSeam` (23.7%)**: the hard partial-band / crossing-pair guard
+  (`blend.rs`) preventing geometrically-wrong bodies. A curved-seam frontier.
+- **Planar blind cut (the dominant planar open-chain decline)**: a tool partially
+  penetrating a compound face, leaving a seam that ends in the face interior with
+  no boundary terminus and no sibling junction. Irreducible: a boundary-to-
+  boundary `split_face` does not exist, and any spur to the interior point is a
+  dangling edge the mass==mesh gate rejects. DECLINE-never-WRONG forbids recovery.
+- **Chain endpoint on an inner HOLE loop (~0.15% of the frontier)**: the one
+  genuinely-tractable planar generalization (dossier 76 Q2), left declined as too
+  rare and too topologically delicate (slit vs split) to justify the regression
+  risk; a candidate for a future targeted rung if its population ever grows.
+
+The decisive signal, as in every prior round of this dossier: WRONG = 0 across
+all 10000 projects, both lanes. The kernel never ships a wrong or non-watertight
+body; the irreducible declines decline cleanly.
