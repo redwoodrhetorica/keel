@@ -10,16 +10,22 @@
 //! planes, then rebuilds the incident straight edges. CURVED case:
 //! offsetting a cylindrical face changes its radius, recomputing the
 //! cap circles (cylinder ^ cap-plane) at the new radius and moving the
-//! seam. TAPER/DRAFT rotates the plane about a parting line. DELETE-FACE
-//! heals by merging a face into a coplanar neighbour (kef). Deferred:
-//! sphere/cone/torus tweak, and the extend-and-reintersect delete-heal
-//! (needs edge contraction the Euler op set lacks).
+//! seam. WHOLE-BODY offset (`offset_body_with`, the shell engine)
+//! generalizes this to mixed plane/cylinder/sphere/torus faces: each
+//! face offsets by its principal radius (or plane translation) and every
+//! 3-valent corner is re-solved as the Levenberg-Marquardt intersection
+//! of its three offset surfaces' implicits, so a filleted box shells.
+//! TAPER/DRAFT rotates the plane about a parting line. DELETE-FACE heals
+//! by merging a face into a coplanar neighbour (kef). Deferred: single-
+//! face sphere/cone/torus tweak, cone/NURBS whole-body offset, higher-
+//! valence corners, and the extend-and-reintersect delete-heal (needs
+//! edge contraction the Euler op set lacks).
 
 use crate::Body;
 use crate::body::TopoError;
 use crate::entity::{EdgeKey, FaceKey, FinKey, SurfaceGeom, VertexKey};
 use crate::lineage::Derivation;
-use keel_geom::curve::{Circle3, Curve3, Line3};
+use keel_geom::curve::{Circle3, Curve3, Ellipse3, Line3};
 use keel_geom::surface::{Cylinder3, Frame3, Plane3, Surface3};
 use keel_math::transform::Transform3;
 use keel_math::vec::Vec3;
@@ -32,6 +38,160 @@ fn three_plane_point(n0: Vec3, d0: f64, n1: Vec3, d1: f64, n2: Vec3, d2: f64) ->
         return None;
     }
     Some((n1.cross(n2) * d0 + n2.cross(n0) * d1 + n0.cross(n1) * d2) * (1.0 / det))
+}
+
+/// The signed-offset surface for a face's analytic surface, offset
+/// OUTWARD (along the outward normal) by `dist` (negative = inward).
+/// A plane translates along its normal; a CONVEX cylinder/sphere/torus
+/// (solid material on the concave side, `sense == true`) grows/shrinks
+/// its principal radius. Returns `None` for surface classes the offset
+/// does not model (cones, NURBS, and -- conservatively -- any radius
+/// that would collapse to <= 0), so the caller declines rather than
+/// guesses. This is the analytic engine behind whole-body shelling of
+/// boxes carrying cylindrical fillet faces (the extrude->fillet->shell
+/// workflow). Toroidal corner blends are modelled too (the minor tube
+/// radius offsets), enabling shells of bodies whose fillets meet in
+/// torus patches.
+fn offset_analytic_surface(s: &Surface3, sense: bool, dist: f64) -> Option<Surface3> {
+    // Outward-normal sign: for a plane the frame z is the +sense side;
+    // for a quadric the implicit's outward gradient points away from the
+    // axis/centre when `sense` is true (solid outside), so growing the
+    // radius moves the surface outward.
+    match s {
+        Surface3::Plane(pl) => {
+            let outward = if sense { pl.frame.z } else { pl.frame.z * -1.0 };
+            let mut np = pl.clone();
+            np.frame.origin = np.frame.origin + outward * dist;
+            Some(Surface3::Plane(np))
+        }
+        Surface3::Cylinder(c) => {
+            let nr = c.radius + if sense { dist } else { -dist };
+            if !(nr.is_finite() && nr > 1e-9) {
+                return None;
+            }
+            Some(Surface3::Cylinder(Cylinder3 {
+                frame: c.frame.clone(),
+                radius: nr,
+            }))
+        }
+        Surface3::Sphere(sp) => {
+            let nr = sp.radius + if sense { dist } else { -dist };
+            if !(nr.is_finite() && nr > 1e-9) {
+                return None;
+            }
+            Some(Surface3::Sphere(keel_geom::surface::Sphere3 {
+                frame: sp.frame.clone(),
+                radius: nr,
+            }))
+        }
+        Surface3::Torus(t) => {
+            // The tube (minor) radius offsets; the ring (major) radius is
+            // the fillet spine and stays put. Convex tube grows outward.
+            let nr = t.minor + if sense { dist } else { -dist };
+            if !(nr.is_finite() && nr > 1e-9 && nr < t.major) {
+                return None;
+            }
+            Some(Surface3::Torus(keel_geom::surface::Torus3 {
+                frame: t.frame.clone(),
+                major: t.major,
+                minor: nr,
+            }))
+        }
+        Surface3::Cone(_) => None,
+    }
+}
+
+/// Solve for the single point lying on all three analytic surfaces,
+/// from `init` (the pre-offset corner -- always a close seed because the
+/// offset is small relative to the feature size). Each surface
+/// contributes its signed `implicit` as a residual and its
+/// `implicit_gradient` as a Jacobian row.
+///
+/// Levenberg-Marquardt on the normal equations `(J^T J + lambda I) dx =
+/// -J^T f`: damping makes the step well-defined even where the plain
+/// Jacobian is RANK-DEFICIENT, which happens at a perfectly valid corner
+/// whose seed sits on a mutual tangency (e.g. the inner top corner of a
+/// filleted box, where the top plane and both fillet cylinders share a
+/// vertical normal at the pre-offset vertex). The damping is annealed as
+/// the residual falls, so near the root the step is full Gauss-Newton and
+/// convergence stays quadratic. Returns `None` only if it fails to drive
+/// the residual to zero (no transversal meet) -- never a guessed point
+/// (the DECLINE-never-WRONG contract; the boolean difference's mass==mesh
+/// post-check is the backstop).
+fn solve_three_surfaces(s0: &Surface3, s1: &Surface3, s2: &Surface3, init: Vec3) -> Option<Vec3> {
+    let resid = |p: Vec3| Vec3::new(s0.implicit(p), s1.implicit(p), s2.implicit(p));
+    // Quadric implicits are in SQUARED units, so |f| scales as size^2;
+    // normalize the convergence/step gates by the working size.
+    let scale = 1.0 + init.norm();
+    let mut p = init;
+    let mut lambda = 1e-3;
+    let mut prev_cost = resid(p).norm_sq();
+    for _ in 0..200 {
+        let f = resid(p);
+        let g0 = s0.implicit_gradient(p);
+        let g1 = s1.implicit_gradient(p);
+        let g2 = s2.implicit_gradient(p);
+        // Normal equations: A = J^T J (+ lambda I), rhs b = -J^T f, where
+        // J rows are g0,g1,g2. J^T J = sum g_i (x) g_i (outer products).
+        let jtf = g0 * f.x + g1 * f.y + g2 * f.z; // J^T f
+        // Build symmetric 3x3 A = sum g_i g_i^T + lambda I, as rows.
+        let outer = |g: Vec3| {
+            [
+                Vec3::new(g.x * g.x, g.x * g.y, g.x * g.z),
+                Vec3::new(g.y * g.x, g.y * g.y, g.y * g.z),
+                Vec3::new(g.z * g.x, g.z * g.y, g.z * g.z),
+            ]
+        };
+        let (a0, a1, a2) = (outer(g0), outer(g1), outer(g2));
+        let mut row0 = a0[0] + a1[0] + a2[0];
+        let mut row1 = a0[1] + a1[1] + a2[1];
+        let mut row2 = a0[2] + a1[2] + a2[2];
+        row0.x += lambda;
+        row1.y += lambda;
+        row2.z += lambda;
+        // Solve A dx = -jtf by Cramer's rule.
+        let det = row0.dot(row1.cross(row2));
+        if det.abs() < 1e-30 {
+            lambda *= 10.0;
+            continue;
+        }
+        let rhs = jtf * -1.0;
+        let inv = 1.0 / det;
+        let dx = Vec3::new(
+            rhs.dot(row1.cross(row2)) * inv,
+            row0.dot(rhs.cross(row2)) * inv,
+            row0.dot(row1.cross(rhs)) * inv,
+        );
+        if !dx.is_finite() {
+            return None;
+        }
+        let p_new = p + dx;
+        let cost = resid(p_new).norm_sq();
+        if cost < prev_cost {
+            // Accept; relax damping toward Gauss-Newton.
+            p = p_new;
+            prev_cost = cost;
+            lambda = (lambda * 0.5).max(1e-12);
+            if dx.norm() <= 1e-13 * scale {
+                break;
+            }
+        } else {
+            // Reject; tighten damping and retry from the same point.
+            lambda *= 4.0;
+            if lambda > 1e12 {
+                break;
+            }
+        }
+    }
+    let res = {
+        let f = resid(p);
+        f.x.abs().max(f.y.abs()).max(f.z.abs())
+    };
+    if res <= 1e-7 * scale * scale && p.is_finite() {
+        Some(p)
+    } else {
+        None
+    }
 }
 
 impl Body {
@@ -509,32 +669,60 @@ impl Body {
         self.offset_body_with(|_| distance)
     }
 
-    /// Per-face offset (item 43, multi-thickness): each face moves along its
-    /// outward normal by `dist(face)` instead of a single global distance.
-    /// The convex-planar / 3-valent-corner reintersect of `offset_body`; the
-    /// three-plane vertex meet handles faces offset by different amounts
-    /// (their offset planes simply meet at a new corner). Negative shrinks.
+    /// Per-face offset (item 43, multi-thickness; item 45 curved-shell
+    /// generalization): each face's analytic surface offsets along its
+    /// outward normal by `dist(face)` instead of a single global distance,
+    /// then every 3-valent corner is re-solved as the intersection of its
+    /// three offset surfaces and every incident edge curve is rebuilt on
+    /// the offset pair.
+    ///
+    /// PLANES offset by translation, CYLINDERS / SPHERES / TORI by their
+    /// principal radius (the curved-fillet rung that lets a filleted box be
+    /// shelled: the extrude->fillet->`hollow` workflow). The corner solve is
+    /// a damped Newton on the three surfaces' signed implicits (the planar
+    /// three-plane meet is its linear special case), so plane/plane/plane,
+    /// plane/plane/cylinder and plane/cylinder/cylinder corners are all
+    /// handled uniformly. Edge carriers are recomputed on the offset
+    /// surfaces (lines through the moved endpoints; cap circles at the new
+    /// radius; bicylinder ellipses scaled by the radius ratio), preserving
+    /// each arc's recorded `arc_sweep` (orientation/angles are invariant
+    /// under a concentric radial scale).
+    ///
+    /// DECLINE-never-WRONG: a face whose surface class the offset does not
+    /// model (cone, NURBS, or a radius that would collapse), a non-3-valent
+    /// corner, or a corner whose three offset surfaces do not meet
+    /// transversally all return `Err` -- and the caller (`hollow`) additionally
+    /// gates on the boolean difference's mass==mesh post-condition.
     pub(crate) fn offset_body_with(
         &mut self,
         dist: impl Fn(FaceKey) -> f64,
     ) -> Result<(), TopoError> {
         use std::collections::HashMap;
-        // New offset plane (+ sense) per face.
-        let mut planes: HashMap<FaceKey, (Plane3, bool)> = HashMap::new();
+        // New offset analytic surface (+ sense) per face.
+        let mut surfs: HashMap<FaceKey, (Surface3, bool)> = HashMap::new();
         for f in self.face_keys() {
-            let (plane, sense) = self
-                .face_plane(f)
-                .ok_or(TopoError::Precondition("offset_body: non-planar face"))?;
-            let outward = if sense {
-                plane.frame.z
-            } else {
-                plane.frame.z * -1.0
+            let (s, sense) = match self.face_surface_geom(f) {
+                Some(SurfaceGeom::Analytic(s)) => {
+                    let sense = self
+                        .faces
+                        .get(f)
+                        .and_then(|x| x.surface)
+                        .map(|(_, s)| s)
+                        .unwrap_or(true);
+                    (s, sense)
+                }
+                _ => {
+                    return Err(TopoError::Precondition(
+                        "offset_body: non-analytic face",
+                    ));
+                }
             };
-            let mut np = plane;
-            np.frame.origin = np.frame.origin + outward * dist(f);
-            planes.insert(f, (np, sense));
+            let ns = offset_analytic_surface(&s, sense, dist(f))
+                .ok_or(TopoError::Precondition("offset_body: unsupported face surface"))?;
+            surfs.insert(f, (ns, sense));
         }
-        // Recompute every vertex as the meet of its three incident planes.
+        // Re-solve every vertex as the meet of its three incident offset
+        // surfaces (Newton seeded at the pre-offset corner).
         let vkeys: Vec<VertexKey> = self.vertices.iter().map(|(k, _)| k).collect();
         let mut moves: Vec<(VertexKey, Vec3)> = Vec::new();
         for v in vkeys {
@@ -549,15 +737,14 @@ impl Body {
             if faces.len() != 3 {
                 return Err(TopoError::Precondition("offset_body: non-simple vertex"));
             }
-            let pl: Vec<(Vec3, f64)> = faces
-                .iter()
-                .map(|f| {
-                    let (p, _) = &planes[f];
-                    (p.frame.z, p.frame.z.dot(p.frame.origin))
-                })
-                .collect();
-            let p = three_plane_point(pl[0].0, pl[0].1, pl[1].0, pl[1].1, pl[2].0, pl[2].1)
-                .ok_or(TopoError::Precondition("offset_body: degenerate corner"))?;
+            let init = self.vertices.get(v).ok_or(TopoError::StaleKey)?.point;
+            let p = solve_three_surfaces(
+                &surfs[&faces[0]].0,
+                &surfs[&faces[1]].0,
+                &surfs[&faces[2]].0,
+                init,
+            )
+            .ok_or(TopoError::Precondition("offset_body: degenerate corner"))?;
             moves.push((v, p));
         }
         for &(v, p) in &moves {
@@ -565,21 +752,98 @@ impl Body {
                 vx.point = p;
             }
         }
-        // Rebuild every edge as the line through its updated endpoints.
+        // Rebuild every edge carrier on its (now offset) incident surfaces.
         let ekeys: Vec<EdgeKey> = self.edges.iter().map(|(k, _)| k).collect();
         for e in ekeys {
-            let (v0, v1) = self.edges.get(e).ok_or(TopoError::StaleKey)?.bounds;
-            let p0 = self.vertices.get(v0).ok_or(TopoError::StaleKey)?.point;
-            let p1 = self.vertices.get(v1).ok_or(TopoError::StaleKey)?.point;
-            if let Ok(line) = Line3::new(p0, p1 - p0) {
-                self.attach_edge_curve(e, Curve3::Line(line), true);
-            }
+            self.offset_edge_curve(e, &surfs);
         }
         // Set each face's offset surface.
-        for (f, (np, sense)) in planes {
-            self.attach_face_surface(f, SurfaceGeom::Analytic(Surface3::Plane(np)), sense);
+        for (f, (ns, sense)) in surfs {
+            self.attach_face_surface(f, SurfaceGeom::Analytic(ns), sense);
         }
         Ok(())
+    }
+
+    /// Recompute one edge's carrier curve after its incident faces have
+    /// been offset (the per-edge half of `offset_body_with`). The new
+    /// curve passes through the edge's (already moved) endpoints and lies
+    /// on the offset surfaces, while preserving the curve's parametric
+    /// orientation so the recorded `arc_sweep` stays valid:
+    ///   * straight edge -> the line through the two endpoints;
+    ///   * cap circle (cylinder ^ perpendicular plane) -> a circle of the
+    ///     cylinder's NEW radius, centred on the axis at the endpoints'
+    ///     height, keeping the old circle's x/y frame;
+    ///   * bicylinder ellipse (two cylinders) -> the old ellipse with its
+    ///     semi-axes scaled by the radius ratio and re-centred through the
+    ///     moved endpoint, keeping the old ellipse's x/y frame.
+    ///
+    /// Unrecognized combinations fall back to a straight carrier (the
+    /// boolean's mass==mesh post-check is the WRONG-net).
+    fn offset_edge_curve(
+        &mut self,
+        e: EdgeKey,
+        surfs: &std::collections::HashMap<FaceKey, (Surface3, bool)>,
+    ) {
+        let Some(ed) = self.edges.get(e) else { return };
+        let (v0, v1) = ed.bounds;
+        let (Some(p0), Some(p1)) = (
+            self.vertices.get(v0).map(|x| x.point),
+            self.vertices.get(v1).map(|x| x.point),
+        ) else {
+            return;
+        };
+        let old_curve = ed.curve.and_then(|(ck, _)| self.curves.get(ck).cloned());
+        // The incident faces' NEW cylinders (if any), for radius/axis.
+        let mut cyls: Vec<Cylinder3> = Vec::new();
+        for f in self.faces_around_edge(e) {
+            if let Some((Surface3::Cylinder(c), _)) = surfs.get(&f) {
+                cyls.push(c.clone());
+            }
+        }
+        match old_curve {
+            Some(Curve3::Circle(oc)) if !cyls.is_empty() => {
+                // Cap circle: keep frame, take the incident cylinder's new
+                // radius, centre on the axis at the endpoint height.
+                let c = &cyls[0];
+                let r = c.radius;
+                let t = (p0 - c.frame.origin).dot(c.frame.z);
+                let center = c.frame.origin + c.frame.z * t;
+                if let Ok(nc) = Circle3::new(center, oc.x_axis, oc.y_axis, r) {
+                    self.attach_edge_curve(e, Curve3::Circle(nc), true);
+                    return;
+                }
+            }
+            Some(Curve3::Ellipse(oe)) if cyls.len() >= 2 => {
+                // Bicylinder Steinmetz ellipse. Two equal-radius cylinders
+                // that shrank by the same delta scale the ellipse about its
+                // centre, so the semi-axes scale by the radius ratio and
+                // the orientation is invariant. Recover the ratio from one
+                // cylinder's radius vs the ellipse's implied old radius
+                // (b == old minor == old cylinder radius for the 90-deg
+                // equal-radius mitre). Re-centre through the moved endpoint
+                // at the endpoint's preserved parametric angle.
+                let r_new = cyls[0].radius.min(cyls[1].radius);
+                let ratio = if oe.b > 1e-12 { r_new / oe.b } else { 1.0 };
+                let a = oe.a * ratio;
+                let b = oe.b * ratio;
+                // The endpoint's angle in the (x,y) frame is invariant under
+                // the concentric scale; read it from the moved endpoint's
+                // direction off the OLD centre, then place the NEW centre so
+                // the scaled ellipse passes back through that endpoint.
+                let dir0 = p0 - oe.center;
+                let theta = dir0.dot(oe.y_axis).atan2(dir0.dot(oe.x_axis));
+                let center = p0 - oe.x_axis * (a * theta.cos()) - oe.y_axis * (b * theta.sin());
+                if let Ok(ne) = Ellipse3::new(center, oe.x_axis, oe.y_axis, a, b) {
+                    self.attach_edge_curve(e, Curve3::Ellipse(ne), true);
+                    return;
+                }
+            }
+            _ => {}
+        }
+        // Straight carrier fallback (lines, and any unrecognized pair).
+        if let Ok(l) = Line3::new(p0, p1 - p0) {
+            self.attach_edge_curve(e, Curve3::Line(l), true);
+        }
     }
 
     /// UNTRIM a face: discard a trimmed analytic face's outer loop and

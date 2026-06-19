@@ -2,17 +2,48 @@
 //! offsetting a solid's boundary inward by a wall thickness `t` and
 //! enclosing the interior as a void. Research: dossier 50 (shell = a
 //! maximal multi-face tweak; the closed shell encloses a void = a third
-//! region). This first increment covers the axis-aligned BOX base case
-//! (dossier 50 sec 6.1): the inner shell is the bounding box shrunk by
-//! `t`, subtracted as a nested boolean difference, which exercises the
-//! enclosed-void (3-region) assembly. General offset-and-reintersect
-//! shells (curved faces, pierce, per-face thickness, thicken) are
-//! follow-ups built on the same void-assembly foundation.
+//! region). The inner shell is the whole-body inward offset
+//! (`offset_body(-t)`), enclosed as a void by `combine_containment` (the
+//! exact nested two-shell assembly; the inward offset guarantees
+//! containment, so no re-intersection is needed) -- with a boolean
+//! difference fallback. CURVED faces are supported: a box carrying
+//! cylindrical FILLET faces shells (the extrude->fillet->shell workflow),
+//! because `offset_body_with` offsets plane/cylinder/sphere/torus faces
+//! and re-solves the plane/cylinder corners (see `tweak.rs`). Pierce,
+//! per-face thickness, and thicken ride the same void-assembly
+//! foundation; concave and higher-valence-corner shells are follow-ups.
 
 use crate::Body;
 use crate::body::TopoError;
 use crate::boolean::{BoolOp, boolean};
 use keel_math::vec::Vec3;
+
+/// Self-consistency gate for a directly-assembled shell: the analytic
+/// mass must agree with the independent render mesh. An ALL-PLANAR shell
+/// tessellates exactly (tight 1e-6 absolute / 1e-9 relative band); any
+/// curved face carries chordal mesh deficit, so the band loosens to 1%
+/// of the volume (the documented tessellation note -- still far tighter
+/// than the soak's 25% curved-WRONG criterion, and the wall must also be
+/// positive). A mismatch means the containment assembly produced a
+/// non-watertight or mis-oriented body, so the caller declines it.
+fn shell_mass_matches_mesh(b: &Body) -> bool {
+    let mass = match b.mass_properties() {
+        Ok(m) => m.volume,
+        Err(_) => return false,
+    };
+    let mesh = b.mesh_volume();
+    if !(mass.is_finite() && mesh.is_finite() && mass > 0.0 && mesh > 0.0) {
+        return false;
+    }
+    let curved = b.face_keys().iter().any(|&f| {
+        !matches!(
+            b.face_surface3(f),
+            Some(keel_geom::surface::Surface3::Plane(_))
+        )
+    });
+    let band = if curved { 1e-2 } else { 1e-6_f64.max(1e-9 * mass) };
+    (mass - mesh).abs() <= band * mass.max(mesh).max(1.0)
+}
 
 impl Body {
     /// Hollow this solid to a uniform wall thickness `t`, leaving a fully
@@ -22,14 +53,22 @@ impl Body {
     ///
     /// The inner shell is the body shrunk inward by `t` via the whole-body
     /// face-offset-and-reintersect (`offset_body(-t)`, the Forsyth shell
-    /// algorithm of dossier 50 sec 1 for the convex planar case), then
-    /// subtracted as a nested boolean difference, whose enclosed-void
-    /// assembly yields the two-shell hollow solid. Scope: convex planar
-    /// solids (box, prism); `offset_body` declines non-convex / non-planar /
-    /// non-simple-vertex bodies, so hollow declines honestly there (curved
-    /// and concave shells are a follow-up). Errors if `t <= 0` or `t` is so
-    /// large the inner shell collapses past the medial axis (the difference's
-    /// mass==mesh post-condition rejects the degenerate inner body).
+    /// algorithm of dossier 50 sec 1), then enclosed as a void: the two
+    /// nested shells are stitched verbatim by `combine_containment` (the
+    /// inward offset guarantees the inner shell is strictly inside, so no
+    /// re-intersection is needed), falling back to a boolean difference if
+    /// that precondition or the mass==mesh gate is not met.
+    ///
+    /// Scope: convex solids whose faces are planes OR cylinders/spheres/tori
+    /// with 3-valent corners -- so a box carrying cylindrical FILLET faces
+    /// shells (the extrude->fillet->shell workflow), not just an all-planar
+    /// box/prism. `offset_body_with` declines faces it cannot offset (cones,
+    /// NURBS), non-3-valent corners, and corners whose offset surfaces do not
+    /// meet, so hollow declines honestly there (concave and higher-valence
+    /// shells remain a follow-up). Errors if `t <= 0` or `t` is so large the
+    /// inner shell collapses past the medial axis (the containment
+    /// precondition + mass==mesh post-condition reject the degenerate inner
+    /// body).
     pub fn hollow(&self, t: f64) -> Result<Body, TopoError> {
         if t <= 0.0 || !t.is_finite() {
             return Err(TopoError::Precondition("hollow: thickness must be > 0"));
@@ -42,15 +81,47 @@ impl Body {
     /// the body's faces (keyed by the body's own `FaceKey`s; a deep clone
     /// preserves them, so the closure is queried on the matching faces of the
     /// inner copy). The inner shell is the body shrunk per-face by
-    /// `offset_body_with` and subtracted; the differently-offset faces meet at
-    /// inner edges/steps automatically (dossier 50 sec 3.1). Same convex-
-    /// planar scope and honest-decline behaviour as [`hollow`](Self::hollow).
+    /// `offset_body_with` and enclosed as a void; the differently-offset faces
+    /// meet at inner edges/steps automatically (dossier 50 sec 3.1). Same scope
+    /// (planar + cylinder/sphere/torus faces, 3-valent corners) and honest-
+    /// decline behaviour as [`hollow`](Self::hollow).
     pub fn hollow_per_face(
         &self,
         thickness: impl Fn(crate::entity::FaceKey) -> f64,
     ) -> Result<Body, TopoError> {
         let mut inner = self.clone();
         inner.offset_body_with(|f| -thickness(f))?;
+        // CONTAINMENT assembly first (the curved-shell path): an INWARD
+        // offset by a thickness under the medial-axis limit leaves `inner`
+        // strictly inside `self` with no boundary crossings, so the hollow
+        // is the two nested shells stitched verbatim -- no SSI/seam. This is
+        // what lets a box carrying cylindrical FILLET faces shell (the
+        // extrude->fillet->hollow workflow), where the nested-curved SSI
+        // difference declines with an unassemblable seam.
+        //
+        // PRECONDITION GATE (DECLINE-never-WRONG): the containment shortcut
+        // is only valid when `inner` is a non-degenerate solid STRICTLY
+        // INSIDE `self`. An over-thick offset collapses the inner shell past
+        // the medial axis -- its offset faces cross, inverting the body
+        // (mesh volume <= 0) -- which would otherwise stitch into a wrong
+        // "shell". Reject any inner that is not a positive solid smaller
+        // than the outer, and additionally gate the assembled body on
+        // validate() + mass==mesh. On rejection, fall back to the exact
+        // boolean difference (the planar/general path, itself gated), whose
+        // mass==mesh post-condition declines the degenerate case honestly.
+        let inner_v = inner.mesh_volume();
+        let outer_v = self.mesh_volume();
+        let inner_contained = inner.validate().is_ok()
+            && inner_v.is_finite()
+            && inner_v > 0.0
+            && inner_v < outer_v;
+        if inner_contained
+            && let Ok(body) = crate::boolean::combine_containment(self, &inner, 1e-7)
+            && body.validate().is_ok()
+            && shell_mass_matches_mesh(&body)
+        {
+            return Ok(body);
+        }
         boolean(self, &inner, BoolOp::Difference, 1e-7)
             .map(|r| r.body)
             .map_err(|_| {
@@ -351,6 +422,74 @@ mod tests {
         assert!(
             (v - 52.0).abs() < 1e-6 && (mv - 52.0).abs() < 1e-6,
             "open tray volume must be 52 with mass == mesh (got mass {v}, mesh {mv})"
+        );
+    }
+
+    #[test]
+    fn hollow_filleted_box_shells() {
+        // The extrude->fillet->shell workflow: a 40x40x30 block whose four
+        // TOP edges are filleted (r=4), then hollowed to a 3 mm wall. The
+        // offset must handle the upstream cylindrical fillet faces (offset
+        // each plane inward, shrink each fillet cylinder r 4->1, re-solve the
+        // plane/cylinder/cylinder corners), and the two nested filleted
+        // shells must assemble into a watertight wall (mass == mesh). This is
+        // the curved counterpart of `hollow_box_encloses_void`.
+        use keel_math::vec::Vec3;
+        let mut b = Body::new();
+        b.sweep(
+            &[
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(40.0, 0.0, 0.0),
+                Vec3::new(40.0, 40.0, 0.0),
+                Vec3::new(0.0, 40.0, 0.0),
+            ],
+            Vec3::new(0.0, 0.0, 30.0),
+        )
+        .unwrap();
+        // Fillet the four top edges (z = 30) at r = 4.
+        let top_mids = [
+            Vec3::new(20.0, 0.0, 30.0),
+            Vec3::new(40.0, 20.0, 30.0),
+            Vec3::new(20.0, 40.0, 30.0),
+            Vec3::new(0.0, 20.0, 30.0),
+        ];
+        let mut cur = b;
+        for m in top_mids {
+            let e = cur
+                .entity_ids()
+                .filter_map(|id| match cur.lookup(id) {
+                    Some(crate::entity::AnyKey::Edge(k)) => Some(k),
+                    _ => None,
+                })
+                .filter(|&e| cur.faces_around_edge(e).len() == 2)
+                .filter_map(|e| {
+                    let (va, vb) = cur.edge(e)?.bounds;
+                    let (pa, pb) = (cur.vertex(va)?.point, cur.vertex(vb)?.point);
+                    if (pb - pa).norm() <= 1e-6 {
+                        return None;
+                    }
+                    Some((e, (((pa + pb) * 0.5) - m).norm()))
+                })
+                .min_by(|a, c| a.1.partial_cmp(&c.1).unwrap())
+                .map(|(e, _)| e)
+                .expect("top edge");
+            cur = cur.fillet_edge(e, 4.0).expect("fillet top edge");
+        }
+        // Curved solid present; now shell it.
+        let shell = cur.hollow(3.0).expect("hollow filleted box");
+        assert!(shell.validate().is_ok(), "filleted shell invalid");
+        let mass = shell.mass_properties().unwrap().volume;
+        let mesh = shell.mesh_volume();
+        // A 3 mm wall on the filleted ~47.5k solid: a real hollow (well below
+        // the solid, above zero), with the analytic mass tracking the mesh
+        // within the curved chordal band.
+        assert!(
+            mass.is_finite() && mass > 8_000.0 && mass < 30_000.0,
+            "filleted-shell wall volume {mass} out of range"
+        );
+        assert!(
+            (mass - mesh).abs() <= 0.03 * mass.max(mesh),
+            "filleted shell mass {mass} != mesh {mesh}"
         );
     }
 

@@ -602,7 +602,6 @@ fn chamfer_even_top_edges() {
 /// top edges, then `hollow` it into a thin-walled open-top-ish box. Asserts a
 /// valid thin-walled shell (validate + mass == mesh; mass well under the solid).
 #[test]
-#[ignore = "tutorial-gap: hollow/offset_body on upstream curved (fillet) faces"]
 fn extrude_fillet_shell() {
     // 1) Extrude a 40x40 square sketch up 30 mm => a 40x40x30 solid block.
     let sketch = [

@@ -2429,6 +2429,64 @@ fn combine_disjoint(a: &Body, b: &Body, tol: f64) -> Result<Body, BoolFault> {
     finalize_imported_assembly(dst, rec, faces, Vec::new(), inf, solid, vtol)
 }
 
+/// CONTAINMENT difference (`outer` MINUS a fully-enclosed `inner`): the
+/// exact two-shell hollow assembly that bypasses the SSI/seam machinery.
+/// When `inner` is strictly inside `outer` with NO boundary crossings --
+/// the invariant of an inward whole-body offset shell (`hollow`) -- the
+/// result is simply the outer boundary (outward) plus the inner boundary
+/// REVERSED (its front facing the new cavity), stitched into one body.
+/// `finalize_imported_assembly`'s enclosed-void-aware region partition
+/// then groups the two disconnected shells correctly: the outer encloses
+/// the exterior (-> infinite region) and the reversed inner encloses a
+/// bounded interior (-> a new void region), giving a wall solid between
+/// them.
+///
+/// This is the curved-shell counterpart of `combine_disjoint`: a clean,
+/// verbatim face import (no re-intersection), so a box carrying
+/// cylindrical/toroidal fillet faces shells exactly where the nested-
+/// curved SSI difference would decline with an unassemblable seam.
+///
+/// DECLINE-never-WRONG: the caller must have ESTABLISHED containment (an
+/// inward offset guarantees it); this routine additionally returns a body
+/// that the caller gates on validate() + mass==mesh, and any coincident
+/// vertices between the shells (which only arise if containment fails and
+/// the shells touch) would make the glue produce a non-watertight body
+/// that those gates reject.
+pub(crate) fn combine_containment(outer: &Body, inner: &Body, tol: f64) -> Result<Body, BoolFault> {
+    use crate::entity::{EdgeKey, VertexKey};
+    use crate::lineage::Derivation;
+    use std::collections::BTreeMap;
+    let vtol = tol.max(1e-7);
+    let mut dst = Body::new();
+    let inf = dst.infinite_region();
+    let mut rec = dst.begin_op();
+    let solid = dst.new_region(&mut rec, true, Derivation::Created);
+    let mut vmap: BTreeMap<(Operand, u64), VertexKey> = BTreeMap::new();
+    let mut emap: BTreeMap<(Operand, u64), EdgeKey> = BTreeMap::new();
+    let mut faces = Vec::new();
+    // Outer shell: outward (front -> exterior).
+    for sf in outer.face_keys() {
+        let f = import_face(
+            &mut dst, outer, sf, Operand::A, false, &mut rec, &mut vmap, &mut emap, inf, solid,
+        )
+        .ok_or(BoolFault::AssemblyFailed("containment: outer import failed"))?;
+        faces.push(f);
+    }
+    // Inner shell: REVERSED, so its front faces the cavity it encloses.
+    for sf in inner.face_keys() {
+        let f = import_face(
+            &mut dst, inner, sf, Operand::B, true, &mut rec, &mut vmap, &mut emap, inf, solid,
+        )
+        .ok_or(BoolFault::AssemblyFailed("containment: inner import failed"))?;
+        faces.push(f);
+    }
+    // No GLUE: the outer and inner shells are disjoint and complete; the
+    // vertex merge would collapse each shell's closed-arc seam vertex pair
+    // (two distinct vertices at one point) into a single closed edge that
+    // the green-slab mass integrator mis-reads as a full-revolution band.
+    finalize_imported_assembly_glued(dst, rec, faces, Vec::new(), inf, solid, vtol, false)
+}
+
 /// Sheet-solid boolean (parity item 28, sheet-target MVP): trim the
 /// open SHEET against the SOLID tool. Intersection keeps the part of
 /// the sheet INSIDE the solid, Difference the part OUTSIDE (a tool
@@ -3275,6 +3333,29 @@ fn conic_arc_split_rel(
 /// aware), then validate. Takes the body with its kept faces already
 /// imported (front -> `inf`, back -> `solid`) and the live op recorder.
 pub(crate) fn finalize_imported_assembly(
+    dst: Body,
+    rec: crate::body::OpRecorder,
+    faces: Vec<FaceKey>,
+    walls: Vec<FaceKey>,
+    inf: crate::entity::RegionKey,
+    solid: crate::entity::RegionKey,
+    vtol: f64,
+) -> Result<Body, BoolFault> {
+    finalize_imported_assembly_glued(dst, rec, faces, walls, inf, solid, vtol, true)
+}
+
+/// As [`finalize_imported_assembly`], but with explicit control over the
+/// coincident-vertex/edge GLUE pass. Pass `glue == false` when the
+/// imported shells are already complete and watertight and must NOT be
+/// welded to each other -- the nested two-shell hollow of
+/// `combine_containment`, whose outer and inner shells are disjoint and
+/// each carries its own closed-arc SEAM vertex pair (two distinct
+/// vertices at one point). The global merge would collapse those seam
+/// pairs into a single closed edge, which the green-slab mass integrator
+/// then reads as a spurious full-revolution band (winding +-1) and
+/// declines. Skipping the merge preserves each shell's exact topology.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn finalize_imported_assembly_glued(
     mut dst: Body,
     mut rec: crate::body::OpRecorder,
     faces: Vec<FaceKey>,
@@ -3282,10 +3363,13 @@ pub(crate) fn finalize_imported_assembly(
     inf: crate::entity::RegionKey,
     solid: crate::entity::RegionKey,
     vtol: f64,
+    glue: bool,
 ) -> Result<Body, BoolFault> {
     use crate::entity::Side;
     use crate::lineage::Derivation;
-    merge_and_glue_imported(&mut dst, &mut rec, vtol);
+    if glue {
+        merge_and_glue_imported(&mut dst, &mut rec, vtol);
+    }
 
     if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
         for (vk, v) in dst.vertices.iter() {
