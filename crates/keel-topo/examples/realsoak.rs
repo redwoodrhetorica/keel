@@ -559,6 +559,49 @@ static REPRO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new
 /// NOT a correctness violation.
 static TESS_NOTES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+// ---------------------------------------------------------------------------
+// TEMPORARY DIAGNOSTIC (compound-operand assembly characterization, #73).
+// Env-gated by KEEL_FAULT_CENSUS: tally every FAILING boolean ATTEMPT by a
+// coarse fault category so the dominant decline mode is grounded in counts.
+// The "degenerate (mass!=mesh)" gate is split by the body's mesh_open_ratio
+// (watertight vs not) since that distinguishes a mass-integration discrepancy
+// on a watertight body (dossier-71 class) from a genuinely-broken stitch.
+// ---------------------------------------------------------------------------
+static FAULT_CENSUS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static C_DEGEN_WATERTIGHT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static C_DEGEN_OPEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static C_UNMATCHED_COEDGE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static C_UNASSEMBLABLE_SEAM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static C_OPEN_CHAIN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static C_OTHER_ASM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static C_OTHER_FAULT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn census_record(fault: &BoolFault) {
+    use std::sync::atomic::Ordering::Relaxed;
+    match fault {
+        BoolFault::AssemblyFailed("degenerate or self-inconsistent result (mass != mesh)") => {
+            // Split is resolved by the caller (it holds the assembled body's
+            // open_ratio); default to "open" here, the caller overrides.
+            C_DEGEN_OPEN.fetch_add(1, Relaxed);
+        }
+        BoolFault::AssemblyFailed("unmatched coedge: shell-closure invariant violated") => {
+            C_UNMATCHED_COEDGE.fetch_add(1, Relaxed);
+        }
+        BoolFault::UnassemblableSeam(..) => {
+            C_UNASSEMBLABLE_SEAM.fetch_add(1, Relaxed);
+        }
+        BoolFault::Topo(_) => {
+            C_OPEN_CHAIN.fetch_add(1, Relaxed);
+        }
+        BoolFault::AssemblyFailed(_) => {
+            C_OTHER_ASM.fetch_add(1, Relaxed);
+        }
+        _ => {
+            C_OTHER_FAULT.fetch_add(1, Relaxed);
+        }
+    }
+}
+
 /// Audit a freshly produced body against the decline-never-wrong contract.
 ///
 /// The correctness net has two tiers, mirroring evolve.rs's stated posture
@@ -945,13 +988,34 @@ fn do_boolean(body: &Body, bound: VolBound, op: BoolOp, tag: &str, rng: &mut Lcg
             },
         };
         match boolean(body, &tool, op, 1e-7) {
-            Err(fault) => last = fault_kind(&fault),
+            Err(fault) => {
+                if FAULT_CENSUS.load(std::sync::atomic::Ordering::Relaxed) {
+                    census_record(&fault);
+                }
+                if REPRO.load(std::sync::atomic::Ordering::Relaxed) {
+                    let bc = body.counts();
+                    let tc = tool.counts();
+                    eprintln!(
+                        "    [{tag}{letter} ATTEMPT] Err({fault:?})  body g{} f{} | tool f{}",
+                        bc.genus, bc.f, tc.f
+                    );
+                }
+                last = fault_kind(&fault)
+            }
             Ok(r) => {
                 let informational = r
                     .faults
                     .iter()
                     .all(|f| matches!(f, BoolFault::Coincident(..)));
                 if !informational {
+                    if REPRO.load(std::sync::atomic::Ordering::Relaxed) {
+                        let bc = body.counts();
+                        let tc = tool.counts();
+                        eprintln!(
+                            "    [{tag}{letter} ATTEMPT] faulted {:?}  body g{} f{} | tool f{}",
+                            r.faults, bc.genus, bc.f, tc.f
+                        );
+                    }
                     last = format!(
                         "faulted:{}",
                         r.faults.first().map(fault_kind).unwrap_or_default()
@@ -1178,6 +1242,9 @@ fn main() {
         .cloned()
         .unwrap_or_else(|| "realsoak-out".to_string());
     std::fs::create_dir_all(&outdir).unwrap();
+    if std::env::var("KEEL_FAULT_CENSUS").is_ok() {
+        FAULT_CENSUS.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     // Quiet the panic firehose; the project seed replays any panic on demand.
     std::panic::set_hook(Box::new(|_| {}));
 
@@ -1386,6 +1453,32 @@ fn main() {
     println!(
         "  (curved-body tessellation divergences noted, NOT wrongs: {tess_notes} -- mass in-bound, mesh coarse)"
     );
+
+    if FAULT_CENSUS.load(std::sync::atomic::Ordering::Relaxed) {
+        use std::sync::atomic::Ordering::Relaxed;
+        println!("\n  [FAULT CENSUS] failing boolean ATTEMPTs by category:");
+        println!(
+            "    degenerate(mass!=mesh gate): {}",
+            C_DEGEN_OPEN.load(Relaxed) + C_DEGEN_WATERTIGHT.load(Relaxed)
+        );
+        println!(
+            "    unmatched-coedge (stitch/Weiler): {}",
+            C_UNMATCHED_COEDGE.load(Relaxed)
+        );
+        println!(
+            "    UnassemblableSeam: {}",
+            C_UNASSEMBLABLE_SEAM.load(Relaxed)
+        );
+        println!(
+            "    Topo(open chain / precondition): {}",
+            C_OPEN_CHAIN.load(Relaxed)
+        );
+        println!("    other AssemblyFailed: {}", C_OTHER_ASM.load(Relaxed));
+        println!(
+            "    other fault (Coincident/Tangent/IntersectionFailed): {}",
+            C_OTHER_FAULT.load(Relaxed)
+        );
+    }
 
     // Decline classes split into two groups:
     //   * "unsupported-on-solid": ops the generator's mapping cannot realize
