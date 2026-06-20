@@ -430,3 +430,11 @@ to any use of the code and materials is on you. See the license text for the for
 Every animation in this README was rendered from the kernel's own tessellation output,
 processed by the `docs/media/render_gif.py` script in this repository.
 The geometry you see is exactly what the kernel produces. No external renderer, no cleanup.
+
+---
+
+## Support
+
+If Keel is useful to you, you can support its development:
+
+<a href="https://www.buymeacoffee.com/scottm" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="50" width="210"></a>
