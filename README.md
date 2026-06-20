@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/media/hero.png" alt="Keel: an open-source B-rep solid modeling kernel in Rust" width="100%">
+</p>
+
 # Keel
 
 **An open-source B-rep solid modeling kernel in Rust.**
