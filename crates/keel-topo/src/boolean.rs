@@ -386,16 +386,34 @@ impl Body {
         p: keel_math::vec::Vec3,
     ) -> Option<keel_math::vec::Vec3> {
         let (sk, sense) = self.faces.get(face).and_then(|f| f.surface)?;
-        let n = match self.surfaces.get(sk)? {
+        // `local_geometry().normal` is `su x dv` (a PSEUDOVECTOR), so its sign
+        // tracks the parametrization FRAME'S handedness. A mirrored body
+        // (Body::mirrored) reflects every frame axis directly, sending the
+        // frame LEFT-handed: `su x dv` then flips and points INWARD relative to
+        // the kernel's `sense * natural` orientation authority (research file 46;
+        // the natural-outward for an analytic surface is the `+frame.z` sense,
+        // which mass_properties/tessellation use directly). Fold the frame
+        // handedness back in so this normal AGREES with mass/tessellation on a
+        // reflected body -- the SAME dossier-72 correction massprops applies via
+        // `frame_handedness`. Without it the boolean classifier reads two
+        // face-to-face coincident mirror faces as `OnSense::Same` instead of
+        // `Opposite`, so the shared interface wall is retained (mass != mesh)
+        // and a mirror+union faults. For every non-mirrored body the frame is
+        // right-handed and the factor is +1.0 (an exact no-op).
+        let (n, hand) = match self.surfaces.get(sk)? {
             SurfaceGeom::Analytic(s) => {
                 let pr = s.project(p).ok()?;
-                s.local_geometry(pr.u, pr.v).ok()?.normal
+                (s.local_geometry(pr.u, pr.v).ok()?.normal, surface_frame_handedness(s))
             }
             SurfaceGeom::Nurbs(nb) => {
                 let pr = keel_geom::project::project_point_surface_fast(nb, p);
-                nb.local_geometry(pr.u, pr.v).ok()?.normal
+                // A NURBS surface carries no analytic frame; its control net is
+                // mapped homogeneously by mirror/scale, so its `su x dv` already
+                // reflects the geometry (no separate handedness fold needed).
+                (nb.local_geometry(pr.u, pr.v).ok()?.normal, 1.0)
             }
         };
+        let n = n * hand;
         Some(if sense { n } else { n * -1.0 })
     }
 
@@ -631,6 +649,27 @@ impl Body {
             }
         }
         pts
+    }
+}
+
+/// Chirality of an analytic surface's parametrization frame: `+1.0` for a
+/// right-handed (proper) frame, `-1.0` for a left-handed (REFLECTED, i.e.
+/// mirrored) frame. Mirrors massprops' `frame_handedness` (dossier 72) so the
+/// boolean classifier's outward normal agrees with the mass/tessellation
+/// orientation authority on a mirrored body. (massprops.rs is locked, so this
+/// is a local copy rather than a shared import.)
+fn surface_frame_handedness(surf: &Surface3) -> f64 {
+    let f = match surf {
+        Surface3::Plane(p) => &p.frame,
+        Surface3::Cylinder(c) => &c.frame,
+        Surface3::Cone(c) => &c.frame,
+        Surface3::Sphere(s) => &s.frame,
+        Surface3::Torus(t) => &t.frame,
+    };
+    if f.x.dot(f.y.cross(f.z)) >= 0.0 {
+        1.0
+    } else {
+        -1.0
     }
 }
 

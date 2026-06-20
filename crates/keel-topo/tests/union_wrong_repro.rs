@@ -162,20 +162,53 @@ fn union_after_shell_mirror_fillet_declines_not_wrong() {
     }
 }
 
-/// Pin the EXACT post-fix outcome: this specific malformed union DECLINES
-/// (returns Err). Separate from the contract test above (which would also pass
-/// for a hypothetical clean assembly) so a regression that silently starts
-/// returning Ok again -- even a self-consistent one -- is caught here as a
-/// changed outcome and re-examined. The correct behavior for THIS body is a
-/// clean decline.
+/// Pin the EXACT current outcome of THIS chain. ORIGINALLY this body declined
+/// (a malformed multi-component curved union, mass 10009 != mesh 5242), and the
+/// pin asserted the decline. The ROOT CAUSE was the mirror step upstream
+/// (step 3 in `build_chain`): `Body::mirrored` left the reflected surface frames
+/// LEFT-handed, and the boolean classifier's `face_outward_normal` (which used
+/// the `su x dv` pseudovector from `local_geometry`, not the `sense * frame.z`
+/// authority that mass/tessellation use) read those normals INVERTED. The shell
+/// + mirror + union therefore mis-classified the shared interface and produced a
+/// malformed (genus-1, mesh-collapsed) body that the final union inherited.
+///
+/// With the mirror-normal fix (boolean.rs `face_outward_normal_at` now folds in
+/// the frame handedness, the same dossier-72 correction massprops applies) the
+/// whole chain assembles CORRECTLY: the mirror-union is watertight (mass==mesh
+/// 5456.89), and the final union is a valid solid with mass 10009.65 ==
+/// mesh 9995.07 (0.15% rel, inside the curved band). So the correct outcome for
+/// THIS body is now a clean Ok, not a decline. The curved gate is UNCHANGED and
+/// UN-loosened; the body simply earns the pass by being correct now. The
+/// DECLINE-never-WRONG contract is enforced by
+/// `union_after_shell_mirror_fillet_declines_not_wrong` above (mass==mesh on any
+/// returned body); this pin tracks the exact post-fix outcome so a regression
+/// that re-introduces the malformed/declined state is caught and re-examined.
 #[test]
 fn union_after_shell_mirror_fillet_is_declined() {
     let (body, tool) = build_chain();
     let res = boolean(&body, &tool, BoolOp::Union, 1e-7);
-    assert!(
-        res.is_err(),
-        "expected the malformed multi-component curved union to DECLINE \
-         (mass != mesh), but it returned Ok -- the curved-gate hole has \
-         reopened (DECLINE-never-WRONG)"
-    );
+    match res {
+        Ok(r) => {
+            // The fixed outcome: a valid, watertight, self-consistent solid.
+            let m = r
+                .body
+                .mass_properties()
+                .map(|mp| mp.volume)
+                .expect("assembled mass");
+            let mesh = r.body.mesh_volume();
+            assert!(
+                r.body.validate().is_ok(),
+                "post-fix chain union must validate as a watertight solid"
+            );
+            assert!(
+                (m - mesh).abs() <= 2e-2 * (1.0 + m.abs()),
+                "post-fix chain union must be self-consistent (mass {m} mesh {mesh})"
+            );
+        }
+        Err(e) => panic!(
+            "the shell+mirror+fillet+union chain now assembles correctly \
+             (mass==mesh) after the mirror-normal fix; an Err means that fix \
+             regressed: {e:?}"
+        ),
+    }
 }

@@ -24,7 +24,7 @@
 //! and runnable via `cargo test --test tutorial_workflows -- --ignored`. When a
 //! gap is FIXED, REMOVE its `#[ignore]` so the now-passing workflow is a
 //! permanent regression guard. The live metric = (passing) of (total); the
-//! ignored set is the worklist. Today: 6 of 12 pass.
+//! ignored set is the worklist. Today: 8 of 12 pass.
 //!
 //! Watertightness note: the crate's `mesh_open_ratio` is `pub(crate)`, so an
 //! external integration test cannot call it. The faithful public-API
@@ -495,7 +495,6 @@ fn loft_two_profiles_tapered() {
 /// a genuinely all-planar solid (a boolean-BUILT L carries a NURBS seam curve
 /// that `mirrored` independently rejects; see the findings).
 #[test]
-#[ignore = "tutorial-gap: coincident-plane boolean union (mirror+union)"]
 fn mirror_solid_union() {
     // L cross-section in z=0, all in x >= 0, extruded up 20 mm. Outer 30x30,
     // with a 20x20 bite from the +x,+y corner -> an L footprint, area

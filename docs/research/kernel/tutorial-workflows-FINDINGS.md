@@ -27,8 +27,9 @@ COMBINED with mass == mesh, because the crate's `mesh_open_ratio` is
 
 ## HEADLINE
 
-**7 of 12 faithful tutorial workflows PASS, 5 DECLINE.** (Was 6/12; #12
-`extrude_fillet_shell` is now FIXED -- see the RESOLVED section at the end.)
+**8 of 12 faithful tutorial workflows PASS, 4 DECLINE.** (Was 6/12; #12
+`extrude_fillet_shell` and #13 `mirror_solid_union` are now FIXED -- see the
+RESOLVED sections at the end.)
 
 (12 = the 6 classes expanded into the variants the plan lists: boolean+fillet
 has 3, fillet-all-edges has G1+G2, loft has rect/circle/tapered, mirror 1,
@@ -205,3 +206,115 @@ generalizes: any solid whose faces are planes/cylinders/spheres/tori with
   exercised by a test; treat as untested until a torus-corner fixture exists.
 - Concave shells and per-face thicknesses that change the topology (steps) ride
   the same containment path only while the inner stays a single contained solid.
+
+---
+
+## #13 mirror_solid_union: the mirror-orientation normal bug (RESOLVED)
+
+Branch `swap-m39-close`. Took `mirror_solid_union` from DECLINE to PASS and, as a
+free consequence, converted a previously-malformed WRONG-locked chain into a
+correct watertight result. Tutorial count 7/12 -> **8/12**.
+
+### Symptom
+
+`boolean(L, mirror(L), Union)` of an L-profile extrusion meeting its mirror image
+flush on x=0 faulted `AssemblyFailed("degenerate or self-inconsistent result
+(mass != mesh)")`. (Note: the task brief expected `"unmatched coedge"`; on this
+base, e4f4558, the coincident-face machinery already runs and stitches the body,
+so the failure had moved DOWNSTREAM to the final mass==mesh gate. The shared x=0
+interface wall was being RETAINED as an interior partition instead of dissolved,
+so mass != mesh.)
+
+### Root cause (confirmed by classification dump)
+
+`KEEL_BOOL_DEBUG=1` showed BOTH x=0 interface faces (the original's and the
+mirror's) classified `OnOther(Same)`. They must be `OnOther(Opposite)`: two
+solids meeting face-to-face have outward normals pointing in OPPOSITE directions.
+For Union, `select_faces` keeps A's `OnOther(Same)` and drops B's `OnOther`; with
+the sense read as `Same` it kept ONE copy of the interface wall instead of
+dropping BOTH. The kept wall is interior to the union => mass != mesh.
+
+The sense came out `Same` because **`Body::mirrored` leaves every reflected
+surface frame LEFT-handed.** `transform::apply_isometry` reflects all three frame
+axes directly (`x'=M(x), y'=M(y), z'=M(z)`), which is geometrically exact and
+keeps pcurves valid, but sends the frame left-handed. The kernel's orientation
+authority is `outward = sense * natural` (research file 46), where for an analytic
+surface `natural` is the `+frame.z` sense -- and `mass_properties`/`tessellate`
+read `frame.z` DIRECTLY, so they stay correct on a mirrored body. But
+`boolean::face_outward_normal_at` derived the natural normal from
+`local_geometry().normal`, which is the `su x dv` cross product (a PSEUDOVECTOR).
+On a left-handed frame `su x dv = -frame.z`, so `face_outward_normal` was INVERTED
+for every mirrored face, planar or curved. The boolean classifier was the only
+consumer using `su x dv` instead of `frame.z`, so only it saw the wrong sign.
+
+This is the EXACT problem `massprops::frame_handedness` already solves (dossier
+72): for a reflected frame `du x dv` points inward, so massprops folds in a
+`-1.0` handedness factor on its curved integrators.
+
+### Fix (WRONG-safe, surgical)
+
+`crates/keel-topo/src/boolean.rs`:
+- New private free fn `surface_frame_handedness(&Surface3) -> f64` (`+1` proper,
+  `-1` reflected), a local copy of massprops' `frame_handedness` (massprops.rs is
+  locked, so it could not be shared).
+- `face_outward_normal_at` now multiplies the analytic `local_geometry().normal`
+  by that handedness before folding `sense`. NURBS faces are unchanged (their
+  control net is mapped homogeneously, so `su x dv` already reflects the
+  geometry; factor = 1.0). For every non-mirrored (right-handed) body the factor
+  is exactly +1.0 -- a provable no-op, so no non-mirror path can change.
+
+After the fix the x=0 faces classify `OnOther(Opposite)`, `select_faces` drops
+BOTH copies (the regularized Union rule), the interface dissolves, and the union
+is one watertight solid: mass == mesh == 20000.0 exactly.
+
+### Free consequence: a WRONG-locked chain became correct
+
+`tests/union_wrong_repro.rs` reproduces `block -> hollow -> mirror+union ->
+fillet -> union(cylinder)` (soak seed 11400715918834827198). It was pinned to
+DECLINE because the final union produced mass 10009 vs mesh 5242 (a 48% mesh
+collapse). That malformation originated at the chain's OWN mirror+union (step 3),
+i.e. THIS bug. With the fix:
+- step-3 mirror-union: mass == mesh == 5456.89, valid;
+- final union: **Ok, mass 10009.65 == mesh 9995.07 (0.15% rel, valid).**
+
+So the body the regression "pinned as must-decline" was malformed only because of
+the mirror bug; it is now a correct solid. The DECLINE-never-WRONG contract test
+(`..._declines_not_wrong`, which accepts EITHER a decline OR mass==mesh) still
+passes. The outcome-PIN test (`..._is_declined`) was updated to assert the now-
+correct Ok (watertight + mass==mesh). **No gate was loosened or removed**; the
+curved gate (incl. the recent `mesh_volume` check) is untouched and the body
+earns the pass by being correct. This is strictly better than the old decline.
+
+### chamfer_even_top_edges: NOT the same class -- left declining (characterized)
+
+The brief expected the adjacent-chamfer case to be unblocked by the same fix.
+It is NOT: it is a different and deeper gap.
+
+- The 2nd of 4 top-edge chamfers fails `Precondition("chamfer: cut failed")`,
+  whose underlying `BoolFault` IS `unmatched coedge: shell-closure invariant
+  violated` (radial-1 dangling edges), reproduced with `KEEL_BOOL_DEBUG=1`.
+- But the classification dump shows ALL fragments `InsideOther`/`OutsideOther`,
+  **zero `OnOther`** -- so it is NOT a coincident-face classification problem.
+  The mirror fix does not touch it (confirmed: still declines after the fix).
+- It is a general-position TRANSVERSAL Difference whose cutting prism interacts
+  with the PRIOR chamfer's oblique face at the shared top corner: the
+  import-and-glue stitcher leaves unpaired seam coedges (radial 1) along the
+  y=5 setback line and the z=40 top where the new cut abuts the prior bevel.
+  The dangling edges are at the partial-overlap seam the seam-subdivision does
+  not split symmetrically on both operands.
+- This is the adjacent-feature seam-pairing class (a chamfer/fillet cutting
+  across a previously-cut non-axis-aligned face), squarely the "import-glue seam
+  on cut-over-prior-feature" assembly gap -- out of scope for the coincident-face
+  union task. It STAYS `#[ignore]`d. (Sibling-agent root-cause attribution to the
+  coincident-face boolean does not hold on this base.)
+
+### Verification
+
+- `cargo build --release` green; `cargo clippy --release` clean (no new warnings;
+  the 23 pre-existing style warnings in keel-geom/boolean.rs are unrelated and at
+  lines far from the edit).
+- `mirror_solid_union` PASS (un-ignored). `cargo test --release`: 298 lib tests +
+  all integration suites green, including the named WRONG-locks `scan_wrong`,
+  `union_wrong_repro` (both tests), `cyl_union_mass_witness`, `three_bucket`,
+  `post_fillet_mass`.
+- Tutorial workflows: **8 passed, 4 ignored** (8/12).
