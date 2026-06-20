@@ -338,7 +338,12 @@ fn difference_then_concave_fillet() {
 ///     V = lwh - (4 - pi) r^2 (l + w + h - 6 r ... )   -- messy; instead build
 ///   the exact value from primitives in the bound below with a tight window.
 #[test]
-#[ignore = "tutorial-gap: adjacent fillet corner interaction (round all box edges)"]
+#[ignore = "tutorial-gap: 3-edge (three-blend) fillet corner. 2-edge adjacent corners are now \
+            robust (endpoint-inclusive spring crossing, both box orderings, hollow-compatible so \
+            extrude_fillet_shell stays green); the box completes 4/12 then DECLINES cleanly at the \
+            first 3-edge corner. The exact cap is the sphere octant; a drafted mid-sequence octant \
+            is exact for 4 of 8 corners but the interleaved later edges (endpoints mid-arc on a \
+            prior far-cap) need a generic-cap follow-up -- see tutorial-workflows-FINDINGS.md"]
 fn fillet_all_edges_box_g1() {
     let l = 40.0_f64;
     let r = 5.0_f64;

@@ -471,6 +471,53 @@ impl Body {
         }
     }
 
+    /// Spring crossing on a support's CAP edge, ENDPOINT-INCLUSIVE: the same
+    /// crossing as `line_crosses_edge` for an interior straddle, but also
+    /// accepting the case where the spring meets the cap edge AT (within a
+    /// length-scaled tolerance of) one of its endpoints. That endpoint case is
+    /// the ADJACENT-BLEND 2-edge corner: a prior fillet on a corner-sharing
+    /// edge already shortened this cap edge so the spring meets it exactly at
+    /// the prior blend's tangent vertex (the two equal-radius springs coincide
+    /// there). The strict straddle test in `line_crosses_edge` rejects that
+    /// (the sign of the far endpoint's signed distance is ambiguous), so a
+    /// general-position fillet succeeds at one such corner but DECLINES at its
+    /// mirror twin (bottom vs top of a box), purely on a sign accident.
+    ///
+    /// Returns the crossing POINT (the endpoint's own coordinates in the
+    /// endpoint case). The caller `split_edge`s there, which creates a fresh
+    /// vertex coincident with the existing endpoint plus a zero-length stub;
+    /// Phase 3's `kev`/`kef` dissolve then fuses the stub, leaving the exact
+    /// 3-valent adjacent-blend (bicylinder-seam) corner -- the SAME topology
+    /// the straddle path yields when it happens to succeed, and the one the
+    /// curved-face `offset_body` (hollow) requires. (Contrast a vertex *reuse*,
+    /// which collapses the corner to a degenerate 4-valent point that
+    /// `offset_body` rejects.) `None` only when the spring genuinely overflows
+    /// the cap edge past both endpoints (a real overflow decline).
+    fn spring_crosses_cap_edge(&self, e: EdgeKey, o: Vec3, m: Vec3) -> Option<Vec3> {
+        let edge = self.edges.get(e)?;
+        let (u0k, u1k) = edge.bounds;
+        let u0 = self.vertices.get(u0k)?.point;
+        let u1 = self.vertices.get(u1k)?.point;
+        let s0 = (u0 - o).dot(m);
+        let s1 = (u1 - o).dot(m);
+        let len = (u1 - u0).norm().max(1e-12);
+        let tol = 1e-7 * (len + 1.0);
+        // Endpoint coincidence (the adjacent-blend corner): the spring passes
+        // through an existing cap-edge endpoint. Return that endpoint POINT.
+        if s0.abs() <= tol {
+            return Some(u0);
+        }
+        if s1.abs() <= tol {
+            return Some(u1);
+        }
+        // Ordinary interior straddle.
+        if (s0 > 0.0) != (s1 > 0.0) {
+            let t = s0 / (s0 - s1);
+            return Some(u0 + (u1 - u0) * t);
+        }
+        None
+    }
+
     /// The shared blend CAP-SPLIT skeleton (surgery parameterization,
     /// first extraction): split `cap` between the fins ending at the
     /// two given vertices, copy the support surface onto the new
@@ -552,12 +599,12 @@ impl Body {
             .ok_or(TopoError::Precondition("fillet: no cap edge at vb"))?;
         let m = n.cross(spring.dir);
         let aa_pt =
-            self.line_crosses_edge(e_va, spring.origin, m)
+            self.spring_crosses_cap_edge(e_va, spring.origin, m)
                 .ok_or(TopoError::Precondition(
                     "fillet: spring misses cap edge (overflow?)",
                 ))?;
         let ab_pt =
-            self.line_crosses_edge(e_vb, spring.origin, m)
+            self.spring_crosses_cap_edge(e_vb, spring.origin, m)
                 .ok_or(TopoError::Precondition(
                     "fillet: spring misses cap edge (overflow?)",
                 ))?;
@@ -1113,6 +1160,30 @@ impl Body {
                                     .unwrap_or(false)
                         })
                         .ok_or(TopoError::Precondition("fillet: no roof ridge"))?;
+                    // DECLINE-never-WRONG: a Roof end whose BOTH caps are
+                    // neighbour blend CYLINDERS is a three-blend (3-edge)
+                    // corner. Its exact cap is the SPHERE OCTANT (centre = the
+                    // inscribed-sphere centre M where the three blend spines
+                    // cross; each cylinder meets the sphere along a quarter
+                    // great circle). The straight-ridge / tangent-plane-ellipse
+                    // surgery below was written for a planar model ridge and
+                    // would assemble a geometrically WRONG corner here (the
+                    // cyl-cyl "ridge" is a curved bicylinder seam, ~2% volume
+                    // low -- the soak's curved-WRONG class). Decline rather than
+                    // emit a wrong body. The mid-sequence octant surgery is the
+                    // follow-up (see tutorial-workflows-FINDINGS.md Addendum 2).
+                    let both_cyl = matches!(
+                        b.face_surface_geom(cap_a),
+                        Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                    ) && matches!(
+                        b.face_surface_geom(cap_b),
+                        Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                    );
+                    if both_cyl {
+                        return Err(TopoError::Precondition(
+                            "fillet: three-blend (adjacent) corner, exact cyl-cyl-cyl surgery follow-up",
+                        ));
+                    }
                     let (r0, r1) = b.edges.get(ridge).ok_or(TopoError::StaleKey)?.bounds;
                     let far = if r0 == v_corner { r1 } else { r0 };
                     let pr = b

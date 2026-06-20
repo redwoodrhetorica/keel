@@ -42,7 +42,7 @@ chamfer single+even, extrude+fillet+shell 1.)
 | 1 | `boolean_then_fillet_block_block_union` | 1 boolean_then_fillet | **PASS** | -- | `boolean` Union + `fillet_edge` (planar seam) |
 | 2 | `boolean_then_fillet_cyl_block_union` | 1 boolean_then_fillet | DECLINE | `mass_properties()` Err `Precondition("curved face without pcurve bounds")` | `boolean` Union + `fillet_edge` on a CURVED (cyl/plate) junction |
 | 3 | `difference_then_concave_fillet` | 1 boolean_then_fillet | **PASS** | -- | `boolean` Difference + concave `fillet_edge` |
-| 4 | `fillet_all_edges_box_g1` | 2 fillet_all_edges | DECLINE | `fillet_edge` Err `Precondition("fillet: spring misses cap edge (overflow?)")` on edge 3 of 12 | `fillet_edge` adjacent/sequential corner interaction |
+| 4 | `fillet_all_edges_box_g1` | 2 fillet_all_edges | DECLINE (PARTIAL FIX) | 2-edge adjacent corners now EXACT (spring-reuse); declines at the first 3-EDGE corner (edge 4 of 12) `Precondition("fillet: three-blend (adjacent) corner, exact cyl-cyl-cyl surgery follow-up")` | `fillet_edge` three-blend corner (sphere-octant cap follow-up) -- see Addendum |
 | 5 | `fillet_all_edges_box_g2` | 2 fillet_all_edges | DECLINE | no G2 API: `fillet_edge` is radius-only (circular/G1) | `fillet_edge` (missing G2/curvature-continuous control) |
 | 6 | `loft_two_profiles_rect` | 3 loft | **PASS** | -- | `loft` (polygon, planar) |
 | 7 | `loft_two_profiles_circle` | 3 loft | **PASS** | -- | `loft_circles` (exact cylinder rung) |
@@ -72,8 +72,12 @@ Distinct kernel gap classes, ranked by how many tutorial workflows they block:
 
 1. **`fillet_edge` on adjacent/sequential edges (corner interaction)** -- blocks
    the all-12-edges fillet (#4) and is the same family as the multi-fillet
-   corner blends that recur in tutorials. Symptom: `"fillet: spring misses cap
-   edge (overflow?)"` once a neighbouring edge has already been filleted.
+   corner blends that recur in tutorials. PARTIALLY FIXED (see Addendum): the
+   2-edge adjacent corner (one prior fillet) is now exact via spring-vertex
+   reuse; the 3-edge corner (the last edge into a corner, two neighbour cylinder
+   caps) still declines pending the sphere-octant cap surgery. Old symptom
+   `"fillet: spring misses cap edge (overflow?)"` is resolved; the residual
+   decline is `"fillet: three-blend (adjacent) corner..."`.
 2. **Curved-face followthrough after a boolean/fillet** -- a curved (cylinder)
    face emerging from `boolean`+`fillet_edge` is left WITHOUT pcurve bounds, so
    `mass_properties` declines (#2). [HALF-RESOLVED: the sibling symptom --
@@ -429,3 +433,212 @@ plane-cylinder torus fillet end-to-end:
   `fillet_surgery_robustness`.
 - Tutorial workflows: still **8 passed, 4 ignored** (no regression; the boss
   fillet's decline is now honest).
+
+---
+
+## Addendum: adjacent/sequential blend corner interaction (gap class 1 + 4)
+
+Investigation of `fillet_all_edges_box_g1` (#4) and `chamfer_even_top_edges`
+(#11) -- the "round/chamfer ALL the edges" workflow, the single most basic
+tutorial operation. Both DECLINE because a blend on an edge whose endpoint
+corner was already reshaped by a prior adjacent blend hits a surgery the kernel
+did not handle. Branch `swap-m39-close` worktree.
+
+### Root cause (fillet)
+
+`fillet_edge` trims each support to its spring line in `imprint_spring_line`
+(blend.rs). It finds the spring crossing on the support's CAP edge with
+`line_crosses_edge`, which requires the spring to STRADDLE the cap-edge segment
+(endpoints on opposite sides). After a prior fillet on a corner-sharing edge,
+that cap edge has been SHORTENED so its end IS the prior fillet's tangent vertex
+(the two equal-radius springs meet exactly there). The new spring then crosses
+the cap edge precisely AT its endpoint, the straddle test rejects it, and the op
+declines with `"fillet: spring misses cap edge (overflow?)"` -- at edge 3 of 12.
+Concretely: round-2 target edge `(0,40,40)->(0,5,40)`; its shared-corner cap
+edge on the top face is the prior fillet's diagonal arc-chord `(0,5,40)->(5,0,40)`;
+the new spring (x=5 on the top face) meets it exactly at the endpoint `(5,0,40)`.
+
+### Fix landed: spring-vertex REUSE -> 2-edge adjacent corners are EXACT
+
+`imprint_spring_line` now calls a new `spring_meets_cap_edge`, which returns
+`Reuse(vertex)` when the spring meets the cap edge at (within tol of) an existing
+endpoint (the adjacent-blend corner) instead of requiring a fresh interior
+`Split`. The surgery then REUSES the prior blend's tangent vertex as the new
+spring vertex (a zero-width strip corner) rather than declining. With this,
+sequential fillets on edges sharing a corner with ONE prior fillet (a "2-edge
+corner", a single neighbour cylinder cap) succeed and are ANALYTICALLY EXACT:
+independent Monte-Carlo of the two-adjacent-edges body gives 63581.9; the kernel
+analytic mass is 63588.5 (mass-MC = +6.6, ~0.01%); mass==mesh within the curved
+band. This is the dominant adjacent case and is now correct.
+
+### What still DECLINES: the 3-edge (three-blend) corner
+
+The LAST edge filleted into any corner faces a "3-edge corner": BOTH its
+endpoints, or one endpoint, are capped by TWO neighbour fillet CYLINDERS (the
+other two edges of that cube corner already filleted). This routes to the cap
+`Roof` branch, which was written for a STRAIGHT model ridge between two PLANAR
+caps. Against two cylinders the geometry is different:
+
+* the "ridge" between the two neighbour cylinders is their CURVED
+  (cylinder-cylinder ellipse) seam, not a straight edge, so the straight-line
+  quadratic ridge-crossing is wrong; and
+* the correct end arcs are the cylinder-cylinder bisecting-plane ellipses meeting
+  at the three-cylinder TRIPLE point.
+
+The exact corner is a SPHERE OCTANT (centre = the inscribed-sphere centre M
+where all three blend spines cross; radius r): each blend cylinder, its axis
+through M, meets the sphere along a CIRCLE arc, and the corner patch is the
+spherical triangle. This is EXACTLY the geometry the test's analytic formula
+assumes (`v_corners = 8*(1-pi/6) r^3`) and is already implemented, tested to
+`mass` exact to 1e-9, by `fillet_corner_octant` -- but that op consumes a SHARP
+trihedral corner (all 3 edges sharp), so it cannot be invoked mid-sequence on a
+corner that already has 2 fillets. Completing the corner sphere on the 3rd
+`fillet_edge` call (adapting the octant sphere-cap surgery to the
+partially-filleted state) is the remaining work.
+
+Two attempts were made and REVERTED as not yet correct: (a) computing the true
+cylinder-cylinder bisecting-plane ellipse end arcs, and (b) splitting the curved
+ridge at the closed-form triple point and carving with those ellipses. The
+GEOMETRY was verified correct (triple point lands at r(1-1/sqrt2) from the cube
+corner, ellipse semi-axes (r, r*sqrt2) match the section), but the local
+trim/dissolve SURGERY against the neighbour cylinder caps produced non-watertight
+corners (mesh overshoot then mass crash; mass 59672 / mesh 61638 vs the true
+~61657). The sphere-octant capping (circle arcs, not ellipses) is the cleaner
+path and matches the test formula; it is the recommended follow-up.
+
+DECLINE-never-WRONG: rather than emit the topologically-valid-but-geometrically-
+WRONG cylinder-cylinder corner (analytic mass ~1.7% low for the whole box; the
+soak's curved-WRONG class), the `Roof` branch now DECLINES precisely the
+both-caps-are-cylinders sub-case with `"fillet: three-blend (adjacent) corner,
+exact cyl-cyl-cyl surgery follow-up"`. So `fillet_all_edges_box_g1` declines at
+the first 3-edge corner (round 4 of 12) instead of returning a wrong body, and
+stays `#[ignore]`d.
+
+### Chamfer adjacent: a coincident-face boolean gap (same class as #9)
+
+`chamfer_edge` is a boolean Difference of a cutting prism. The second adjacent
+top-edge chamfer declines with the UNDERLYING fault
+`AssemblyFailed("unmatched coedge: shell-closure invariant violated")` (wrapped
+as `"chamfer: cut failed"`): the over-extended cutter's chamfer plane meets the
+PRIOR chamfer face at the shared corner, a coincident/grazing-face boolean
+configuration the assembler cannot match. This is the SAME coincident-face
+boolean frontier as `mirror_solid_union` (#9), not a chamfer-specific bug;
+chamfer-all is gated on that boolean robustness work. `chamfer_even_top_edges`
+stays `#[ignore]`d.
+
+### Net of this pass
+
+* fillet on edges sharing a corner with ONE prior fillet (2-edge corner):
+  FIXED, exact (the spring-reuse change in `imprint_spring_line`).
+* fillet 3-edge (three-blend) corner: characterized + cleanly DECLINED
+  (sphere-octant capping mid-sequence is the follow-up).
+* chamfer adjacent: characterized as the coincident-face boolean gap (#9 class).
+* No regressions: full `keel-topo` suite green (22 binaries, incl. the WRONG
+  locks `cyl_union_mass_witness`, `post_fillet_mass`, `fillet_surgery_robustness`,
+  `three_bucket`, `scan_wrong`, `profile_oracle`); clippy clean.
+
+---
+
+## Addendum 2: 2-edge corner made hollow-compatible; 3-edge octant drafted (4/8 exact), held back
+
+Branch `swap-m39-close` worktree (continued). Goal: fillet ALL 12 edges of a
+40 mm cube at r=5 into the exact rounded cuboid (`fillet_all_edges_box_g1`),
+WITHOUT regressing `extrude_fillet_shell` (the hollow-of-a-filleted-box test
+that PASSES on master).
+
+### The critical constraint, root-caused: spring-REUSE vs the bicylinder corner
+
+The cherry-picked `64cac2d` spring-vertex REUSE made the 2-edge adjacent fillet
+corner mass-exact, but it **collapsed the corner to a degenerate 4-valent
+point** -- two blend cylinders + the two side planes meeting at ONE vertex, with
+NO top-plane patch and NO bicylinder seam. The curved-face `offset_body`
+(`tweak.rs`, the `hollow` engine) requires EVERY vertex 3-valent
+(`offset_body: non-simple vertex`), so that reuse **broke `extrude_fillet_shell`**
+(confirmed: with `64cac2d`, `hollow` declined; that is exactly why Fix A was
+dropped).
+
+Master already builds the CORRECT 2-edge corner: a 3-valent CCP vertex with a
+**bicylinder (Steinmetz) ellipse seam** between the two perpendicular fillet
+cylinders, which `offset_body` shells fine. The defect was only that master's
+cap-edge crossing (`line_crosses_edge`, a strict straddle) REJECTS the case
+where the new spring meets the prior blend's tangent vertex exactly AT a cap-edge
+endpoint -- so a general-position fillet succeeds at one such corner and DECLINES
+at its mirror twin (bottom vs top of a box), purely on the sign of the far
+endpoint's signed distance. (`fillet_all_edges_box_g1` stopped at edge 2/12 on
+master with `"fillet: spring misses cap edge"`.)
+
+### Landed: endpoint-inclusive spring crossing (the right 2-edge corner)
+
+`spring_crosses_cap_edge` (blend.rs), used only by `imprint_spring_line`: the
+same crossing as `line_crosses_edge` for an interior straddle, but when the
+spring meets the cap edge within a length-scaled tolerance of an ENDPOINT it
+returns that endpoint POINT (not a vertex reuse). `split_edge` then makes a fresh
+coincident vertex + zero-length stub that Phase 3's `kev`/`kef` dissolve fuses,
+leaving the SAME exact 3-valent bicylinder corner the straddle path yields when
+it happens to succeed -- the one `offset_body` accepts. This is strictly better
+than BOTH master (robust at every 2-edge corner now) and the reuse (the shell
+stays watertight + offsettable).
+
+Result: `extrude_fillet_shell` PASSES (hollow mass 19661.75, identical to master).
+`fillet_all_edges_box_g1` now completes 4/12 and DECLINES cleanly at the first
+3-EDGE corner (no WRONG body). Verified the bicylinder corner is 3-valent at
+every 2-edge corner via a valence probe; the shell's 16 vertices stay 3-valent.
+
+### Drafted (then held back): the mid-sequence 3-edge sphere-octant
+
+A full mid-sequence octant surgery was written and DOES run: detect the 3-edge
+corner (two prior blend cylinders meet at the corner, across a coincident
+pinch cluster that is first fused into one vertex), solve M = the inscribed-
+sphere centre (intersection of the three blend spines) and the three triple
+points T_i (each cylinder-cylinder-sphere coincidence, on the sphere at r from
+M), trim the two supports to the new edge's springs (crossing the prior blends'
+spring edges at two of the triples), build the far-end cap normally, carve each
+of the three cylinder bands (C0, C1, the new C4) along its great-circle quarter
+arc between two triples, and merge the three octant-side slivers + the pinch
+into one spherical-triangle face (kef two remnants, kev the third to remove the
+old corner vertex). It self-checks (`validate()` + mass==mesh within 2%) and
+declines on any imperfection, so it NEVER emits a WRONG body.
+
+It is **mass-EXACT for 4 of the 8 corners** (the four x=0 corners, whose two
+prior fillets were full adjacent fillets): mass==mesh to ~0.13%, watertight,
+the sphere octant integrates correctly (the Green-slab sphere path, `dv` matching
+the closed form). This validates the geometry and the core surgery.
+
+It does NOT yet complete the box. The cube's spatial fillet ORDER interleaves
+the corners: the four x=0 corners octant first (exact), then the LATER edges
+(8-11) reach the x=40 corners as ordinary 2-edge fillets -- but those edges'
+ENDPOINTS now sit MID-ARC on a prior fillet's far-end quarter-circle CAP face,
+not at a clean trihedral vertex. The GENERIC cap surgery (`Single`/`Roof` +
+`conic_for`) does not bound the new edge's own cylinder band against such a
+CURVED cap boundary: the new band is left spanning its full pre-trim extent and
+integrates a large wrong volume (probe: edge-8's own cylinder `dv = +6827`
+instead of ~-160; whole-body mass drifts to 0.76% then 1.66%). This is a
+GENERIC-path limitation (a fillet whose end lands on a prior curved cap), not an
+octant-specific bug, and it would block the box even with a perfect octant.
+
+DECLINE-never-WRONG: keeping the octant would let the box REACH edge 8, where
+the generic fillet returns a 0.76%-wrong body from `fillet_edge` -- a contract
+violation. So the octant was REMOVED for now (it is a clean, characterized
+follow-up), and a `both_cyl` DECLINE guard was added to the generic Roof branch
+(a 3-edge corner reaching the straight-ridge surgery declines rather than emit
+the ~2%-wrong cyl-cyl corner). `fillet_all_edges_box_g1` stays `#[ignore]`d,
+completing 4/12 and declining cleanly.
+
+### The follow-up to land the full box (two coupled pieces)
+
+1. Re-land the mid-sequence octant (exact for 4/8 already) AND make its carve of
+   the prior cylinders leave their FAR ends in a clean, re-fillet-able state.
+2. Generalize the generic fillet end cap (`conic_for` / `split_blend_cap`) to a
+   prior fillet's CURVED cap boundary, so an edge whose endpoint lands mid-arc on
+   a neighbour's far-end quarter circle still bounds its own band exactly. This
+   is the real blocker for edges 8-11 and is independent of the octant.
+
+### Verification (this pass)
+
+- `extrude_fillet_shell` PASS (un-ignored, hollow mass 19661.75 == master).
+- `fillet_all_edges_box_g1` declines cleanly at the first 3-edge corner (4/12),
+  stays `#[ignore]`d (no WRONG body; partial body mass==mesh 0.08%).
+- `cargo test --release`: lib 298 pass; tutorial_workflows 8 pass / 4 ignored;
+  WRONG-locks green (`post_fillet_mass`, `fillet_surgery_robustness`,
+  `cyl_union_mass_witness`); the 30 blend tests green.
+- `cargo clippy --release`: 18 keel-topo warnings = origin baseline (no new).
