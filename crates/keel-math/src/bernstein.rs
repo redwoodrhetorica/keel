@@ -1,10 +1,10 @@
-//! Univariate polynomials in Bernstein form on [0,1]: backward-stable
+//! Univariate polynomials in Bernstein form on `[0,1]`: backward-stable
 //! evaluation, subdivision, and variation-diminishing root isolation.
 //! Seed of the M2 multivariate subdivision solver (spec D6).
 
 use crate::newton::solve_bracketed;
 
-/// Polynomial in Bernstein basis on [0,1]; degree = coeffs.len() - 1.
+/// Polynomial in Bernstein basis on `[0,1]`; degree = `coeffs.len()` - 1.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bernstein {
     coeffs: Vec<f64>,
@@ -31,7 +31,7 @@ impl Bernstein {
 
     /// Convert from power basis (`power[i]` multiplies x^i), for tests
     /// and for analytic-geometry callers that derive power-form
-    /// polynomials. b_i = sum_{j<=i} C(i,j)/C(n,j) * power[j].
+    /// polynomials. b_i = sum_{j<=i} C(i,j)/C(n,j) * `power[j]`.
     pub fn from_power(power: &[f64]) -> Option<Self> {
         if power.is_empty() {
             return None;
@@ -152,8 +152,8 @@ impl Bernstein {
         Self { coeffs }
     }
 
-    /// Split at parameter t into left ([0,t] reparameterized to [0,1])
-    /// and right ([t,1] reparameterized to [0,1]) via de Casteljau.
+    /// Split at parameter t into left (`[0,t]` reparameterized to `[0,1]`)
+    /// and right (`[t,1]` reparameterized to `[0,1]`) via de Casteljau.
     pub fn subdivide(&self, t: f64) -> (Self, Self) {
         let mut w = self.coeffs.clone();
         let n = w.len();
@@ -188,7 +188,7 @@ impl Bernstein {
         count
     }
 
-    /// All roots in [0,1], ascending. Subdivide until each piece has
+    /// All roots in `[0,1]`, ascending. Subdivide until each piece has
     /// zero variations (discard, modulo endpoint zeros) or one
     /// variation with an endpoint sign change (bracketed Newton
     /// polish); pieces narrower than `t_tol` yield their midpoint

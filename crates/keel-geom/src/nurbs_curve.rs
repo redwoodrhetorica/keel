@@ -462,7 +462,7 @@ pub struct BezierSegment {
 }
 
 impl BezierSegment {
-    /// De Casteljau at local t in [0,1]; homogeneous result.
+    /// De Casteljau at local t in `[0,1]`; homogeneous result.
     pub fn eval_homogeneous(&self, t: f64) -> Vec4 {
         let mut w = self.ctrl.clone();
         let mut len = w.len();
@@ -550,7 +550,7 @@ impl BezierSegment {
     /// Certified 3D enclosure: the homogeneous enclosure divided by
     /// the weight interval. None when the weight enclosure straddles
     /// zero (the interval arithmetic must prove positivity, not
-    /// assume it; for t inside [0,1] on a valid segment it does).
+    /// assume it; for t inside `[0,1]` on a valid segment it does).
     pub fn point_enclosure(&self, t: Interval) -> Option<[Interval; 3]> {
         let h = self.eval_homogeneous_interval(t);
         Some([

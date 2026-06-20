@@ -19,6 +19,10 @@ fn default_linear_tolerance() -> f64 {
 }
 
 /// Errors from topology construction and mutation.
+///
+/// Modeling operations return `Err(TopoError)` when they DECLINE rather
+/// than produce an invalid or geometrically wrong body. `Precondition`
+/// carries a static reason string naming the failed contract.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TopoError {
     /// A key did not resolve (stale or foreign).
@@ -29,6 +33,36 @@ pub enum TopoError {
     Invalid,
 }
 
+/// A B-rep body: the kernel's central modeling object.
+///
+/// A `Body` owns the full non-manifold topology tower (regions, shells,
+/// faces, loops, fins, edges, vertices) plus the attached analytic and
+/// NURBS geometry, stable per-entity identities, and total lineage. It
+/// is the unit a consumer builds, queries, transforms, and combines.
+///
+/// Construction goes through the primitive builders ([`Body::block`],
+/// [`Body::cylinder`], [`Body::sphere`], ...) or a fresh empty body via
+/// [`Body::new`]; modeling operations ([`Body::fillet_edge`],
+/// [`Body::chamfer_edge`], [`Body::hollow`], the boolean functions in
+/// [`crate::boolean`]) consume bodies and produce new ones. Read-only
+/// queries ([`Body::validate`], [`Body::mass_properties`],
+/// [`Body::mesh_volume`], [`Body::bounding_box`]) never mutate.
+///
+/// Bodies are clonable and serializable. Operations are deterministic:
+/// entity ids are monotonic and the iteration order is stable, so the
+/// same inputs always yield the same output.
+///
+/// # Examples
+///
+/// ```
+/// use keel_topo::body::Body;
+/// use keel_math::vec::Vec3;
+///
+/// let mut b = Body::new();
+/// b.block(Vec3::ZERO, 2.0, 3.0, 4.0).unwrap();
+/// let mp = b.mass_properties().unwrap();
+/// assert!((mp.volume - 24.0).abs() < 1e-9);
+/// ```
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Body {
     pub(crate) vertices: Arena<Vertex>,
@@ -50,7 +84,10 @@ pub struct Body {
 }
 
 impl Body {
-    /// New body: a single infinite void region under op 0.
+    /// Create an empty body: a single infinite void region and no
+    /// faces. Feed it to a primitive builder (e.g. [`Body::block`]) to
+    /// populate it, or use it as the starting point for explicit
+    /// Euler-operator construction.
     pub fn new() -> Self {
         let mut b = Self {
             vertices: Arena::new(),
@@ -109,34 +146,44 @@ impl Body {
 
     // ---- read accessors -------------------------------------------------
 
+    /// Resolve a vertex key to its record, or `None` if stale/foreign.
     pub fn vertex(&self, k: VertexKey) -> Option<&Vertex> {
         self.vertices.get(k)
     }
+    /// Resolve an edge key to its record, or `None` if stale/foreign.
     pub fn edge(&self, k: EdgeKey) -> Option<&Edge> {
         self.edges.get(k)
     }
+    /// Resolve a fin key to its record, or `None` if stale/foreign.
     pub fn fin(&self, k: FinKey) -> Option<&Fin> {
         self.fins.get(k)
     }
+    /// Resolve a loop key to its record, or `None` if stale/foreign.
     pub fn loop_(&self, k: LoopKey) -> Option<&Loop> {
         self.loops.get(k)
     }
+    /// Resolve a face key to its record, or `None` if stale/foreign.
     pub fn face(&self, k: FaceKey) -> Option<&Face> {
         self.faces.get(k)
     }
+    /// Resolve a shell key to its record, or `None` if stale/foreign.
     pub fn shell(&self, k: ShellKey) -> Option<&Shell> {
         self.shells.get(k)
     }
+    /// Resolve a region key to its record, or `None` if stale/foreign.
     pub fn region(&self, k: RegionKey) -> Option<&Region> {
         self.regions.get(k)
     }
+    /// Resolve a curve-geometry key, or `None` if stale/foreign.
     pub fn curve(&self, k: CurveKey) -> Option<&CurveGeom> {
         self.curves.get(k)
     }
+    /// Resolve a surface-geometry key, or `None` if stale/foreign.
     pub fn surface(&self, k: SurfaceKey) -> Option<&SurfaceGeom> {
         self.surfaces.get(k)
     }
 
+    /// Resolve a stable [`EntityId`] to its current arena key.
     pub fn lookup(&self, id: EntityId) -> Option<AnyKey> {
         self.ids.get(&id).copied()
     }

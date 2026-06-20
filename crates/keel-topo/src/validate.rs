@@ -8,31 +8,53 @@
 use crate::body::Body;
 use crate::entity::{AnyKey, CurveGeom, FinKey, LoopKind, Side, SurfaceGeom, VertexKey};
 
+/// A specific way a body failed [`Body::validate`]. The error list names
+/// every invariant that was broken, so a consumer can report or debug a
+/// malformed body.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ValidationError {
+    /// A stored key points at a deleted or foreign entity.
     StaleReference(&'static str),
+    /// The id-to-entity map disagrees with the arenas.
     IdMapInconsistent,
+    /// A loop's fin ring is not a closed doubly-linked cycle.
     FinRingBroken(&'static str),
+    /// An edge's radial cycle of fins is malformed.
     RadialCycleBroken(&'static str),
+    /// A loop's structure (entry fin / vertex loop) is inconsistent.
     LoopInconsistent(&'static str),
+    /// A shell/region back-reference is inconsistent.
     ShellRegionInconsistent(&'static str),
+    /// A face's boundary chain does not close (the d-of-d oracle):
+    /// dangling or open edges, the signature of a non-watertight solid.
     BoundaryChainBroken,
+    /// The Euler-Poincare identity does not hold (`lhs` != `rhs`).
     EulerPoincareViolated { lhs: i64, rhs: i64 },
 }
 
-/// Combinatorial counts used by tests and the Euler check.
+/// Combinatorial counts of a body's topology, used by tests and the
+/// Euler-Poincare check. Returned by [`Body::counts`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Counts {
+    /// Vertex count.
     pub v: usize,
+    /// Edge count.
     pub e: usize,
+    /// Face count.
     pub f: usize,
+    /// Number of inner (hole) loops across all faces.
     pub inner_rings: usize,
+    /// Region count (including the infinite region).
     pub regions: usize,
+    /// Shell count.
     pub shells: usize,
+    /// Total genus (handles) of the body's shells.
     pub genus: u32,
 }
 
 impl Body {
+    /// Combinatorial entity counts (vertices, edges, faces, loops,
+    /// regions, shells, genus). See [`Counts`].
     pub fn counts(&self) -> Counts {
         Counts {
             v: self.vertices.len(),
@@ -49,6 +71,18 @@ impl Body {
         }
     }
 
+    /// Check every structural invariant of the body.
+    ///
+    /// Verifies the id map, fin rings, radial cycles, loops,
+    /// shell/region links, boundary-chain closure, and the
+    /// Euler-Poincare identity. A solid that passes is watertight: the
+    /// boundary-chain check rejects open or dangling edges. This is the
+    /// public-API expression of "is this body well-formed".
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(Vec<ValidationError>)` listing every invariant that
+    /// failed. An empty body and any well-formed body return `Ok(())`.
     pub fn validate(&self) -> Result<(), Vec<ValidationError>> {
         let mut errs = Vec::new();
         self.check_id_map(&mut errs);

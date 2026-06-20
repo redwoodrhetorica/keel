@@ -1,6 +1,6 @@
 //! Surface from boundary curves, n-sided (parity item 68; dossier 26
 //! sec 1.1: the bilinearly blended Coons patch, Coons 1967 MIT
-//! MAC-TR-41 -- "the algebraic skeleton ... [used] directly by the
+//! MAC-TR-41 -- "the algebraic skeleton ... \[used\] directly by the
 //! practical NURBS hole-fill"). MVP: the DISCRETE Coons interior on
 //! the control net over four boundary control rows fit from sampled
 //! sides (end-pinned LSQ, so corners interpolate exactly). N != 4

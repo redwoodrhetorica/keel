@@ -15,9 +15,13 @@ use crate::entity::{EdgeKey, SurfaceGeom};
 use keel_geom::surface::Surface3;
 
 impl Body {
-    /// Chamfer `edge` with equal setback `distance` on each adjacent
-    /// face. Returns the chamfered body. Errors if the edge is not
-    /// bounded by exactly two planar faces, or the cut fails.
+    /// Chamfer `edge` with equal setback `distance` (model units) on each
+    /// adjacent face. Returns a new chamfered body; the original is not
+    /// mutated.
+    ///
+    /// Like the fillet and boolean entry points, this DECLINES with
+    /// `Err(TopoError)` rather than producing a wrong body. Errors if the
+    /// edge is not bounded by exactly two planar faces, or the cut fails.
     pub fn chamfer_edge(&self, edge: EdgeKey, distance: f64) -> Result<Body, TopoError> {
         self.chamfer_edge_asymmetric(edge, distance, distance)
     }

@@ -14,8 +14,8 @@
 //! tier; mating, constraints, and PLM product structure stay in the host.
 //!
 //! - item 82 instances: [`Instance`] (a placed definition reference).
-//! - item 83 assembly DAG: a [`Def`] can be referenced by many instances.
-//! - item 84 per-instance transforms: world = path composition ([`flatten`]).
+//! - item 83 assembly DAG: a `Def` can be referenced by many instances.
+//! - item 84 per-instance transforms: world = path composition (`flatten`).
 //! - item 85 stable edit-surviving ids: [`InstanceId`] / the occurrence path.
 
 use crate::Body;

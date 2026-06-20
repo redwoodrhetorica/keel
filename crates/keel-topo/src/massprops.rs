@@ -23,11 +23,19 @@ use keel_geom::curve::Curve3;
 use keel_geom::surface::Surface3;
 use keel_math::vec::Vec3;
 
+/// Integral mass properties of a body's solid regions, at unit density.
+///
+/// Returned by [`Body::mass_properties`]. Quantities are in model units:
+/// `volume` in length-cubed, `centroid` in length, `inertia` in
+/// length-to-the-fifth (multiply by a real density to get physical mass,
+/// center of mass, and moment of inertia).
 #[derive(Clone, Debug)]
 pub struct MassProps {
+    /// Enclosed volume of the solid regions (always positive on success).
     pub volume: f64,
+    /// Center of volume (centroid), in model coordinates.
     pub centroid: Vec3,
-    /// Inertia tensor about the centroid (unit density).
+    /// Symmetric 3x3 inertia tensor about the centroid, unit density.
     pub inertia: [[f64; 3]; 3],
 }
 
@@ -213,7 +221,20 @@ impl Body {
         Ok(m)
     }
 
-    /// Mass properties of the body's solid regions (unit density).
+    /// Exact mass properties of the body's solid regions, at unit
+    /// density, via the divergence theorem over the boundary faces.
+    ///
+    /// Returns volume, centroid, and the inertia tensor about the
+    /// centroid (see [`MassProps`] for units). Analytic faces are
+    /// integrated exactly; the result does not depend on tessellation,
+    /// so it is the reference volume against which [`Body::mesh_volume`]
+    /// is checked.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TopoError::Precondition)` if integration yields a
+    /// non-positive volume, which indicates a body with no solid region
+    /// or an orientation inconsistency rather than a valid solid.
     pub fn mass_properties(&self) -> Result<MassProps, TopoError> {
         let _prof = crate::profile::Scope::new(&crate::profile::MASS_NS);
         crate::profile::count(&crate::profile::MASS_CALLS);

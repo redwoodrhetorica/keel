@@ -94,7 +94,7 @@ impl KnotVector {
         u.clamp(a, b)
     }
 
-    /// Knot span index k with knots[k] <= u < knots[k+1] (NURBS Book
+    /// Knot span index k with `knots[k]` <= u < `knots[k+1]` (NURBS Book
     /// A2.1). The end parameter returns the last nonempty span.
     pub fn find_span(&self, u: f64) -> usize {
         let p = self.degree;

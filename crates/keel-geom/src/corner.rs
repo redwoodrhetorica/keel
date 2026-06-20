@@ -251,7 +251,7 @@ impl CornerPatch {
 /// One central-split quad of the hexagon, exposed as a rectangular
 /// `ForeignSurface` for the certified NURBS fit: corner i's quad is
 /// (V_i, mid(S_i), centre, mid(S_{i-1})), bilinearly mapped from
-/// [0,1]^2.
+/// `[0,1]^2`.
 pub struct QuadPatch<'a> {
     pub patch: &'a CornerPatch,
     /// Domain-quad corners in bilinear order (q00, q10, q11, q01).

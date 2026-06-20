@@ -5,7 +5,7 @@ use crate::knots::KnotVector;
 
 /// All degree+1 nonzero basis values N_{span-p..=span, p}(u), in
 /// `out[0..=p]` (NURBS Book A2.2). Convex corner-cutting: every output
-/// is in [0,1] and they sum to 1 (partition of unity).
+/// is in `[0,1]` and they sum to 1 (partition of unity).
 pub fn basis_funs(kv: &KnotVector, span: usize, u: f64) -> [f64; MAX_ORDER] {
     let p = kv.degree();
     let knots = kv.knots();
@@ -28,7 +28,7 @@ pub fn basis_funs(kv: &KnotVector, span: usize, u: f64) -> [f64; MAX_ORDER] {
 }
 
 /// All nonzero basis functions and derivatives up to order `d` at `u`
-/// (NURBS Book A2.3). Returns ders[k][j] = (d^k/du^k) N_{span-p+j, p}(u)
+/// (NURBS Book A2.3). Returns `ders[k][j]` = (d^k/du^k) N_{span-p+j, p}(u)
 /// for k in 0..=d, j in 0..=p. Rows beyond the degree are zero (the
 /// derivative of a degree-p polynomial vanishes; M2a lesson: zero-fill,
 /// never truncate the output array).

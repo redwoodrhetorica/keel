@@ -1294,6 +1294,23 @@ impl Body {
     /// face carries its exact `Cylinder3` surface; blend-face pcurves (so
     /// analytic mass_properties covers it) and overflow handling (file 41)
     /// are follow-ups, as are non-planar supports and mixed-convexity ends.
+    ///
+    /// `radius` is the rolling-ball radius, in model units. The original
+    /// body is not mutated; a new filleted body is returned.
+    ///
+    /// # DECLINE-never-WRONG
+    ///
+    /// Like the boolean entry points, this operation DECLINES with
+    /// `Err(TopoError)` rather than emitting a topologically-valid but
+    /// geometrically wrong body. Configurations outside the supported
+    /// scope (non-degree-3 corners, a radius too large for the local
+    /// feature, unsupported support surfaces) return an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TopoError::Precondition)` when `edge` is not bounded
+    /// by exactly two faces, the corners are not simple degree-3, or the
+    /// blend cannot be assembled at the requested `radius`.
     pub fn fillet_edge(&self, edge: EdgeKey, radius: f64) -> Result<Body, TopoError> {
         let faces = self.faces_around_edge(edge);
         if faces.len() != 2 {

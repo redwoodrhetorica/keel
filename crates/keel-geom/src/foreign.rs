@@ -13,7 +13,7 @@
 //!
 //! Fit method: tensor-product least squares by two-stage curve fitting
 //! (NURBS Book 9.4.2) on a uniform parameter grid affinely mapped from
-//! the foreign domain to [0,1] (so the cache reproduces the foreign
+//! the foreign domain to `[0,1]` (so the cache reproduces the foreign
 //! parameterization up to that affine map). Certification is against
 //! FRESH evaluator samples on a denser offset grid, inflated by the
 //! same `SAFETY` factor as `fit::fit_cubic`.
@@ -68,7 +68,7 @@ const ESCALATION: [usize; 4] = [4, 8, 16, 32];
 /// Control count escalates per `ESCALATION`; the best fit is returned
 /// even when `tol` is not met (callers read `tol_achieved` and decide;
 /// `Body::foreign_sheet` declines). The fit parameter domain is
-/// [0,1]^2, affinely mapped from the foreign domain.
+/// `[0,1]^2`, affinely mapped from the foreign domain.
 pub fn fit_foreign_surface(
     f: &dyn ForeignSurface,
     tol: f64,

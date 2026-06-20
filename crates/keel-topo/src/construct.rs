@@ -19,10 +19,20 @@ use keel_math::vec::Vec3;
 /// A straight pcurve segment in the parameter cover: (start, end) UV.
 pub type UvSegment = ((f64, f64), (f64, f64));
 
+/// What a primitive builder created, returned by [`Body::block`],
+/// [`Body::cylinder`], and the other constructors.
+///
+/// The keys index into the body the builder was called on; use them to
+/// pick edges/faces for follow-up operations (e.g. pass an edge key to
+/// [`Body::fillet_edge`]). `reports` carries the per-operation lineage.
 pub struct PrimitiveOut {
+    /// Faces created by the primitive.
     pub faces: Vec<FaceKey>,
+    /// Edges created by the primitive.
     pub edges: Vec<EdgeKey>,
+    /// Vertices created by the primitive.
     pub vertices: Vec<VertexKey>,
+    /// One lineage report per Euler operation the builder performed.
     pub reports: Vec<OpReport>,
 }
 
@@ -137,7 +147,15 @@ impl Body {
         Ok(out)
     }
 
-    /// Axis-aligned block at `origin` with positive extents.
+    /// Build an axis-aligned solid box.
+    ///
+    /// The box spans from `origin` to `origin + (dx, dy, dz)`; the
+    /// extents are along the global X/Y/Z axes, in model units.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TopoError::Precondition)` if any extent is not finite
+    /// and strictly positive, or `origin` is not finite.
     pub fn block(
         &mut self,
         origin: Vec3,
@@ -941,8 +959,8 @@ impl Body {
     /// `profile` of (radius, height) points about `frame.z` -- a GENUS-1
     /// (toroidal) solid such as a tube / hollow cylinder or annular ring.
     /// Every profile point must be off the axis (radius > 0); the profile
-    /// is an implicitly-closed loop (the last segment runs profile[n-1] ->
-    /// profile[0]). Each segment revolves to a cylinder / cone / washer
+    /// is an implicitly-closed loop (the last segment runs `profile[n-1]`
+    /// -> `profile[0]`). Each segment revolves to a cylinder / cone / washer
     /// band as in `revolve`; the cycle is closed by one `kfmrh` handle-
     /// punch plus a `mekr` seam (research file 45), and interior washer
     /// bands are `kemr`'d to 2-loop holed faces. Profiles that touch the
@@ -1402,6 +1420,16 @@ impl Body {
 
     /// Solid cylinder: axis = frame.z, base disc at the frame origin,
     /// height h. Topology V2 E3 F3 (caps + lateral with seam).
+    ///
+    /// The base disc is centered at `frame.origin` in the frame's
+    /// XY plane; the axis runs along `frame.z` for height `h`. `radius`
+    /// and `h` are in model units. The lateral face carries an exact
+    /// analytic cylinder surface.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TopoError::Precondition)` if `radius` or `h` is not
+    /// finite and strictly positive.
     pub fn cylinder(
         &mut self,
         frame: Frame3,
@@ -1593,6 +1621,16 @@ impl Body {
 
     /// Solid cone: base disc of `radius` at the frame origin, apex at
     /// height h on the axis. Topology V2 E2 F2.
+    ///
+    /// The base disc lies in the frame's XY plane centered at
+    /// `frame.origin`; the apex is at `frame.origin + frame.z * h`.
+    /// Lengths are in model units. This is a full (pointed) cone; for a
+    /// truncated cone use [`Body::extrude_tapered`] or [`Body::revolve`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TopoError::Precondition)` if `radius` or `h` is not
+    /// finite and strictly positive.
     pub fn cone(&mut self, frame: Frame3, radius: f64, h: f64) -> Result<PrimitiveOut, TopoError> {
         if radius <= 0.0 || h <= 0.0 || !radius.is_finite() || !h.is_finite() {
             return Err(TopoError::Precondition("cone: bad parameters"));
@@ -1660,6 +1698,16 @@ impl Body {
 
     /// Solid sphere centered at the frame origin. Topology V2 E1 F1
     /// (pole-to-pole seam meridian).
+    ///
+    /// Centered at `frame.origin` with the seam meridian and poles laid
+    /// out along `frame.z`. `radius` is in model units. The single face
+    /// carries an exact analytic sphere surface. For a NURBS-backed
+    /// sphere instead, see [`Body::nurbs_sphere`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TopoError::Precondition)` if `radius` is not finite
+    /// and strictly positive.
     pub fn sphere(&mut self, frame: Frame3, radius: f64) -> Result<PrimitiveOut, TopoError> {
         if radius <= 0.0 || !radius.is_finite() {
             return Err(TopoError::Precondition("sphere: bad radius"));
@@ -1755,6 +1803,15 @@ impl Body {
     /// Solid ring torus about frame.z. Topology V2 E2 F1 with one
     /// inner ring and genus 1 (the M3 torus skeleton: outer/inner
     /// equator seam structure).
+    ///
+    /// Centered at `frame.origin`, the tube revolves about `frame.z`.
+    /// `major` is the centerline radius (origin to tube center) and
+    /// `minor` is the tube radius, in model units. Ring torus only.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(TopoError::Precondition)` unless `major > minor > 0`
+    /// and both are finite (degenerate / self-intersecting tori decline).
     pub fn torus(
         &mut self,
         frame: Frame3,

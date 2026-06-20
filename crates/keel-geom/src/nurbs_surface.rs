@@ -564,7 +564,7 @@ impl NurbsSurface {
 /// Exact full surface of revolution: revolve `profile` about the axis
 /// through `origin` along `axis` (NURBS Book 8.* construction). The u
 /// direction is the exact 9-point rational full circle (degree 2,
-/// double interior knots, shoulder weight sqrt(2)/2, domain [0,1]);
+/// double interior knots, shoulder weight sqrt(2)/2, domain `[0,1]`);
 /// v is the profile parameter. Weights multiply (tensor structure),
 /// so the result is exact: revolving an exact arc yields an exact
 /// quadric or torus (kernel/24 forward direction).
@@ -694,7 +694,7 @@ pub struct BezierPatch {
 }
 
 impl BezierPatch {
-    /// De Casteljau in s along each column, then in t (local [0,1]^2).
+    /// De Casteljau in s along each column, then in t (local `[0,1]^2`).
     pub fn eval_homogeneous(&self, s: f64, t: f64) -> Vec4 {
         let mut col = [Vec4::ZERO; MAX_ORDER];
         let mut lane = [Vec4::ZERO; MAX_ORDER];

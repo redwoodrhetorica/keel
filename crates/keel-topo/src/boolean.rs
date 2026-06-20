@@ -15,12 +15,17 @@ use crate::entity::{AnyKey, FaceKey, FinKey, SurfaceGeom};
 use keel_geom::ssi::{SsiResult, SurfaceRef, intersect_surfaces};
 use keel_geom::surface::Surface3;
 
-/// The three regularized boolean operations.
+/// The three regularized boolean operations on solid bodies.
+///
+/// Used as the `op` argument to [`boolean`] and friends. Results are
+/// regularized (lower-dimensional slivers are discarded) by default.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BoolOp {
+    /// `a` OR `b`: the volume occupied by either operand.
     Union,
+    /// `a` AND `b`: the volume occupied by both operands.
     Intersection,
-    /// `a` minus `b`.
+    /// `a` minus `b`: the part of `a` not occupied by `b`.
     Difference,
 }
 
@@ -2178,9 +2183,20 @@ pub(crate) fn classify_faces(working: &Body, other: &Body, tol: f64) -> Vec<(Fac
 /// A boolean result: the assembled body plus any non-fatal faults
 /// gathered along the way.
 #[derive(Debug)]
+/// The outcome of a [`boolean`] operation.
+///
+/// Partial-success model: `body` is the best result the kernel could
+/// assemble and `faults` lists every face pair it could not handle, so
+/// a caller sees what was skipped rather than getting an all-or-nothing
+/// answer. An empty `faults` vector means the result is complete. The
+/// DECLINE-never-WRONG contract is upstream of this type: the kernel
+/// returns `Err(BoolFault)` rather than a geometrically wrong `body`.
 pub struct BoolResult {
+    /// The resulting body. May be empty (e.g. an empty intersection).
     pub body: Body,
+    /// Face pairs the kernel could not resolve (empty = complete).
     pub faults: Vec<BoolFault>,
+    /// The operation that produced this result.
     pub op: BoolOp,
 }
 
@@ -4234,7 +4250,10 @@ fn preimprint_coincident_overlaps(a: &Body, b: &Body, tol: f64) -> Option<(Body,
 /// partition wall, and the result is a CELLULAR solid whose solid
 /// material is partitioned into multiple solid regions.
 #[derive(Clone, Copy, Debug)]
+/// Tuning knobs for [`boolean_with`]. [`Default`] enables regularization.
 pub struct BooleanOptions {
+    /// When `true` (the default), discard lower-dimensional artifacts
+    /// (dangling faces/edges) so the result is a clean regularized set.
     pub regularize: bool,
 }
 
@@ -4244,10 +4263,43 @@ impl Default for BooleanOptions {
     }
 }
 
+/// Regularized boolean of two solid bodies.
+///
+/// Computes `a op b` ([`BoolOp::Union`] / [`BoolOp::Intersection`] /
+/// [`BoolOp::Difference`]) and returns a [`BoolResult`] holding the
+/// resulting body plus any per-face-pair [`BoolFault`]s. `tol` is the
+/// linear modeling tolerance (in model units) used for coincidence and
+/// snapping decisions; `1e-7` is a typical value for a part on the
+/// order of tens of units.
+///
+/// # The DECLINE-never-WRONG contract
+///
+/// This is the central robustness guarantee: the kernel returns
+/// `Err(BoolFault)` (a DECLINE) rather than ever returning a
+/// geometrically WRONG body. Configurations the current pipeline cannot
+/// assemble exactly (coplanar/coincident faces, tangencies, certain
+/// crossing curved seams) surface as faults instead of corrupt
+/// geometry. A successful `Ok` result with empty `faults` is trusted to
+/// be correct (mass equals mesh volume).
+///
+/// # Errors
+///
+/// Returns `Err(BoolFault)` when an operand is inside-out (negative
+/// volume), when intersection geometry cannot be assembled into a valid
+/// body, or when a hard configuration is encountered. See [`BoolFault`]
+/// for the variants and what each DECLINE means.
+///
+/// For near-coincident contact that strict mode declines, see
+/// [`boolean_tolerant`].
 pub fn boolean(a: &Body, b: &Body, op: BoolOp, tol: f64) -> Result<BoolResult, BoolFault> {
     boolean_with(a, b, op, tol, BooleanOptions::default())
 }
 
+/// [`boolean`] with explicit [`BooleanOptions`].
+///
+/// Identical to [`boolean`] except the caller controls regularization.
+/// The same DECLINE-never-WRONG contract and `Err(BoolFault)` semantics
+/// apply.
 pub fn boolean_with(
     a: &Body,
     b: &Body,
@@ -4510,9 +4562,17 @@ pub fn boolean_with(
 /// pipeline ran (tier 2). Salvage is never silent: the caller always
 /// sees the tier and the bound.
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Provenance of a [`boolean_tolerant`] result: how much snapping it
+/// took and the tolerance actually achieved.
 pub struct Confidence {
+    /// `true` if near-coincident contact was snapped to assemble the
+    /// result (i.e. strict mode alone would have declined).
     pub salvaged: bool,
+    /// Which recovery tier produced the result (0 = strict, higher =
+    /// more aggressive snapping).
     pub tier: u8,
+    /// The effective fuzz (model units) applied, capped by local feature
+    /// size; never larger than the caller's requested `fuzz`.
     pub achieved_tolerance: f64,
 }
 
@@ -8063,6 +8123,14 @@ fn recovered_analytics(body: &Body, tol: f64) -> Vec<(FaceKey, Surface3)> {
     out
 }
 
+/// Compute the surface-surface intersection ([`SeamCurve`]s) between the
+/// faces of `a` and `b`, without imprinting or assembling anything.
+///
+/// This is the read-only first stage of a boolean: it returns the seam
+/// curves the operation would imprint, plus a [`BoolFault`] for every
+/// face pair whose intersection could not be computed (coincident,
+/// tangent, or unsupported). Useful for previewing where two bodies
+/// meet. `tol` is the linear modeling tolerance.
 pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFault>) {
     let mut seams = Vec::new();
     let mut faults = Vec::new();

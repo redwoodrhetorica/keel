@@ -1,5 +1,5 @@
 //! Multivariate polynomials in tensor-product Bernstein form on
-//! [0,1]^n and the Projected Polyhedron global root solver
+//! `[0,1]^n` and the Projected Polyhedron global root solver
 //! (Sherbrooke and Patrikalakis 1993; spec D6). Every step is a
 //! conservative convex-hull exclusion, so no root is ever lost.
 //!
@@ -17,7 +17,7 @@ pub struct MultiBernstein {
     coeffs: Vec<f64>,
 }
 
-/// A root enclosure box in [0,1]^n.
+/// A root enclosure box in `[0,1]^n`.
 #[derive(Clone, Debug)]
 pub struct RootBox {
     pub lo: Vec<f64>,
@@ -190,7 +190,7 @@ impl MultiBernstein {
     }
 
     /// Partial derivative along `axis`: degree drops by 1 on that axis.
-    /// b'_i = d * (b_{i+1} - b_i) on the [0,1] axis.
+    /// b'_i = d * (b_{i+1} - b_i) on the `[0,1]` axis.
     pub fn derivative(&self, axis: usize) -> MultiBernstein {
         let p = self.degrees[axis];
         if p == 0 {
@@ -411,7 +411,7 @@ fn below_zero_span(chain: &[(f64, f64)]) -> Option<(f64, f64)> {
     }
 }
 
-/// Projected Polyhedron solve over [0,1]^n. Returns None when the
+/// Projected Polyhedron solve over `[0,1]^n`. Returns None when the
 /// node budget is exhausted.
 pub fn solve_system(polys: &[MultiBernstein], tol: f64, max_nodes: usize) -> Option<Vec<RootBox>> {
     if polys.is_empty() {

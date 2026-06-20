@@ -166,13 +166,18 @@ impl Ellipse3 {
     }
 }
 
-/// Exhaustive curve dispatch (compile error at every non-exhaustive
-/// match when a curve type is added).
+/// A 3D curve: a first-class analytic type or a NURBS curve. This is the
+/// geometry attached to an edge. Exhaustive dispatch (adding a curve type
+/// is a compile error at every match).
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Curve3 {
+    /// A straight line.
     Line(Line3),
+    /// A circle.
     Circle(Circle3),
+    /// An ellipse.
     Ellipse(Ellipse3),
+    /// A NURBS curve.
     Nurbs(NurbsCurve),
 }
 
