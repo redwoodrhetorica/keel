@@ -318,3 +318,114 @@ It is NOT: it is a different and deeper gap.
   `union_wrong_repro` (both tests), `cyl_union_mass_witness`, `three_bucket`,
   `post_fillet_mass`.
 - Tutorial workflows: **8 passed, 4 ignored** (8/12).
+
+---
+
+## `boolean_then_fillet_cyl_block_union` (boss + fillet): root cause is the CONCAVE plane-cylinder fillet, not pcurve bounds
+
+### TL;DR
+
+The "boss + fillet" gap (#5) was diagnosed as a missing-pcurve-bounds problem
+("curved face without pcurve bounds" out of `mass_properties`). It is NOT. The
+real cause is that the cap-rim torus fillet (`fillet_cap_rim` /
+`blend_torus_for_edge` in `crates/keel-topo/src/blend.rs`) **only implements the
+CONVEX cap-end case** (rounding a cylinder's flat-top rim, an inward torus). The
+boss-on-plate seam is the **CONCAVE** case (an outward torus filling the
+reentrant corner where a cylinder rises out of a plate), which needs the
+mirror-image trim-and-stitch surgery. Unguarded, the convex code built an
+inward torus (`major = r_cyl - radius`) and stapled it to the **annular plate-top
+face**, leaving a body that passed `validate()` but DECLINED in
+`mass_properties` with the misleading pcurve message. Implementing the concave
+case correctly is a milestone-scale change (the imprint, the mekr loop roles,
+and the ring-face selection all assume the convex disc-cap topology); it stays a
+DECLINE. The landed change makes that decline **honest and early** (at
+`fillet_edge`) instead of a broken body + misleading late mass error.
+
+### The investigation chain (what the instrumentation showed)
+
+1. `mass_properties` fails on the post-fillet body at curved face `Key(0g0)`:
+   `KEEL_MASS_DEBUG` -> `mass curved Key(0g0) stale true ... lo (0,0) hi (tau,60)
+   vert_v (0, 1.5708)`. The pcurve box `v=60` (a PLATE length, not an angle)
+   exceeds the vertex extent `v=pi/2`, so the bounds path flags STALE and falls
+   to `projected_rect_bounds`, which returns `None`; the surface is a `Torus`,
+   not in `integrate_face_green`'s {cylinder, sphere, cone}, so it returns
+   `Precondition("curved face without pcurve bounds")` (massprops.rs:918). The
+   guard is correct -- the face genuinely has no readable UV rectangle.
+2. `KEEL_PRB_DEBUG` (temporary dump in `projected_rect_bounds`) showed the failing
+   torus face's loop is NOT a clean two-spring band: it carried the **60x60 plate
+   pcurves** (`v=0..60`), cylinder pcurves (`v=10`, `v=30`), my two spring
+   circles, AND a `curve=none` **mekr seam bridge** whose chord projects to
+   varying u AND v (non-iso). So the torus surface was attached to the
+   plate-top face.
+3. `blend_torus_for_edge` computes `major = r_cyl - radius = 9` and the spring
+   on the plane at `r = major = 9`. For the boss, `r=9 < r_cyl=12` is INSIDE the
+   boss footprint -- not on the plate-top annulus (`r>12`) at all. `imprint_ring`
+   then split the plate-top into a disc `r<15`... wrong region. `CAPRIM` dump:
+   `convex=Some(true)` -- the generic `edge_is_convex` MISREADS the corner
+   (it takes the in-plane direction from the plane face's outer-loop centroid,
+   which for the boss annulus sits over the bore and flips inward), so even with
+   a correct concave torus the convex surgery ran.
+
+### Why the convex path is right and the boss is the concave dual
+
+The PASSING unit test `blend::tests::fillet_cylinder_cap_rim_to_torus` fillets
+the top rim of a STANDALONE cylinder (a disc cap bounded BY the cylinder): the
+ball rolls in the material inside the cylinder, `major = r_cyl - radius`, and the
+resulting torus ring integrates EXACTLY (Pappus, `< 1e-9`). That is the convex
+cap-end. The boss is its dual: the planar support is a **plate that overruns the
+cylinder** and is pierced by the cylinder footprint; the ball rolls in the void
+OUTSIDE the cylinder; the correct torus is OUTWARD (`major = r_cyl + radius`,
+tube centre offset into the void, spring on the plane at `r_cyl + radius`). The
+geometry for the outward torus was derived and verified
+(`major=15, minor=3, origin z=13`, springs at `(r=12,z=13)` and `(r=15,z=10)`),
+but the surgery that trims and stitches it (imprint, mekr, kef, ring selection)
+is convex-specific and produced a mis-attached face.
+
+### What landed (WRONG-safe, low-risk)
+
+`blend_torus_for_edge` now DETECTS the concave case and DECLINES with the true
+reason `"blend_torus: concave plane-cylinder (boss) rim fillet unimplemented"`.
+The detector is a generalized-winding-number probe just OUTSIDE the cylinder, on
+the MATERIAL side of the plane (opposite the plane's outward normal): MATERIAL
+there means the plane overruns the cylinder (boss => concave); VOID there means
+the plane ends at the cylinder (cap-end => convex). This correctly distinguishes
+the two without relying on `edge_is_convex` (which misreads annular supports).
+
+- The convex cap-end path is untouched: all 30 `blend` lib tests pass, including
+  the three `fillet_cylinder_*_rim_to_torus` cases and the Pappus mass check.
+- The boss fillet now declines cleanly at `fillet_edge` (no broken body, no
+  misleading late `mass_properties` error). `boolean_then_fillet_cyl_block_union`
+  stays `#[ignore]`d (its annotation updated to the true reason).
+
+### The follow-up to actually pass this test (the concave cap-rim milestone)
+
+To un-ignore `boolean_then_fillet_cyl_block_union`, implement the concave
+plane-cylinder torus fillet end-to-end:
+1. `blend_torus_for_edge`: build the OUTWARD torus for the concave branch
+   (`major = r_cyl + radius`, `h_off = hp + sgn*radius`; the spring on the plane
+   at `r_cyl + radius`, the spring on the cylinder at `hp + sgn*radius`; skip the
+   `R > 2r` guard, which is only needed for the inward torus). (Derived + verified
+   in this investigation.)
+2. The trim-and-stitch surgery for the concave topology: the planar support is an
+   annulus where the seam (rim) is an INNER hole, not the outer loop, and the
+   spring circle (`r_cyl + radius`) bounds a BAND with the rim (not a disc inside
+   the spring). `imprint_ring`, the `rim_loop`/`ring_loop` roles fed to `mekr`
+   (the spring loop is OUTER, the rim loop INNER -- inverted from the convex
+   case), and the post-`kef` `ring`-face selection all need the mirror-image
+   logic.
+3. Then attach the torus ring's pcurve bounds (iso-v springs) so the green-slab
+   integrator reads `u in [0, tau], v in [v0, v0+pi/2]` -- the small, originally
+   anticipated piece, which only matters once (1) and (2) produce a clean
+   two-spring torus band.
+
+### Verification (this change)
+
+- `cargo build --release` green; `cargo clippy --release` introduces **no new
+  warnings** (origin baseline = 18 keel-topo warnings, unchanged; none in the
+  edited region).
+- `cargo test --release` (keel-topo): 298 lib tests + every integration suite
+  green, including WRONG-locks `scan_wrong`, `union_wrong_repro`,
+  `cyl_union_mass_witness`, `three_bucket`, `post_fillet_mass`, and
+  `fillet_surgery_robustness`.
+- Tutorial workflows: still **8 passed, 4 ignored** (no regression; the boss
+  fillet's decline is now honest).

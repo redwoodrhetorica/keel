@@ -271,6 +271,47 @@ impl Body {
             .ok_or(TopoError::Precondition("blend_torus: plane point"))?;
         let hp = (pp - axis_o).dot(axis); // plane height along the axis
         let sgn = np.dot(axis); // +1 cap faces +axis, -1 faces -axis
+        // SCOPE: only the CONVEX cap-end (a cylinder's flat top/bottom rim,
+        // where the cap is a simple disc bounded BY the cylinder and the ball
+        // rolls in the material INSIDE the cylinder) is implemented. The CONCAVE
+        // boss rim (a cylinder rising out of a plate, where the planar support
+        // EXTENDS BEYOND the cylinder and is pierced by the cylinder footprint,
+        // and the fillet fills the reentrant void OUTSIDE the cylinder) needs
+        // the mirror-image trim-and-stitch surgery (imprint_ring, the mekr loop
+        // roles, and the ring-face selection all assume the convex disc-cap
+        // topology), which is unimplemented; left unguarded it builds an inward
+        // torus and staples it to the annular plate face, yielding a body that
+        // later DECLINES in mass_properties with a misleading "curved face
+        // without pcurve bounds". DECLINE here instead, with the true reason.
+        //
+        // The two cases differ in whether the planar support extends past the
+        // cylinder: probe the generalized winding number just OUTSIDE the
+        // cylinder, on the MATERIAL side of the plane (opposite its outward
+        // normal). MATERIAL there means the plane is a plate that overruns the
+        // cylinder => concave boss; VOID there means the plane ends at the
+        // cylinder => convex cap-end. (The generic edge_is_convex misreads this
+        // corner: it takes the in-plane direction from the plane face's
+        // OUTER-loop centroid, which for the boss annulus sits over the bore and
+        // flips inward.)
+        let (sv0, sv1) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
+        let radial_out = {
+            let at = |vk: crate::entity::VertexKey| {
+                self.vertices.get(vk).and_then(|x| {
+                    let w = x.point - axis_o;
+                    (w - axis * w.dot(axis)).try_normalize()
+                })
+            };
+            at(sv0).or_else(|| at(sv1))
+        };
+        if let Some(rad) = radial_out {
+            let eps = (radius * 0.25).min(r_cyl * 0.05).max(1e-4);
+            let probe = axis_o + axis * hp + rad * (r_cyl + eps) - np * eps;
+            if self.generalized_winding_number(probe) > 0.5 {
+                return Err(TopoError::Precondition(
+                    "blend_torus: concave plane-cylinder (boss) rim fillet unimplemented",
+                ));
+            }
+        }
         let h_off = hp - sgn * radius; // offset plane, toward material
         let major = r_cyl - radius; // coaxial offset cylinder radius
         let centre = axis_o + axis * h_off;
