@@ -4041,12 +4041,24 @@ fn connected_face_components(dst: &Body, faces: &[FaceKey]) -> Vec<Vec<FaceKey>>
     use std::collections::BTreeMap;
     let idx: BTreeMap<FaceKey, usize> = faces.iter().enumerate().map(|(i, &f)| (f, i)).collect();
     let mut parent: Vec<usize> = (0..faces.len()).collect();
+    // ITERATIVE union-find (was recursive): the recursive variant's depth
+    // scaled with the union-tree height, so a pathological component (a long
+    // union chain) could drive it deep enough to overflow the stack -- a crash
+    // is strictly worse than a decline (it bypasses DECLINE-never-WRONG). The
+    // two-pass loop (find root, then path-compress) is byte-identical in result
+    // and O(1) stack regardless of body complexity.
     fn find(p: &mut [usize], i: usize) -> usize {
-        if p[i] != i {
-            let r = find(p, p[i]);
-            p[i] = r;
+        let mut r = i;
+        while p[r] != r {
+            r = p[r];
         }
-        p[i]
+        let mut c = i;
+        while p[c] != c {
+            let nx = p[c];
+            p[c] = r;
+            c = nx;
+        }
+        r
     }
     // Union faces that share an edge (via the edge's radial fins -> owners).
     for (_, e) in dst.edges.iter() {

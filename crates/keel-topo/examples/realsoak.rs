@@ -1397,16 +1397,22 @@ fn spawn_pool(n: usize) -> (mpsc::Sender<Project>, mpsc::Receiver<PoolResult>) {
     for i in 0..n.max(1) {
         let job_rx = std::sync::Arc::clone(&job_rx);
         let res_tx = res_tx.clone();
-        // Large per-worker stack: the realistic LONG chains grow complex bodies
-        // that drive the kernel's recursive boolean/tessellation routines deep.
-        // The default 2 MB stack overflowed on a heavy grown body and a stack
-        // overflow is NOT catch_unwind-able -- it aborts the whole process,
-        // killing the soak mid-run. A generous 256 MB stack lets such a project
-        // run to completion (or, if it truly recurses without bound, the 90 s
-        // recv-timeout still reconciles it as a TIMEOUT rather than a crash).
+        // Per-worker stack. The realistic LONG chains grow complex bodies, and a
+        // stack overflow is NOT catch_unwind-able -- it aborts the whole process,
+        // killing the soak mid-run. The historical band-aid was a generous 256 MB
+        // stack; the two genuine unbounded recursions on the boolean assembly
+        // path (the recursive union-find in connected_face_components and the
+        // assembly-DAG walk) are now ITERATIVE, so this large stack is merely
+        // belt-and-suspenders. KEEL_WORKER_STACK_MB overrides it (set small, e.g.
+        // 2, to confirm the kernel no longer aborts on deep input). See
+        // docs/research/kernel/deep-chain-recursion-FINDINGS.md.
+        let stack_mb: usize = std::env::var("KEEL_WORKER_STACK_MB")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(256);
         let builder = std::thread::Builder::new()
             .name(format!("realsoak-w{i}"))
-            .stack_size(256 * 1024 * 1024);
+            .stack_size(stack_mb * 1024 * 1024);
         let spawn_res = builder.spawn(move || {
             loop {
                 // Pull one job (lock only for the recv, never across the work).
@@ -1473,6 +1479,65 @@ fn main() {
             eprintln!("  => realized={} {}", res.realized, res.final_sig);
             return;
         }
+    }
+
+    // CRASH HUNT (recursion repro): run projects SEQUENTIALLY on a SMALL-stack
+    // thread, flushing each seed to a log file BEFORE running it. A stack
+    // overflow aborts the whole process, so the LAST seed in the log is the
+    // crasher. KEEL_CRASH_HUNT=<stack_kib>. Args: [nproj] [seed].
+    if let Ok(Ok(stack_kib)) = std::env::var("KEEL_CRASH_HUNT").map(|s| s.parse::<usize>()) {
+        if std::env::var("KEEL_FAITHFUL").is_ok() {
+            FAITHFUL.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        std::panic::set_hook(Box::new(|_| {}));
+        let args: Vec<String> = std::env::args().collect();
+        let nproj: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(20000);
+        let base: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
+        let logp = std::env::var("KEEL_CRASH_LOG").unwrap_or_else(|_| "crash_hunt.log".into());
+        eprintln!("CRASH HUNT: {nproj} projects on a {stack_kib} KiB thread, log={logp}");
+        let mut deepest = 0usize;
+        for k in 0..nproj {
+            let pseed = base
+                .wrapping_mul(0x100000001B3)
+                .wrapping_add(k as u64)
+                .wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let proj = gen_project(pseed);
+            // Flush the seed + op count BEFORE running, so a crash leaves it.
+            {
+                use std::io::Write as _;
+                let mut f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&logp)
+                    .unwrap();
+                let _ = writeln!(f, "{{\"k\":{k},\"seed\":{pseed},\"ops\":{}}}", proj.ops.len());
+                let _ = f.flush();
+            }
+            // Run THIS project on a small-stack thread so a clean panic is
+            // caught (recorded) and only a true overflow aborts.
+            let h = std::thread::Builder::new()
+                .stack_size(stack_kib * 1024)
+                .spawn(move || run_project(&proj))
+                .unwrap();
+            match h.join() {
+                Ok(res) => {
+                    if res.realized > deepest {
+                        deepest = res.realized;
+                    }
+                }
+                Err(_) => {
+                    // Caught panic (NOT an overflow abort): note and continue.
+                    use std::io::Write as _;
+                    let mut f = std::fs::OpenOptions::new().append(true).open(&logp).unwrap();
+                    let _ = writeln!(f, "{{\"k\":{k},\"seed\":{pseed},\"panic\":true}}");
+                }
+            }
+            if k % 500 == 0 {
+                eprintln!("  hunt {k}/{nproj} (deepest realized {deepest})");
+            }
+        }
+        eprintln!("CRASH HUNT complete: no overflow in {nproj} projects (deepest realized {deepest})");
+        return;
     }
 
     let args: Vec<String> = std::env::args().collect();

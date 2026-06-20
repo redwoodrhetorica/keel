@@ -119,38 +119,58 @@ impl Assembly {
     pub fn flatten(&self) -> Result<Vec<Occurrence>, TopoError> {
         let mut out = Vec::new();
         if let Some(root) = self.root {
-            let mut path = Vec::new();
-            self.walk(root, Transform3::IDENTITY, &mut path, &mut out)?;
+            self.walk_iter(root, &mut out)?;
         }
         Ok(out)
     }
 
-    fn walk(
-        &self,
-        def: DefId,
-        acc: Transform3,
-        path: &mut Vec<InstanceId>,
-        out: &mut Vec<Occurrence>,
-    ) -> Result<(), TopoError> {
-        match self.defs.get(def) {
-            Some(Def::Part(body)) => {
-                out.push(Occurrence {
-                    path: path.clone(),
-                    world: acc,
-                    body: body.transformed(&acc)?,
-                });
-            }
-            Some(Def::Sub(instances)) => {
-                for inst in instances {
-                    // Descend: child world = child-local placed by its
-                    // transform, then by the accumulated parent transform.
-                    let child_acc = inst.transform.then(acc);
-                    path.push(inst.id);
-                    self.walk(inst.def, child_acc, path, out)?;
-                    path.pop();
+    /// Expand the DAG by an EXPLICIT-STACK depth-first walk (was recursive).
+    /// The recursion depth scaled with the assembly NESTING depth, so a deeply
+    /// nested DAG could overflow the thread stack -- an abort, which bypasses
+    /// the graceful-decline contract. The explicit stack runs in O(1) native
+    /// stack at any nesting depth and reproduces the recursive version's output
+    /// EXACTLY: leaves are emitted in pre-order (children left-to-right) and
+    /// each carries the instance-id path + composed world transform from root.
+    fn walk_iter(&self, root: DefId, out: &mut Vec<Occurrence>) -> Result<(), TopoError> {
+        // Each frame is a node to visit with its accumulated world transform
+        // and the instance-id path from the root to it. Children are pushed in
+        // REVERSE so they pop (and emit) in forward order -- matching the
+        // recursive `for inst in instances` traversal.
+        struct Frame {
+            def: DefId,
+            acc: Transform3,
+            path: Vec<InstanceId>,
+        }
+        let mut stack = vec![Frame {
+            def: root,
+            acc: Transform3::IDENTITY,
+            path: Vec::new(),
+        }];
+        while let Some(Frame { def, acc, path }) = stack.pop() {
+            match self.defs.get(def) {
+                Some(Def::Part(body)) => {
+                    out.push(Occurrence {
+                        path,
+                        world: acc,
+                        body: body.transformed(&acc)?,
+                    });
                 }
+                Some(Def::Sub(instances)) => {
+                    for inst in instances.iter().rev() {
+                        // Descend: child world = child-local placed by its
+                        // transform, then by the accumulated parent transform.
+                        let child_acc = inst.transform.then(acc);
+                        let mut child_path = path.clone();
+                        child_path.push(inst.id);
+                        stack.push(Frame {
+                            def: inst.def,
+                            acc: child_acc,
+                            path: child_path,
+                        });
+                    }
+                }
+                None => {}
             }
-            None => {}
         }
         Ok(())
     }
