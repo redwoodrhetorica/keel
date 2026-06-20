@@ -70,35 +70,26 @@ Resolution and shading fidelity reflect the kernel's current state, not a render
 <details>
 <summary>Full media corpus (remaining demos)</summary>
 
-| File | Caption |
-|---|---|
-| `blendzoo.webp` | Blend zoo, multiple fillet families side by side |
-| `cellular-union.webp` | Cellular union, non-manifold result retained |
-| `corners2.webp` | Corner blend variant, second configuration |
-| `defeature.webp` | Defeature: round removal |
-| `deleteface.webp` | Delete face, heal boundary |
-| `draft.webp` | Draft angle applied to a pocket |
-| `extrude-revolve.webp` | Extrude and revolve primitives |
-| `helix.webp` | Helix sweep |
-| `hlr.webp` | Hidden-line removal wireframe |
-| `knit.webp` | Sheet knit (open shell closure) |
-| `loft.webp` | Loft between profiles |
-| `mirror.webp` | Mirror operation |
-| `moveface.webp` | Move-face direct edit |
-| `multitool.webp` | Multi-tool boolean (several cutters) |
-| `nonuniform.webp` | Non-uniform scaling / non-uniform surface |
-| `offset.webp` | Offset face |
-| `partition.webp` | Partition body by surface |
-| `pierce.webp` | Pierce (body-through-body) |
-| `primitives.webp` | Primitive constructors: box, cylinder, sphere, cone, torus |
-| `revolve_partial.webp` | Partial revolve (sector) |
-| `sheets.webp` | Sheet bodies and open shells |
-| `slicestack.webp` | Slice-stack cross-section sweep |
-| `taperface.webp` | Taper face |
-| `unblend.webp` | Unblend (fillet removal) |
-| `vfillet.webp` | Variable-radius fillet |
-| `winding-cloud.webp` | Generalized winding-number point cloud classification |
-| `wiretrim.webp` | Wire trim on a face |
+| | | |
+|---|---|---|
+| ![Blend zoo](docs/media/blendzoo.webp) | ![Cellular union](docs/media/cellular-union.webp) | ![Corner blend variant](docs/media/corners2.webp) |
+| Blend zoo, multiple fillet families side by side | Cellular union, non-manifold result retained | Corner blend variant, second configuration |
+| ![Defeature](docs/media/defeature.webp) | ![Delete face](docs/media/deleteface.webp) | ![Draft](docs/media/draft.webp) |
+| Defeature: round removal | Delete face, heal boundary | Draft angle applied to a pocket |
+| ![Extrude and revolve](docs/media/extrude-revolve.webp) | ![Helix sweep](docs/media/helix.webp) | ![Hidden-line removal](docs/media/hlr.webp) |
+| Extrude and revolve primitives | Helix sweep | Hidden-line removal wireframe |
+| ![Knit](docs/media/knit.webp) | ![Loft](docs/media/loft.webp) | ![Mirror](docs/media/mirror.webp) |
+| Sheet knit (open shell closure) | Loft between profiles | Mirror operation |
+| ![Move face](docs/media/moveface.webp) | ![Multi-tool boolean](docs/media/multitool.webp) | ![Non-uniform](docs/media/nonuniform.webp) |
+| Move-face direct edit | Multi-tool boolean (several cutters) | Non-uniform scaling / non-uniform surface |
+| ![Offset face](docs/media/offset.webp) | ![Partition](docs/media/partition.webp) | ![Pierce](docs/media/pierce.webp) |
+| Offset face | Partition body by surface | Pierce (body-through-body) |
+| ![Primitives](docs/media/primitives.webp) | ![Partial revolve](docs/media/revolve_partial.webp) | ![Sheets](docs/media/sheets.webp) |
+| Primitive constructors: box, cylinder, sphere, cone, torus | Partial revolve (sector) | Sheet bodies and open shells |
+| ![Slice-stack](docs/media/slicestack.webp) | ![Taper face](docs/media/taperface.webp) | ![Unblend](docs/media/unblend.webp) |
+| Slice-stack cross-section sweep | Taper face | Unblend (fillet removal) |
+| ![Variable-radius fillet](docs/media/vfillet.webp) | ![Winding cloud](docs/media/winding-cloud.webp) | ![Wire trim](docs/media/wiretrim.webp) |
+| Variable-radius fillet | Generalized winding-number point cloud classification | Wire trim on a face |
 
 </details>
 
