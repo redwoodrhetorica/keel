@@ -297,26 +297,44 @@ fn seed_primitive(rng: &mut Lcg) -> Option<(Body, PrimKind)> {
     // never grew the LONG chains that are this soak's whole point. The curved
     // boolean decline class is still well-represented via curved TOOLS and
     // the curved-seed minority.)
-    let kind = match rng.weighted(&[0.70, 0.20, 0.04, 0.06]) {
-        0 => PrimKind::Block,
-        1 => PrimKind::Cyl,
-        2 => PrimKind::Cone,
-        _ => PrimKind::Sphere,
+    // Faithful mode: tutorials are overwhelmingly prismatic; lean even harder
+    // into the block and trim the cone/sphere tail so a curved-first-boolean
+    // decline (the documented frontier, an artifact when it kills the chain at
+    // op 1) is rarer. The fuzzer keeps its broader curved mix.
+    let kind = if faithful() {
+        match rng.weighted(&[0.80, 0.16, 0.02, 0.02]) {
+            0 => PrimKind::Block,
+            1 => PrimKind::Cyl,
+            2 => PrimKind::Cone,
+            _ => PrimKind::Sphere,
+        }
+    } else {
+        match rng.weighted(&[0.70, 0.20, 0.04, 0.06]) {
+            0 => PrimKind::Block,
+            1 => PrimKind::Cyl,
+            2 => PrimKind::Cone,
+            _ => PrimKind::Sphere,
+        }
     };
     let mut b = Body::new();
     let s = feature_size(rng);
+    // Aspect-ratio band: tutorial primitives are near-cubic (modelers rarely
+    // start from a sliver). Faithful mode tightens to 0.75..1.35 (max ~1.8x
+    // anisotropy); the fuzzer keeps 0.6..1.6 (up to ~2.7x).
+    let (alo, ahi) = if faithful() { (0.75, 1.35) } else { (0.6, 1.6) };
+    let (hlo, hhi) = if faithful() { (0.8, 1.6) } else { (0.8, 2.0) };
     let ok = match kind {
         PrimKind::Block => {
-            // Roughly cubic with up to 2x anisotropy, centred at origin.
-            let dx = s * rng.range(0.6, 1.6);
-            let dy = s * rng.range(0.6, 1.6);
-            let dz = s * rng.range(0.6, 1.6);
+            // Roughly cubic, centred at origin.
+            let dx = s * rng.range(alo, ahi);
+            let dy = s * rng.range(alo, ahi);
+            let dz = s * rng.range(alo, ahi);
             b.block(Vec3::new(-dx * 0.5, -dy * 0.5, -dz * 0.5), dx, dy, dz)
                 .is_ok()
         }
         PrimKind::Cyl => {
             let r = s * 0.5;
-            let h = s * rng.range(0.8, 2.0);
+            let h = s * rng.range(hlo, hhi);
             Frame3::from_z(Vec3::new(0.0, 0.0, -h * 0.5), Vec3::new(0.0, 0.0, 1.0))
                 .ok()
                 .map(|f| b.cylinder(f, r, h).is_ok())
@@ -324,7 +342,7 @@ fn seed_primitive(rng: &mut Lcg) -> Option<(Body, PrimKind)> {
         }
         PrimKind::Cone => {
             let r = s * 0.5;
-            let h = s * rng.range(0.8, 2.0);
+            let h = s * rng.range(hlo, hhi);
             Frame3::from_z(Vec3::new(0.0, 0.0, -h * 0.5), Vec3::new(0.0, 0.0, 1.0))
                 .ok()
                 .map(|f| b.cone(f, r, h).is_ok())
@@ -507,18 +525,116 @@ impl VolBound {
     }
 }
 
+/// Decline PROVENANCE (faithful-mode classifier, Part 1 of the faithful soak).
+///
+/// A decline is only a REAL tutorial gap when ALL of these hold:
+///   (a) the INPUT body is validate()-Ok AND watertight (no radial-1 open
+///       boundary edges);
+///   (b) the op is a real tutorial op (fillet/chamfer/boolean/loft-no:
+///       free-form ops that have no realization on a solid are ARTIFACT);
+///   (c) the op's parameters are SENSIBLE (radius comfortably fits the edge,
+///       shell thickness < half the min wall, ...);
+///   (d) the op is well-posed (the target edge exists; the boolean tool
+///       genuinely + meaningfully OVERLAPS the body, not a glancing touch).
+/// If all hold and the kernel declines -> REAL gap (worklist). Otherwise the
+/// decline is an ARTIFACT of impossible/ill-posed input and is counted
+/// separately, NOT on the worklist. `Real` carries no payload; `Artifact`
+/// carries a short machine reason for the artifact bucket histogram.
+#[derive(Clone, Debug)]
+enum Provenance {
+    Real,
+    Artifact(&'static str),
+}
+
+impl Provenance {
+    fn is_real(&self) -> bool {
+        matches!(self, Provenance::Real)
+    }
+    fn reason(&self) -> &'static str {
+        match self {
+            Provenance::Real => "real",
+            Provenance::Artifact(r) => r,
+        }
+    }
+}
+
 /// Outcome of executing one op against the current body.
 #[allow(clippy::large_enum_variant)] // Ok carries a whole Body by design.
 enum Step {
     /// Op produced a valid body; carry it forward with its new bound.
     Ok(Body, VolBound),
     /// Op declined gracefully (kernel said no, or not applicable). The op is
-    /// recorded and SKIPPED; the chain continues. `fault` is the signature.
-    Decline(String),
+    /// recorded and SKIPPED; the chain continues. `fault` is the signature and
+    /// `prov` records whether this is a REAL tutorial gap or an ARTIFACT of
+    /// impossible/ill-posed input (Part-1 classifier; only meaningful in
+    /// faithful mode -- in fuzzer mode every decline is treated as before).
+    Decline(String, Provenance),
     /// decline-never-wrong VIOLATION (panic / invalid / mass!=mesh / wrong).
     /// `reason` is the failure class; the chain stops and it is recorded.
     Fail(String),
 }
+
+/// Faithful mode: separate REAL tutorial declines from random-primitive
+/// artifacts and tighten generation toward valid, realistic workflows.
+/// Off (the historical fuzzer) unless KEEL_FAITHFUL is set.
+static FAITHFUL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn faithful() -> bool {
+    FAITHFUL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Count of radial-1 OPEN boundary edges (a manifold-closed body has none).
+/// An edge is an open boundary when exactly ONE fin uses it and its endpoints
+/// differ (a closed/seam edge has bounds.0 == bounds.1 and is not a boundary).
+/// Replicates the interrogate.rs `radial.len()==1 && bounds.0 != bounds.1`
+/// predicate via the public Edge accessors. 0 == watertight.
+fn open_edge_count(b: &Body) -> usize {
+    edge_keys(b)
+        .into_iter()
+        .filter_map(|k| b.edge(k))
+        .filter(|e| e.radial.len() == 1 && e.bounds.0 != e.bounds.1)
+        .count()
+}
+
+/// Condition (a): the INPUT body is a legitimate starting point -- validate()
+/// passes AND it is watertight (closed). A decline against a body that is
+/// already malformed/open is an ARTIFACT (the body, not the op, is the
+/// problem), so it never reaches the worklist.
+fn input_is_sound(b: &Body) -> bool {
+    b.validate().is_ok() && open_edge_count(b) == 0
+}
+
+/// Axis-aligned-bbox overlap FRACTION of two bodies: vol(box(a) /\ box(b)) /
+/// min(vol box(a), vol box(b)). ~0 for a glancing/degenerate touch, up to 1
+/// when one body's box sits inside the other's. The well-posedness signal for
+/// a boolean (condition d): a tool whose box barely grazes the body is NOT a
+/// meaningful, deliberate cut/join -- a real modeler would not request it.
+fn bbox_overlap_frac(a: &Body, t: &Body) -> f64 {
+    let (ba, bt) = (a.bounding_box(), t.bounding_box());
+    if !ba.min.is_finite() || !bt.min.is_finite() {
+        return 0.0;
+    }
+    let lo = Vec3::new(
+        ba.min.x.max(bt.min.x),
+        ba.min.y.max(bt.min.y),
+        ba.min.z.max(bt.min.z),
+    );
+    let hi = Vec3::new(
+        ba.max.x.min(bt.max.x),
+        ba.max.y.min(bt.max.y),
+        ba.max.z.min(bt.max.z),
+    );
+    let ov = (hi.x - lo.x).max(0.0) * (hi.y - lo.y).max(0.0) * (hi.z - lo.z).max(0.0);
+    let va = (ba.max.x - ba.min.x) * (ba.max.y - ba.min.y) * (ba.max.z - ba.min.z);
+    let vt = (bt.max.x - bt.min.x) * (bt.max.y - bt.min.y) * (bt.max.z - bt.min.z);
+    let denom = va.min(vt);
+    if denom <= 1e-30 { 0.0 } else { ov / denom }
+}
+
+/// A boolean tool genuinely + meaningfully overlaps the body (condition d):
+/// the bbox overlap fraction clears a deliberate-cut threshold. Below it the
+/// operands barely graze -- a degenerate/glancing configuration no real
+/// workflow would request, so a decline there is an ARTIFACT.
+const MEANINGFUL_OVERLAP: f64 = 0.10;
 
 /// Number of non-planar (curved / NURBS) faces of the body, via the PUBLIC
 /// face surface accessor. 0 == an all-planar body whose tessellation is
@@ -717,8 +833,12 @@ fn boolean_tool(b: &Body, rng: &mut Lcg) -> Option<(Body, VolBound)> {
     let ax = rng.pick(3); // protrusion axis
     let (e0, e1, e2) = (size.x.max(1.0), size.y.max(1.0), size.z.max(1.0));
     // Cross-section fractions in the two perpendicular axes (strictly < 1).
-    let cf_a = rng.range(0.3, 0.7);
-    let cf_b = rng.range(0.3, 0.7);
+    // Faithful mode: a solid 0.4..0.65 cross-section guarantees a deliberate,
+    // meaningful transversal cut/join (clears the bbox-overlap bar), not a
+    // thin grazing peg. The fuzzer keeps the wider 0.3..0.7.
+    let (cflo, cfhi) = if faithful() { (0.4, 0.65) } else { (0.3, 0.7) };
+    let cf_a = rng.range(cflo, cfhi);
+    let cf_b = rng.range(cflo, cfhi);
     // Small lateral jitter (a fraction of the slack) so the peg is off-centre
     // but still fully inside the cross-section -- avoids any accidental
     // face/edge alignment without poking a side out.
@@ -765,8 +885,15 @@ fn boolean_tool(b: &Body, rng: &mut Lcg) -> Option<(Body, VolBound)> {
     };
     let rad = 0.5 * px.min(py);
     let mut tool = Body::new();
-    // 64% block, 24% cylinder, 6% cone, 6% sphere.
-    let kind = rng.weighted(&[0.64, 0.24, 0.06, 0.06]);
+    // Tool kind. Faithful mode: a real cut/join is overwhelmingly a prismatic
+    // boss/peg or a round drill (block/cyl); cone and sphere tools are the
+    // curved-boolean frontier and mostly produce tangent/glancing artifacts, so
+    // trim their share. The fuzzer keeps the broader curved mix.
+    let kind = if faithful() {
+        rng.weighted(&[0.72, 0.24, 0.02, 0.02]) // block / cyl / cone / sphere
+    } else {
+        rng.weighted(&[0.64, 0.24, 0.06, 0.06])
+    };
     let vol;
     let ok = match kind {
         0 => {
@@ -832,13 +959,19 @@ fn apply_op(op: Op, body: &Body, bound: VolBound, rng: &mut Lcg) -> Step {
             do_boolean(body, bound, bop, otag, rng)
         }
         Op::Fillet => {
+            // (a) input must be a sound starting body, else this decline is an
+            // artifact of a malformed/open body, not a real fillet gap.
+            let input_ok = input_is_sound(body);
             let cands = blend_edge_candidates(body, rng);
             if cands.is_empty() {
-                return Step::Decline("fillet:no-edge".into());
+                // (d) not well-posed: no target edge exists.
+                return Step::Decline("fillet:no-edge".into(), Provenance::Artifact("no-target-edge"));
             }
             // Radius SMALL vs the local feature (edge length): 2..8% (large
             // radii overflow the local geometry and the kernel declines them).
             // Try the best few candidate edges; accept the first that blends.
+            // (c) holds by construction: the radius is a small fraction of the
+            // edge length, so it comfortably fits.
             let frac = rng.range(0.02, 0.08);
             let mut last = "Precondition".to_string();
             for (e, len) in cands.iter().take(4) {
@@ -858,12 +991,20 @@ fn apply_op(op: Op, body: &Body, bound: VolBound, rng: &mut Lcg) -> Step {
                     Err(err) => last = topo_err(&err),
                 }
             }
-            Step::Decline(format!("fillet:{last}"))
+            // (a)-(d) all hold (sound input, real op, sane radius, edge exists)
+            // and the kernel still declined -> REAL gap. Otherwise artifact.
+            let prov = if input_ok {
+                Provenance::Real
+            } else {
+                Provenance::Artifact("input-not-watertight")
+            };
+            Step::Decline(format!("fillet:{last}"), prov)
         }
         Op::Chamfer => {
+            let input_ok = input_is_sound(body);
             let cands = blend_edge_candidates(body, rng);
             if cands.is_empty() {
-                return Step::Decline("chamfer:no-edge".into());
+                return Step::Decline("chamfer:no-edge".into(), Provenance::Artifact("no-target-edge"));
             }
             let frac = rng.range(0.02, 0.08);
             let mut last = "Precondition".to_string();
@@ -882,15 +1023,21 @@ fn apply_op(op: Op, body: &Body, bound: VolBound, rng: &mut Lcg) -> Step {
                     Err(err) => last = topo_err(&err),
                 }
             }
-            Step::Decline(format!("chamfer:{last}"))
+            let prov = if input_ok {
+                Provenance::Real
+            } else {
+                Provenance::Artifact("input-not-watertight")
+            };
+            Step::Decline(format!("chamfer:{last}"), prov)
         }
         Op::Mirror => {
             // Mirror across a plane through the bbox max corner so the copy
             // sits beside the body, then union: volume roughly doubles, but
             // overlap can reduce it, so bound = [old_hi, 2*old_hi].
+            let input_ok = input_is_sound(body);
             let bb = body.bounding_box();
             if !bb.min.is_finite() {
-                return Step::Decline("mirror:empty".into());
+                return Step::Decline("mirror:empty".into(), Provenance::Artifact("empty-body"));
             }
             // Mirror plane: one of the three axis planes at the body's far
             // face, so the reflection is adjacent (touching) -> a clean union.
@@ -901,15 +1048,30 @@ fn apply_op(op: Op, body: &Body, bound: VolBound, rng: &mut Lcg) -> Step {
                 _ => (Vec3::new(0.0, 0.0, bb.max.z), Vec3::new(0.0, 0.0, 1.0)),
             };
             let mirrored = match body.mirrored(pt, n) {
-                Err(err) => return Step::Decline(format!("mirror:{}", topo_err(&err))),
+                Err(err) => {
+                    let prov = if input_ok {
+                        Provenance::Real
+                    } else {
+                        Provenance::Artifact("input-not-watertight")
+                    };
+                    return Step::Decline(format!("mirror:{}", topo_err(&err)), prov);
+                }
                 Ok(m) => m,
             };
             let nb = VolBound {
                 lo: bound.lo,
                 hi: 2.0 * bound.hi,
             };
+            // mirror+union of a sound body across its own far face is a real,
+            // well-posed tutorial op (the copy is coincident-adjacent by
+            // construction); a decline is REAL when the input was sound.
+            let prov = if input_ok {
+                Provenance::Real
+            } else {
+                Provenance::Artifact("input-not-watertight")
+            };
             match boolean(body, &mirrored, BoolOp::Union, 1e-7) {
-                Err(fault) => Step::Decline(format!("mirror-union:{}", fault_kind(&fault))),
+                Err(fault) => Step::Decline(format!("mirror-union:{}", fault_kind(&fault)), prov),
                 Ok(r) => {
                     let informational = r
                         .faults
@@ -917,7 +1079,7 @@ fn apply_op(op: Op, body: &Body, bound: VolBound, rng: &mut Lcg) -> Step {
                         .all(|f| matches!(f, BoolFault::Coincident(..)));
                     if !informational {
                         let k = r.faults.first().map(fault_kind).unwrap_or_default();
-                        return Step::Decline(format!("mirror-union:faulted:{k}"));
+                        return Step::Decline(format!("mirror-union:faulted:{k}"), prov);
                     }
                     audit(r.body, nb, "mirror")
                 }
@@ -926,15 +1088,32 @@ fn apply_op(op: Op, body: &Body, bound: VolBound, rng: &mut Lcg) -> Step {
         Op::Shell => {
             // Wall thickness a small fraction of the smallest bbox extent so
             // the inner shell does not collapse past the medial axis.
+            let input_ok = input_is_sound(body);
             let bb = body.bounding_box();
             if !bb.min.is_finite() {
-                return Step::Decline("shell:empty".into());
+                return Step::Decline("shell:empty".into(), Provenance::Artifact("empty-body"));
             }
             let size = bb.max - bb.min;
             let tmin = size.x.min(size.y).min(size.z).max(1e-3);
             let t = tmin * rng.range(0.05, 0.2);
+            // (c) sane only when the wall fits: t < half the body's min wall
+            // thickness (else the inner offset crosses the medial axis and the
+            // decline is an artifact of an impossible thickness, not a gap).
+            let thickness_sane = body
+                .min_wall_thickness()
+                .map(|w| t < 0.5 * w)
+                .unwrap_or(true);
             match body.hollow(t) {
-                Err(err) => Step::Decline(format!("shell:{}", topo_err(&err))),
+                Err(err) => {
+                    let prov = if input_ok && thickness_sane {
+                        Provenance::Real
+                    } else if !input_ok {
+                        Provenance::Artifact("input-not-watertight")
+                    } else {
+                        Provenance::Artifact("thickness-exceeds-wall")
+                    };
+                    Step::Decline(format!("shell:{}", topo_err(&err)), prov)
+                }
                 // Hollow removes the interior: new volume in (0, old_hi].
                 Ok(nb) => audit(
                     nb,
@@ -947,12 +1126,29 @@ fn apply_op(op: Op, body: &Body, bound: VolBound, rng: &mut Lcg) -> Step {
             }
         }
         // Free-form ops with no clean realization on an arbitrary solid:
-        // decline gracefully (the minimize-declines worklist) and end here.
-        Op::Loft => Step::Decline("loft:unsupported-on-solid".into()),
-        Op::Sweep => Step::Decline("sweep:unsupported-on-solid".into()),
-        Op::Fill => Step::Decline("fill:unsupported-on-solid".into()),
-        Op::Array => Step::Decline("array:unsupported-on-solid".into()),
-        Op::Trim => Step::Decline("trim:unsupported-on-solid".into()),
+        // decline gracefully and end here. These FAIL condition (b) -- they are
+        // not tutorial ops the kernel claims to perform on an arbitrary solid --
+        // so they are ARTIFACTs (by-design scope limits), never on the worklist.
+        Op::Loft => Step::Decline(
+            "loft:unsupported-on-solid".into(),
+            Provenance::Artifact("op-not-on-solid"),
+        ),
+        Op::Sweep => Step::Decline(
+            "sweep:unsupported-on-solid".into(),
+            Provenance::Artifact("op-not-on-solid"),
+        ),
+        Op::Fill => Step::Decline(
+            "fill:unsupported-on-solid".into(),
+            Provenance::Artifact("op-not-on-solid"),
+        ),
+        Op::Array => Step::Decline(
+            "array:unsupported-on-solid".into(),
+            Provenance::Artifact("op-not-on-solid"),
+        ),
+        Op::Trim => Step::Decline(
+            "trim:unsupported-on-solid".into(),
+            Provenance::Artifact("op-not-on-solid"),
+        ),
     }
 }
 
@@ -968,11 +1164,23 @@ fn do_boolean(body: &Body, bound: VolBound, op: BoolOp, tag: &str, rng: &mut Lcg
         BoolOp::Difference => "D",
         BoolOp::Intersection => "I",
     };
+    // Provenance accounting (Part 1): a boolean decline is REAL only when the
+    // INPUT body is sound (a) AND at least one tool we tried genuinely +
+    // meaningfully overlapped it (d). We track whether ANY built tool cleared
+    // the meaningful-overlap bar; if none did, every placement merely grazed
+    // and the decline is an ARTIFACT of a glancing/degenerate configuration.
+    let input_ok = input_is_sound(body);
+    let mut any_meaningful_overlap = false;
+    let mut built_a_tool = false;
     let mut last = "no-tool".to_string();
     for _ in 0..3 {
         let Some((tool, tbound)) = boolean_tool(body, rng) else {
             continue;
         };
+        built_a_tool = true;
+        if bbox_overlap_frac(body, &tool) >= MEANINGFUL_OVERLAP {
+            any_meaningful_overlap = true;
+        }
         let nb = match op {
             BoolOp::Union => VolBound {
                 lo: bound.lo.max(tbound.lo),
@@ -1026,7 +1234,20 @@ fn do_boolean(body: &Body, bound: VolBound, op: BoolOp, tag: &str, rng: &mut Lcg
             }
         }
     }
-    Step::Decline(format!("{tag}{letter}:{last}"))
+    // Classify the decline. REAL = sound input AND a tool genuinely overlapped
+    // (a real, deliberate cut/join the kernel could not assemble). Everything
+    // else is an artifact: an unsound input body, a tool that could not even be
+    // built (no-tool), or only glancing/degenerate overlaps.
+    let prov = if !input_ok {
+        Provenance::Artifact("input-not-watertight")
+    } else if !built_a_tool {
+        Provenance::Artifact("no-tool-buildable")
+    } else if !any_meaningful_overlap {
+        Provenance::Artifact("glancing-overlap")
+    } else {
+        Provenance::Real
+    };
+    Step::Decline(format!("{tag}{letter}:{last}"), prov)
 }
 
 fn topo_err(e: &keel_topo::body::TopoError) -> String {
@@ -1051,10 +1272,11 @@ const MAX_CONSEC_DECLINES: usize = 12;
 
 #[derive(Clone)]
 struct ProjResult {
-    realized: usize,                 // ops that EXECUTED (produced a body)
-    attempted: usize,                // ops attempted before stop (<= chain len)
-    declines: Vec<(Op, Op, String)>, // every (prev-realized-op, declined-op, fault)
-    failed: Option<(Op, String)>,    // decline-never-wrong violation, if any
+    realized: usize,  // ops that EXECUTED (produced a body)
+    attempted: usize, // ops attempted before stop (<= chain len)
+    // every (prev-realized-op, declined-op, fault, is_real, artifact_reason).
+    declines: Vec<(Op, Op, String, bool, &'static str)>,
+    failed: Option<(Op, String)>, // decline-never-wrong violation, if any
     seed_tag: &'static str,
     final_sig: String,
 }
@@ -1092,7 +1314,7 @@ fn run_project(p: &Project) -> ProjResult {
     };
     let mut realized = 0usize;
     let mut attempted = 0usize;
-    let mut declines: Vec<(Op, Op, String)> = Vec::new();
+    let mut declines: Vec<(Op, Op, String, bool, &'static str)> = Vec::new();
     let mut prev = Op::Sketch; // notional pre-seed op for the first transition key
     let mut consec = 0usize;
 
@@ -1106,8 +1328,8 @@ fn run_project(p: &Project) -> ProjResult {
                 prev = op;
                 consec = 0;
             }
-            Step::Decline(fault) => {
-                declines.push((prev, op, fault));
+            Step::Decline(fault, prov) => {
+                declines.push((prev, op, fault, prov.is_real(), prov.reason()));
                 consec += 1;
                 if consec >= MAX_CONSEC_DECLINES {
                     let c = body.counts();
@@ -1172,10 +1394,20 @@ fn spawn_pool(n: usize) -> (mpsc::Sender<Project>, mpsc::Receiver<PoolResult>) {
     let (job_tx, job_rx) = mpsc::channel::<Project>();
     let (res_tx, res_rx) = mpsc::channel::<PoolResult>();
     let job_rx = std::sync::Arc::new(std::sync::Mutex::new(job_rx));
-    for _ in 0..n.max(1) {
+    for i in 0..n.max(1) {
         let job_rx = std::sync::Arc::clone(&job_rx);
         let res_tx = res_tx.clone();
-        std::thread::spawn(move || {
+        // Large per-worker stack: the realistic LONG chains grow complex bodies
+        // that drive the kernel's recursive boolean/tessellation routines deep.
+        // The default 2 MB stack overflowed on a heavy grown body and a stack
+        // overflow is NOT catch_unwind-able -- it aborts the whole process,
+        // killing the soak mid-run. A generous 256 MB stack lets such a project
+        // run to completion (or, if it truly recurses without bound, the 90 s
+        // recv-timeout still reconciles it as a TIMEOUT rather than a crash).
+        let builder = std::thread::Builder::new()
+            .name(format!("realsoak-w{i}"))
+            .stack_size(256 * 1024 * 1024);
+        let spawn_res = builder.spawn(move || {
             loop {
                 // Pull one job (lock only for the recv, never across the work).
                 let p = {
@@ -1203,6 +1435,12 @@ fn spawn_pool(n: usize) -> (mpsc::Sender<Project>, mpsc::Receiver<PoolResult>) {
                 }
             }
         });
+        // If a worker thread fails to spawn, drop its res_tx clone (already
+        // moved into the closure on success); on failure just continue with
+        // fewer workers rather than aborting the whole soak.
+        if spawn_res.is_err() {
+            eprintln!("  warning: worker {i} failed to spawn (continuing with fewer)");
+        }
     }
     (job_tx, res_rx)
 }
@@ -1218,6 +1456,9 @@ fn main() {
     if let Ok(Ok(pseed)) = std::env::var("KEEL_REPRO").map(|s| s.parse::<u64>()) {
         {
             REPRO.store(true, std::sync::atomic::Ordering::Relaxed);
+            if std::env::var("KEEL_FAITHFUL").is_ok() {
+                FAITHFUL.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             let proj = gen_project(pseed);
             eprintln!(
                 "REPRO seed={pseed}: {} ops: {}",
@@ -1244,6 +1485,13 @@ fn main() {
     std::fs::create_dir_all(&outdir).unwrap();
     if std::env::var("KEEL_FAULT_CENSUS").is_ok() {
         FAULT_CENSUS.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    // KEEL_FAITHFUL: turn on the Part-1 provenance classifier and the Part-2
+    // tighter, tutorial-plausible generation. Off => the historical adversarial
+    // fuzzer, unchanged.
+    let faithful_mode = std::env::var("KEEL_FAITHFUL").is_ok();
+    if faithful_mode {
+        FAITHFUL.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     // Quiet the panic firehose; the project seed replays any panic on demand.
     std::panic::set_hook(Box::new(|_| {}));
@@ -1278,6 +1526,17 @@ fn main() {
     let mut decline_hist: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     // First minimal repro (project seed) per decline class.
     let mut decline_repro: std::collections::HashMap<String, u64> =
+        std::collections::HashMap::new();
+    // FAITHFUL provenance split (Part 1): REAL tutorial declines vs ARTIFACTs.
+    // `real_hist` is the histogram of ONLY the real-gap declines (the worklist
+    // the operator wants); `real_repro` a minimal repro seed per real class;
+    // `artifact_hist` tallies artifacts by their machine reason so the noise is
+    // itemized too.
+    let mut total_declines_real = 0u64;
+    let mut total_declines_artifact = 0u64;
+    let mut real_hist: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let mut real_repro: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let mut artifact_hist: std::collections::HashMap<&'static str, u64> =
         std::collections::HashMap::new();
     let mut leaked = 0usize;
 
@@ -1333,17 +1592,31 @@ fn main() {
         gen_lens.push(chain_len);
 
         // Record every declined op (the worklist), regardless of project fate.
-        for (prev, op, fault) in &res.declines {
+        for (prev, op, fault, is_real, art_reason) in &res.declines {
             let key = format!("{}->{}:{}", prev.tag(), op.tag(), fault);
             *decline_hist.entry(key.clone()).or_insert(0) += 1;
-            decline_repro.entry(key).or_insert(pseed);
+            decline_repro.entry(key.clone()).or_insert(pseed);
+            // Provenance split (faithful mode): REAL declines feed the worklist
+            // histogram; ARTIFACT declines are itemized by reason. (In fuzzer
+            // mode every decline is Real-typed unless an op-not-on-solid, so the
+            // split is informative there too but not the headline.)
+            if *is_real {
+                total_declines_real += 1;
+                *real_hist.entry(key.clone()).or_insert(0) += 1;
+                real_repro.entry(key).or_insert(pseed);
+            } else {
+                total_declines_artifact += 1;
+                *artifact_hist.entry(*art_reason).or_insert(0) += 1;
+            }
             let _ = writeln!(
                 dfile,
-                "{{\"seed\":{},\"prev\":\"{}\",\"op\":\"{}\",\"fault\":\"{}\"}}",
+                "{{\"seed\":{},\"prev\":\"{}\",\"op\":\"{}\",\"fault\":\"{}\",\"real\":{},\"artifact\":\"{}\"}}",
                 pseed,
                 prev.tag(),
                 op.tag(),
                 json_escape(fault),
+                is_real,
+                json_escape(art_reason),
             );
         }
 
@@ -1514,4 +1787,52 @@ fn main() {
         classes.len(),
         classes.iter().filter(|(c, _)| !is_unsupported(c)).count()
     );
+
+    // -- FAITHFUL provenance report (Part 1): the headline real-vs-artifact
+    // split. A decline is REAL only when input sound + op real + params sane +
+    // well-posed; otherwise it is an ARTIFACT of impossible/ill-posed input.
+    // The REAL classes are the operator's actual worklist.
+    if faithful_mode {
+        let mut real_classes: Vec<(String, u64)> = real_hist.into_iter().collect();
+        real_classes.sort_by_key(|x| std::cmp::Reverse(x.1));
+        let mut art_classes: Vec<(&'static str, u64)> = artifact_hist.into_iter().collect();
+        art_classes.sort_by_key(|x| std::cmp::Reverse(x.1));
+        let total_dec = total_declines_real + total_declines_artifact;
+        let real_pct = if total_dec == 0 {
+            0.0
+        } else {
+            100.0 * total_declines_real as f64 / total_dec as f64
+        };
+        println!(
+            "\n================ FAITHFUL PROVENANCE (the real worklist) ================"
+        );
+        println!(
+            "  total declines {total_dec} = {total_declines_real} REAL ({real_pct:.1}%) + {total_declines_artifact} ARTIFACT"
+        );
+        println!("  (REAL = sound watertight input + real tutorial op + sane params + well-posed; the rest is random-primitive / ill-posed noise)\n");
+        println!("  TOP REAL TUTORIAL DECLINE CLASSES (the worklist -- prevOp->op:fault   count   repro-seed):");
+        if real_classes.is_empty() {
+            println!("    (none -- every requested valid, well-posed tutorial op was performed)");
+        }
+        for (cls, cnt) in real_classes.iter().take(25) {
+            let repro = real_repro.get(cls).copied().unwrap_or(0);
+            println!("    {cnt:>7}  {cls}   (KEEL_REPRO={repro})");
+        }
+        println!("\n  ARTIFACT declines by reason (NOT on the worklist -- impossible/ill-posed input):");
+        for (reason, cnt) in art_classes.iter() {
+            println!("    {cnt:>7}  {reason}");
+        }
+        println!(
+            "\n  CONTRAST: the old all-in count put {frontier} declines on the \"kernel-frontier\" worklist;"
+        );
+        println!(
+            "            the provenance classifier shows only {total_declines_real} are REAL tutorial gaps"
+        );
+        println!(
+            "            ({} were artifacts of random/ill-posed input that no real workflow would request).",
+            total_declines_artifact
+        );
+        println!("  WRONG (decline-never-wrong): {n_fail} {}", if n_fail == 0 { "[invariant HELD]" } else { "[BROKEN]" });
+        println!("========================================================================");
+    }
 }
