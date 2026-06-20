@@ -3,6 +3,7 @@
 //! outward-triangle tessellation the winding classifier uses.
 
 use crate::Body;
+use crate::entity::EntityId;
 use keel_math::bbox::Aabb3;
 use keel_math::vec::Vec3;
 
@@ -673,6 +674,207 @@ impl Body {
                 (q, (p - q).norm())
             })
             .min_by(|x, y| x.1.total_cmp(&y.1))
+    }
+
+    /// Closest point on a single edge `e` to an external point `p`, with
+    /// its distance (model length units). Returns `None` only if `e` is
+    /// stale/foreign or its endpoint vertices are missing.
+    ///
+    /// The query respects the edge's ACTUAL bounded geometry, so it is
+    /// correct for the CURVED seams a boolean produces, not just straight
+    /// edges: a line / degree-1 edge uses the exact segment projection; a
+    /// circular or elliptic arc projects onto the conic in closed form and
+    /// clamps to the edge's true angular span (full circle for a closed
+    /// edge); a NURBS edge uses keel-geom's certified-global projection
+    /// (Bezier decomposition + AABB branch-and-bound + bracketed Newton,
+    /// [`keel_geom::project::project_point`]). A coarse polyline of the
+    /// edge is always considered as well, so the answer is never worse than
+    /// the wireframe resolution even on a degenerate carrier.
+    ///
+    /// This is the geometric primitive a consumer can lift into ray-based
+    /// edge picking (project the closest point of each candidate edge to a
+    /// pick ray). Mirrors [`Body::closest_point`] in return shape.
+    pub fn closest_point_on_edge(
+        &self,
+        e: crate::entity::EdgeKey,
+        p: Vec3,
+    ) -> Option<(Vec3, f64)> {
+        use keel_geom::curve::Curve3;
+        let edge = self.edges.get(e)?;
+        let (v0, v1) = edge.bounds;
+        let p0 = self.vertices.get(v0)?.point;
+        let p1 = self.vertices.get(v1)?.point;
+
+        // Endpoints are always candidates: they bound any arc and are the
+        // answer whenever the curve projection falls outside the edge.
+        let mut best_q = p0;
+        let mut best_d = (p - p0).norm();
+        let mut consider = |q: Vec3| {
+            let d = (p - q).norm();
+            if d < best_d {
+                best_d = d;
+                best_q = q;
+            }
+        };
+        consider(p1);
+
+        // No carrier, a straight line, or a degree-1 NURBS edge: the
+        // bounded edge is exactly the segment p0..p1 -> closed-form clamp.
+        let straight = || {
+            let ab = p1 - p0;
+            let len2 = ab.norm_sq();
+            let t = if len2 > 0.0 {
+                ((p - p0).dot(ab) / len2).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            p0 + ab * t
+        };
+        let curve = match edge.curve.and_then(|(ck, _)| self.curves.get(ck)) {
+            None => {
+                consider(straight());
+                return Some((best_q, best_d));
+            }
+            Some(c) => c,
+        };
+
+        match curve {
+            Curve3::Line(_) => consider(straight()),
+            Curve3::Nurbs(n) if n.degree() <= 1 => consider(straight()),
+            Curve3::Nurbs(n) => {
+                // Certified-global projection over the curve's domain (a
+                // NURBS edge spans its full domain). width_tol follows the
+                // edge tolerance so the branch-and-bound stops at scale.
+                let wtol = edge.tolerance.max(1e-12);
+                let pr = keel_geom::project::project_point(n, p, wtol);
+                consider(pr.point);
+            }
+            Curve3::Circle(c) => {
+                let c = *c;
+                if let Some(tc) = self.conic_span_param(e, p0, p1, c.project(p), |t| c.point(t)) {
+                    consider(c.point(tc));
+                }
+            }
+            Curve3::Ellipse(el) => {
+                let el = *el;
+                if let Some(tc) = self.conic_span_param(e, p0, p1, el.project(p), |t| el.point(t)) {
+                    consider(el.point(tc));
+                }
+            }
+        }
+
+        // Belt-and-suspenders: the bounded polyline always lies on the
+        // edge, so its nearest sample is a safe fallback if the closed-form
+        // conic parameter was out of span or the carrier was degenerate.
+        if !matches!(curve, Curve3::Line(_))
+            && let Some(poly) = self.edge_polyline(e)
+        {
+            for q in poly {
+                consider(q);
+            }
+        }
+
+        Some((best_q, best_d))
+    }
+
+    /// For a conic (circle / ellipse) edge, return the closest infinite-
+    /// curve parameter `tc` IF it lies within the edge's true angular span
+    /// `[t0, t1]`; otherwise `None` (the endpoints, already considered by
+    /// the caller, win). Builds the span with the same rules
+    /// `edge_polyline` uses (endpoint projection, `arc_sweep`, and the
+    /// degenerate-projection fallback), so the two stay consistent.
+    fn conic_span_param(
+        &self,
+        edge: crate::entity::EdgeKey,
+        p0: Vec3,
+        p1: Vec3,
+        tc: f64,
+        eval: impl Fn(f64) -> Vec3,
+    ) -> Option<f64> {
+        let tau = core::f64::consts::TAU;
+        let e = self.edges.get(edge)?;
+        let (v0, v1) = e.bounds;
+        if v0 == v1 {
+            // Closed edge: a full revolution, so every parameter is in span.
+            return Some(tc);
+        }
+        let (a0, a1) = self.conic_endpoint_params(edge, p0, p1)?;
+        // Increasing span between the endpoint parameters, built exactly as
+        // `edge_polyline`'s local `span` closure.
+        if (a1 - a0).abs() < 1e-9 {
+            // Coincident endpoint projections on an OPEN edge: the carrier
+            // cannot parameterize this edge. Defer to the polyline fallback.
+            return None;
+        }
+        let mut hi = a1;
+        if hi < a0 {
+            hi += tau;
+        }
+        if hi - a0 > tau {
+            hi -= tau;
+        }
+        let (t0, t1) = if let Some(s) = e.arc_sweep {
+            // A recorded arc_sweep IS the edge's arc identity: [a0, a0 + s].
+            ((a0).min(a0 + s), (a0).max(a0 + s))
+        } else {
+            self.true_arc_span(edge, (a0, hi), &eval)
+        };
+        // tc (any conic phase) is in span iff its offset from t0 fits in
+        // [0, t1 - t0] modulo a full turn.
+        let delta = (tc - t0).rem_euclid(tau);
+        if delta <= (t1 - t0) + 1e-9 {
+            Some(t0 + delta)
+        } else {
+            None
+        }
+    }
+
+    /// Carrier parameters of an edge's two endpoints for a conic edge,
+    /// via the same closed-form projection `edge_polyline` uses.
+    fn conic_endpoint_params(
+        &self,
+        edge: crate::entity::EdgeKey,
+        p0: Vec3,
+        p1: Vec3,
+    ) -> Option<(f64, f64)> {
+        use keel_geom::curve::Curve3;
+        let e = self.edges.get(edge)?;
+        let (ck, _) = e.curve?;
+        match self.curves.get(ck)? {
+            Curve3::Circle(c) => Some((c.project(p0), c.project(p1))),
+            Curve3::Ellipse(el) => Some((el.project(p0), el.project(p1))),
+            _ => None,
+        }
+    }
+
+    /// The edge whose closest point to `p` is nearest, i.e. the picked
+    /// edge. `None` for a body with no edges.
+    ///
+    /// Built on [`Body::edge_keys`](crate::Body::edge_keys) +
+    /// [`Body::closest_point_on_edge`], so it is correct for curved seams.
+    /// The tie-break is deterministic: among edges equidistant (within a
+    /// tight epsilon) from `p`, the one with the lowest [`EntityId`] wins,
+    /// so repeated picks of the same point are reproducible. Distances are
+    /// in model length units.
+    pub fn nearest_edge(&self, p: Vec3) -> Option<crate::entity::EdgeKey> {
+        let mut best: Option<(crate::entity::EdgeKey, f64, EntityId)> = None;
+        for e in self.edge_keys() {
+            let Some((_, d)) = self.closest_point_on_edge(e, p) else {
+                continue;
+            };
+            let id = self.edge_id(e).unwrap_or(EntityId(u64::MAX));
+            best = Some(match best {
+                None => (e, d, id),
+                Some((be, bd, bid)) => {
+                    if d < bd - 1e-12 || ((d - bd).abs() <= 1e-12 && id < bid) {
+                        (e, d, id)
+                    } else {
+                        (be, bd, bid)
+                    }
+                }
+            });
+        }
+        best.map(|(e, _, _)| e)
     }
 
     /// Radius of the largest inscribed sphere tangent at surface point

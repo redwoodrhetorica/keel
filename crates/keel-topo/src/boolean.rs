@@ -82,8 +82,18 @@ pub struct SeamCurve {
 }
 
 impl Body {
-    /// Live face keys in deterministic EntityId order.
-    pub(crate) fn face_keys(&self) -> Vec<FaceKey> {
+    /// All LIVE faces of the body, as transient [`FaceKey`]s in
+    /// deterministic [`EntityId`](crate::entity::EntityId) order.
+    ///
+    /// This is the face counterpart of
+    /// [`Body::edge_keys`](crate::Body::edge_keys): it lets a consumer
+    /// enumerate the faces of an ARBITRARY body (e.g. a boolean result),
+    /// not just the keys a primitive constructor hands back. Each key
+    /// resolves through [`Body::face`](crate::Body::face); keys are
+    /// transient (valid only for this body value, invalidated by the next
+    /// mutation), while the order is stable across identical inputs.
+    /// Returns an empty vector for a body with no faces.
+    pub fn face_keys(&self) -> Vec<FaceKey> {
         self.entity_ids()
             .filter_map(|id| match self.lookup(id) {
                 Some(AnyKey::Face(k)) => Some(k),

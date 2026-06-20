@@ -193,6 +193,29 @@ impl Body {
         self.ids.keys().copied()
     }
 
+    /// All LIVE edges of the body, as transient [`EdgeKey`]s in
+    /// deterministic [`EntityId`] order.
+    ///
+    /// This is the edge counterpart of [`Body::face_keys`]: it lets a
+    /// consumer enumerate (and then pick) the edges of an ARBITRARY body
+    /// such as a boolean result, not only the keys a primitive
+    /// constructor returns. It is the building block for
+    /// [`Body::nearest_edge`](crate::Body::nearest_edge) and for ray /
+    /// box picking built on top of [`Body::closest_point_on_edge`].
+    ///
+    /// Each key resolves through [`Body::edge`]; keys are transient (valid
+    /// only for this body value and invalidated by the next mutation),
+    /// while the order is stable across identical inputs. Returns an empty
+    /// vector for a body with no edges.
+    pub fn edge_keys(&self) -> Vec<EdgeKey> {
+        self.entity_ids()
+            .filter_map(|id| match self.lookup(id) {
+                Some(AnyKey::Edge(k)) => Some(k),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Number of live topological entities (geometry not counted).
     pub fn entity_count(&self) -> usize {
         self.ids.len()
