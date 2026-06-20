@@ -12,6 +12,28 @@ Pre-alpha, APIs change without notice.
 
 ---
 
+## At a Glance
+
+The kernel's defining property is a measured error contract, not a feature count:
+**every operation either produces a verified result or explicitly declines, and the
+"wrong" outcome is held at zero** across every test lane. The figures below are
+generated directly from the kernel's own test output by
+[`docs/media/render_charts.py`](docs/media/render_charts.py); every number traces to a
+numbered addendum in [`LOG.md`](LOG.md).
+
+![Verification scale: 2.4 billion-plus fuzz executions with zero crashes, 1,000,000 randomized oracle trials per lane with zero wrong, 10,000 realistic projects with zero wrong, and zero wrong results in any lane](docs/media/chart-scale.png)
+
+| | |
+|---|---|
+| ![Randomized oracle: WRONG equals 0 across 1,000,000 trials per lane](docs/media/chart-oracle.png) | ![Faithful tutorial workflows: 10 of 12 pass](docs/media/chart-tutorial.png) |
+| ![Realistic-workflow soak: 8,039 of 10,000 projects pass, 0 wrong](docs/media/chart-realsoak.png) | ![Decline provenance: the real worklist is about 30 percent of the raw fuzzer count](docs/media/chart-provenance.png) |
+
+These are correctness and coverage figures. Performance benchmarks are deliberately
+omitted here until the operation-level benchmark harness lands; no timing numbers are
+claimed on this page.
+
+---
+
 ## What and Why
 
 Most open B-rep kernels treat topology as a downstream consequence of floating-point geometry.
@@ -132,6 +154,11 @@ The completion-gate soak runs 16 sectors back to back; the most recent run logge
 
 ## Capabilities
 
+For the honest capabilities and **limitations** frontier (the faithful tutorial
+scoreboard, the decline taxonomy, what the kernel refuses and why), see
+[`docs/CAPABILITIES.md`](docs/CAPABILITIES.md). The matrix below is the
+shipped/partial/declined summary.
+
 Legend: **S** = shipped and tested, **P** = partial or in progress, **D** = declined by design (not in scope)
 
 ### Boolean operations
@@ -250,6 +277,10 @@ complementing the unit-level oracle tests.
 ---
 
 ## Architecture
+
+For a deeper, source-grounded overview (the radial-edge B-rep data model, the boolean
+pipeline stages, the mass integrator, and the correctness architecture), see
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The crate summary follows.
 
 ### `keel-math`
 
