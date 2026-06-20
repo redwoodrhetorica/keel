@@ -3,7 +3,7 @@
 **An open-source B-rep solid modeling kernel in Rust.**
 
 Exact topology decisions over tolerant geometry. A "decline, never wrong" contract on every operation.
-Pre-alpha, APIs change without notice.
+Alpha 0.1, APIs change without notice.
 
 <!-- BADGES: CI and crates.io hrefs become live once a remote and a published crate exist. -->
 [![CI](https://img.shields.io/github/actions/workflow/status/keel-kernel/keel/ci.yml?label=CI)](https://github.com/keel-kernel/keel/actions)
