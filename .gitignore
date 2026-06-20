@@ -18,3 +18,8 @@ gate_launch.log
 /realsoak-out/
 /realsoak-final.log
 /realsoak-out-run.log
+
+# soak / explorer artifacts also land under the crate dir when the example is
+# run from there (realsoak-out/, baseline-out/, recovery-out/, evolve-out/, ...)
+crates/keel-topo/realsoak-out/
+crates/keel-topo/*-out/
