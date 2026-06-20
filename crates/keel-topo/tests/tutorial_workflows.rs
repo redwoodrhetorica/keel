@@ -24,7 +24,7 @@
 //! and runnable via `cargo test --test tutorial_workflows -- --ignored`. When a
 //! gap is FIXED, REMOVE its `#[ignore]` so the now-passing workflow is a
 //! permanent regression guard. The live metric = (passing) of (total); the
-//! ignored set is the worklist. Today: 8 of 12 pass.
+//! ignored set is the worklist. Today: 9 of 12 pass.
 //!
 //! Watertightness note: the crate's `mesh_open_ratio` is `pub(crate)`, so an
 //! external integration test cannot call it. The faithful public-API
@@ -561,7 +561,6 @@ fn chamfer_single_edge() {
 /// brackets "4 wedges removed, corners shared" is used. If any edge declines,
 /// the workflow is incomplete -> FAIL.
 #[test]
-#[ignore = "tutorial-gap: adjacent chamfer corner interaction"]
 fn chamfer_even_top_edges() {
     let l = 40.0_f64;
     let d = 5.0_f64;

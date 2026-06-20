@@ -705,6 +705,7 @@ fn clip_line_to_planar_face(
     // Direction in 2D (the line lies in the plane, so this is its full
     // direction; magnitude matches the 3D parameterization).
     let d = (line.dir.dot(fr.x), line.dir.dot(fr.y));
+    let dmag = (d.0 * d.0 + d.1 * d.1).sqrt();
     let mut t_lo = f64::NEG_INFINITY;
     let mut t_hi = f64::INFINITY;
     for i in 0..poly.len() {
@@ -715,9 +716,25 @@ fn clip_line_to_planar_face(
         let n = if ccw { (-e.1, e.0) } else { (e.1, -e.0) };
         let denom = n.0 * d.0 + n.1 * d.1;
         let num = n.0 * (o.0 - a.0) + n.1 * (o.1 - a.1); // n . (P0 - a)
-        if denom.abs() < 1e-300 {
-            if num < 0.0 {
-                return None; // parallel and outside this edge
+        // PARALLEL test must scale with |n|*|d|, NOT a fixed 1e-300. When the
+        // line lies ON (parallel to) a polygon edge -- the common case for the
+        // miter seam of an adjacent chamfer, whose SSI chord runs exactly along
+        // the cutter chamfer face's own boundary edge -- denom is zero in exact
+        // arithmetic but rounds to ~1e-14 here. The old fixed threshold let that
+        // garbage through, so t = -num/denom became a spurious finite half-plane
+        // bound (it truncated the top-face chord at a phantom mid-edge vertex,
+        // orphaning the seam coedges: the `unmatched coedge` shell-closure
+        // failure of the 2nd adjacent chamfer). |n| == edge length, |d| == the
+        // line's 2D speed; their product is the natural scale of `denom`.
+        let nmag = (n.0 * n.0 + n.1 * n.1).sqrt();
+        let par_eps = (nmag * dmag).max(1.0) * 1e-9;
+        if denom.abs() <= par_eps {
+            // Line parallel to this edge. `num` is the inward signed area of the
+            // line origin vs the edge; on/inside (num >= -|n|*len_eps) imposes no
+            // constraint, strictly outside means the line misses the polygon.
+            let on_eps = nmag.max(1.0) * 1e-7;
+            if num < -on_eps {
+                return None; // parallel and strictly outside this edge
             }
         } else {
             let t = -num / denom;

@@ -642,3 +642,78 @@ completing 4/12 and declining cleanly.
   WRONG-locks green (`post_fillet_mass`, `fillet_surgery_robustness`,
   `cyl_union_mass_witness`); the 30 blend tests green.
 - `cargo clippy --release`: 18 keel-topo warnings = origin baseline (no new).
+
+## chamfer_even_top_edges -- LANDED (the adjacent-chamfer miter seam)
+
+`chamfer_even_top_edges` (chamfer the 4 top edges of a 40 mm cube by 5 mm each,
+in sequence) is now un-ignored and PASSES: validate() Ok, mass == mesh, volume
+62000 inside the [61500, 63000] bound (4 wedges removed, corners shared). The
+tutorial scoreboard moves 8/12 -> 9/12.
+
+### Symptom
+
+The 2nd adjacent chamfer faulted `chamfer: cut failed`. Under `KEEL_BOOL_DEBUG`
+the stitched body carried five radial-1 (lone-fin) coedges, all on the top plane
+z=40: the perimeter strip the chamfer should have removed -- `(35,5)->(40,5)`,
+`(40,5)->(40,40)`, `(40,40)->(35,40)` -- plus the new chamfer face's own top
+boundary at x=35, split at a phantom vertex y=28.73:
+`(35,5)->(35,28.73)` and `(35,28.73)->(35,40)`. The top face was kept WHOLE
+(spanning to x=40) instead of being split at x=35 and dropping the x>35 strip, so
+the new chamfer face's x=35 edge had nothing to pair with -> `unmatched coedge:
+shell-closure invariant violated`, surfaced as `chamfer: cut failed`.
+
+### Root cause -- `clip_line_to_planar_face` mishandles a line ON a polygon edge
+
+The diagnosis chain (env-gated probes): the chamfer-1 cutter is a triangular
+prism along the +x top edge (which chamfer-0 had shortened to length 35, running
+y in [5,40]). The cutter chamfer plane meets the top plane along the line x=35,
+z=40 -- the miter chord that must split the top face from y=5 to y=40. The SSI
+seam was instead emitted as y in [5, 28.73].
+
+`KEEL_CLIP_DEBUG`/`KEEL_CLIP2_DEBUG` localized it to `clip_line_to_planar_face`
+(boolean.rs:681), which clips the unbounded plane-plane SSI line to each trimmed
+face by convex half-plane intersection. The cutter chamfer face is a rectangle
+(its 7.07 mm wide x 80 mm long parallelogram); the SSI line lies EXACTLY ON that
+rectangle's long boundary edge (the cut chord runs along the cutter face's own
+edge). For that parallel edge `denom = n . d` is zero in exact arithmetic but
+rounds to ~2e-14. The old parallel guard was `denom.abs() < 1e-300`, so the
+~2e-14 slipped through and `t = -num/denom` (a 0/0 of two ~2e-14 quantities)
+produced a GARBAGE finite half-plane bound, t = -28.73, which spuriously
+truncated the chord at the phantom y=28.73. Truncating the chord left the top
+face unsplit and orphaned the seam coedges.
+
+This is a latent numerical bug, not chamfer-specific: ANY transversal cut whose
+SSI chord runs along a cutter face's own boundary edge can trip it (the adjacent
+chamfer is the first faithful workflow that does, because the prior chamfer
+shortens the next edge so the cut chord coincides with the cutter rectangle's
+border). The first chamfer succeeded only because its edge was full-length and
+the rounding happened to fall favorably.
+
+### Fix (WRONG-safe, boolean.rs:681)
+
+Scale the parallel test to the geometry: `par_eps = (|n| * |d|).max(1.0) * 1e-9`
+(|n| is the edge length, |d| the line's 2D speed -- their product is the natural
+magnitude of `denom`). When `|denom| <= par_eps` the line is parallel to the
+edge: an on/inside origin (`num >= -|n|*1e-7`) imposes NO half-plane constraint;
+a strictly-outside origin returns None. This drops the spurious bound, so the
+chord clips to the full y in [5,40], the top face splits at x=35, the x>35 strip
+classifies InsideOther and is dropped, and the chamfer face's x=35 edge pairs
+with the kept top -> watertight.
+
+No mass path touched (massprops.rs untouched); the fix only corrects which seam
+segment is imprinted, which is a pure topology decision.
+
+### Verification (this pass)
+
+- `chamfer_even_top_edges` PASS (un-ignored): mass 62000, mass == mesh, valid.
+- `extrude_fillet_shell` still PASS; chamfer unit tests
+  (`chamfer_box_edge_removes_wedge`, `asymmetric_chamfer_assembles_to_true_volume`)
+  PASS.
+- `cargo test --release`: full suite green (lib 298 pass; tutorial_workflows
+  9 pass / 3 ignored; all WRONG-lock binaries green: `scan_wrong`,
+  `union_wrong_repro`, `cyl_union_mass_witness`, `post_fillet_mass`,
+  `fillet_surgery_robustness`, `three_bucket`).
+- `three_bucket` oracle (N=300): strict 286 PASS / 14 DECLINE / **WRONG 0**;
+  tolerant 75 PASS / **WRONG 0** -- the clip is on the hot boolean path, so this
+  confirms no WRONG regression.
+- `cargo clippy --release`: 18 keel-topo warnings = baseline (no new).
