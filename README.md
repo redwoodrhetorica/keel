@@ -224,7 +224,7 @@ Legend: **S** = shipped and tested, **P** = partial or in progress, **D** = decl
 | Mass properties (volume, area, centroid, inertia) | **S** | Analytic integrals per face |
 | Cross-section slices | **S** | |
 | Hidden-line removal wireframe | **S** | |
-| Winding-number point-in-solid | **S** | Generalized winding numbers (Spainhour-Weiss) |
+| Winding-number point-in-solid | **S** | Generalized winding numbers (signed solid angle) |
 
 ### Import / export
 
@@ -292,8 +292,9 @@ documented in unit tests), bracketed hybrid Newton solver, polynomial arithmetic
 (Blinn quadratic, Yuksel monotonic-interval cubic), and Bernstein machinery including
 the projected-polyhedron multivariate subdivision solver.
 
-The one-root algebraic layer (`AlgebraicReal`, an expression DAG with interval enclosures
-and BFMSS separation bounds) supports exact conic predicates at the topology tier.
+The one-root algebraic layer (`OneRoot` numbers of the form (a + b sqrt(c)) / d over exact
+integers, compared exactly by the Devillers et al. integer sign-battery recipe, no square
+root ever evaluated) supports exact conic predicates at the topology tier.
 
 ### `keel-geom`
 
@@ -320,6 +321,27 @@ contract), cross-section interrogation, mass-properties integrator, and hidden-l
 
 Thin WebAssembly binding layer over `keel-topo`. Exposes a subset of the API for browser
 and Node.js consumers. Spike in progress; the API surface is not yet stable.
+
+---
+
+## Methodology and References
+
+Keel's approach is the consensus recommendation of the robust computational-geometry
+literature: exact (or filtered-exact) combinatorial decisions over tolerant `f64` metric
+geometry, validated against exact closed-form references rather than a second approximate
+code path. The methods are established; the engineering and the never-wrong integration
+are the contribution.
+
+Headline methods, each mapped to the module that uses it: Shewchuk adaptive predicates
+(via the `robust` crate); the Devillers et al. exact one-root comparison for conic
+intersections; Farouki-Rajan Bernstein arithmetic and the Sherbrooke-Patrikalakis
+Projected-Polyhedron system solver; de Boor NURBS evaluation (The NURBS Book); Weiler
+radial-edge non-manifold topology with Requicha regularized set operations; and
+generalized winding numbers (Jacobson et al.; Van Oosterom-Strackee solid angle) for
+point classification.
+
+The complete bibliography, mapped subsystem by subsystem and verified against the source,
+is in [`docs/REFERENCES.md`](docs/REFERENCES.md).
 
 ---
 
