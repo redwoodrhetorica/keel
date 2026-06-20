@@ -400,15 +400,15 @@ section D10 for the patent posture.
 
 ## License
 
-Keel is licensed under the **GNU General Public License, version 3.0 or later**
-(`SPDX: GPL-3.0-or-later`). See the `LICENSE` file for the full text.
+Keel is free software; you may use, redistribute, and modify it under the terms of the
+**GNU General Public License, version 3.0 or later** (`SPDX: GPL-3.0-or-later`), as published
+by the Free Software Foundation. See the `LICENSE` file for the complete text.
 
-This is a strong copyleft license: any work that links Keel must itself be released under a
-compatible license. If that does not fit your use, please reach out to discuss alternative terms.
+Alternatively, Keel may be used under the terms of a commercial license or a contractual
+agreement.
 
-**Contributions are not yet accepted.** A contributor license agreement (CLA) decision
-is pending, so external pull requests cannot be merged yet. Please open an issue to discuss
-before submitting one.
+Keel is provided on an "AS IS" basis, WITHOUT WARRANTY OF ANY KIND. The entire risk related
+to any use of the code and materials is on you. See the license text for the formal disclaimer.
 
 ---
 
