@@ -4,6 +4,7 @@
 
 use crate::Body;
 use crate::entity::EntityId;
+use crate::tessellate::arc_segments;
 use keel_math::bbox::Aabb3;
 use keel_math::vec::Vec3;
 
@@ -196,6 +197,22 @@ impl Body {
     /// arc between their endpoint parameters (a full revolution for a
     /// closed edge); NURBS edges sample their parameter domain.
     fn edge_polyline(&self, edge: crate::entity::EdgeKey) -> Option<Vec<Vec3>> {
+        self.edge_polyline_opt(edge, None)
+    }
+
+    /// Like `edge_polyline`, but sample curved edges (circular/elliptic
+    /// arcs) to a chord tolerance `tol` (the item-98 `arc_segments`
+    /// machinery). `tol = None` is the DEFAULT density (`arc_segments`
+    /// returns the fixed 32 segments for `None`), so `edge_polyline` and
+    /// every default consumer are byte-identical. NURBS edges keep the
+    /// fixed 32-sample grid (no analytic radius; a curvature-adaptive NURBS
+    /// edge sampler is a follow-up, matching `render_mesh_tol`'s NURBS
+    /// face policy). Used by `worker_mesh` / `worker_mesh_tol`.
+    pub(crate) fn edge_polyline_opt(
+        &self,
+        edge: crate::entity::EdgeKey,
+        tol: Option<f64>,
+    ) -> Option<Vec<Vec3>> {
         use keel_geom::curve::Curve3;
         let e = self.edges.get(edge)?;
         let (v0, v1) = e.bounds;
@@ -263,31 +280,38 @@ impl Body {
                 let c = *c;
                 let (a0, a1) = (c.project(p0), c.project(p1));
                 if let Some(s) = sweep {
-                    (0..=N)
-                        .map(|i| c.point(a0 + s * i as f64 / N as f64))
+                    let nc = arc_segments(s, c.radius, tol, N);
+                    (0..=nc)
+                        .map(|i| c.point(a0 + s * i as f64 / nc as f64))
                         .collect()
                 } else if degenerate_proj(a0, a1) {
                     self.pcurve_polyline(edge).unwrap_or(straight)
                 } else {
                     let (t0, t1) = self.true_arc_span(edge, span(a0, a1), |t| c.point(t));
-                    (0..=N)
-                        .map(|i| c.point(t0 + (t1 - t0) * i as f64 / N as f64))
+                    let nc = arc_segments(t1 - t0, c.radius, tol, N);
+                    (0..=nc)
+                        .map(|i| c.point(t0 + (t1 - t0) * i as f64 / nc as f64))
                         .collect()
                 }
             }
             Curve3::Ellipse(el) => {
                 let el = *el;
                 let (a0, a1) = (el.project(p0), el.project(p1));
+                // Use the larger semi-axis as the radius bound so the chord
+                // error is conservative everywhere on the ellipse.
+                let r = el.a.max(el.b);
                 if let Some(s) = sweep {
-                    (0..=N)
-                        .map(|i| el.point(a0 + s * i as f64 / N as f64))
+                    let nc = arc_segments(s, r, tol, N);
+                    (0..=nc)
+                        .map(|i| el.point(a0 + s * i as f64 / nc as f64))
                         .collect()
                 } else if degenerate_proj(a0, a1) {
                     self.pcurve_polyline(edge).unwrap_or(straight)
                 } else {
                     let (t0, t1) = self.true_arc_span(edge, span(a0, a1), |t| el.point(t));
-                    (0..=N)
-                        .map(|i| el.point(t0 + (t1 - t0) * i as f64 / N as f64))
+                    let nc = arc_segments(t1 - t0, r, tol, N);
+                    (0..=nc)
+                        .map(|i| el.point(t0 + (t1 - t0) * i as f64 / nc as f64))
                         .collect()
                 }
             }

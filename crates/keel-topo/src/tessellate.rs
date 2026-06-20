@@ -19,7 +19,7 @@ use keel_math::vec::Vec3;
 /// volume oracle -- is unchanged). The chord error of one step d(phi) is
 /// radius*(1 - cos(d(phi)/2)) ~ radius*d(phi)^2/8, giving
 /// n >= span * sqrt(radius / (8*tol)).
-fn arc_segments(span: f64, radius: f64, tol: Option<f64>, default: usize) -> usize {
+pub(crate) fn arc_segments(span: f64, radius: f64, tol: Option<f64>, default: usize) -> usize {
     match tol {
         Some(t) if t > 0.0 && radius > 0.0 && span > 0.0 => {
             let n = (span.abs() * (radius / (8.0 * t)).sqrt()).ceil() as usize;

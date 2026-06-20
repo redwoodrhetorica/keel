@@ -100,12 +100,104 @@ clean convex top edge (the pick itself works on every edge).
   is clippy-clean; only pre-existing warnings remain in unrelated files).
 - `cargo doc --workspace --no-deps`: clean (rustdoc on every new method).
 
-## Deferred — Phase 2/3 keel-wasm work (NOT done here)
+## Phase 2 — worker-mesh edge_groups + chord-tolerance variant (DONE)
 
-These remain for the consumer/WASM phase, as scoped:
+The two deferred items below are now implemented (additive; the default
+worker_mesh / mass / oracle path is byte-identical — see Verification).
 
-- `worker_mesh` `edge_groups`: per-edge polylines in the tessellation for
-  UI edge highlighting. (`closest_point_on_edge` / `nearest_edge` already
-  give the building block for ray-based picking in keel-wasm.)
-- `worker_mesh_tol(chord)`: tolerance-parameterized tessellation for draft
-  vs final.
+### Feature 1 — `edge_groups` (parallel to `face_groups`)
+
+`WorkerMesh` (`crates/keel-topo/src/render.rs`) gains one field:
+
+```rust
+pub edge_groups: Vec<(u64, u32, u32)>,   // (id, start, count)
+```
+
+- **`id`** = the source edge's STABLE `EntityId.0` (NOT an arena slot;
+  unlike `face_groups`, which carry `FaceKey::index`). The host maps a
+  rendered/picked edge back to its `EdgeKey` with
+  `Body::lookup(EntityId(id)) -> Some(AnyKey::Edge(k))`.
+- **`start` / `count`** are in **f32 ELEMENTS** of the existing `lines`
+  buffer: the edge's segments are `lines[start as usize .. (start+count)
+  as usize]`. `count` is always a multiple of 6 (two xyz endpoints per
+  LineSegments segment; `count/6` = segment count for that edge).
+- Ranges are contiguous, non-overlapping, and tile the WHOLE `lines`
+  buffer in build order. `lines` contents/order are UNCHANGED — this is
+  pure metadata over the existing buffer (the existing `mesh_lines_ptr/len`
+  consumers are unaffected).
+- One group per topological edge that tessellates (polyline >= 2 points);
+  the group set's ids equal `edge_keys()` ids exactly.
+
+### Feature 2 — `Body::worker_mesh_tol(chord)`
+
+```rust
+pub fn worker_mesh(&self) -> WorkerMesh;             // DEFAULT density (unchanged)
+pub fn worker_mesh_tol(&self, chord: f64) -> WorkerMesh;   // NEW: chord-tolerance
+```
+
+Both delegate to a private `worker_mesh_opt(tol: Option<f64>)`.
+`worker_mesh()` = `worker_mesh_opt(None)` (default density, the mass/oracle
+tessellation). `worker_mesh_tol(chord)` = `worker_mesh_opt(Some(chord))`:
+curved analytic FACES are faceted within `chord` (existing
+`tessellate_face_tol`), and curved EDGES are arc-sampled to the same chord
+via a new `Body::edge_polyline_opt(edge, Option<f64>)` (interrogate.rs)
+that routes the conic segment count through `tessellate::arc_segments`
+(now `pub(crate)`). `edge_polyline` now = `edge_polyline_opt(edge, None)`;
+since `arc_segments(.., None, 32)` returns exactly 32, every default
+consumer (incl. `render_mesh`) is byte-identical. NURBS edges keep the
+32-sample grid (no analytic radius — matches `render_mesh_tol`'s NURBS
+face policy).
+
+### keel-wasm exports (`crates/keel-wasm/src/lib.rs`) — host binds these
+
+| Export | Signature | Purpose |
+|---|---|---|
+| `mesh_edge_groups_ptr` | `() -> *const u32` | ptr to flattened `(id,start,count)` u32 triples |
+| `mesh_edge_groups_len` | `() -> usize` | element count (triples * 3) |
+| `demo_mesh_build_tol` | `(chord: f64) -> i32` | build the demo scene at chord tol; 0 ok / negative stage code |
+
+The edge-groups buffer mirrors the existing `mesh_groups_ptr/len` (faces):
+`(id, start, count)` u32 triples, `id` = edge `EntityId` cast to u32 (ids
+in one body fit u32, same as `face_groups`), `start`/`count` = f32-element
+offsets into the `lines` buffer read via `mesh_lines_ptr/len`. Staging is
+shared by `demo_mesh_build` and `demo_mesh_build_tol` (a new `EDGE_GROUPS`
+thread-local + `stage_mesh` helper). All existing exports are unchanged.
+
+### Tests
+
+`crates/keel-topo/tests/worker_mesh_edge_groups.rs` (3 tests, all green):
+
+1. `edge_groups_partition_lines_and_resolve` — on a drilled-plate boolean:
+   edge_groups are contiguous/non-overlapping, tile the `lines` buffer,
+   each `count` a multiple of 6, every `id` resolves to a live `EdgeKey`
+   via `lookup`, and the group-id set == live `edge_keys()` ids.
+2. `worker_mesh_tol_refines_curved_edges_and_faces` — on a cylinder,
+   `worker_mesh_tol(1e-4)` has strictly more line floats AND more
+   triangles than `worker_mesh_tol(0.1)`; both still partition `lines`.
+3. `worker_mesh_default_unchanged_snapshot` — `worker_mesh()` is
+   deterministic and its `lines` are byte-identical to the legacy
+   `render_mesh().edges` flattening (proves edge_groups is pure additive
+   metadata and the default density is unchanged).
+
+`crates/keel-wasm/run_spike.mjs` extended: verifies `mesh_edge_groups_*`
+partition the lines buffer across the WASM boundary, and that
+`demo_mesh_build_tol(0.2)` (coarse) yields fewer tris/segments than
+`demo_mesh_build_tol(1e-4)` (fine). Live run: `edge groups: 17 edges
+tiling 846 line floats -> PARTITION OK`; `chord tol: coarse 336 tris / 45
+segs, fine 7216 tris / 461 segs -> REFINES OK`.
+
+### Phase-2 verification
+
+- `cargo build --release` + `cargo test --release` (keel-topo): all green
+  (298 lib + new 3); WRONG-locks green (`three_bucket` [ignored, compiles],
+  `cyl_union_mass_witness` 3, `post_fillet_mass` 2, `scan_wrong`,
+  `union_wrong_repro` 2, `tutorial_workflows` 10).
+- **Default path byte-identical**: `worker_mesh()` positions/normals/
+  indices/lines and `mesh_volume()` unchanged — confirmed by the snapshot
+  test (`lines == render_mesh().edges`) and the unchanged WRONG-locks. No
+  10k soak needed (additive-only). `src/massprops.rs` untouched.
+- `cargo build -p keel-wasm` (native) + `--target wasm32-unknown-unknown
+  --release`: both clean. `node run_spike.mjs`: all contracts OK, pin/box
+  volumes EXACT.
+- `cargo clippy --release`: zero new warnings from the new code (only
+  pre-existing keel-topo lib warnings in unrelated files remain).
