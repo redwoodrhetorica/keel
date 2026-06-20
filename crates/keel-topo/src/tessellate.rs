@@ -204,7 +204,14 @@ impl Body {
             return (0.0, tau);
         }
         let (c, ez, rmaj) = (t.frame.origin, t.frame.z, t.major);
-        let (mut lo, mut hi, mut any) = (f64::INFINITY, f64::NEG_INFINITY, false);
+        // Tube angle v of every boundary vertex. The naive min/max picks the
+        // WRONG arc when the face's v-span straddles atan2's branch cut at +-pi
+        // (a CONCAVE boss rim occupies v in [pi, 3pi/2], whose 3pi/2 point reads
+        // as -pi/2, so min/max would span the complementary 270 deg). Resolve the
+        // span the periodic way -- the minimal arc covering the samples, found by
+        // the LARGEST GAP (mirrors massprops' projected_rect_bounds), so the
+        // mesh trims to the SAME quarter the analytic mass integrates.
+        let mut vs: Vec<f64> = Vec::new();
         for &lk in self.faces.get(face).map(|f| &f.loops).into_iter().flatten() {
             let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
                 continue;
@@ -219,10 +226,7 @@ impl Body {
                     let w = (p - c) - ez * (p - c).dot(ez);
                     if let Some(radial) = w.try_normalize() {
                         let d = p - (c + radial * rmaj);
-                        let v = d.dot(ez).atan2(d.dot(radial));
-                        lo = lo.min(v);
-                        hi = hi.max(v);
-                        any = true;
+                        vs.push(d.dot(ez).atan2(d.dot(radial)).rem_euclid(tau));
                     }
                 }
                 cur = fin.next;
@@ -231,7 +235,27 @@ impl Body {
                 }
             }
         }
-        if any && hi > lo { (lo, hi) } else { (0.0, tau) }
+        if vs.len() < 2 {
+            return (0.0, tau);
+        }
+        vs.sort_by(f64::total_cmp);
+        let n = vs.len();
+        let mut best_gap = tau - (vs[n - 1] - vs[0]);
+        let mut lo = vs[0];
+        for i in 1..n {
+            let g = vs[i] - vs[i - 1];
+            if g > best_gap {
+                best_gap = g;
+                lo = vs[i];
+            }
+        }
+        // A near-full ring (largest gap explained by sampling density) is the
+        // full tube; otherwise the covered arc is [lo, lo + (tau - best_gap)].
+        if best_gap <= 1.6 * tau / 64.0 {
+            (0.0, tau)
+        } else {
+            (lo, lo + (tau - best_gap))
+        }
     }
 
     /// Tessellate a ring torus. point(u, v) = c + (R + rr cos v)*

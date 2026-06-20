@@ -27,9 +27,12 @@ COMBINED with mass == mesh, because the crate's `mesh_open_ratio` is
 
 ## HEADLINE
 
-**8 of 12 faithful tutorial workflows PASS, 4 DECLINE.** (Was 6/12; #12
-`extrude_fillet_shell` and #13 `mirror_solid_union` are now FIXED -- see the
-RESOLVED sections at the end.)
+**10 of 12 faithful tutorial workflows PASS, 2 DECLINE.** (Was 6/12; #12
+`extrude_fillet_shell`, #13 `mirror_solid_union`, #11 `chamfer_even_top_edges`,
+and #2 `boolean_then_fillet_cyl_block_union` (the concave boss cap-rim fillet)
+are now FIXED -- see the RESOLVED sections at the end.) The remaining 2 declines
+are #4 `fillet_all_edges_box_g1` (the 3-edge octant corner mid-sequence) and #5
+`fillet_all_edges_box_g2` (no G2 API).
 
 (12 = the 6 classes expanded into the variants the plan lists: boolean+fillet
 has 3, fillet-all-edges has G1+G2, loft has rect/circle/tapered, mirror 1,
@@ -40,7 +43,7 @@ chamfer single+even, extrude+fillet+shell 1.)
 | # | Workflow (`#[test]`) | Class | Result | Decline reason (the `Err`) | Op implicated |
 |---|---|---|---|---|---|
 | 1 | `boolean_then_fillet_block_block_union` | 1 boolean_then_fillet | **PASS** | -- | `boolean` Union + `fillet_edge` (planar seam) |
-| 2 | `boolean_then_fillet_cyl_block_union` | 1 boolean_then_fillet | DECLINE | `mass_properties()` Err `Precondition("curved face without pcurve bounds")` | `boolean` Union + `fillet_edge` on a CURVED (cyl/plate) junction |
+| 2 | `boolean_then_fillet_cyl_block_union` | 1 boolean_then_fillet | **PASS** (was DECLINE) | -- | `boolean` Union + concave `fillet_edge` (boss cap-rim, OUTWARD torus) -- see RESOLVED section |
 | 3 | `difference_then_concave_fillet` | 1 boolean_then_fillet | **PASS** | -- | `boolean` Difference + concave `fillet_edge` |
 | 4 | `fillet_all_edges_box_g1` | 2 fillet_all_edges | DECLINE (PARTIAL FIX) | 2-edge adjacent corners now EXACT (spring-reuse); declines at the first 3-EDGE corner (edge 4 of 12) `Precondition("fillet: three-blend (adjacent) corner, exact cyl-cyl-cyl surgery follow-up")` | `fillet_edge` three-blend corner (sphere-octant cap follow-up) -- see Addendum |
 | 5 | `fillet_all_edges_box_g2` | 2 fillet_all_edges | DECLINE | no G2 API: `fillet_edge` is radius-only (circular/G1) | `fillet_edge` (missing G2/curvature-continuous control) |
@@ -717,3 +720,103 @@ segment is imprinted, which is a pure topology decision.
   tolerant 75 PASS / **WRONG 0** -- the clip is on the hot boolean path, so this
   confirms no WRONG regression.
 - `cargo clippy --release`: 18 keel-topo warnings = baseline (no new).
+
+---
+
+## boolean_then_fillet_cyl_block_union -- the CONCAVE boss cap-rim fillet (LANDED)
+
+Branch `swap-m39-close` worktree. The "boss + fillet" gap (#2) is now un-ignored
+and PASSES: a cylinder (r=12, h=30) unioned onto a 60x60x10 plate, then the
+boss/plate seam filleted at r=3 -- analytic mass 45201.5, mesh 45170.7 (rel
+0.07%, inside [44500, 45700]), `validate()` Ok. **Tutorial scoreboard 9/12 ->
+10/12.** A concave fillet ADDS the reentrant-corner fillet, so the union's ~45047
+rises ~150 to ~45185.
+
+### The three structural changes (all in blend.rs except the tessellator span)
+
+The prior characterization (the cyl+block section above) named three blockers --
+the outward torus, the convexity misread, and the convex-specific surgery. A
+fourth, NOT previously noted, turned out to be the dominant one and is recorded
+here: **the boolean Union splits the bore circle into TWO ARCS**, so the seam is
+NOT a single closed rim like the convex cap-end (a standalone cylinder's rim is
+one closed self-loop edge). The four fixes:
+
+1. **Outward torus geometry (`blend_torus_for_edge`).** A GWN probe just OUTSIDE
+   the cylinder on the MATERIAL side of the plane distinguishes the concave boss
+   (plate overruns the cylinder => MATERIAL => `concave=true`) from the convex
+   cap-end (VOID). For concave: `major = r_cyl + radius`, `h_off = hp + sgn*r`
+   (tube centre ABOVE the plate, OUTSIDE the cylinder); the `R > 2r` guard is
+   convex-only (the outward `major = r_cyl + r > r` always). Verified for the
+   test: `major=15, minor=3, origin z=13`, spring_plane (r=15, z=10), spring_cyl
+   (r=12, z=13). A `concave` flag is added to `EdgeBlendTorus`.
+
+2. **Convexity read (`edge_is_convex`).** Rewritten as a direct GWN DIHEDRAL
+   measurement: sample the generalized winding number on a small circle in the
+   plane PERPENDICULAR to the edge tangent at an ON-edge point; the fraction
+   inside the solid is the interior dihedral / 2pi (convex < half, concave/reflex
+   > half). This needs only the edge tangent and the exact GWN -- NO face
+   centroid (an ANNULAR plate-top mis-locates its centroid over the bore, the old
+   misread that returned `Some(true)`), NO winding-convention assumption, NO
+   single-representative-normal (a cylinder's normal varies around it). For a
+   CIRCLE-arc edge the on-edge point and tangent come from the circle geometry
+   (the chord midpoint is the axis, off the curve; `curve_point(0.5)` walks the
+   FULL circle, not the arc). Boss seam now reads `Some(false)` (18/24 inside =
+   270 deg); the L-prism convex/concave planar reads and all 30 blend tests stay
+   green.
+
+3. **Bore-rim NORMALIZATION (`tweak.rs::merge_two_arcs_to_closed`).** The Union
+   splits the bore at the cylinder seam endpoint (valence-3) and its antipode
+   (valence-2, two cocircular arcs). A new Euler op dissolves the valence-2
+   antipode, fusing the two arcs into ONE closed circle edge (the circular dual
+   of `merge_collinear_edges_at`, which rejects the a==b closed case). It handles
+   the 2-fin bore-ring loop collapsing to a single self-loop fin. This restores
+   the single-closed-rim topology the cap-rim surgery wants.
+
+4. **Concave surgery (`fillet_cap_rim_concave`) + tessellator span.** Mirrors the
+   convex `fillet_cap_rim` with the loop roles inverted: the planar support is an
+   ANNULUS whose rim is an INNER hole, so after imprinting spring_plane the bore
+   (seam) hole is moved to the BAND (the r<spring disc), the band's spring loop is
+   OUTER and the rim INNER (the mekr args invert vs convex), and the OUTWARD torus
+   ring's sense is REVERSED (its outward normal faces the cavity). The kef then
+   merges the cap band and the cylinder lower band into the torus ring exactly as
+   convex. The tessellator's `torus_tube_span` was the last bug: its naive
+   min/max of boundary tube-angles picks the WRONG (complementary 270 deg) arc
+   when the v-span straddles atan2's branch cut at +-pi (the concave quarter is
+   v in [pi, 3pi/2], whose 3pi/2 point reads -pi/2). Replaced with the periodic
+   LARGEST-GAP span (mirrors massprops' `projected_rect_bounds`), so the mesh
+   trims to the SAME quarter the analytic mass integrates. With the right span the
+   convex cap-rim tessellation is unchanged (its span does not wrap).
+
+### DECLINE-never-WRONG
+
+`fillet_cap_rim_concave` ends with a self-check: `validate()` + analytic
+`mass_properties` == `mesh_volume` within the 3% curved band. Any imperfection
+(a non-normalizable rim, a failed imprint/mekr/kef, a mass!=mesh) returns a
+`Precondition` DECLINE -- it never emits a wrong body. The convex cap-end path
+(`fillet_cap_rim`, the 3 `fillet_cylinder_*_rim_to_torus` tests, the Pappus mass
+check in `blend_faces_integrate_analytically_via_projected_bounds`) is untouched
+and green (the concave branch forks at the top on `blend.concave`).
+
+### Verification
+
+- `cargo build --release` green; `cargo clippy --release` introduces NO new
+  warnings in the edited regions (all remaining warnings are pre-existing,
+  outside the diff hunks).
+- `cargo test --release` (keel-topo): full suite green -- 298 lib + the 30 blend
+  tests + the 3 `fillet_cylinder_*_rim_to_torus` + every integration binary
+  (`scan_wrong`, `union_wrong_repro`, `cyl_union_mass_witness`, `post_fillet_mass`,
+  `fillet_surgery_robustness`, `curved_volume_robustness`, `steinmetz`,
+  `three_bucket` oracle WRONG=0).
+- `tutorial_workflows`: **10 passed, 2 ignored** (`boolean_then_fillet_cyl_block_union`
+  un-ignored; `extrude_fillet_shell` still green).
+
+### Honest scope of the concave cap-rim fillet
+
+The surgery is specific to the boss/plate configuration the test exercises: a
+single cylinder perpendicular to a planar plate, seam split into exactly two
+cocircular arcs by one cylinder seam line. A rim split into MORE than two arcs
+(multiple boolean seams crossing the bore), a non-perpendicular plane-cylinder
+(cyclide), or a bore that is not a clean circle still decline (the normalization
+or the imprint preconditions fail, caught by the self-check). The convex R>2r
+guard does not apply to the outward torus, but a radius so large the spring_plane
+(r_cyl + r) overruns the plate edge would fail the imprint and decline.

@@ -1280,6 +1280,197 @@ impl Body {
         self.debug_validate();
         Ok(true)
     }
+
+    /// If `v` is a manifold valence-2 vertex whose two incident edges are the
+    /// two ARCS of one circle (they share BOTH endpoints: the far endpoint `w`
+    /// AND `v`), fuse them into a single CLOSED edge `w -> w` carrying that
+    /// circle, removing `v`. Returns `Ok(Some(closed_edge))`, or `Ok(None)` when
+    /// the vertex does not qualify (the body is left untouched). This is the
+    /// circular dual of `merge_collinear_edges_at` for the a == b (closed)
+    /// case it explicitly rejects: a boolean union splits a boss BORE circle at
+    /// the cylinder seam endpoint AND its antipode, leaving a valence-2 antipode
+    /// whose dissolution restores the single closed rim the cap-rim fillet wants.
+    pub(crate) fn merge_two_arcs_to_closed(
+        &mut self,
+        v: VertexKey,
+    ) -> Result<Option<EdgeKey>, TopoError> {
+        if self.vertices.get(v).map(|x| !x.groups.is_empty()) != Some(false) {
+            return Ok(None);
+        }
+        if self.loops.iter().any(|(_, l)| l.vertex == Some(v)) {
+            return Ok(None);
+        }
+        let inc = self.edges_of_vertex(v);
+        if inc.len() != 2 {
+            return Ok(None);
+        }
+        let (e1, e2) = (inc[0], inc[1]);
+        let (b1, b2) = match (self.edges.get(e1), self.edges.get(e2)) {
+            (Some(x), Some(y)) => (x.bounds, y.bounds),
+            _ => return Ok(None),
+        };
+        // Both open, radial-2, and sharing the SAME far vertex w (so the union
+        // of the two arcs is a closed loop w..v..w).
+        if b1.0 == b1.1 || b2.0 == b2.1 {
+            return Ok(None);
+        }
+        if self.edges.get(e1).map(|x| x.radial.len()) != Some(2)
+            || self.edges.get(e2).map(|x| x.radial.len()) != Some(2)
+        {
+            return Ok(None);
+        }
+        let w1 = if b1.0 == v { b1.1 } else { b1.0 };
+        let w2 = if b2.0 == v { b2.1 } else { b2.0 };
+        if w1 != w2 || w1 == v {
+            return Ok(None);
+        }
+        let w = w1;
+        // Both edges must be cocircular arcs of the SAME circle (same carrier
+        // center/axis/radius), so the closed result is an exact circle.
+        let circ = |e: EdgeKey| -> Option<Circle3> {
+            match self
+                .edges
+                .get(e)
+                .and_then(|x| x.curve)
+                .and_then(|(ck, _)| self.curves.get(ck))
+            {
+                Some(Curve3::Circle(c)) => Some(*c),
+                _ => None,
+            }
+        };
+        let (c1, c2) = match (circ(e1), circ(e2)) {
+            (Some(a), Some(b)) => (a, b),
+            _ => return Ok(None),
+        };
+        let n1 = c1.x_axis.cross(c1.y_axis);
+        let n2 = c2.x_axis.cross(c2.y_axis);
+        if (c1.center - c2.center).norm() > 1e-7
+            || (c1.radius - c2.radius).abs() > 1e-7
+            || n1.cross(n2).norm() > 1e-7
+        {
+            return Ok(None);
+        }
+        // Pair the fins by loop: in each loop, a fin on e1 ending at v is
+        // followed by a fin on e2 leaving v (or the symmetric arrangement).
+        let e1_fins = self.edges.get(e1).map(|x| x.radial.clone()).unwrap_or_default();
+        let mut pairs: Vec<(FinKey, FinKey)> = Vec::new();
+        for x in e1_fins {
+            let pair = if self.fin_end_vertex(x) == Some(v) {
+                self.fins.get(x).map(|f| f.next).map(|nx| (x, nx))
+            } else if self.fin_start_vertex(x) == Some(v) {
+                self.fins.get(x).map(|f| f.prev).map(|px| (px, x))
+            } else {
+                None
+            };
+            let Some((f_in, f_out)) = pair else {
+                return Ok(None);
+            };
+            let edges = (
+                self.fins.get(f_in).map(|f| f.edge),
+                self.fins.get(f_out).map(|f| f.edge),
+            );
+            let spans_both = edges == (Some(e1), Some(e2)) || edges == (Some(e2), Some(e1));
+            if !spans_both
+                || f_in == f_out
+                || self.fins.get(f_in).map(|f| f.owner) != self.fins.get(f_out).map(|f| f.owner)
+            {
+                return Ok(None);
+            }
+            pairs.push((f_in, f_out));
+        }
+        if pairs.len() != 2 {
+            return Ok(None);
+        }
+        // Commit: build the closed edge w -> w and splice each loop's pair.
+        let (id1, id2) = (
+            self.edges.get(e1).map(|x| x.id),
+            self.edges.get(e2).map(|x| x.id),
+        );
+        let mut rec = self.begin_op();
+        let derivation = match (id1, id2) {
+            (Some(a), Some(b)) => Derivation::MergeResult { from: vec![a, b] },
+            _ => Derivation::Created,
+        };
+        let e_new = self.new_edge(&mut rec, (w, w), derivation);
+        let mut new_fins: Vec<FinKey> = Vec::new();
+        for &(f_in, f_out) in &pairs {
+            let owner = self.fins.get(f_in).map(|f| f.owner).ok_or(TopoError::StaleKey)?;
+            // The merged fin traverses start(f_in) -> end(f_out) = w -> w. Keep
+            // the orientation of f_in (which starts at w) as forward on e_new.
+            let forward = self.fins.get(f_in).map(|f| f.forward).unwrap_or(true);
+            let g = self.new_fin(&mut rec, e_new, forward, owner, Derivation::Created);
+            let in_prev = self.fins.get(f_in).map(|f| f.prev).ok_or(TopoError::StaleKey)?;
+            let out_next = self.fins.get(f_out).map(|f| f.next).ok_or(TopoError::StaleKey)?;
+            // If the loop was EXACTLY this pair (a 2-fin bore-rim loop -- the cap
+            // annulus's inner ring is just the two arcs), in_prev/out_next point
+            // at the dying fins: g becomes a self-loop (the closed-circle ring).
+            let pair_only = in_prev == f_out && out_next == f_in;
+            if pair_only {
+                if let Some(x) = self.fins.get_mut(g) {
+                    x.prev = g;
+                    x.next = g;
+                }
+            } else {
+                if let Some(x) = self.fins.get_mut(in_prev) {
+                    x.next = g;
+                }
+                if let Some(x) = self.fins.get_mut(g) {
+                    x.prev = in_prev;
+                    x.next = out_next;
+                }
+                if let Some(x) = self.fins.get_mut(out_next) {
+                    x.prev = g;
+                }
+            }
+            if let Some(l) = self.loops.get_mut(owner)
+                && (l.fin == Some(f_in) || l.fin == Some(f_out))
+            {
+                l.fin = Some(g);
+            }
+            new_fins.push(g);
+        }
+        if let Some(ed) = self.edges.get_mut(e_new) {
+            ed.radial = new_fins.clone();
+        }
+        // Re-anchor w off any dying fin.
+        let dead: Vec<FinKey> = pairs.iter().flat_map(|&(i, o)| [i, o]).collect();
+        let needs = self
+            .vertices
+            .get(w)
+            .and_then(|x| x.fin)
+            .map(|fk| dead.contains(&fk))
+            .unwrap_or(false);
+        if needs {
+            let repl = new_fins.first().copied();
+            if let Some(x) = self.vertices.get_mut(w) {
+                x.fin = repl;
+            }
+        }
+        // Tear down the two arcs, their four fins, and v.
+        for &(f_in, f_out) in &pairs {
+            for fk in [f_in, f_out] {
+                if let Some(id) = self.fins.get(fk).map(|x| x.id) {
+                    self.unregister(&mut rec, id);
+                }
+                self.fins.remove(fk);
+            }
+        }
+        for ek in [e1, e2] {
+            if let Some(id) = self.edges.get(ek).map(|x| x.id) {
+                self.unregister(&mut rec, id);
+            }
+            self.edges.remove(ek);
+        }
+        if let Some(id) = self.vertices.get(v).map(|x| x.id) {
+            self.unregister(&mut rec, id);
+        }
+        self.vertices.remove(v);
+        let _ = rec.finish();
+        // The closed edge carries the (shared) circle.
+        self.attach_edge_curve(e_new, Curve3::Circle(c1), true);
+        self.debug_validate();
+        Ok(Some(e_new))
+    }
 }
 
 #[cfg(test)]

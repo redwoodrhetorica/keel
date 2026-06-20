@@ -1644,7 +1644,7 @@ impl Body {
         }
     }
 
-    fn face_analytic_surface(
+    pub(crate) fn face_analytic_surface(
         &self,
         face: FaceKey,
     ) -> Result<keel_geom::surface::Surface3, TopoError> {

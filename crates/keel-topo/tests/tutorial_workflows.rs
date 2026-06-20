@@ -256,13 +256,10 @@ fn boolean_then_fillet_block_block_union() {
 
 /// A cylinder unioned onto a block (a boss on a plate), then the circular
 /// seam where they meet is filleted -- the classic "boss + fillet" tutorial.
+/// The seam is the CONCAVE boss/plate rim: the fillet adds a small reentrant
+/// fillet via an OUTWARD torus (major = r_cyl + radius). See the concave cap-rim
+/// surgery in blend.rs (`fillet_cap_rim_concave`) and the FINDINGS addendum.
 #[test]
-#[ignore = "tutorial-gap: concave plane-cylinder (boss) rim fillet unimplemented -- \
-            fillet_cap_rim/blend_torus_for_edge only build the CONVEX cap-end torus; \
-            the boss-on-plate seam is the CONCAVE case (outward torus, annular plate \
-            support) needing the mirror-image trim-and-stitch surgery. Now DECLINES \
-            cleanly at fillet_edge (was a misleading late mass_properties error). See \
-            docs/research/kernel/tutorial-workflows-FINDINGS.md."]
 fn boolean_then_fillet_cyl_block_union() {
     let mut plate = Body::new();
     plate.block(Vec3::ZERO, 60.0, 60.0, 10.0).unwrap();
