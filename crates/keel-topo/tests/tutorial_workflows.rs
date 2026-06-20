@@ -404,7 +404,9 @@ fn fillet_all_edges_box_g1() {
 /// kernel API. This is a recorded API GAP (the plan's "if the API supports
 /// continuity" -- it does not). FAIL naming the missing capability.
 #[test]
-#[ignore = "tutorial-gap: no G2 (curvature-continuous) fillet API"]
+#[ignore = "feature-gap (no G2 API): a curvature-continuous fillet needs a new \
+            surface family (conic/NURBS blend), not a decline-fix. Out of scope for \
+            the decline program; tracked as a future feature -- see tutorial-workflows-FINDINGS.md"]
 fn fillet_all_edges_box_g2() {
     // There is no `fillet_edge_g2` / continuity argument in the public API
     // (blend.rs exposes `fillet_edge(edge, radius)` and `fillet_edge_conic`,
