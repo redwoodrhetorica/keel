@@ -23,3 +23,4 @@ gate_launch.log
 # run from there (realsoak-out/, baseline-out/, recovery-out/, evolve-out/, ...)
 crates/keel-topo/realsoak-out/
 crates/keel-topo/*-out/
+/LOG.md
