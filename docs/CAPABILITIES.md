@@ -5,9 +5,8 @@ declines, and the guarantee that backs both. It complements the capability matri
 `README.md` by going deeper on the **limitations frontier**: where the kernel refuses,
 why, and how that refusal is kept safe.
 
-Every quantitative claim here traces to a numbered addendum in `LOG.md`. Numbers are
-reported conservatively; a DECLINE is a documented outcome, not a defect. Status as of
-LOG Addendum 303 (kernel snapshot 2026-06-20).
+Every quantitative claim here is reproducible from the test suite (commands at the end).
+Numbers are reported conservatively; a DECLINE is a documented outcome, not a defect.
 
 ---
 
@@ -209,6 +208,5 @@ fails the suite.
 - `README.md` — the capability matrix (shipped/partial/declined), the honesty contract, the
   demo gallery, quickstart.
 - `docs/ARCHITECTURE.md` — how the kernel is built (data structures, pipelines, algorithms).
-- `LOG.md` — the engineering log; every claim here cites an addendum number.
 - `docs/research/kernel/` — the dossiers behind each frontier fix.
 - `docs/research/kernel/tutorial-workflows-FINDINGS.md` — the per-workflow tutorial findings.

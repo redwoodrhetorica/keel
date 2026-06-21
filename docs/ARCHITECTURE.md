@@ -10,7 +10,7 @@ high-level crate roles). It complements rather than repeats that prose:
 expect data-model detail, pipeline stages, and algorithm sketches here. For
 the operation surface and status legend see the README capabilities tables
 and [`docs/PARITY_OPS.md`](PARITY_OPS.md); for the running engineering
-narrative and the per-decision rationale see [`LOG.md`](../LOG.md) and
+narrative and the per-decision rationale see
 [`docs/ENGINEERING-LOG.md`](ENGINEERING-LOG.md).
 
 Every type, function, and module named below was verified against the source
@@ -658,6 +658,6 @@ trajectories. That composition is how DECLINE-never-WRONG is held.
   limitations frontier: the faithful tutorial scoreboard, the decline taxonomy,
   and the WRONG=0 evidence chain.
 - [`docs/PARITY_OPS.md`](PARITY_OPS.md) -- the operation parity matrix.
-- [`LOG.md`](../LOG.md) and [`docs/ENGINEERING-LOG.md`](ENGINEERING-LOG.md) --
+- [`docs/ENGINEERING-LOG.md`](ENGINEERING-LOG.md) --
   the running engineering narrative, per-decision rationale, and the current
   anchor.

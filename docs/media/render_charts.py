@@ -66,7 +66,7 @@ def save(fig, name):
     print("wrote", path)
 
 
-# --- 1. Randomized oracle: WRONG = 0 across 1,000,000 trials per lane (LOG Add 193) ---
+# --- 1. Randomized oracle: WRONG = 0 across 1,000,000 trials per lane ---
 def chart_oracle():
     lanes = ["Strict", "Tolerant\n(near-contact)", "Cone geometry"]
     passes = [955946, 250000, 998375]
@@ -91,12 +91,12 @@ def chart_oracle():
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2,
               frameon=False, fontsize=9.5)
     fig.text(0.5, -0.07,
-             "WRONG = 0 in every lane. A DECLINE is a documented refusal, not an error.  (LOG Add. 193)",
+             "WRONG = 0 in every lane. A DECLINE is a documented refusal, not an error.",
              ha="center", color=MUTED, fontsize=9)
     save(fig, "chart-oracle.png")
 
 
-# --- 2. Faithful tutorial workflows: 10 / 12 pass (LOG Add 302-303) ---
+# --- 2. Faithful tutorial workflows: 10 / 12 pass ---
 def chart_tutorial():
     labels = [
         "Union + fillet seam", "Difference + concave fillet", "Single chamfer",
@@ -123,12 +123,12 @@ def chart_tutorial():
     ax.spines["left"].set_visible(False)
     fig.text(0.5, -0.02,
              "Real workflow structures, fixed parameters, asserted watertight + mass == mesh.  "
-             "2 deferred = a deep corner-surgery follow-up and a missing feature.  (LOG Add. 302-303)",
+             "2 deferred = a deep corner-surgery follow-up and a missing feature.",
              ha="center", color=MUTED, fontsize=8.5)
     save(fig, "chart-tutorial.png")
 
 
-# --- 3. Realistic-workflow soak: 8,039 / 10,000 pass, 0 wrong (LOG Add 303) ---
+# --- 3. Realistic-workflow soak: 8,039 / 10,000 pass, 0 wrong ---
 def chart_realsoak():
     vals = [8039, 1961, 0]
     names = ["PASS", "DECLINE", "WRONG"]
@@ -146,12 +146,12 @@ def chart_realsoak():
     ax.legend(wedges, legend_lbls, loc="lower center", ncol=3, frameon=False,
               bbox_to_anchor=(0.5, -0.10), fontsize=10)
     fig.text(0.5, 0.005,
-             "Grammar-driven long op-chains from 113 tutorials. A DECLINE is refusal, never a wrong body.  (LOG Add. 303)",
+             "Grammar-driven long op-chains from 113 tutorials. A DECLINE is refusal, never a wrong body.",
              ha="center", color=MUTED, fontsize=8.5)
     save(fig, "chart-realsoak.png")
 
 
-# --- 4. Decline provenance: most fuzzer declines are impossible-input noise (LOG Add 300) ---
+# --- 4. Decline provenance: most fuzzer declines are impossible-input noise ---
 def chart_provenance():
     fig, ax = plt.subplots(figsize=(7.6, 2.4))
     real = 29.8  # REAL 30,092 of (30,092 + 70,729); round down to 29.8%
@@ -171,12 +171,12 @@ def chart_provenance():
     _clean(ax)
     ax.spines["left"].set_visible(False)
     fig.text(0.5, -0.14,
-             "A classifier separates real gaps (sound watertight input + sensible op) from impossible random inputs.  (LOG Add. 300)",
+             "A classifier separates real gaps (sound watertight input + sensible op) from impossible random inputs.",
              ha="center", color=MUTED, fontsize=8.5)
     save(fig, "chart-provenance.png")
 
 
-# --- 5. Verification scale callout (LOG Add 193, 303) ---
+# --- 5. Verification scale callout ---
 def chart_scale():
     fig, ax = plt.subplots(figsize=(10.0, 2.2))
     ax.axis("off")

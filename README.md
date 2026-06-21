@@ -22,8 +22,8 @@ The kernel's defining property is a measured error contract, not a feature count
 **every operation either produces a verified result or explicitly declines, and the
 "wrong" outcome is held at zero** across every test lane. The figures below are
 generated directly from the kernel's own test output by
-[`docs/media/render_charts.py`](docs/media/render_charts.py); every number traces to a
-numbered addendum in [`LOG.md`](LOG.md).
+[`docs/media/render_charts.py`](docs/media/render_charts.py), and every number is
+reproducible from the test suite.
 
 ![Verification scale: 2.4 billion-plus fuzz executions with zero crashes, 1,000,000 randomized oracle trials per lane with zero wrong, 10,000 realistic projects with zero wrong, and zero wrong results in any lane](docs/media/chart-scale.png)
 
@@ -396,7 +396,7 @@ fn main() {
 
 The milestones below follow the sequence established in the architecture spec
 (`docs/superpowers/specs/2026-06-07-keel-kernel-architecture-design.md`).
-Status is approximate; read `LOG.md` for the current anchor.
+Status is approximate.
 
 | Milestone | Description | Status |
 |---|---|---|
