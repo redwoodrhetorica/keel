@@ -253,17 +253,185 @@ pub struct EdgeBlendTorus {
     pub spring_cyl: keel_geom::curve::Circle3,
     /// The exact blend surface: torus (major = spine radius, minor = r).
     pub surface: keel_geom::surface::Torus3,
-    /// `true` for the CONCAVE boss rim (a cylinder rising out of a plate; the
-    /// fillet ADDS material in the reentrant corner OUTSIDE the cylinder, so
-    /// `major = r_cyl + r` and the tube centre sits ABOVE the plate, OUTSIDE
-    /// the cylinder). `false` for the CONVEX cap-end (`major = r_cyl - r`,
-    /// the ball rolls in the material INSIDE the cylinder). The trim-and-stitch
-    /// surgery forks on this: the planar support is an ANNULUS whose rim is an
-    /// INNER hole (not the outer loop), so the mekr loop roles invert.
-    pub concave: bool,
+    /// `true` when the planar support is an ANNULUS whose rim is an INNER hole
+    /// (a plate that overruns the cylinder): the boss rim AND the bored-hole
+    /// lip. `false` for a simple disc cap bounded BY the cylinder (the peg-top
+    /// cap-end). Drives the trim-and-stitch surgery: an annulus needs the
+    /// inverted mekr loop roles and two-arc rim normalization; a disc cap does
+    /// not. When `annulus`, `major = r_cyl + r` (the ball centre sits OUTSIDE
+    /// the cylinder); otherwise `major = r_cyl - r` (the ball rolls in the
+    /// material INSIDE the cylinder, needing `r_cyl > 2r`).
+    pub annulus: bool,
+    /// `true` for a CONVEX rim where the fillet REMOVES material and the tube
+    /// centre sits on the MATERIAL side of the plane (the peg-top cap-end and
+    /// the bored-hole lip); `false` for the CONCAVE boss rim where the fillet
+    /// ADDS material into the reentrant void and the tube centre sits on the
+    /// outward-normal side. Sets the axial offset sign and the blend face's
+    /// surface sense. The bore lip is the third combination: `annulus && convex`.
+    pub convex: bool,
+}
+
+/// The analytic data of a constant-setback CHAMFER on a plane-cylinder cap rim:
+/// the two spring circles on the supports and the exact cone-frustum cut
+/// surface. The chamfer dual of [`EdgeBlendTorus`]; the cap-rim trim-and-stitch
+/// surgery is shared (`cap_rim_annulus_surgery`), only the surface differs.
+#[derive(Clone, Debug)]
+pub struct EdgeBlendCone {
+    /// Tangency circle on the planar support (radius = `r_cyl +/- d`).
+    pub spring_plane: keel_geom::curve::Circle3,
+    /// Tangency circle on the cylindrical support (radius = `r_cyl`).
+    pub spring_cyl: keel_geom::curve::Circle3,
+    /// The exact blend surface: a cone frustum between the two spring circles.
+    pub surface: keel_geom::surface::Cone3,
+    /// Planar support is an annulus (rim is an inner hole): boss or bore.
+    pub annulus: bool,
+    /// Convex rim (chamfer removes material): peg-top or bore lip.
+    pub convex: bool,
+}
+
+/// Shared classification of a plane-meets-cylinder cap rim, independent of the
+/// blend surface (torus fillet or cone chamfer). Identifies the supports,
+/// requires the plane perpendicular to the cylinder axis, and runs the two GWN
+/// probes that place the rim in the three-case taxonomy (see [`EdgeBlendTorus`]).
+pub(crate) struct CapRimGeom {
+    pub axis: Vec3,
+    pub axis_o: Vec3,
+    pub r_cyl: f64,
+    /// Plane height along the axis.
+    pub hp: f64,
+    /// `np . axis`: +1 if the plane faces +axis, -1 if -axis.
+    pub sgn: f64,
+    /// Cylinder frame radial axes (the blend circles' x/y).
+    pub ex: Vec3,
+    pub ey: Vec3,
+    /// Planar support overruns the cylinder (rim is an inner hole): boss or bore.
+    pub annulus: bool,
+    /// Convex corner (blend removes material): peg-top or bore lip.
+    pub convex: bool,
 }
 
 impl Body {
+    /// Classify a plane-cylinder cap rim `edge` for either blend family. `span`
+    /// is the characteristic feature size (fillet radius or chamfer setback);
+    /// it scales the GWN probe offsets only. Errors if the edge is not a
+    /// perpendicular plane-cylinder rim.
+    fn cap_rim_geometry(&self, edge: EdgeKey, span: f64) -> Result<CapRimGeom, TopoError> {
+        let faces = self.faces_around_edge(edge);
+        if faces.len() != 2 {
+            return Err(TopoError::Precondition("blend: edge needs two faces"));
+        }
+        // Identify the planar and the cylindrical support.
+        let mut plane_face = None;
+        let mut cyl = None;
+        for &f in &faces {
+            match self.face_surface_geom(f) {
+                Some(SurfaceGeom::Analytic(Surface3::Plane(_))) => plane_face = Some(f),
+                Some(SurfaceGeom::Analytic(Surface3::Cylinder(c))) => cyl = Some(c),
+                _ => {}
+            }
+        }
+        let (plane_face, cyl) = match (plane_face, cyl) {
+            (Some(p), Some(c)) => (p, c),
+            _ => {
+                return Err(TopoError::Precondition(
+                    "blend: cap rim needs a plane and a cylinder support",
+                ));
+            }
+        };
+        let (axis, axis_o, r_cyl) = (cyl.frame.z, cyl.frame.origin, cyl.radius);
+        let np = self
+            .face_outward_normal(plane_face)
+            .ok_or(TopoError::Precondition("blend: cap rim plane normal"))?;
+        // Cap case: the plane must be perpendicular to the cylinder axis.
+        if np.cross(axis).norm() > 1e-7 {
+            return Err(TopoError::Precondition(
+                "blend: non-perpendicular plane-cylinder (cyclide, follow-up)",
+            ));
+        }
+        let pp = self
+            .face_outer_loop_points(plane_face)
+            .first()
+            .copied()
+            .ok_or(TopoError::Precondition("blend: cap rim plane point"))?;
+        let hp = (pp - axis_o).dot(axis); // plane height along the axis
+        let sgn = np.dot(axis); // +1 cap faces +axis, -1 faces -axis
+        let (ex, ey) = (cyl.frame.x, cyl.frame.y);
+        // A plane-meets-cylinder rim is ONE of three configurations, set by two
+        // INDEPENDENT geometric facts that the old single `concave` bool wrongly
+        // conflated (the bug that DECLINED the bored-hole lip, the third case):
+        //
+        //   * `annulus` -- does the planar support OVERRUN the cylinder, so the
+        //     rim is an INNER hole? TRUE for the boss rim (plate pierced by a
+        //     rising cylinder) AND the bored-hole lip (plate pierced by a bore);
+        //     FALSE for the peg-top cap-end (a disc bounded BY the cylinder).
+        //     Probe the GWN just OUTSIDE the cylinder, on the MATERIAL side of
+        //     the plane (opposite np): MATERIAL => the plate overruns => annulus.
+        //   * `convex` -- does the blend REMOVE material (the corner is a sharp
+        //     CONVEX lip) or ADD it (a reentrant CONCAVE valley)? TRUE for the
+        //     peg-top AND the bored-hole lip; FALSE for the boss. Probe the GWN
+        //     just INSIDE the cylinder, on the OUTWARD-normal (np) side of the
+        //     plane: MATERIAL there => a solid rises on the void side => concave
+        //     boss; VOID => the cylinder bounds empty space => convex.
+        //
+        // The surgery forks on `annulus`; the axial offset sign and surface sense
+        // fork on `convex`. Two GWN probes, not the centroid-based edge_is_convex
+        // (which mis-locates the in-plane direction over an annular plate's bore).
+        let (sv0, sv1) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
+        let radial_out = {
+            let at = |vk: crate::entity::VertexKey| {
+                self.vertices.get(vk).and_then(|x| {
+                    let w = x.point - axis_o;
+                    (w - axis * w.dot(axis)).try_normalize()
+                })
+            };
+            at(sv0).or_else(|| at(sv1))
+        };
+        let annulus = if let Some(rad) = radial_out {
+            let eps = (span * 0.25).min(r_cyl * 0.05).max(1e-4);
+            let probe = axis_o + axis * hp + rad * (r_cyl + eps) - np * eps;
+            self.generalized_winding_number(probe) > 0.5
+        } else {
+            false
+        };
+        // Topological refinement of the GWN verdict: the probe sees material
+        // just beyond the bore even when the planar support is a FULL DISC whose
+        // rim is its OUTER boundary -- a blind-hole FLOOR, where solid lies below
+        // AND outside the floor disc, yet the disc itself does NOT overrun the
+        // cylinder. annulus_surgery requires the rim to be an INNER loop of the
+        // cap (it relocates the bore hole into the spring band); a disc cap whose
+        // rim is its OUTER loop must take the disc-cap surgery instead. So an
+        // annulus claim only stands if the rim edge actually sits on an INNER
+        // loop of the planar support; otherwise it is a disc cap. (Default to the
+        // GWN verdict when the loop role is indeterminate, preserving prior behavior.)
+        let annulus = annulus
+            && self
+                .face_loop_with_edge(plane_face, edge)
+                .and_then(|lk| self.loops.get(lk))
+                .map(|l| l.kind == crate::entity::LoopKind::Inner)
+                .unwrap_or(true);
+        // Convex (remove material) vs concave (boss, add material): probe inside
+        // the cylinder on the np side of the plane. Material => reentrant boss.
+        let convex = if let Some(rad) = radial_out {
+            let eps_r = (r_cyl * 0.05).max(1e-4).min(r_cyl * 0.5);
+            let eps_h = (span * 0.25).max(1e-4);
+            let probe = axis_o + axis * hp + np * eps_h + rad * (r_cyl - eps_r);
+            self.generalized_winding_number(probe) <= 0.5
+        } else {
+            true
+        };
+        Ok(CapRimGeom {
+            axis,
+            axis_o,
+            r_cyl,
+            hp,
+            sgn,
+            ex,
+            ey,
+            annulus,
+            convex,
+        })
+    }
+
     /// Generate the exact-torus blend for a convex `edge` where a PLANAR
     /// face meets a CYLINDRICAL face perpendicular to its axis (a cap rim;
     /// file 40 Case B / rung 2). The spine is the circle where the two
@@ -284,116 +452,42 @@ impl Body {
         if !(radius.is_finite() && radius > 0.0) {
             return Err(TopoError::Precondition("blend: radius must be positive"));
         }
-        let faces = self.faces_around_edge(edge);
-        if faces.len() != 2 {
-            return Err(TopoError::Precondition("blend: edge needs two faces"));
-        }
-        // Identify the planar and the cylindrical support.
-        let mut plane_face = None;
-        let mut cyl = None;
-        for &f in &faces {
-            match self.face_surface_geom(f) {
-                Some(SurfaceGeom::Analytic(Surface3::Plane(_))) => plane_face = Some(f),
-                Some(SurfaceGeom::Analytic(Surface3::Cylinder(c))) => cyl = Some(c),
-                _ => {}
-            }
-        }
-        let (plane_face, cyl) = match (plane_face, cyl) {
-            (Some(p), Some(c)) => (p, c),
-            _ => {
-                return Err(TopoError::Precondition(
-                    "blend_torus: needs a plane and a cylinder support",
-                ));
-            }
-        };
-        let (axis, axis_o, r_cyl) = (cyl.frame.z, cyl.frame.origin, cyl.radius);
-        let np = self
-            .face_outward_normal(plane_face)
-            .ok_or(TopoError::Precondition("blend_torus: plane normal"))?;
-        // Cap case: the plane must be perpendicular to the cylinder axis.
-        if np.cross(axis).norm() > 1e-7 {
-            return Err(TopoError::Precondition(
-                "blend_torus: non-perpendicular plane-cylinder (cyclide, follow-up)",
-            ));
-        }
-        let pp = self
-            .face_outer_loop_points(plane_face)
-            .first()
-            .copied()
-            .ok_or(TopoError::Precondition("blend_torus: plane point"))?;
-        let hp = (pp - axis_o).dot(axis); // plane height along the axis
-        let sgn = np.dot(axis); // +1 cap faces +axis, -1 faces -axis
-        // SCOPE: only the CONVEX cap-end (a cylinder's flat top/bottom rim,
-        // where the cap is a simple disc bounded BY the cylinder and the ball
-        // rolls in the material INSIDE the cylinder) is implemented. The CONCAVE
-        // boss rim (a cylinder rising out of a plate, where the planar support
-        // EXTENDS BEYOND the cylinder and is pierced by the cylinder footprint,
-        // and the fillet fills the reentrant void OUTSIDE the cylinder) needs
-        // the mirror-image trim-and-stitch surgery (imprint_ring, the mekr loop
-        // roles, and the ring-face selection all assume the convex disc-cap
-        // topology), which is unimplemented; left unguarded it builds an inward
-        // torus and staples it to the annular plate face, yielding a body that
-        // later DECLINES in mass_properties with a misleading "curved face
-        // without pcurve bounds". DECLINE here instead, with the true reason.
-        //
-        // The two cases differ in whether the planar support extends past the
-        // cylinder: probe the generalized winding number just OUTSIDE the
-        // cylinder, on the MATERIAL side of the plane (opposite its outward
-        // normal). MATERIAL there means the plane is a plate that overruns the
-        // cylinder => concave boss; VOID there means the plane ends at the
-        // cylinder => convex cap-end. (The generic edge_is_convex misreads this
-        // corner: it takes the in-plane direction from the plane face's
-        // OUTER-loop centroid, which for the boss annulus sits over the bore and
-        // flips inward.)
-        let (sv0, sv1) = self.edges.get(edge).ok_or(TopoError::StaleKey)?.bounds;
-        let radial_out = {
-            let at = |vk: crate::entity::VertexKey| {
-                self.vertices.get(vk).and_then(|x| {
-                    let w = x.point - axis_o;
-                    (w - axis * w.dot(axis)).try_normalize()
-                })
-            };
-            at(sv0).or_else(|| at(sv1))
-        };
-        // Distinguish CONVEX cap-end from CONCAVE boss rim: probe the
-        // generalized winding number just OUTSIDE the cylinder, on the MATERIAL
-        // side of the plane (opposite its outward normal). MATERIAL there means
-        // the plane is a plate that overruns the cylinder => concave boss; VOID
-        // means the plane ends at the cylinder => convex cap-end. (edge_is_convex
-        // misreads this corner -- it reads the in-plane direction from the
-        // plate's OUTER-loop centroid, which sits over the bore and flips.)
-        let concave = if let Some(rad) = radial_out {
-            let eps = (radius * 0.25).min(r_cyl * 0.05).max(1e-4);
-            let probe = axis_o + axis * hp + rad * (r_cyl + eps) - np * eps;
-            self.generalized_winding_number(probe) > 0.5
-        } else {
-            false
-        };
-        // The inward (convex) torus needs major = r_cyl - r > minor = r, i.e.
-        // r_cyl > 2r. The outward (concave) torus has major = r_cyl + r > r
-        // always, so the guard is convex-only.
-        if !concave && r_cyl <= 2.0 * radius {
+        let CapRimGeom {
+            axis,
+            axis_o,
+            r_cyl,
+            hp,
+            sgn,
+            ex,
+            ey,
+            annulus,
+            convex,
+            ..
+        } = self.cap_rim_geometry(edge, radius)?;
+        // The disc-cap (inward) torus needs major = r_cyl - r > minor = r, i.e.
+        // r_cyl > 2r. The annulus (outward) torus has major = r_cyl + r > r
+        // always, so the guard is disc-cap-only.
+        if !annulus && r_cyl <= 2.0 * radius {
             return Err(TopoError::Precondition(
                 "blend_torus: radius too large for cylinder (needs R > 2r)",
             ));
         }
-        // Offset toward the rolling-ball void: the CONVEX cap-end rolls the ball
-        // in the material INSIDE the cylinder (offset cylinder inward, tube
-        // centre toward the material along -sgn*axis); the CONCAVE boss rolls it
-        // in the void OUTSIDE the cylinder and ABOVE the plate (offset cylinder
-        // outward, tube centre away from the material along +sgn*axis).
-        let h_off = if concave {
-            hp + sgn * radius
-        } else {
+        // Axial offset toward the rolling-ball centre: a CONVEX corner rolls the
+        // ball on the MATERIAL side of the plane (tube centre along -sgn*axis); a
+        // CONCAVE boss rolls it in the void on the outward-normal side (tube
+        // centre along +sgn*axis). Radial side: an ANNULUS support puts the ball
+        // OUTSIDE the cylinder (major = r_cyl + r); a disc cap, INSIDE.
+        let h_off = if convex {
             hp - sgn * radius
+        } else {
+            hp + sgn * radius
         };
-        let major = if concave {
+        let major = if annulus {
             r_cyl + radius
         } else {
             r_cyl - radius
         };
         let centre = axis_o + axis * h_off;
-        let (ex, ey) = (cyl.frame.x, cyl.frame.y);
 
         let spine = Circle3::new(centre, ex, ey, major)
             .map_err(|_| TopoError::Precondition("blend_torus: bad spine"))?;
@@ -414,7 +508,87 @@ impl Body {
             spring_plane,
             spring_cyl,
             surface,
-            concave,
+            annulus,
+            convex,
+        })
+    }
+
+    /// Generate the exact cone-frustum CHAMFER blend for `edge` where a PLANAR
+    /// face meets a CYLINDRICAL face perpendicular to its axis (a cap rim). The
+    /// cut surface is the cone through the two spring circles: radius `r_cyl` on
+    /// the cylinder at the setback height, radius `r_cyl +/- d` on the plane at
+    /// the rim height. `distance` is the setback on each support. The chamfer
+    /// dual of [`blend_torus_for_edge`]; the three-case classification is shared
+    /// via [`Body::cap_rim_geometry`] and a cone needs no `R > 2r` guard.
+    pub fn blend_chamfer_cone_for_edge(
+        &self,
+        edge: EdgeKey,
+        distance: f64,
+    ) -> Result<EdgeBlendCone, TopoError> {
+        use keel_geom::curve::Circle3;
+        use keel_geom::surface::Cone3;
+        if !(distance.is_finite() && distance > 0.0) {
+            return Err(TopoError::Precondition("blend: setback must be positive"));
+        }
+        let CapRimGeom {
+            axis,
+            axis_o,
+            r_cyl,
+            hp,
+            sgn,
+            ex,
+            ey,
+            annulus,
+            convex,
+            ..
+        } = self.cap_rim_geometry(edge, distance)?;
+        // Plane spring radius: r_cyl + d (annulus) or r_cyl - d (disc cap). A
+        // disc cap needs r_cyl > d to keep the plane spring radius positive.
+        if !annulus && r_cyl <= distance {
+            return Err(TopoError::Precondition(
+                "blend_cone: setback too large for cylinder (needs R > d)",
+            ));
+        }
+        let major = if annulus {
+            r_cyl + distance
+        } else {
+            r_cyl - distance
+        };
+        // The cylinder spring sits a setback DOWN the material side for a convex
+        // corner, UP the void side for a concave boss.
+        let h_cyl = if convex {
+            hp - sgn * distance
+        } else {
+            hp + sgn * distance
+        };
+        let dv = hp - h_cyl; // axial gap from the cyl spring to the plane spring
+        let dr = major - r_cyl; // radial growth across that gap
+        if dv.abs() < 1e-12 {
+            return Err(TopoError::Precondition("blend_cone: degenerate setback"));
+        }
+        // Cone anchored at the cyl spring (radius r_cyl at v = 0), growing by
+        // tan(half_angle) = dr/dv per unit axial height to reach `major` at the
+        // plane (a 45-degree frustum for an equal setback).
+        let half_angle = (dr / dv).atan();
+        let origin = axis_o + axis * h_cyl;
+        let frame = Frame3 {
+            origin,
+            x: ex,
+            y: ey,
+            z: axis,
+        };
+        let surface = Cone3::new(frame, r_cyl, half_angle)
+            .map_err(|_| TopoError::Precondition("blend_cone: bad cone"))?;
+        let spring_plane = Circle3::new(axis_o + axis * hp, ex, ey, major)
+            .map_err(|_| TopoError::Precondition("blend_cone: bad plane spring"))?;
+        let spring_cyl = Circle3::new(origin, ex, ey, r_cyl)
+            .map_err(|_| TopoError::Precondition("blend_cone: bad cyl spring"))?;
+        Ok(EdgeBlendCone {
+            spring_plane,
+            spring_cyl,
+            surface,
+            annulus,
+            convex,
         })
     }
 
@@ -927,12 +1101,25 @@ impl Body {
     /// and the general plane-cylinder cyclide case are follow-ups.
     pub fn fillet_cap_rim(&self, edge: EdgeKey, radius: f64) -> Result<Body, TopoError> {
         let blend = self.blend_torus_for_edge(edge, radius)?;
-        // The CONCAVE boss rim (a cylinder rising out of a plate) is a separate
-        // surgery: the planar support is an ANNULUS whose rim is an INNER hole,
-        // the torus bulges OUTWARD into the reentrant void, and a boolean union
-        // splits the bore circle into two arcs. Routed to its own routine.
-        if blend.concave {
-            return self.fillet_cap_rim_concave(edge, radius, &blend);
+        // An ANNULUS support (the planar face overruns the cylinder, so the rim
+        // is an INNER hole) is a separate surgery: the boss rim (a cylinder
+        // rising out of a plate, CONCAVE, torus bulges into the reentrant void)
+        // AND the bored-hole lip (a plate pierced by a bore, CONVEX, torus eats
+        // the sharp lip). Both have the rim split into two arcs at the cylinder
+        // seam, the inverted mekr loop roles, and the same ring-face selection;
+        // they fork only on the convexity (the axial offset and surface sense),
+        // already baked into `blend`. Routed to the shared annulus routine.
+        if blend.annulus {
+            // Torus natural normal points away from the tube; for the bore lip
+            // (convex) that IS the face's outward normal -> sense = convex.
+            return self.cap_rim_annulus_surgery(
+                edge,
+                &blend.spring_plane,
+                &blend.spring_cyl,
+                Surface3::Torus(blend.surface.clone()),
+                blend.convex,
+                blend.convex,
+            );
         }
         let faces = self.faces_around_edge(edge);
         let cap = faces
@@ -999,6 +1186,32 @@ impl Body {
             }
             false
         };
+        // A BORED/holed cap (e.g. filleting the OUTER rim of a cylinder with a
+        // through-bore) leaves its hole loop STRANDED on the rim/outer fragment
+        // after the spring-circle imprint, so the kept inner disc comes out as a
+        // FULL disc that covers the bore (a 10x over-cut, a self-consistent-wrong
+        // the mass==mesh gate cannot catch). Relocate every stray inner loop (any
+        // loop on the rim face that is NOT the rim edge nor the spring edge) onto
+        // the inner disc -- the disc-cap analog of the annulus path's bore-loop
+        // move. No-op for a plain disc cap (rim face carries only rim + spring).
+        for lk in alps.iter().copied() {
+            if !loop_has_edge(&b, lk, edge) && !loop_has_edge(&b, lk, spring_plane_edge) {
+                if let Some(f) = b.faces.get_mut(annulus) {
+                    f.loops.retain(|&x| x != lk);
+                }
+                if let Some(l) = b.loops.get_mut(lk) {
+                    l.face = inner_disc;
+                }
+                if let Some(f) = b.faces.get_mut(inner_disc) {
+                    f.loops.push(lk);
+                }
+            }
+        }
+        let alps = b
+            .faces
+            .get(annulus)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
         let rim_loop = alps
             .iter()
             .copied()
@@ -1058,27 +1271,251 @@ impl Body {
 
         b.validate()
             .map_err(|_| TopoError::Precondition("fillet_rim: result invalid"))?;
+        // Self-check (DECLINE-never-WRONG): this inline disc surgery is verified
+        // for the CONVEX peg-top cap. A CONCAVE disc cap (a blind-hole FLOOR) can
+        // also route here, and its loop selection is not yet correct -- it can
+        // keep the wrong region (a body that validate()s but fills the bore,
+        // mesh far off, analytic mass declining so mass==mesh cannot catch it).
+        // Mirror cap_rim_disc_surgery's guard so an unverifiable or wrong-volume
+        // result DECLINES honestly instead of shipping a malformed body. A
+        // correct convex disc fillet passes (mass integrates; removes a small wedge).
+        let mass = b
+            .mass_properties()
+            .map_err(|_| TopoError::Precondition("fillet_rim disc: mass declined"))?
+            .volume;
+        let mesh = b.mesh_volume();
+        if (mass - mesh).abs() / (1.0 + mass.abs()) > 0.03 {
+            return Err(TopoError::Precondition("fillet_rim disc: mass != mesh (self-check)"));
+        }
+        if let Ok(before) = self.mass_properties() {
+            let removed = before.volume - mass;
+            if !(if blend.convex { removed > 0.0 } else { removed < 0.0 }) {
+                return Err(TopoError::Precondition(
+                    "fillet_rim disc: blend changed volume the wrong way",
+                ));
+            }
+        }
         Ok(b)
     }
 
-    /// Round the CONCAVE rim where a cylinder rises out of a plate (a boss/plate
-    /// seam) with an OUTWARD constant-radius torus fillet (file 40 Case B, the
-    /// concave dual of `fillet_cap_rim`). The concave case differs structurally
-    /// from the convex cap-end on three counts, all handled here. First, the
-    /// planar support is an ANNULUS (a plate pierced by the bore) whose rim is an
-    /// INNER hole, so the spring circle (r_cyl + r) is the band's OUTER loop and
-    /// the rim its INNER loop (the mekr roles invert). Second, a boolean Union
-    /// splits the bore circle into TWO ARCS at the cylinder seam-line endpoint
-    /// and its antipode, so the rim is first NORMALIZED to a single closed circle
-    /// by dissolving the valence-2 antipode. Third, the torus bulges into the
-    /// reentrant void, so the ring face's sense is reversed (its outward normal
-    /// faces the cavity). The fillet ADDS material; the result is gated by
-    /// validate + mass==mesh and DECLINES on any imperfection (never wrong).
-    fn fillet_cap_rim_concave(
+    /// Chamfer a plane-cylinder cap rim `edge` with equal setback `distance`: a
+    /// cone-frustum bevel (the chamfer analog of [`Body::fillet_cap_rim`]). An
+    /// ANNULUS support -- a boss rim or a bored-hole lip -- routes through the
+    /// SAME annulus trim-and-stitch as the fillet, only with a cone surface
+    /// instead of a torus. The disc-cap (peg-top) chamfer is a documented
+    /// follow-up. DECLINES with `Err` (never a wrong body) outside scope; the
+    /// result is gated by validate + mass==mesh inside the shared surgery.
+    pub fn chamfer_cap_rim(&self, edge: EdgeKey, distance: f64) -> Result<Body, TopoError> {
+        let blend = self.blend_chamfer_cone_for_edge(edge, distance)?;
+        if blend.annulus {
+            // The cone's natural normal points the OPPOSITE way to the torus's
+            // (outward-and-DOWN toward the material vs outward from the tube), so
+            // the chamfer's ring sense is the negation of the fillet's: a convex
+            // lip needs sense = false, a concave boss sense = true. The volume-
+            // direction guard in the surgery backstops a wrong sense regardless.
+            return self.cap_rim_annulus_surgery(
+                edge,
+                &blend.spring_plane,
+                &blend.spring_cyl,
+                Surface3::Cone(blend.surface.clone()),
+                !blend.convex,
+                blend.convex,
+            );
+        }
+        // Disc-cap (peg-top): a flat cap bounded BY the cylinder (a shaft/peg end).
+        // The disc-cap surgery keeps the inner disc (opposite side from the annulus
+        // surgery), so the cone ring's outward normal is the natural cone normal
+        // here -> sense = convex. The volume-direction + closed-form probe backstop.
+        self.cap_rim_disc_surgery(
+            edge,
+            &blend.spring_plane,
+            &blend.spring_cyl,
+            Surface3::Cone(blend.surface.clone()),
+            blend.convex,
+            blend.convex,
+        )
+    }
+
+    /// Trim-and-stitch a blend onto a DISC-CAP (peg-top) cap rim: a flat disc
+    /// bounded BY the cylinder (a shaft/peg end), NOT an annulus. The cone analog
+    /// of the disc-cap branch of [`Body::fillet_cap_rim`]; shared shape, with the
+    /// caller's `surface`/`sense`. The cap splits into an inner disc (kept) + an
+    /// annulus that merges with the cylinder cap band across the rim, becoming the
+    /// blend ring. `convex` drives the volume-direction self-check (a convex
+    /// peg-top blend REMOVES material). Gated by validate + mass==mesh + volume
+    /// direction; DECLINES (never wrong) on any imperfection.
+    fn cap_rim_disc_surgery(
         &self,
         edge: EdgeKey,
-        _radius: f64,
-        blend: &EdgeBlendTorus,
+        spring_plane: &keel_geom::curve::Circle3,
+        spring_cyl: &keel_geom::curve::Circle3,
+        surface: Surface3,
+        sense: bool,
+        convex: bool,
+    ) -> Result<Body, TopoError> {
+        let faces = self.faces_around_edge(edge);
+        let cap = faces
+            .iter()
+            .copied()
+            .find(|&f| {
+                matches!(
+                    self.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Plane(_)))
+                )
+            })
+            .ok_or(TopoError::Precondition("cap_rim disc: no cap"))?;
+        let lat = faces
+            .iter()
+            .copied()
+            .find(|&f| {
+                matches!(
+                    self.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )
+            })
+            .ok_or(TopoError::Precondition("cap_rim disc: no cylinder"))?;
+        let tol = 1e-7;
+        let mut b = self.clone();
+
+        let rep_cap = b.imprint_ring(cap, &Curve3::Circle(*spring_plane), tol)?;
+        let annulus = *rep_cap
+            .faces
+            .iter()
+            .find(|&&f| b.face_has_edge(f, edge))
+            .ok_or(TopoError::Precondition("cap_rim disc: no cap annulus"))?;
+        let inner_disc = *rep_cap
+            .faces
+            .iter()
+            .find(|&&f| f != annulus)
+            .ok_or(TopoError::Precondition("cap_rim disc: no inner disc"))?;
+        let spring_plane_edge = rep_cap.edge;
+
+        let rep_lat = b.imprint_ring(lat, &Curve3::Circle(*spring_cyl), tol)?;
+        let spring_cyl_edge = rep_lat.edge;
+
+        let alps = b
+            .faces
+            .get(annulus)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        let loop_has_edge = |b: &Body, lk: crate::entity::LoopKey, e: EdgeKey| -> bool {
+            let Some(entry) = b.loops.get(lk).and_then(|l| l.fin) else {
+                return false;
+            };
+            let mut cur = entry;
+            while let Some(fin) = b.fins.get(cur) {
+                if fin.edge == e {
+                    return true;
+                }
+                cur = fin.next;
+                if cur == entry {
+                    break;
+                }
+            }
+            false
+        };
+        // Bored/holed cap: relocate stray hole loops off the rim face onto the
+        // inner disc (same as the fillet disc-cap path; prevents the bored-rim
+        // over-cut). No-op for a plain disc cap.
+        for lk in alps.iter().copied() {
+            if !loop_has_edge(&b, lk, edge) && !loop_has_edge(&b, lk, spring_plane_edge) {
+                if let Some(f) = b.faces.get_mut(annulus) {
+                    f.loops.retain(|&x| x != lk);
+                }
+                if let Some(l) = b.loops.get_mut(lk) {
+                    l.face = inner_disc;
+                }
+                if let Some(f) = b.faces.get_mut(inner_disc) {
+                    f.loops.push(lk);
+                }
+            }
+        }
+        let alps = b
+            .faces
+            .get(annulus)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        let rim_loop = alps
+            .iter()
+            .copied()
+            .find(|&lk| loop_has_edge(&b, lk, edge))
+            .ok_or(TopoError::Precondition("cap_rim disc: no rim loop"))?;
+        let ring_loop = alps
+            .iter()
+            .copied()
+            .find(|&lk| lk != rim_loop && loop_has_edge(&b, lk, spring_plane_edge))
+            .ok_or(TopoError::Precondition("cap_rim disc: no spring hole loop"))?;
+        let fin_outer = b
+            .loops
+            .get(rim_loop)
+            .and_then(|l| l.fin)
+            .ok_or(TopoError::StaleKey)?;
+        let fin_ring = b
+            .loops
+            .get(ring_loop)
+            .and_then(|l| l.fin)
+            .ok_or(TopoError::StaleKey)?;
+        b.mekr(fin_outer, fin_ring)?;
+
+        b.rehome_dying_face_holes(edge);
+        b.kef(edge)?;
+        let ring = b
+            .faces_around_edge(spring_plane_edge)
+            .into_iter()
+            .find(|&f| f != inner_disc)
+            .ok_or(TopoError::Precondition("cap_rim disc: no blend ring"))?;
+        b.attach_face_surface(ring, SurfaceGeom::Analytic(surface), sense);
+        b.attach_edge_curve(spring_plane_edge, Curve3::Circle(*spring_plane), true);
+        b.attach_edge_curve(spring_cyl_edge, Curve3::Circle(*spring_cyl), true);
+
+        b.validate()
+            .map_err(|_| TopoError::Precondition("cap_rim disc: result invalid"))?;
+        let mass = b
+            .mass_properties()
+            .map_err(|_| TopoError::Precondition("cap_rim disc: mass declined"))?
+            .volume;
+        let mesh = b.mesh_volume();
+        if (mass - mesh).abs() / (1.0 + mass.abs()) > 0.03 {
+            return Err(TopoError::Precondition("cap_rim disc: mass != mesh (self-check)"));
+        }
+        if let Ok(before) = self.mass_properties() {
+            let removed = before.volume - mass;
+            if !(if convex { removed > 0.0 } else { removed < 0.0 }) {
+                return Err(TopoError::Precondition(
+                    "cap_rim disc: blend changed volume the wrong way",
+                ));
+            }
+        }
+        Ok(b)
+    }
+
+    /// Trim-and-stitch a blend onto an ANNULUS-support cap rim (file 40 Case B):
+    /// the planar face overruns the cylinder, so the rim is an INNER hole. This
+    /// ONE routine serves BOTH blend families (a torus FILLET and a cone-frustum
+    /// CHAMFER -- the caller passes the two spring circles, the `surface`, and the
+    /// ring `sense`) AND both convexities, which share their entire surgery:
+    ///   * the CONCAVE boss rim (a cylinder rising out of a plate): the blend
+    ///     bulges OUTWARD into the reentrant void ABOVE the plate, ADDING
+    ///     material; the ring sense is reversed (outward normal faces the cavity).
+    ///   * the CONVEX bored-hole lip (a plate pierced by a bore): the blend eats
+    ///     the sharp lip BELOW the top, REMOVING material; the ring sense is the
+    ///     natural surface normal (the blend body sits in the plate material).
+    /// Both differ from the disc-cap (peg-top) on three counts, all handled here.
+    /// First, the plane spring circle is the band's OUTER loop and the rim its
+    /// INNER loop (the mekr roles invert vs the disc cap). Second, a boolean
+    /// splits the rim circle into TWO ARCS at the cylinder seam endpoint and its
+    /// antipode, so the rim is first NORMALIZED to a single closed circle by
+    /// dissolving the valence-2 antipode. Third, the ring face's sense is the
+    /// caller's `sense`. The result is gated by validate + mass==mesh and DECLINES
+    /// on any imperfection (never wrong).
+    fn cap_rim_annulus_surgery(
+        &self,
+        edge: EdgeKey,
+        spring_plane: &keel_geom::curve::Circle3,
+        spring_cyl: &keel_geom::curve::Circle3,
+        surface: Surface3,
+        sense: bool,
+        convex: bool,
     ) -> Result<Body, TopoError> {
         let tol = 1e-7;
         let mut b = self.clone();
@@ -1122,7 +1559,7 @@ impl Body {
                         edge
                     } else {
                         return Err(TopoError::Precondition(
-                            "fillet_rim: concave bore rim is not a normalizable two-arc circle",
+                            "cap_rim: bore rim is not a normalizable two-arc circle",
                         ));
                     }
                 }
@@ -1131,7 +1568,7 @@ impl Body {
             edge
         } else {
             return Err(TopoError::Precondition(
-                "fillet_rim: concave bore rim has no valence-2 antipode to normalize",
+                "cap_rim: bore rim has no valence-2 antipode to normalize",
             ));
         };
         b.validate()
@@ -1141,7 +1578,7 @@ impl Body {
         // interior circle between the bore and the plate edge, so it splits the
         // cap into an OUTER face (plate edge + spring hole) and a BAND (the disc
         // inside the spring), with the bore initially STRANDED on the outer.
-        let rep_cap = b.imprint_ring(cap, &Curve3::Circle(blend.spring_plane), tol)?;
+        let rep_cap = b.imprint_ring(cap, &Curve3::Circle(*spring_plane), tol)?;
         let spring_plane_edge = rep_cap.edge;
         let outer_cap = *rep_cap
             .faces
@@ -1188,7 +1625,7 @@ impl Body {
                 )
             })
             .ok_or(TopoError::Precondition("fillet_rim: no cylinder on bore"))?;
-        let rep_lat = b.imprint_ring(lat, &Curve3::Circle(blend.spring_cyl), tol)?;
+        let rep_lat = b.imprint_ring(lat, &Curve3::Circle(*spring_cyl), tol)?;
         let spring_cyl_edge = rep_lat.edge;
 
         // (1, roles inverted) mekr: bridge the band's spring (OUTER) loop to its
@@ -1245,30 +1682,44 @@ impl Body {
             .into_iter()
             .find(|&f| f != outer_cap)
             .ok_or(TopoError::Precondition("fillet_rim: no torus ring"))?;
-        // (3) The OUTWARD torus ring's outward normal faces the cavity: sense is
-        // reversed relative to the convex cap-end.
-        b.attach_face_surface(
-            ring,
-            SurfaceGeom::Analytic(Surface3::Torus(blend.surface.clone())),
-            false,
-        );
-        b.attach_edge_curve(spring_plane_edge, Curve3::Circle(blend.spring_plane), true);
-        b.attach_edge_curve(spring_cyl_edge, Curve3::Circle(blend.spring_cyl), true);
+        // (3) The ring face sense is the caller's `sense`, forked on convexity:
+        // a CONCAVE boss reverses it (the blend's outward normal faces the
+        // reentrant cavity), a CONVEX lip keeps the natural surface normal (the
+        // blend body sits in the plate material). A wrong sense is caught by the
+        // mass==mesh self-check below, never emitted.
+        b.attach_face_surface(ring, SurfaceGeom::Analytic(surface), sense);
+        b.attach_edge_curve(spring_plane_edge, Curve3::Circle(*spring_plane), true);
+        b.attach_edge_curve(spring_cyl_edge, Curve3::Circle(*spring_cyl), true);
 
         // DECLINE-never-WRONG self-check: watertight (validate) AND analytic
         // mass == tessellated mesh (the curved band). Any imperfection declines.
         b.validate()
-            .map_err(|_| TopoError::Precondition("fillet_rim: concave result invalid"))?;
+            .map_err(|_| TopoError::Precondition("cap_rim: result invalid"))?;
         let mass = b
             .mass_properties()
-            .map_err(|_| TopoError::Precondition("fillet_rim: concave mass declined"))?
+            .map_err(|_| TopoError::Precondition("cap_rim: mass declined"))?
             .volume;
         let mesh = b.mesh_volume();
         let rel = (mass - mesh).abs() / (1.0 + mass.abs());
         if rel > 0.03 {
             return Err(TopoError::Precondition(
-                "fillet_rim: concave result mass != mesh (self-check)",
+                "cap_rim: result mass != mesh (self-check)",
             ));
+        }
+        // The mass==mesh gate is BLIND to a flipped blend-face sense: both the
+        // analytic mass and the tessellated mesh derive from the same sense, so a
+        // wrong sense yields a SELF-CONSISTENT but WRONG body (a real cone-chamfer
+        // hazard observed in testing). Guard it with an independent invariant: a
+        // CONVEX lip blend REMOVES material, a CONCAVE valley blend ADDS it. The
+        // input volume fixes the direction; a violation DECLINES (never wrong).
+        if let Ok(before) = self.mass_properties() {
+            let removed = before.volume - mass;
+            let direction_ok = if convex { removed > 0.0 } else { removed < 0.0 };
+            if !direction_ok {
+                return Err(TopoError::Precondition(
+                    "cap_rim: blend changed volume the wrong way (sense/side guard)",
+                ));
+            }
         }
         Ok(b)
     }
@@ -1603,6 +2054,20 @@ impl Body {
             {
                 return Err(TopoError::Precondition(
                     "fillet: analytic/mesh volume inconsistent (mass-integration follow-up)",
+                ));
+            }
+        }
+        // VOLUME-DIRECTION guard (DECLINE-never-WRONG floor): a CONVEX fillet
+        // REMOVES material; a CONCAVE one ADDS it. A result that moves the volume
+        // the WRONG way is a mis-stitched SELF-CONSISTENT-wrong (mass==mesh both
+        // wrong -- the WF279 corner over-volume), which the mass==mesh gate above
+        // cannot catch. `convex` is the fillet's own build direction, so a correct
+        // fillet never trips this. (Correcting the stitch so it PASSES is a follow-up.)
+        if let (Ok(before), Ok(after)) = (self.mass_properties(), b.mass_properties()) {
+            let delta = after.volume - before.volume;
+            if if convex { delta > 1e-6 } else { delta < -1e-6 } {
+                return Err(TopoError::Precondition(
+                    "fillet: result changed volume the wrong way (mis-stitch guard)",
                 ));
             }
         }
@@ -2122,6 +2587,20 @@ impl Body {
             {
                 return Err(TopoError::Precondition(
                     "fillet: analytic/mesh volume inconsistent (mass-integration follow-up)",
+                ));
+            }
+        }
+        // VOLUME-DIRECTION guard (DECLINE-never-WRONG floor): a CONVEX fillet
+        // REMOVES material; a CONCAVE one ADDS it. A result that moves the volume
+        // the WRONG way is a mis-stitched SELF-CONSISTENT-wrong (mass==mesh both
+        // wrong -- the WF279 corner over-volume), which the mass==mesh gate above
+        // cannot catch. `convex` is the fillet's own build direction, so a correct
+        // fillet never trips this. (Correcting the stitch so it PASSES is a follow-up.)
+        if let (Ok(before), Ok(after)) = (self.mass_properties(), b.mass_properties()) {
+            let delta = after.volume - before.volume;
+            if if convex { delta > 1e-6 } else { delta < -1e-6 } {
+                return Err(TopoError::Precondition(
+                    "fillet: result changed volume the wrong way (mis-stitch guard)",
                 ));
             }
         }

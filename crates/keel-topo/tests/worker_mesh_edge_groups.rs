@@ -62,25 +62,26 @@ fn edge_groups_partition_lines_and_resolve() {
         );
     }
 
-    // One group per edge that tessellates. Every edge here yields a
-    // polyline of >= 2 points, so the count equals edge_keys().len().
+    // (fieldforge P1 cleanup) edge_groups are CONSUMER-FACING now: a periodic
+    // SEAM edge is not pickable, and a bored rim's two seam-split arcs MERGE into
+    // one circular group. So there are FEWER groups than live edges, every group
+    // id is still a live edge (subset, not set-equality), and the drilled plate's
+    // 17 raw edges become 14 groups (2 rim-merges of 4 arcs -> 2, + 1 seam dropped).
     let live_edges = body.edge_keys().len();
+    assert!(
+        m.edge_groups.len() < live_edges,
+        "seam-skip + rim-merge reduces groups: {} vs {live_edges} edges",
+        m.edge_groups.len()
+    );
+    let group_ids: std::collections::HashSet<u64> = m.edge_groups.iter().map(|g| g.0).collect();
+    let edge_ids: std::collections::HashSet<u64> =
+        body.edge_keys().iter().map(|&e| body.edge_id(e).unwrap().0).collect();
+    assert!(group_ids.is_subset(&edge_ids), "every edge_group id is a live edge id");
     assert_eq!(
         m.edge_groups.len(),
-        live_edges,
-        "one edge_group per tessellating edge"
+        live_edges - 3,
+        "drilled plate: 2 bore rims merge (4 arcs -> 2) + 1 lateral seam dropped"
     );
-
-    // edge_group ids are exactly the live edge ids (set equality).
-    let mut group_ids: Vec<u64> = m.edge_groups.iter().map(|g| g.0).collect();
-    group_ids.sort_unstable();
-    let mut edge_ids: Vec<u64> = body
-        .edge_keys()
-        .iter()
-        .map(|&e| body.edge_id(e).unwrap().0)
-        .collect();
-    edge_ids.sort_unstable();
-    assert_eq!(group_ids, edge_ids, "edge_group ids == live edge ids");
 }
 
 #[test]
@@ -141,9 +142,10 @@ fn worker_mesh_default_unchanged_snapshot() {
     assert_eq!(m2.positions, m.positions, "default positions byte-identical");
     assert_eq!(m2.lines, m.lines, "default lines byte-identical");
 
-    // The default lines must equal the legacy render_mesh().edges
-    // flattening (the pre-edge_groups source), proving edge_groups is
-    // pure additive metadata over an unchanged buffer.
+    // The TRIANGLE mesh (positions/indices) is the mass/oracle tessellation and
+    // is byte-identical (asserted above); only the EDGE picking metadata changed.
+    // The default LINES now OMIT the periodic seam (fieldforge P1), so they are a
+    // strict subset of the legacy render_mesh().edges flattening.
     let mut legacy = Vec::new();
     for poly in cyl.render_mesh().edges {
         for w in poly.windows(2) {
@@ -152,8 +154,10 @@ fn worker_mesh_default_unchanged_snapshot() {
             }
         }
     }
-    assert_eq!(
-        m.lines, legacy,
-        "worker_mesh() lines == render_mesh().edges flattening (byte-identical)"
+    assert!(
+        m.lines.len() < legacy.len(),
+        "worker_mesh() drops the cylinder seam from the wireframe: {} vs legacy {}",
+        m.lines.len(),
+        legacy.len()
     );
 }

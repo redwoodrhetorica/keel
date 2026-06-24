@@ -114,31 +114,77 @@ impl Body {
         // order render_mesh_opt does, and tol=None routes through the same
         // 32-segment default arc sampling, so `lines` is byte-identical to
         // the pre-edge_groups `render_mesh().edges` flattening.
+        // Two consumer cleanups (the fieldforge cylinder-seam / bisected-rim P1).
+        // These touch ONLY the edge picking metadata (`lines` + `edge_groups`),
+        // never the triangle mesh the mass==mesh oracle reads:
+        //   (1) SKIP a periodic-face SEAM edge -- a manifold (2-coedge) edge whose
+        //       BOTH coedges lie on the SAME face. It is a parametric artifact of
+        //       the seamed cylinder/cone/sphere/torus, not a model edge, so it must
+        //       not render as a line or be pickable.
+        //   (2) MERGE co-circular arcs into ONE group -- a bored rim is split by the
+        //       seam into two arcs that share one circle curve; emit them as a single
+        //       edge_group so a rim pick highlights/selects the WHOLE circle
+        //       (OCCT/Parasolid behavior), not a half.
+        #[derive(PartialEq, Eq, Hash, Clone, Copy)]
+        enum EKey {
+            // co-circular arcs key by the circle's GEOMETRY (center, normal,
+            // radius) so the two arcs of one rim merge even across distinct curve
+            // instances; non-circle edges key by their own edge (no merge).
+            Circle([i64; 7]),
+            Solo(crate::entity::EdgeKey),
+        }
+        let mut buckets: Vec<(u64, Vec<Vec<Vec3>>)> = Vec::new();
+        let mut bindex: std::collections::HashMap<EKey, usize> = std::collections::HashMap::new();
         for (ek, _) in self.edges.iter() {
+            if self.fins_of_edge(ek).len() == 2 && self.faces_around_edge(ek).len() == 1 {
+                continue; // seam: 2 coedges, 1 face
+            }
             let Some(poly) = self.edge_polyline_opt(ek, tol) else {
                 continue;
             };
-            // A polyline of n points => n-1 segments => (n-1)*6 floats.
             if poly.len() < 2 {
                 continue;
             }
+            // Stable EntityId so the host maps a picked edge back to its EdgeKey
+            // via Body::lookup (the representative arc, for a merged circle).
+            let id = self.edge_id(ek).map(|e| e.0).unwrap_or(ek.index() as u64);
+            let key = match self
+                .edges
+                .get(ek)
+                .and_then(|e| e.curve)
+                .and_then(|(ck, _)| self.curves.get(ck))
+            {
+                Some(keel_geom::curve::Curve3::Circle(c)) => {
+                    let q = |x: f64| (x * 1e6).round() as i64;
+                    let n = c.x_axis.cross(c.y_axis);
+                    EKey::Circle([
+                        q(c.center.x), q(c.center.y), q(c.center.z),
+                        q(n.x), q(n.y), q(n.z), q(c.radius),
+                    ])
+                }
+                _ => EKey::Solo(ek),
+            };
+            let b = *bindex.entry(key).or_insert_with(|| {
+                buckets.push((id, Vec::new()));
+                buckets.len() - 1
+            });
+            buckets[b].1.push(poly);
+        }
+        for (id, polys) in buckets {
             let start = out.lines.len() as u32;
-            for w in poly.windows(2) {
-                for p in w {
-                    out.lines
-                        .extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
+            for poly in &polys {
+                // A polyline of n points => n-1 segments => (n-1)*6 floats.
+                for w in poly.windows(2) {
+                    for p in w {
+                        out.lines
+                            .extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
+                    }
                 }
             }
             let count = out.lines.len() as u32 - start;
-            if count == 0 {
-                continue;
+            if count > 0 {
+                out.edge_groups.push((id, start, count));
             }
-            // Stable EntityId so the host maps the rendered/picked edge
-            // back to its EdgeKey via Body::lookup (consistent with how
-            // face_groups identify faces, but using the stable id the
-            // edge-pick API exposes).
-            let id = self.edge_id(ek).map(|e| e.0).unwrap_or(ek.index() as u64);
-            out.edge_groups.push((id, start, count));
         }
         out
     }

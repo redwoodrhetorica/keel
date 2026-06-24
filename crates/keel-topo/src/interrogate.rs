@@ -877,28 +877,39 @@ impl Body {
     /// Built on [`Body::edge_keys`](crate::Body::edge_keys) +
     /// [`Body::closest_point_on_edge`], so it is correct for curved seams.
     /// The tie-break is deterministic: among edges equidistant (within a
-    /// tight epsilon) from `p`, the one with the lowest [`EntityId`] wins,
-    /// so repeated picks of the same point are reproducible. Distances are
-    /// in model length units.
+    /// tight epsilon) from `p`, a MANIFOLD edge (two adjacent faces) wins over
+    /// a one-face parametric seam or boundary edge, then the lowest [`EntityId`]
+    /// breaks any remaining tie, so repeated picks of the same point are
+    /// reproducible. The face-count preference matters when a pick lands on a
+    /// vertex shared by several edges: e.g. the seam endpoint where a bored
+    /// hole's rim arcs meet the cylinder's vertical seam edge -- a blind pick of
+    /// that point must resolve to a filletable rim arc, not the 1-face seam.
+    /// Distances are in model length units.
     pub fn nearest_edge(&self, p: Vec3) -> Option<crate::entity::EdgeKey> {
-        let mut best: Option<(crate::entity::EdgeKey, f64, EntityId)> = None;
+        let mut best: Option<(crate::entity::EdgeKey, f64, usize, EntityId)> = None;
         for e in self.edge_keys() {
             let Some((_, d)) = self.closest_point_on_edge(e, p) else {
                 continue;
             };
+            let faces = self.faces_around_edge(e).len();
             let id = self.edge_id(e).unwrap_or(EntityId(u64::MAX));
-            best = Some(match best {
-                None => (e, d, id),
-                Some((be, bd, bid)) => {
-                    if d < bd - 1e-12 || ((d - bd).abs() <= 1e-12 && id < bid) {
-                        (e, d, id)
+            let better = match best {
+                None => true,
+                Some((_, bd, bfaces, bid)) => {
+                    if (d - bd).abs() <= 1e-12 {
+                        // Equidistant (a shared vertex): prefer more adjacent
+                        // faces, then the lowest EntityId.
+                        faces > bfaces || (faces == bfaces && id < bid)
                     } else {
-                        (be, bd, bid)
+                        d < bd
                     }
                 }
-            });
+            };
+            if better {
+                best = Some((e, d, faces, id));
+            }
         }
-        best.map(|(e, _, _)| e)
+        best.map(|(e, _, _, _)| e)
     }
 
     /// Radius of the largest inscribed sphere tangent at surface point

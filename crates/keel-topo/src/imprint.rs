@@ -545,6 +545,150 @@ impl Body {
         })
     }
 
+    /// Split a SEAMED cylinder lateral `face` into two bands along TWO parallel
+    /// open rulings r1, r2 (a plane-cut / flat-slot mill). A single `split_face`
+    /// on a seamed lateral DOUBLES its area: the lateral's loop is a (theta,z)
+    /// rectangle whose left (u=0) and right (u=tau) walls are the SAME seam
+    /// bridge edge, so one `mef` leaves both child loops sampling ~the full rim.
+    /// The open-ruling band split (the dossier-#64 analogue of
+    /// `imprint_cylinder_wrap_bands`): two `mef` (one per ruling) then KILL the
+    /// seam, which after both rulings is a redundant divider inside one band.
+    /// The two rim circles must already be split at the four ruling feet (the
+    /// imprint presplit does this). Returns the two new ruling edges.
+    ///
+    /// STATUS: WIP, gated behind KEEL_MILL_FLOW (default OFF). The "2 mef + kef"
+    /// design (band_split_design.md) is INVALIDATED: OP1's `split_face` still
+    /// DOUBLES the seamed lateral's area (1256.64 -> 1233.45 + 1233.45), matching
+    /// that doc's own sec 1.2 and contradicting sec 3.4. A correct band-split must
+    /// NOT use `mef`/`split_face` on the seamed lateral -- it must rebuild the two
+    /// band loops directly from the (theta,z) partition (or fix periodic-face
+    /// pcurve winding). Kept as the documented attempt + area instrumentation.
+    pub(crate) fn imprint_cylinder_lateral_slot(
+        &mut self,
+        face: FaceKey,
+        r1: &Curve3,
+        r2: &Curve3,
+        tol: f64,
+    ) -> Result<Vec<crate::entity::EdgeKey>, TopoError> {
+        use keel_math::vec::Vec3;
+        let etol = tol.max(1e-7);
+        let Some(keel_geom::surface::Surface3::Cylinder(cyl)) = self.face_surface3(face) else {
+            return Err(TopoError::Precondition("lateral slot: not a cylinder face"));
+        };
+        let axis = cyl.frame.z;
+        let origin = cyl.frame.origin;
+        let endpoints = |c: &Curve3| -> (Vec3, Vec3) {
+            match c {
+                Curve3::Nurbs(n) => {
+                    let (a, b) = n.domain();
+                    (n.point(a), n.point(b))
+                }
+                Curve3::Line(l) => (l.point(0.0), l.point(1.0)),
+                Curve3::Circle(c) => (c.point(0.0), c.point(core::f64::consts::PI)),
+                Curve3::Ellipse(e) => (e.point(0.0), e.point(core::f64::consts::PI)),
+            }
+        };
+        // Sort each ruling's feet bottom (low axial) -> top.
+        let order = |c: &Curve3| -> (Vec3, Vec3) {
+            let (p, q) = endpoints(c);
+            if (p - origin).dot(axis) <= (q - origin).dot(axis) {
+                (p, q)
+            } else {
+                (q, p)
+            }
+        };
+        let (a1, b1) = order(r1);
+        let (a2, b2) = order(r2);
+        let vat = |me: &Self, p: Vec3| -> Option<crate::entity::VertexKey> {
+            me.vertices
+                .iter()
+                .find(|(_, v)| (v.point - p).norm() <= etol)
+                .map(|(k, _)| k)
+        };
+        let (Some(va1), Some(vb1), Some(va2), Some(vb2)) =
+            (vat(self, a1), vat(self, b1), vat(self, a2), vat(self, b2))
+        else {
+            return Err(TopoError::Precondition(
+                "lateral slot: foot vertex not found (rim not presplit)",
+            ));
+        };
+        // The seam edge = the one LINE edge of this lateral's loop (rims are circles).
+        let lp = self
+            .faces
+            .get(face)
+            .and_then(|f| f.loops.first().copied())
+            .ok_or(TopoError::StaleKey)?;
+        let seam_edge = {
+            let entry = self.loops.get(lp).and_then(|l| l.fin).ok_or(TopoError::StaleKey)?;
+            let mut cur = entry;
+            let mut found = None;
+            loop {
+                if let Some(ek) = self.fins.get(cur).map(|f| f.edge)
+                    && matches!(
+                        self.edges.get(ek).and_then(|e| e.curve).and_then(|(ck, _)| self.curves.get(ck)),
+                        Some(Curve3::Line(_))
+                    )
+                {
+                    found = Some(ek);
+                    break;
+                }
+                cur = self.fins.get(cur).map(|f| f.next).ok_or(TopoError::StaleKey)?;
+                if cur == entry {
+                    break;
+                }
+            }
+            found.ok_or(TopoError::Precondition("lateral slot: no seam line edge"))?
+        };
+        let surf_key = self.faces.get(face).and_then(|f| f.surface);
+        let dbg = std::env::var("KEEL_BOOL_DEBUG").is_ok();
+        if dbg {
+            eprintln!("[slot] area0={:.2} feet a1={a1:?} b1={b1:?} a2={a2:?} b2={b2:?}", self.face_area(face));
+        }
+        // OP1: ruling r1 (va1 bottom -> vb1 top). The seam ends up in one band.
+        let fa = self.fin_ending_at_vertex(lp, va1)?;
+        let fb = self.fin_ending_at_vertex(lp, vb1)?;
+        let m1 = self.split_face(fa, fb, surf_key)?;
+        self.attach_seam_geometry(m1.edge, face, r1, tol);
+        if dbg {
+            eprintln!("[slot] OP1 -> old={:.2} new={:.2}", self.face_area(m1.face_old), self.face_area(m1.face_new));
+        }
+        // OP2: ruling r2 on whichever band now carries the seam (the seam edge's
+        // owning face). va2/vb2 live on it.
+        let seam_face = self
+            .edges
+            .get(seam_edge)
+            .and_then(|e| e.radial.first().copied())
+            .and_then(|f| self.fins.get(f))
+            .and_then(|f| self.loops.get(f.owner))
+            .map(|l| l.face)
+            .ok_or(TopoError::Precondition("lateral slot: seam face lost"))?;
+        let lp2 = self
+            .faces
+            .get(seam_face)
+            .and_then(|f| f.loops.first().copied())
+            .ok_or(TopoError::StaleKey)?;
+        let fa2 = self.fin_ending_at_vertex(lp2, va2)?;
+        let fb2 = self.fin_ending_at_vertex(lp2, vb2)?;
+        let m2 = self.split_face(fa2, fb2, surf_key)?;
+        self.attach_seam_geometry(m2.edge, seam_face, r2, tol);
+        if dbg {
+            eprintln!("[slot] OP2 -> old={:.2} new={:.2}", self.face_area(m2.face_old), self.face_area(m2.face_new));
+        }
+        // OP3: the seam is now a redundant divider inside one band -> kill it
+        // (kef merges two distinct faces; kemr if it became a bridge in one loop).
+        let killed = self.kef(seam_edge).map(|_| "kef").or_else(|_| {
+            let fin = self.edges.get(seam_edge).and_then(|e| e.radial.first().copied());
+            match fin {
+                Some(f) => self.kemr(f).map(|_| "kemr"),
+                None => Err(TopoError::Precondition("lateral slot: seam kill no fin")),
+            }
+        })?;
+        if dbg {
+            eprintln!("[slot] OP3 seam killed via {killed}");
+        }
+        Ok(vec![m1.edge, m2.edge])
+    }
+
     /// Imprint a CLOSED planar curve that CROSSES a boundary line edge
     /// of `face` (a cylinder's vertical seam): split the seam at the
     /// crossing point P, then base the closed curve edge at P (`mef`

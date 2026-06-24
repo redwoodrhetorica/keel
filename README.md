@@ -172,7 +172,7 @@ Legend: **S** = shipped and tested, **P** = partial or in progress, **D** = decl
 
 | Operation | Status | Notes |
 |---|---|---|
-| Constant-radius edge fillet | **S** | |
+| Constant-radius edge fillet | **S** | Includes the closed circular rim of a bored hole (full 360 deg loop) |
 | Variable-radius fillet | **S** | |
 | Corner blend (vertex fillet) | **S** | |
 | Fillet overflow / graceful degeneracy | **S** | Documented in `fillet-overflow` demo |
@@ -227,7 +227,7 @@ Legend: **S** = shipped and tested, **P** = partial or in progress, **D** = decl
 |---|---|---|
 | STEP export | **S** | Analytic surfaces and curves to AP203/214-class entities |
 | STEP import | **P** | Quadric surfaces and analytic curves; fuzzed; not yet a full reader |
-| WASM build | **P** | `keel-wasm` crate in workspace; spike in progress |
+| WASM build | **P** | `keel-wasm` implements the complete extern-C consumer ABI (primitives, booleans, fillet/chamfer, face edits, meshing, STEP export, offset); builds to `wasm32-unknown-unknown` and passes an end-to-end smoke test. API alpha. |
 
 ---
 
@@ -309,13 +309,19 @@ pipeline.
 PES-class non-manifold B-rep topology with first-class space-partitioning regions, Euler operators
 (MEV, MEF, MEKR, KEV, KEF, KEKR and their inverses), operation lineage records on every entity,
 session / pmark / rollback support (transactional editing), boolean pipeline (imprint, classify,
-stitch), blend and fillet families, local direct-edit operators, tessellation (edge-first watertight
-contract), cross-section interrogation, mass-properties integrator, and hidden-line removal.
+stitch), blend and fillet families, local direct-edit operators, tessellation (a per-face render mesh with per-edge and per-face
+pick groups; an edge-conforming watertight render mesh is in progress), cross-section
+interrogation, mass-properties integrator, and hidden-line removal.
 
 ### `keel-wasm`
 
-Thin WebAssembly binding layer over `keel-topo`. Exposes a subset of the API for browser
-and Node.js consumers. Spike in progress; the API surface is not yet stable.
+WebAssembly binding over `keel-topo`: a raw `extern "C"` ABI (no wasm-bindgen) that a browser
+or Node.js host calls directly over linear memory. Bodies stay in a thread-local slab behind
+integer handles; every body-producing call returns a handle or a negative decline code, so the
+decline-never-wrong contract holds across the boundary. Covers primitives, placement, profile
+ops, booleans, edge and face edits (fillet, chamfer, push, draft, hollow), meshing with per-face
+and per-edge pick groups, STEP export, and offset. Builds to `wasm32-unknown-unknown` and passes
+an end-to-end smoke test; the API surface is alpha and may change.
 
 ---
 
@@ -406,7 +412,7 @@ Status is approximate.
 | M4 | Boolean pipeline, classify, stitch | Complete |
 | M5 | Certified SSI (surface-surface intersection), NURBS booleans | Partial: SSI certified and analytic booleans exact; general NURBS booleans not yet certified |
 | M6 | Blends, fillets, local direct-edit operators | Complete |
-| M7 | STEP import/export, WASM build, first external consumer | Partial: STEP export shipped, import partial, WASM spike, consumer integration ongoing |
+| M7 | STEP import/export, WASM build, first external consumer | Partial: STEP export shipped, import partial; WASM consumer ABI implemented and smoke-tested (alpha); first-consumer (fieldforge) integration in progress |
 
 Items not on the current roadmap (by design): T-splines (patent landscape, THB-splines cover
 the refinement use case), auto-inferred live-rules constraints, single-body mesh-plus-B-rep

@@ -23,6 +23,20 @@ impl Body {
     /// `Err(TopoError)` rather than producing a wrong body. Errors if the
     /// edge is not bounded by exactly two planar faces, or the cut fails.
     pub fn chamfer_edge(&self, edge: EdgeKey, distance: f64) -> Result<Body, TopoError> {
+        // A plane-cylinder cap rim (the lip of a bore, a boss seam, a peg top)
+        // is a cone-frustum bevel, a different construction from the two-planar
+        // transversal cut. Dispatch by support geometry, mirroring `fillet_edge`.
+        let faces = self.faces_around_edge(edge);
+        if faces.len() == 2
+            && faces.iter().any(|&f| {
+                matches!(
+                    self.face_surface_geom(f),
+                    Some(SurfaceGeom::Analytic(Surface3::Cylinder(_)))
+                )
+            })
+        {
+            return self.chamfer_cap_rim(edge, distance);
+        }
         self.chamfer_edge_asymmetric(edge, distance, distance)
     }
 

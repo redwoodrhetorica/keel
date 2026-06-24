@@ -665,6 +665,51 @@ impl Body {
         }
         pts
     }
+
+    /// Clip an in-plane `line` to a planar face whose OUTER boundary is a single
+    /// CIRCLE edge (a pristine cylinder/cone cap), returning the line-parameter
+    /// range `[t0, t1]` where the line lies inside the disk. The polygon clip
+    /// (`clip_line_to_planar_face`) needs >= 3 boundary vertices, but a cap's
+    /// rim is ONE closed circle edge = ONE vertex, so it returns None and the
+    /// cap-plane section seam (e.g. a flat/slot mill's cap chord) is dropped --
+    /// leaving the tool face's trim ring open. An ANALYTIC line/circle solve
+    /// gives EXACT endpoints (so the chord corners coincide with the wall
+    /// rulings' endpoints, and the trim ring closes), where a sampled polygon
+    /// would carry a chord-sagitta error that misplaces the corners.
+    pub(crate) fn circle_face_line_clip(
+        &self,
+        face: FaceKey,
+        line: &keel_geom::curve::Line3,
+    ) -> Option<(f64, f64)> {
+        use keel_geom::curve::Curve3;
+        let lp = self.faces.get(face)?.loops.first().copied()?;
+        let entry = self.loops.get(lp)?.fin?;
+        let ek = self.fins.get(entry)?.edge;
+        let Curve3::Circle(c) = self
+            .edges
+            .get(ek)?
+            .curve
+            .and_then(|(ck, _)| self.curves.get(ck))?
+        else {
+            return None;
+        };
+        // The line lies in the cap plane (it is a plane-plane SSI), so the 3D
+        // distance to the circle center IS the in-plane distance. Solve
+        // |origin + t*dir - center|^2 = r^2 for the two crossings.
+        let oc = line.origin - c.center;
+        let aa = line.dir.dot(line.dir);
+        if aa <= 0.0 {
+            return None;
+        }
+        let bb = 2.0 * oc.dot(line.dir);
+        let cc = oc.dot(oc) - c.radius * c.radius;
+        let disc = bb * bb - 4.0 * aa * cc;
+        if disc <= 0.0 {
+            return None; // misses or grazes the disk: no chord
+        }
+        let sq = disc.sqrt();
+        Some(((-bb - sq) / (2.0 * aa), (-bb + sq) / (2.0 * aa)))
+    }
 }
 
 /// Chirality of an analytic surface's parametrization frame: `+1.0` for a
@@ -5677,6 +5722,16 @@ fn assemble_boolean(
         // only check; this band converts that whole class from silent
         // to declined. Bodies whose mass legitimately declines (NURBS
         // corner patches) keep the positive-volume floor.
+        //
+        // OVER-STRICTNESS NOTE (over-strictness-audit): widening this band to
+        // the oracle's 25% recovers correct coarse-tessellation curved bodies
+        // (+143 on the 10k soak, FAIL 0) BUT is NOT safe by construction -- it
+        // also admits any body whose mass and tess DIVERGE by 2-25% with volume
+        // in op-bounds, which can include a wrong body this 2% gate conservatively
+        // declines (the soak's 25% band + sampling cannot prove their absence).
+        // Recovering those passes SAFELY needs an independent closed-form/refined-
+        // tess CONFIRMATION per recovered body, not a blanket band widening. Kept
+        // at 2% until that safer recovery exists (DECLINE-never-WRONG > +passes).
         let v = body.tessellated_volume();
         let bm = body.mass_properties().map(|m| m.volume);
         if std::env::var("KEEL_BOOL_DEBUG").is_ok() {
@@ -6657,6 +6712,17 @@ impl Body {
             let AnyKey::Edge(ek) = self.lookup(id)? else {
                 continue;
             };
+            // Curve-aware: a point strictly INTERIOR to a CONIC ARC edge (a
+            // cylinder/cap rim circle, a cone rim) -- the straight chord test
+            // below cannot see it (a point mid-arc is a chord-sagitta away),
+            // and a FULL-circle rim (bounds.0 == bounds.1) it skips entirely
+            // (len2 == 0). conic_arc_split_rel uses the edge's stored arc_sweep
+            // so the directed arc is unambiguous (and it already enforces the
+            // strict-interior / on-curve predicate). This is what lets the
+            // imprint presplit land a milling seam endpoint on a curved rim.
+            if conic_arc_split_rel(self, ek, p, tol).is_some() {
+                return Some(ek);
+            }
             let Some(e) = self.edges.get(ek) else {
                 continue;
             };
@@ -6752,19 +6818,24 @@ impl Body {
             let entry = self.loops.get(lk).and_then(|l| l.fin)?;
             let mut cur = entry;
             loop {
-                if let Some(ek) = self.fins.get(cur).map(|f| f.edge)
-                    && let Some(e) = self.edges.get(ek)
-                    && let (Some(a), Some(b)) = (
-                        self.vertices.get(e.bounds.0).map(|v| v.point),
-                        self.vertices.get(e.bounds.1).map(|v| v.point),
-                    )
-                {
-                    let ab = b - a;
-                    let len2 = ab.dot(ab);
-                    if len2 > 0.0 {
-                        let t = (p - a).dot(ab) / len2;
-                        if t > 1e-7 && t < 1.0 - 1e-7 && ((a + ab * t) - p).norm() <= tol {
-                            return Some(ek);
+                if let Some(ek) = self.fins.get(cur).map(|f| f.edge) {
+                    // Curve-aware (conic arc) first; chord test for straight edges.
+                    if conic_arc_split_rel(self, ek, p, tol).is_some() {
+                        return Some(ek);
+                    }
+                    if let Some(e) = self.edges.get(ek)
+                        && let (Some(a), Some(b)) = (
+                            self.vertices.get(e.bounds.0).map(|v| v.point),
+                            self.vertices.get(e.bounds.1).map(|v| v.point),
+                        )
+                    {
+                        let ab = b - a;
+                        let len2 = ab.dot(ab);
+                        if len2 > 0.0 {
+                            let t = (p - a).dot(ab) / len2;
+                            if t > 1e-7 && t < 1.0 - 1e-7 && ((a + ab * t) - p).norm() <= tol {
+                                return Some(ek);
+                            }
                         }
                     }
                 }
@@ -6793,19 +6864,24 @@ impl Body {
         let entry = self.loops.get(lk).and_then(|l| l.fin)?;
         let mut cur = entry;
         loop {
-            if let Some(ek) = self.fins.get(cur).map(|f| f.edge)
-                && let Some(e) = self.edges.get(ek)
-                && let (Some(a), Some(b)) = (
-                    self.vertices.get(e.bounds.0).map(|v| v.point),
-                    self.vertices.get(e.bounds.1).map(|v| v.point),
-                )
-            {
-                let ab = b - a;
-                let len2 = ab.dot(ab);
-                if len2 > 0.0 {
-                    let t = (p - a).dot(ab) / len2;
-                    if t > 1e-7 && t < 1.0 - 1e-7 && ((a + ab * t) - p).norm() <= tol {
-                        return Some(ek);
+            if let Some(ek) = self.fins.get(cur).map(|f| f.edge) {
+                // Curve-aware (conic arc) first; chord test for straight edges.
+                if conic_arc_split_rel(self, ek, p, tol).is_some() {
+                    return Some(ek);
+                }
+                if let Some(e) = self.edges.get(ek)
+                    && let (Some(a), Some(b)) = (
+                        self.vertices.get(e.bounds.0).map(|v| v.point),
+                        self.vertices.get(e.bounds.1).map(|v| v.point),
+                    )
+                {
+                    let ab = b - a;
+                    let len2 = ab.dot(ab);
+                    if len2 > 0.0 {
+                        let t = (p - a).dot(ab) / len2;
+                        if t > 1e-7 && t < 1.0 - 1e-7 && ((a + ab * t) - p).norm() <= tol {
+                            return Some(ek);
+                        }
                     }
                 }
             }
@@ -7557,7 +7633,7 @@ impl Body {
 
     /// Attach a seam edge's 3D curve and the pcurve (in the face's
     /// analytic surface) to both of its radial fins.
-    fn attach_seam_geometry(
+    pub(crate) fn attach_seam_geometry(
         &mut self,
         edge: crate::entity::EdgeKey,
         face: FaceKey,
@@ -7831,7 +7907,19 @@ fn imprint_operand(
     }
     for &p in &corners {
         if let Some(edge) = working.edge_containing_point(p, etol) {
-            let _ = working.split_edge(edge, p);
+            // A CONIC rim split must carry the children's arc_sweep, else a
+            // SUBSEQUENT corner on the same rim (now two arcs) reads the wrong
+            // sweep in conic_arc_split_rel and is not recognized as on-boundary
+            // -> the open-chain imprint then fails "end not on boundary". Mirror
+            // merge_and_glue_imported's arc_sweep propagation. A straight edge
+            // returns None here and splits with no sweep (correct for a line).
+            let conic = conic_arc_split_rel(&working, edge, p, etol);
+            if let Ok(out) = working.split_edge(edge, p) {
+                if let Some((rel, s)) = conic {
+                    working.set_edge_arc_sweep(out.edge_a, rel);
+                    working.set_edge_arc_sweep(out.edge_b, s - rel);
+                }
+            }
         }
     }
 
@@ -7869,6 +7957,31 @@ fn imprint_operand(
                 }
             }
             members = keep;
+        }
+        // MILLING SLOT (KEEL_MILL_FLOW): two open STRAIGHT rulings on a CYLINDER
+        // lateral = a plane-cut flat/slot. A blind per-ruling split_face doubles
+        // the seamed lateral (the seam is a re-used left/right bridge edge), so
+        // route the PAIR to the open-ruling band split.
+        if std::env::var("KEEL_MILL_FLOW").is_ok()
+            && members.len() == 2
+            && matches!(working.face_surface3(face), Some(Surface3::Cylinder(_)))
+            && members.iter().all(|&i| {
+                !seams[i].closed && {
+                    let (a, b) = curve_endpoints(&seams[i].curve);
+                    (curve_point(&seams[i].curve, 0.5) - (a + b) * 0.5).norm() <= etol.max(1e-6)
+                }
+            })
+        {
+            match working.imprint_cylinder_lateral_slot(
+                face,
+                &seams[members[0]].curve,
+                &seams[members[1]].curve,
+                tol,
+            ) {
+                Ok(mut es) => seam_edges.append(&mut es),
+                Err(e) => faults.push(BoolFault::Topo(e)),
+            }
+            continue;
         }
         // CROSSING-PAIR arrangement (task 29, the equal-radii slice):
         // exactly two closed seams on one cylinder lateral that
@@ -8393,8 +8506,22 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                         {
                             let pts_a = a.face_outer_loop_points(fa);
                             let pts_b = b.face_outer_loop_points(fb);
-                            let ia = clip_line_to_planar_face(line, pa, &pts_a);
-                            let ib = clip_line_to_planar_face(line, pb, &pts_b);
+                            // A pristine cap's boundary is ONE circle edge (1
+                            // vertex) -> the polygon clip needs >= 3, so use the
+                            // analytic line/circle clip for a circular-boundary
+                            // face (exact endpoints, so the cap chord's corners
+                            // coincide with the wall rulings and the tool's trim
+                            // ring closes). Straight-bounded faces keep the polygon.
+                            let ia = if pts_a.len() >= 3 {
+                                clip_line_to_planar_face(line, pa, &pts_a)
+                            } else {
+                                a.circle_face_line_clip(fa, line)
+                            };
+                            let ib = if pts_b.len() >= 3 {
+                                clip_line_to_planar_face(line, pb, &pts_b)
+                            } else {
+                                b.circle_face_line_clip(fb, line)
+                            };
                             if let (Some((a0, a1)), Some((b0, b1))) = (ia, ib) {
                                 let t0 = a0.max(b0);
                                 let t1 = a1.min(b1);
@@ -8420,6 +8547,99 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                                 }
                             }
                             continue;
+                        }
+                        // Open STRAIGHT seam (a Line) between a PLANAR face and
+                        // a CURVED (cylinder/cone) face: the flat/slot-mill
+                        // ruling. Drilling a round hole imprints a CLOSED circle
+                        // (plane PERP to axis) and already assembles; milling a
+                        // flat/slot is the dual -- a plane PARALLEL to the axis
+                        // cuts the wall in a straight ruling that lies ON the
+                        // curved face. The plane-plane clip above needs BOTH
+                        // planar; here clip the line to the planar face's
+                        // half-planes AND to the curved face's axial extent (the
+                        // line's parameter span over the curved face's boundary),
+                        // then push the bounded segment so imprint_open_chain can
+                        // split BOTH faces boundary-to-boundary. Previously this
+                        // fell through to `UnassemblableSeam` -> DECLINE.
+                        if let keel_geom::curve::Curve3::Line(line) = &c.curve {
+                            let is_plane =
+                                |g: &SurfaceGeom| matches!(g, SurfaceGeom::Analytic(Surface3::Plane(_)));
+                            let is_curved = |g: &SurfaceGeom| matches!(
+                                g,
+                                SurfaceGeom::Analytic(Surface3::Cylinder(_))
+                                    | SurfaceGeom::Analytic(Surface3::Cone(_))
+                            );
+                            let planar_curved = (is_plane(&ga) && is_curved(&gb))
+                                || (is_plane(&gb) && is_curved(&ga));
+                            // DORMANT milling-seam machinery (KEEL_MILL_FLOW) -- the
+                            // dual of drilling. Drilling imprints a CLOSED circle
+                            // (plane PERP to axis) and assembles; milling a flat/slot
+                            // is the same operation with the plane PARALLEL/OBLIQUE
+                            // to the axis, whose SSI is an OPEN ruling line / ellipse
+                            // arc. This clips that open seam to both faces and pushes
+                            // it. Default-OFF because the downstream open-chain
+                            // imprint cannot yet land a chain endpoint MID-ARC on a
+                            // CIRCULAR rim edge: edge_containing_point /
+                            // edge_on_face_containing / loop_edge_containing are
+                            // straight-segment only (linear a+ab*t), so a point on a
+                            // cylinder/cap rim circle reads INTERIOR and
+                            // imprint_open_chain declines ("open chain end not on
+                            // boundary"). Landing this needs curve-aware edge
+                            // containment + a circle/arc split_edge -- a core
+                            // primitive used across the assembler. Gated so the
+                            // default path is byte-identical (DECLINE-never-WRONG)
+                            // until that primitive lands and the soak re-validates.
+                            if planar_curved && std::env::var("KEEL_MILL_FLOW").is_ok() {
+                                // (plane, plane-face-points, curved-face-points)
+                                let (pl, pts_pl, pts_cv) = if is_plane(&ga) {
+                                    let SurfaceGeom::Analytic(Surface3::Plane(p)) = &ga else {
+                                        unreachable!()
+                                    };
+                                    (p.clone(), a.face_outer_loop_points(fa), b.face_outer_loop_points(fb))
+                                } else {
+                                    let SurfaceGeom::Analytic(Surface3::Plane(p)) = &gb else {
+                                        unreachable!()
+                                    };
+                                    (p.clone(), b.face_outer_loop_points(fb), a.face_outer_loop_points(fa))
+                                };
+                                if let Some((lp0, lp1)) = clip_line_to_planar_face(line, &pl, &pts_pl) {
+                                    // Axial clip: the line's parameter span over
+                                    // the curved face's boundary (the line is a
+                                    // ruling lying on that face, so its endpoints
+                                    // on the trimmed face are at the rim extent).
+                                    let dd = line.dir.dot(line.dir).max(1e-30);
+                                    let proj = |p: keel_math::vec::Vec3| (p - line.origin).dot(line.dir) / dd;
+                                    let (mut lc0, mut lc1) = (f64::INFINITY, f64::NEG_INFINITY);
+                                    for p in &pts_cv {
+                                        let t = proj(*p);
+                                        lc0 = lc0.min(t);
+                                        lc1 = lc1.max(t);
+                                    }
+                                    let t0 = lp0.max(lc0);
+                                    let t1 = lp1.min(lc1);
+                                    if lc1 > lc0 && t1 - t0 > tol {
+                                        let p0 = line.point(t0);
+                                        let p1 = line.point(t1);
+                                        if let Ok(seg) = keel_geom::nurbs_curve::NurbsCurve::new(
+                                            1,
+                                            vec![0., 0., 1., 1.],
+                                            vec![p0, p1],
+                                            None,
+                                        ) {
+                                            seams.push(SeamCurve {
+                                                face_a: fa,
+                                                face_b: fb,
+                                                curve: keel_geom::curve::Curve3::Nurbs(seg),
+                                                closed: false,
+                                                tol: c.tol_achieved,
+                                                on_boundary_a: false,
+                                                on_boundary_b: false,
+                                            });
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
                         }
                         // Surface-surface SSI uses the UNBOUNDED surfaces;
                         // a curve OFF both faces' trimmed extents is no
