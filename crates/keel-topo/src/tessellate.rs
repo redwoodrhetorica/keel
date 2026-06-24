@@ -99,6 +99,370 @@ impl Body {
         }
     }
 
+    /// EDGE-FIRST (watertight) tessellation for the worker/render mesh: every
+    /// face derives its boundary from the SAME shared per-edge polyline
+    /// (`edge_polyline_opt`), so two faces meeting along a curved rim emit
+    /// IDENTICAL vertices and the welded triangle soup has zero boundary edges.
+    ///
+    /// This is a SEPARATE path from `tessellate_face` (the GWN/boolean
+    /// classifier and the mass==mesh oracle, both left byte-identical): the
+    /// clean analytic bands (cylinder/cone, full torus) and all planar faces
+    /// conform; spheres, NURBS, and complex-trim analytic faces fall back to the
+    /// proven non-conforming tessellation (coverage over watertightness there).
+    pub(crate) fn tessellate_face_watertight(
+        &self,
+        face: FaceKey,
+        tol: Option<f64>,
+    ) -> Vec<[Vec3; 3]> {
+        let Some((sk, sense)) = self.faces.get(face).and_then(|f| f.surface) else {
+            return Vec::new();
+        };
+        let conforming = match self.surfaces.get(sk) {
+            Some(crate::entity::SurfaceGeom::Analytic(surf)) => match surf {
+                Surface3::Plane(p) => self.tessellate_planar_conforming(face, p.frame.z, sense, tol),
+                Surface3::Cylinder(cy) => self
+                    .tessellate_lateral_conforming(
+                        face, cy.frame.origin, cy.frame.x, cy.frame.y, cy.frame.z, sense, tol,
+                    )
+                    .unwrap_or_default(),
+                Surface3::Cone(co) => self
+                    .tessellate_lateral_conforming(
+                        face, co.frame.origin, co.frame.x, co.frame.y, co.frame.z, sense, tol,
+                    )
+                    .unwrap_or_default(),
+                Surface3::Torus(t) => self
+                    .tessellate_torus_conforming(face, t, sense, tol)
+                    .unwrap_or_default(),
+                Surface3::Sphere(_) => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        if conforming.is_empty() {
+            // Sphere / NURBS / declined-analytic: keep the proven mesh.
+            self.tessellate_face_opt(face, tol)
+        } else {
+            conforming
+        }
+    }
+
+    /// Per-fin oriented boundary polylines of a loop, each sampled ONCE from the
+    /// shared per-edge `edge_polyline_opt` and reversed when the fin runs the
+    /// edge backward. The single source of truth that makes adjacent faces agree
+    /// on a shared rim vertex-for-vertex.
+    fn fin_ring(
+        &self,
+        lk: crate::entity::LoopKey,
+        tol: Option<f64>,
+    ) -> Vec<(crate::entity::EdgeKey, bool, Vec<Vec3>)> {
+        let mut out = Vec::new();
+        let Some(entry) = self.loops.get(lk).and_then(|l| l.fin) else {
+            return out;
+        };
+        let mut cur = entry;
+        while let Some(fin) = self.fins.get(cur) {
+            if let Some(mut poly) = self.edge_polyline_opt(fin.edge, tol) {
+                if !fin.forward {
+                    poly.reverse();
+                }
+                if poly.len() >= 2 {
+                    out.push((fin.edge, fin.forward, poly));
+                }
+            }
+            cur = fin.next;
+            if cur == entry {
+                break;
+            }
+        }
+        out
+    }
+
+    /// A loop's boundary polygon built by concatenating its fins' shared-edge
+    /// polylines (the conforming analogue of `loop_polygon`). Straight-edge
+    /// loops (box faces) reduce to the corner vertices exactly, so all-planar
+    /// bodies stay byte-identical.
+    fn loop_polygon_conforming(&self, lk: crate::entity::LoopKey, tol: Option<f64>) -> Vec<Vec3> {
+        let mut verts: Vec<Vec3> = Vec::new();
+        for (_, _, poly) in self.fin_ring(lk, tol) {
+            for p in poly {
+                if verts.last().map(|q| (*q - p).norm() > 1e-9).unwrap_or(true) {
+                    verts.push(p);
+                }
+            }
+        }
+        if verts.len() >= 2 && (verts[0] - verts[verts.len() - 1]).norm() <= 1e-9 {
+            verts.pop();
+        }
+        verts
+    }
+
+    /// Conforming planar tessellation: identical machinery to `tessellate_planar`
+    /// (ear-clip outer, holed bridge for rings, reversed fan fallback) but the
+    /// loop polygons come from the shared per-edge polylines, so a cap's hole
+    /// rim matches the bore wall's rim vertex-for-vertex.
+    fn tessellate_planar_conforming(
+        &self,
+        face: FaceKey,
+        nz: Vec3,
+        sense: bool,
+        tol: Option<f64>,
+    ) -> Vec<[Vec3; 3]> {
+        let outward = if sense { nz } else { nz * -1.0 };
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        if loops.is_empty() {
+            return Vec::new();
+        }
+        if loops.len() > 1 && std::env::var("KEEL_TESS_DEBUG").is_ok() {
+            for &lk in &loops {
+                for (edge, _f, poly) in self.fin_ring(lk, tol) {
+                    let kind = self
+                        .edges
+                        .get(edge)
+                        .and_then(|e| e.curve)
+                        .and_then(|(ck, _)| self.curves.get(ck))
+                        .map(|c| match c {
+                            keel_geom::curve::Curve3::Line(_) => "line",
+                            keel_geom::curve::Curve3::Circle(_) => "circle",
+                            keel_geom::curve::Curve3::Ellipse(_) => "ellipse",
+                            keel_geom::curve::Curve3::Nurbs(_) => "nurbs",
+                        })
+                        .unwrap_or("none");
+                    eprintln!(
+                        "  tess_plane {face:?} nz.z={:.3} loop_edge={edge:?} {kind} npts={}",
+                        nz.z,
+                        poly.len()
+                    );
+                }
+            }
+        }
+        let polys: Vec<Vec<Vec3>> = loops
+            .iter()
+            .map(|&lk| self.loop_polygon_conforming(lk, tol))
+            .collect();
+        if polys.len() > 1
+            && polys.iter().all(|p| p.len() >= 3)
+            && let Some(tris) =
+                Self::triangulate_holed(polys[0].clone(), polys[1..].to_vec(), nz, outward)
+        {
+            return tris;
+        }
+        let mut tris = Vec::new();
+        for (li, poly) in polys.iter().enumerate() {
+            if poly.len() < 3 {
+                continue;
+            }
+            let loop_out = if li == 0 { outward } else { outward * -1.0 };
+            if li == 0 {
+                for [ia, ib, ic] in earclip_3d(poly, nz) {
+                    tris.push(orient([poly[ia], poly[ib], poly[ic]], loop_out));
+                }
+            } else {
+                let n = poly.len();
+                let centroid = poly.iter().fold(Vec3::ZERO, |a, p| a + *p) * (1.0 / n as f64);
+                for i in 0..n {
+                    tris.push(orient([centroid, poly[i], poly[(i + 1) % n]], loop_out));
+                }
+            }
+        }
+        tris
+    }
+
+    /// Conforming tessellation of a CYLINDER or CONE lateral band: connect the
+    /// two circular rim polylines (taken from the shared per-edge sampler) with
+    /// an index-proportional ribbon. Returns None (caller falls back to the grid
+    /// tessellator) unless the face is a clean axis-perpendicular band -- exactly
+    /// two distinct circle-rim heights, every boundary edge a circle or line, no
+    /// NURBS/ellipse/tilted trim. Outward is radial*sense (the dominant normal
+    /// component; `orient` only needs the correct hemisphere, and the worker
+    /// recomputes the flat facet normal from the winding anyway).
+    fn tessellate_lateral_conforming(
+        &self,
+        face: FaceKey,
+        origin: Vec3,
+        ex: Vec3,
+        ey: Vec3,
+        ez: Vec3,
+        sense: bool,
+        tol: Option<f64>,
+    ) -> Option<Vec<[Vec3; 3]>> {
+        use keel_geom::curve::Curve3;
+        let mut heights = self.cyl_circle_heights(face, origin, ez);
+        heights.sort_by(f64::total_cmp);
+        heights.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        if heights.len() != 2 {
+            return None;
+        }
+        let (hlo, hhi) = (heights[0], heights[1]);
+        if hhi - hlo <= 1e-9 {
+            return None;
+        }
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        let mut lower: Vec<Vec3> = Vec::new();
+        let mut upper: Vec<Vec3> = Vec::new();
+        for lk in &loops {
+            for (edge, _fwd, poly) in self.fin_ring(*lk, tol) {
+                let Some((ck, _)) = self.edges.get(edge).and_then(|e| e.curve) else {
+                    return None;
+                };
+                match self.curves.get(ck) {
+                    Some(Curve3::Line(_)) => {}
+                    Some(Curve3::Nurbs(n)) if n.degree() <= 1 => {}
+                    Some(Curve3::Circle(c)) => {
+                        let nrm = c.x_axis.cross(c.y_axis);
+                        if nrm.dot(ez).abs() < 1.0 - 1e-6 {
+                            return None; // tilted rim: leave to the cap-plane grid
+                        }
+                        let h = (c.center - origin).dot(ez);
+                        if (h - hlo).abs() <= (h - hhi).abs() {
+                            lower.extend(poly);
+                        } else {
+                            upper.extend(poly);
+                        }
+                    }
+                    _ => return None,
+                }
+            }
+        }
+        if lower.len() < 3 || upper.len() < 3 {
+            return None;
+        }
+        let sgn = if sense { 1.0 } else { -1.0 };
+        let angle = |q: Vec3| {
+            let w = q - origin;
+            w.dot(ey).atan2(w.dot(ex))
+        };
+        let outward = |q: Vec3| {
+            let w = q - origin;
+            (w - ez * w.dot(ez)) * sgn
+        };
+        let (low_ring, low_closed) = order_ring(lower, &angle);
+        let (up_ring, up_closed) = order_ring(upper, &angle);
+        if low_closed != up_closed {
+            return None;
+        }
+        Some(orient_outward(
+            ribbon(&low_ring, &up_ring, low_closed, &angle),
+            &outward,
+        ))
+    }
+
+    /// Conforming tessellation of a FULL (closed-major) torus band (a bore-rim
+    /// fillet): the two circular rims come from the shared per-edge sampler so
+    /// they match the neighbouring cap and cylinder, and intermediate tube rows
+    /// follow the minor-arc curvature so the mesh volume stays faithful. Returns
+    /// None for partial-major tori, tilted/odd rims, or anything but two circle
+    /// rims (caller falls back to the grid).
+    fn tessellate_torus_conforming(
+        &self,
+        face: FaceKey,
+        torus: &keel_geom::surface::Torus3,
+        sense: bool,
+        tol: Option<f64>,
+    ) -> Option<Vec<[Vec3; 3]>> {
+        use keel_geom::curve::Curve3;
+        let tau = core::f64::consts::TAU;
+        let (c, ex, ey, ez, rmaj, rmin) = (
+            torus.frame.origin,
+            torus.frame.x,
+            torus.frame.y,
+            torus.frame.z,
+            torus.major,
+            torus.minor,
+        );
+        let sgn = if sense { 1.0 } else { -1.0 };
+        let v_of = |p: Vec3| {
+            let w = p - c;
+            let z = w.dot(ez);
+            let d = (w - ez * z).norm();
+            z.atan2(d - rmaj)
+        };
+        let u_angle = |p: Vec3| {
+            let w = p - c;
+            w.dot(ey).atan2(w.dot(ex))
+        };
+        let loops = self
+            .faces
+            .get(face)
+            .map(|f| f.loops.clone())
+            .unwrap_or_default();
+        let mut rims: Vec<(f64, Vec<Vec3>)> = Vec::new();
+        for lk in &loops {
+            for (edge, _fwd, poly) in self.fin_ring(*lk, tol) {
+                // No curve = a straight seam edge; skip it (the rims are circles).
+                let Some((ck, _)) = self.edges.get(edge).and_then(|e| e.curve) else {
+                    continue;
+                };
+                match self.curves.get(ck) {
+                    // The major seam is a meridian minor-arc (a circle whose plane
+                    // CONTAINS the bore axis, so its normal is perpendicular to ez)
+                    // and straight/low-degree edges are seam connectors: only the
+                    // AXIS-PERPENDICULAR circles are the cap/cylinder rims we mesh
+                    // between. Skip everything else; reconstruct the tube from the
+                    // surface between the two rims.
+                    Some(Curve3::Circle(ci))
+                        if ci.x_axis.cross(ci.y_axis).dot(ez).abs() >= 1.0 - 1e-6 =>
+                    {
+                        let v = v_of(ci.center + ci.x_axis * ci.radius);
+                        if let Some(slot) = rims.iter_mut().find(|(vv, _)| (*vv - v).abs() < 1e-4) {
+                            slot.1.extend(poly);
+                        } else {
+                            rims.push((v, poly));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if rims.len() != 2 {
+            return None;
+        }
+        rims.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let mut it = rims.into_iter();
+        let (v0, ring0) = it.next().unwrap();
+        let (v1, ring1) = it.next().unwrap();
+        let outward = |q: Vec3| {
+            let w = q - c;
+            let z = w.dot(ez);
+            let radial = w - ez * z;
+            let rn = radial.norm();
+            let tube_center = if rn > 1e-12 { c + radial * (rmaj / rn) } else { c };
+            (q - tube_center) * sgn
+        };
+        let (b0, c0) = order_ring(ring0, &u_angle);
+        let (b1, c1) = order_ring(ring1, &u_angle);
+        if !c0 || !c1 {
+            return None; // partial-major torus: leave to the grid
+        }
+        let nv = arc_segments((v1 - v0).abs(), rmin, tol, 16).max(2);
+        let nu = b0.len().max(b1.len()).max(8);
+        let pt = |u: f64, v: f64| -> Vec3 {
+            let radial = ex * u.cos() + ey * u.sin();
+            c + radial * (rmaj + rmin * v.cos()) + ez * (rmin * v.sin())
+        };
+        // Build the whole tube (all v-strips) in the ribbon's natural winding,
+        // then orient ONCE: a single vote over the full tube lets the reliable
+        // mid-tube triangles fix the global orientation, instead of each thin
+        // strip (especially the near-tangent rim strips at v0/v1) voting on its
+        // own ambiguous normals.
+        let mut tris = Vec::new();
+        let mut prev = b0.clone();
+        for k in 1..nv {
+            let v = v0 + (v1 - v0) * k as f64 / nv as f64;
+            let cur: Vec<Vec3> = (0..nu).map(|i| pt(tau * i as f64 / nu as f64, v)).collect();
+            tris.extend(ribbon(&prev, &cur, true, &u_angle));
+            prev = cur;
+        }
+        tris.extend(ribbon(&prev, &b1, true, &u_angle));
+        Some(orient_outward(tris, &outward))
+    }
+
     /// Grid-tessellate a NURBS face over its parameter domain into
     /// outward-oriented triangles (outward = the surface `local_geometry`
     /// normal, sense-adjusted; the cell-center fallback handles
@@ -1376,10 +1740,12 @@ impl Body {
         // wrongly in any viewer consuming the worker mesh (task 34's
         // drill gif showed a capped bore). Falls back to the fan path if
         // the bridge cannot be placed.
-        if loops.len() > 1
-            && let Some(tris) = self.tessellate_planar_holed(&loops, nz, outward)
-        {
-            return tris;
+        if loops.len() > 1 {
+            let outer = self.loop_polygon(loops[0]);
+            let rings: Vec<Vec<Vec3>> = loops[1..].iter().map(|&lk| self.loop_polygon(lk)).collect();
+            if let Some(tris) = Self::triangulate_holed(outer, rings, nz, outward) {
+                return tris;
+            }
         }
         let mut tris = Vec::new();
         for (li, lk) in loops.iter().enumerate() {
@@ -1412,10 +1778,12 @@ impl Body {
     /// is spliced into the outer polygon through a mutually visible
     /// bridge vertex pair (the classic hole-cutting reduction), and the
     /// resulting simple polygon ear-clips. `None` when a bridge cannot
-    /// be placed (the caller falls back to the signed-fan path).
-    fn tessellate_planar_holed(
-        &self,
-        loops: &[crate::entity::LoopKey],
+    /// be placed (the caller falls back to the signed-fan path). Takes the
+    /// already-built loop polygons so both the GWN planar path (`loop_polygon`)
+    /// and the conforming worker path (`loop_polygon_conforming`) can share it.
+    fn triangulate_holed(
+        outer_in: Vec<Vec3>,
+        rings_in: Vec<Vec<Vec3>>,
         nz: Vec3,
         outward: Vec3,
     ) -> Option<Vec<[Vec3; 3]>> {
@@ -1439,7 +1807,7 @@ impl Body {
                 * 0.5
         };
         // Outer loop CCW in (u, w); rings CW (holes wind opposite).
-        let mut outer = self.loop_polygon(loops[0]);
+        let mut outer = outer_in;
         if outer.len() < 3 {
             return None;
         }
@@ -1466,8 +1834,8 @@ impl Body {
                 && ((d3 > eps && d4 < -eps) || (d3 < -eps && d4 > eps))
         };
         let mut rings: Vec<Vec<Vec3>> = Vec::new();
-        for lk in &loops[1..] {
-            let mut ring = self.loop_polygon(*lk);
+        for r in rings_in {
+            let mut ring = r;
             if ring.len() < 3 {
                 return None;
             }
@@ -2222,6 +2590,151 @@ fn orient(tri: [Vec3; 3], outward: Vec3) -> [Vec3; 3] {
         [tri[0], tri[2], tri[1]]
     } else {
         tri
+    }
+}
+
+/// Order a rim ring's points by angle (via `angle`) and report whether they
+/// close a full turn. Duplicate / shared seam points are removed; an OPEN arc
+/// is rotated to start just after its largest angular void so the ribbon never
+/// bridges the gap. Circular rims are monotonic in angle, which the conforming
+/// band/torus paths guarantee before calling this.
+fn order_ring(pts: Vec<Vec3>, angle: &dyn Fn(Vec3) -> f64) -> (Vec<Vec3>, bool) {
+    let tau = core::f64::consts::TAU;
+    let mut a: Vec<(f64, Vec3)> = pts.into_iter().map(|p| (angle(p), p)).collect();
+    a.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
+    a.dedup_by(|x, y| (x.1 - y.1).norm() < 1e-7);
+    if a.len() >= 2 && (a[0].1 - a[a.len() - 1].1).norm() < 1e-7 {
+        a.pop();
+    }
+    let n = a.len();
+    if n < 2 {
+        return (a.into_iter().map(|p| p.1).collect(), false);
+    }
+    let mut max_gap = 0.0f64;
+    let mut gap_at = n - 1;
+    for i in 0..n {
+        let g = if i + 1 < n {
+            a[i + 1].0 - a[i].0
+        } else {
+            a[0].0 + tau - a[i].0
+        };
+        if g > max_gap {
+            max_gap = g;
+            gap_at = i;
+        }
+    }
+    // A closed ring's largest gap is ~tau/n; an open arc's is its (large) void.
+    let closed = max_gap < 4.0 * tau / n as f64;
+    let ring: Vec<Vec3> = a.iter().map(|p| p.1).collect();
+    if closed {
+        (ring, true)
+    } else {
+        let start = (gap_at + 1) % n;
+        ((0..n).map(|k| ring[(start + k) % n]).collect(), false)
+    }
+}
+
+/// Triangulate the lateral strip between two boundary rings that wind the same
+/// way around a common axis, using ONLY the given vertices (no new rim points --
+/// that is what keeps a shared rim identical to the neighbouring face, so the
+/// weld is watertight). For CLOSED rings the two are merged by ANGLE (advance
+/// whichever ring's next vertex comes sooner), which tolerates unequal vertex
+/// counts AND unequal start phases -- the latter is essential because a rim ring
+/// (from the edge sampler) and an interior tube row (generated from u=0) do not
+/// start at the same angle. For open arcs the rings are pre-rotated past their
+/// void by `order_ring`, so an index-proportional walk suffices. Returns triangles
+/// in the walk's NATURAL (consistent) winding; the caller passes them through
+/// `orient_outward` (a stack of strips can be voted together so weak/skewed
+/// tangent-rim triangles do not flip independently).
+fn ribbon(
+    lower: &[Vec3],
+    upper: &[Vec3],
+    closed: bool,
+    angle: &dyn Fn(Vec3) -> f64,
+) -> Vec<[Vec3; 3]> {
+    let (m0, n0) = (lower.len(), upper.len());
+    if m0 < 2 || n0 < 2 {
+        return Vec::new();
+    }
+    // Build the strip with its NATURAL (consistent) winding, then orient the
+    // WHOLE strip once by majority vote against `outward`. The walk produces a
+    // consistently-wound strip, so a single global flip keeps it manifold-
+    // consistent; a per-triangle `orient` would flip the skewed triangles a
+    // sparse-to-dense merge makes near a TANGENT rim (where `outward` is a weak
+    // discriminator) inconsistently, tearing the strip into boundary edges.
+    let mut raw: Vec<[Vec3; 3]> = Vec::with_capacity(m0 + n0);
+    if closed {
+        let tau = core::f64::consts::TAU;
+        let mut lo: Vec<(f64, Vec3)> =
+            lower.iter().map(|&p| (angle(p).rem_euclid(tau), p)).collect();
+        let mut up: Vec<(f64, Vec3)> =
+            upper.iter().map(|&p| (angle(p).rem_euclid(tau), p)).collect();
+        lo.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        up.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let (m, n) = (lo.len(), up.len());
+        let la = |k: usize| lo[k % m].0 + tau * ((k / m) as f64);
+        let ua = |k: usize| up[k % n].0 + tau * ((k / n) as f64);
+        let (mut i, mut j) = (0usize, 0usize);
+        while i < m || j < n {
+            let advance_lower = if i >= m {
+                false
+            } else if j >= n {
+                true
+            } else {
+                la(i + 1) <= ua(j + 1)
+            };
+            if advance_lower {
+                raw.push([lo[i % m].1, lo[(i + 1) % m].1, up[j % n].1]);
+                i += 1;
+            } else {
+                raw.push([lo[i % m].1, up[(j + 1) % n].1, up[j % n].1]);
+                j += 1;
+            }
+        }
+    } else {
+        let (m, n) = (m0, n0);
+        let (steps_l, steps_u) = (m - 1, n - 1);
+        let (mut i, mut j) = (0usize, 0usize);
+        while i < steps_l || j < steps_u {
+            let advance_lower = if i >= steps_l {
+                false
+            } else if j >= steps_u {
+                true
+            } else {
+                (i as f64 / steps_l as f64) <= (j as f64 / steps_u as f64)
+            };
+            if advance_lower {
+                raw.push([lower[i], lower[i + 1], upper[j.min(n - 1)]]);
+                i += 1;
+            } else {
+                raw.push([lower[i.min(m - 1)], upper[j + 1], upper[j]]);
+                j += 1;
+            }
+        }
+    }
+    raw
+}
+
+/// Orient a consistently-wound triangle batch outward by a single majority vote
+/// (sum of area-weighted geometric-normal . outward). Flipping the WHOLE batch
+/// (vs per-triangle) keeps a manifold strip consistent even where `outward` is a
+/// weak discriminator (a tangent rim) or triangles are skewed (a sparse-to-dense
+/// ribbon): the reliable large triangles carry the vote. The caller must pass a
+/// batch that is ALREADY consistently wound (one ribbon, or a stack of ribbons
+/// built with the same walk convention -- e.g. a whole torus tube).
+fn orient_outward(raw: Vec<[Vec3; 3]>, outward: &dyn Fn(Vec3) -> Vec3) -> Vec<[Vec3; 3]> {
+    let vote: f64 = raw
+        .iter()
+        .map(|t| {
+            let n = (t[1] - t[0]).cross(t[2] - t[0]);
+            let ctr = (t[0] + t[1] + t[2]) * (1.0 / 3.0);
+            n.dot(outward(ctr))
+        })
+        .sum();
+    if vote < 0.0 {
+        raw.into_iter().map(|t| [t[0], t[2], t[1]]).collect()
+    } else {
+        raw
     }
 }
 

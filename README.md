@@ -310,8 +310,8 @@ PES-class non-manifold B-rep topology with first-class space-partitioning region
 (MEV, MEF, MEKR, KEV, KEF, KEKR and their inverses), operation lineage records on every entity,
 session / pmark / rollback support (transactional editing), boolean pipeline (imprint, classify,
 stitch), blend and fillet families, local direct-edit operators, tessellation (a per-face render mesh with per-edge and per-face
-pick groups; an edge-conforming watertight render mesh is in progress), cross-section
-interrogation, mass-properties integrator, and hidden-line removal.
+pick groups; edge-conforming on planar and analytic-band faces, so adjacent faces share rim vertices and the render mesh
+welds watertight there), cross-section interrogation, mass-properties integrator, and hidden-line removal.
 
 ### `keel-wasm`
 

@@ -27,11 +27,15 @@
 //!
 //! Everything here READS the tessellation; nothing mutates geometry.
 //!
-//! `worker_mesh()` is the DEFAULT-density path (byte-identical to the
-//! pre-edge_groups output for positions/normals/indices/lines, and to the
-//! mass/oracle tessellation). `worker_mesh_tol(chord)` is an additive
-//! coarse/fine variant that refines curved FACES and curved EDGES to the
-//! chord tolerance; it never touches the default path.
+//! `worker_mesh()` is the DEFAULT-density path. Its TRIANGLES use the
+//! edge-first CONFORMING tessellation (`tessellate_face_watertight`): adjacent
+//! faces consume the same shared per-edge polyline for a common rim, so the
+//! welded mesh is watertight (zero boundary edges on a closed solid). This is a
+//! SEPARATE path from the GWN/boolean classifier and the mass==mesh oracle
+//! (`tessellate_face` / `mesh_volume`), which are left byte-identical. The
+//! `lines` buffer is still the proven per-edge wireframe (seam-skipped,
+//! co-circular-arc-merged for picking). `worker_mesh_tol(chord)` refines the
+//! conforming faces and curved edges to the chord tolerance.
 
 use crate::body::Body;
 use keel_math::vec::Vec3;
@@ -56,11 +60,11 @@ pub struct WorkerMesh {
 }
 
 impl Body {
-    /// Worker-protocol mesh at the DEFAULT tessellation density. Output is
-    /// byte-identical to the mass/oracle tessellation (positions, normals,
-    /// indices, lines): this is the path the mass==mesh gate reads, so it
-    /// must never change density. `edge_groups`/`face_groups` are additive
-    /// metadata over the same buffers.
+    /// Worker-protocol mesh at the DEFAULT tessellation density. Triangles use
+    /// the edge-first CONFORMING tessellation so the welded mesh is watertight;
+    /// the mass==mesh oracle (`mesh_volume`) and the GWN/boolean classifier
+    /// (`tessellate_face`) are a separate, byte-identical path. `edge_groups` /
+    /// `face_groups` are additive picking metadata over these buffers.
     pub fn worker_mesh(&self) -> WorkerMesh {
         self.worker_mesh_opt(None)
     }
@@ -83,10 +87,11 @@ impl Body {
         // ungrouped facet list). tol=None is the default density, the
         // exact tessellation the volume oracle uses.
         for face in self.face_keys() {
-            let tris = match tol {
-                Some(t) => self.tessellate_face_tol(face, t),
-                None => self.tessellate_face(face),
-            };
+            // Edge-first conforming tessellation: adjacent faces consume the
+            // SAME shared per-edge polyline for a common rim, so the welded
+            // triangle soup is watertight (zero boundary edges). This is a
+            // separate path from the GWN/oracle `tessellate_face` (untouched).
+            let tris = self.tessellate_face_watertight(face, tol);
             if tris.is_empty() {
                 continue;
             }
@@ -235,8 +240,11 @@ mod tests {
         assert_eq!(m.normals.len(), m.positions.len());
         let total: u32 = m.face_groups.iter().map(|g| g.2).sum();
         assert_eq!(total as usize, m.indices.len());
-        // The grouped mesh's signed volume must match mesh_volume (same
-        // tessellation through a different packaging).
+        // The worker triangles are now the edge-first CONFORMING tessellation
+        // (a separate path from `mesh_volume`'s GWN facets). Being WATERTIGHT,
+        // its divergence-theorem volume is well-defined and must track the
+        // ANALYTIC mass within the curved-facet chord band (the bore wall is a
+        // ~32-gon prism, ~0.7% under for any radius).
         let mut v = 0.0f64;
         for tri in m.indices.chunks(3) {
             let p = |i: u32| {
@@ -250,10 +258,10 @@ mod tests {
             let (a, b2, c) = (p(tri[0]), p(tri[1]), p(tri[2]));
             v += a.dot(b2.cross(c)) / 6.0;
         }
-        let mv = holed.mesh_volume();
+        let analytic = holed.mass_properties().expect("analytic mass").volume;
         assert!(
-            (v - mv).abs() < 1e-3 * (1.0 + mv.abs()),
-            "worker mesh volume {v} vs mesh_volume {mv} (f32 quantization band)"
+            (v - analytic).abs() < 0.02 * analytic,
+            "watertight worker mesh volume {v} within 2% of analytic {analytic}"
         );
         // edge_groups tile the lines buffer.
         let etotal: u32 = m.edge_groups.iter().map(|g| g.2).sum();

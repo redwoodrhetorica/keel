@@ -5,7 +5,7 @@ behavior. Prioritized by how common the workflow is in practice. The app handles
 all of these decline-safe (geometry left unchanged + a warning); these are
 kernel/binding items for the Keel session, not app bugs.
 
-## P0 - worker_mesh: T-junction CRACKS at curved face-face boundaries (shared edges meshed independently). VERY visible.
+## P0 - worker_mesh: T-junction CRACKS at curved face-face boundaries. [RESOLVED: edge-conforming worker mesh]
 `worker_mesh` tessellates each FACE independently, so a shared topological edge
 (e.g. a bored hole's rim, where the cylindrical wall meets the planar cap) is
 discretized TWICE -- once by each adjacent face -- at DIFFERENT vertex angles.
@@ -37,6 +37,24 @@ dark wedge (looks like a missing segment). Confirmed NOT a normal/winding bug.
 - Note: independent of the LOD/chord work on the fieldforge side; app cannot fix
   this without re-stitching the soup (insert T-junction verts + re-triangulate),
   which we are NOT doing -- the kernel should emit a watertight render mesh.
+- **STATUS — RESOLVED** (`tessellate.rs` + `render.rs::worker_mesh_opt`). `worker_mesh`
+  now tessellates EDGE-FIRST: a new `tessellate_face_watertight` path derives every
+  face's boundary from the shared per-edge polyline (`edge_polyline_opt`, a pure
+  deterministic function of the edge), so two faces meeting along a curved rim emit
+  IDENTICAL vertices and the welded soup has zero boundary edges. Planar faces reuse
+  the ear-clip / holed-bridge triangulation on the shared rims; cylinder/cone laterals
+  and full tori connect their shared rim polylines with an ANGLE-MERGED ribbon (handles
+  unequal vertex counts AND unequal start phases between a rim and an interior tube row);
+  spheres / NURBS / complex-trim analytic faces fall back to the proven grid (still
+  watertight where they share only circular rims). This is a SEPARATE path from the
+  GWN/boolean classifier (`tessellate_face`) and the mass==mesh oracle (`mesh_volume`),
+  both left byte-identical -- so no boolean-correctness or mass==mesh risk. The P1 edge
+  picking metadata (seam-skip + co-circular-arc merge) is unchanged. Verified by
+  `tests/worker_mesh_watertight.rs`: box, drilled plate, AND drilled+filleted plate all
+  yield ZERO unpaired edges (was 192 / 352 before); full keel-topo suite green (298 lib
+  + all integration incl. the mass==mesh witnesses), smoke test passes. Flat per-face
+  normals preserved (the worker recomputes them from the triangle winding). Rebuilt
+  keel-wasm (1.3 MB); revendor the .wasm to ship.
 
 ## P0 - fillet/chamfer a CIRCULAR edge (hole rim). VERY common. [CONVEX RIM: RESOLVED in source]
 `fillet_edge` / `chamfer_edge` on a closed circular edge where a cylindrical face
