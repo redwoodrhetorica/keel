@@ -24,3 +24,19 @@ gate_launch.log
 crates/keel-topo/realsoak-out/
 crates/keel-topo/*-out/
 /LOG.md
+
+# local cad_workflows census + scratch (validation artifacts run this session;
+# kept locally, NOT for the public repo)
+/soak-*/
+/workflow_results*.md
+/cad_workflows_10000.md
+/b1_patch.md
+/band_split_design.md
+/Flux2_*.png
+/hero.png
+crates/keel-topo/examples/wf.rs
+crates/keel-topo/examples/wf_*.rs
+crates/keel-topo/examples/wf_kit/
+crates/keel-topo/examples/probe_*.rs
+crates/keel-wasm/phase1_smoke.mjs
+*.bak_note
