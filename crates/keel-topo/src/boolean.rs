@@ -7962,8 +7962,7 @@ fn imprint_operand(
         // lateral = a plane-cut flat/slot. A blind per-ruling split_face doubles
         // the seamed lateral (the seam is a re-used left/right bridge edge), so
         // route the PAIR to the open-ruling band split.
-        if std::env::var("KEEL_MILL_FLOW").is_ok()
-            && members.len() == 2
+        if members.len() == 2
             && matches!(working.face_surface3(face), Some(Surface3::Cylinder(_)))
             && members.iter().all(|&i| {
                 !seams[i].closed && {
@@ -8589,7 +8588,7 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                             // primitive used across the assembler. Gated so the
                             // default path is byte-identical (DECLINE-never-WRONG)
                             // until that primitive lands and the soak re-validates.
-                            if planar_curved && std::env::var("KEEL_MILL_FLOW").is_ok() {
+                            if planar_curved {
                                 // (plane, plane-face-points, curved-face-points)
                                 let (pl, pts_pl, pts_cv) = if is_plane(&ga) {
                                     let SurfaceGeom::Analytic(Surface3::Plane(p)) = &ga else {

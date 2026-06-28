@@ -931,6 +931,286 @@ impl Body {
         Ok(report)
     }
 
+    /// Strategy A (dossier 64) sector split: partition a periodic cylinder
+    /// LATERAL face into the two bands cut by TWO axial rulings (a flat/slot
+    /// mill), by BUILDING each band's (theta,z) loop DIRECTLY -- no incremental
+    /// `mef`, which doubles a periodic loop. The rim circles must already be
+    /// split at the four ruling feet (r1 = va1 bottom / vb1 top; r2 = va2 /
+    /// vb2). The periodic seam edge is REMOVED (after a sector cut neither band
+    /// is a full revolution). The rim-arc EDGES are reused (cap-side fins
+    /// untouched); only the lateral fins + loops are rebuilt. Returns the two
+    /// new ruling edges (the caller attaches their curves/pcurves).
+    pub(crate) fn split_lateral_by_two_rulings(
+        &mut self,
+        face: FaceKey,
+        va1: VertexKey,
+        vb1: VertexKey,
+        va2: VertexKey,
+        vb2: VertexKey,
+    ) -> Result<(EdgeKey, EdgeKey), TopoError> {
+        use keel_geom::curve::Curve3;
+        use keel_geom::surface::Surface3;
+        let Some(Surface3::Cylinder(cyl)) = self.face_surface3(face) else {
+            return Err(TopoError::Precondition("sector split: not a cylinder face"));
+        };
+        let (origin, ex, ey, ez) = (cyl.frame.origin, cyl.frame.x, cyl.frame.y, cyl.frame.z);
+        let tau = std::f64::consts::TAU;
+        let lp = self
+            .faces
+            .get(face)
+            .and_then(|f| f.loops.first().copied())
+            .ok_or(TopoError::StaleKey)?;
+        let surf_key = self.faces.get(face).and_then(|f| f.surface);
+        let (sf, sb) = self.shells_of_face(face)?;
+        let (fr, br, face_id) = {
+            let f = self.faces.get(face).ok_or(TopoError::StaleKey)?;
+            (f.front_region, f.back_region, f.id)
+        };
+        let lp_id = self.loops.get(lp).map(|l| l.id).unwrap_or_default_id();
+
+        // 1. Walk the periodic loop: rim ARCs (circle) vs the SEAM (line).
+        let entry = self.loops.get(lp).and_then(|l| l.fin).ok_or(TopoError::StaleKey)?;
+        let mut old_fins: Vec<FinKey> = Vec::new();
+        let mut seam_edge: Option<EdgeKey> = None;
+        let mut arc_edges: Vec<EdgeKey> = Vec::new();
+        let mut cur = entry;
+        loop {
+            old_fins.push(cur);
+            let e = self.fins.get(cur).map(|f| f.edge).ok_or(TopoError::StaleKey)?;
+            match self
+                .edges
+                .get(e)
+                .and_then(|x| x.curve)
+                .and_then(|(ck, _)| self.curves.get(ck))
+            {
+                Some(Curve3::Circle(_)) => {
+                    if !arc_edges.contains(&e) {
+                        arc_edges.push(e);
+                    }
+                }
+                Some(Curve3::Line(_)) => seam_edge = Some(e),
+                _ => return Err(TopoError::Precondition("sector split: bad boundary curve")),
+            }
+            cur = self.fins.get(cur).map(|f| f.next).ok_or(TopoError::StaleKey)?;
+            if cur == entry {
+                break;
+            }
+        }
+        let seam_edge = seam_edge.ok_or(TopoError::Precondition("sector split: no seam edge"))?;
+        let old_set: std::collections::HashSet<FinKey> = old_fins.iter().copied().collect();
+
+        // 2. Per rim arc: bounds, midpoint (axial + azimuth sector), cap fin.
+        let az_of = |v: VertexKey, me: &Self| -> f64 {
+            let w = me.vertices.get(v).map(|x| x.point).unwrap_or(origin) - origin;
+            w.dot(ey).atan2(w.dot(ex))
+        };
+        let az1 = az_of(va1, self);
+        let az2 = az_of(va2, self);
+        let d12 = (az2 - az1).rem_euclid(tau);
+        struct Seg {
+            edge: EdgeKey,
+            v0: VertexKey,
+            v1: VertexKey,
+            z: f64,
+            ccw: bool,
+            cap_fin: FinKey,
+        }
+        let mut segs: Vec<Seg> = Vec::new();
+        let (mut zlo, mut zhi) = (f64::INFINITY, f64::NEG_INFINITY);
+        for &e in &arc_edges {
+            let (v0, v1) = self.edges.get(e).map(|x| x.bounds).ok_or(TopoError::StaleKey)?;
+            let poly = self.edge_polyline_opt(e, None).unwrap_or_default();
+            let mid = if poly.len() >= 2 {
+                poly[poly.len() / 2]
+            } else {
+                self.vertices.get(v0).map(|x| x.point).unwrap_or(origin)
+            };
+            let w = mid - origin;
+            let z = w.dot(ez);
+            zlo = zlo.min(z);
+            zhi = zhi.max(z);
+            let ccw = (w.dot(ey).atan2(w.dot(ex)) - az1).rem_euclid(tau) < d12;
+            let cap_fin = self
+                .edges
+                .get(e)
+                .and_then(|x| x.radial.iter().copied().find(|f| !old_set.contains(f)))
+                .ok_or(TopoError::Precondition("sector split: rim arc has no cap fin"))?;
+            segs.push(Seg { edge: e, v0, v1, z, ccw, cap_fin });
+        }
+        let zmid = 0.5 * (zlo + zhi);
+
+        // 3. Chain a seg subset into an ordered vertex path start..end.
+        fn chain(
+            segs: &[&Seg],
+            start: VertexKey,
+            end: VertexKey,
+        ) -> Option<Vec<(EdgeKey, VertexKey, VertexKey)>> {
+            let mut out = Vec::new();
+            let mut used = vec![false; segs.len()];
+            let mut v = start;
+            loop {
+                if v == end && !out.is_empty() {
+                    return Some(out);
+                }
+                let mut adv = false;
+                for (i, s) in segs.iter().enumerate() {
+                    if used[i] {
+                        continue;
+                    }
+                    if s.v0 == v {
+                        out.push((s.edge, s.v0, s.v1));
+                        used[i] = true;
+                        v = s.v1;
+                        adv = true;
+                        break;
+                    }
+                    if s.v1 == v {
+                        out.push((s.edge, s.v1, s.v0));
+                        used[i] = true;
+                        v = s.v0;
+                        adv = true;
+                        break;
+                    }
+                }
+                if !adv || out.len() > segs.len() + 1 {
+                    return None;
+                }
+            }
+        }
+        let pick = |bottom: bool, ccw: bool| -> Vec<&Seg> {
+            segs.iter()
+                .filter(|s| (s.z < zmid) == bottom && s.ccw == ccw)
+                .collect()
+        };
+        let pre = || TopoError::Precondition("sector split: arc chain incomplete");
+        let bot_ccw = chain(&pick(true, true), va1, va2).ok_or_else(pre)?;
+        let top_ccw = chain(&pick(false, true), vb2, vb1).ok_or_else(pre)?;
+        let bot_cw = chain(&pick(true, false), va2, va1).ok_or_else(pre)?;
+        let top_cw = chain(&pick(false, false), vb1, vb2).ok_or_else(pre)?;
+
+        // 4. Build the two band loops directly. Each band's cyclic segment list:
+        //    band1 (ccw): bot A1->A2, r2 A2->B2, top B2->B1, r1 B1->A1.
+        //    band2 (cw):  bot A2->A1, r1 A1->B1, top B1->B2, r2 B2->A2.
+        let mut rec = self.begin_op();
+        let r1 = self.new_edge(&mut rec, (va1, vb1), Derivation::Created);
+        let r2 = self.new_edge(&mut rec, (va2, vb2), Derivation::Created);
+        let mut band1: Vec<(EdgeKey, VertexKey, VertexKey)> = bot_ccw;
+        band1.push((r2, va2, vb2));
+        band1.extend(top_ccw);
+        band1.push((r1, vb1, va1));
+        let mut band2: Vec<(EdgeKey, VertexKey, VertexKey)> = bot_cw;
+        band2.push((r1, va1, vb1));
+        band2.extend(top_cw);
+        band2.push((r2, vb2, va2));
+
+        let face2 = self.new_face(&mut rec, fr, br, Derivation::Generated { from: face_id });
+        let loop1 = self.new_loop(&mut rec, face, LoopKind::Outer, Derivation::Created);
+        let loop2 = self.new_loop(&mut rec, face2, LoopKind::Outer, Derivation::Created);
+
+        // Create the fins for one band loop, wire them cyclically, return them.
+        let make_band = |me: &mut Self,
+                         rec: &mut crate::body::OpRecorder,
+                             segs: &[(EdgeKey, VertexKey, VertexKey)],
+                             loopk: LoopKey|
+         -> Vec<(EdgeKey, FinKey)> {
+            let mut fins: Vec<(EdgeKey, FinKey)> = Vec::new();
+            for &(e, from, _to) in segs {
+                let bounds = me.edges.get(e).map(|x| x.bounds).unwrap_or((from, from));
+                let forward = bounds.0 == from;
+                let fk = me.new_fin(rec, e, forward, loopk, Derivation::Created);
+                fins.push((e, fk));
+            }
+            let n = fins.len();
+            for i in 0..n {
+                let (cur, nxt) = (fins[i].1, fins[(i + 1) % n].1);
+                if let Some(f) = me.fins.get_mut(cur) {
+                    f.next = nxt;
+                }
+                if let Some(f) = me.fins.get_mut(nxt) {
+                    f.prev = cur;
+                }
+            }
+            if let Some(l) = me.loops.get_mut(loopk) {
+                l.fin = fins.first().map(|x| x.1);
+            }
+            fins
+        };
+        let fins1 = make_band(self, &mut rec, &band1, loop1);
+        let fins2 = make_band(self, &mut rec, &band2, loop2);
+
+        // 5. Edge radials: a rim arc gets [new lateral fin, cap fin]; a ruling
+        //    gets its two band fins.
+        let mut edge_fins: std::collections::HashMap<EdgeKey, Vec<FinKey>> =
+            std::collections::HashMap::new();
+        for &(e, fk) in fins1.iter().chain(fins2.iter()) {
+            edge_fins.entry(e).or_default().push(fk);
+        }
+        for s in &segs {
+            let lat = edge_fins
+                .get(&s.edge)
+                .and_then(|v| v.first().copied())
+                .ok_or(TopoError::Precondition("sector split: arc lost its band fin"))?;
+            if let Some(edge) = self.edges.get_mut(s.edge) {
+                edge.radial = vec![lat, s.cap_fin];
+            }
+        }
+        for ruling in [r1, r2] {
+            let rf = edge_fins.get(&ruling).cloned().unwrap_or_default();
+            if let Some(edge) = self.edges.get_mut(ruling) {
+                edge.radial = rf;
+            }
+        }
+
+        // 6. Faces: band1 reuses `face`; band2 is the new face. Surfaces + shells.
+        if let Some(f) = self.faces.get_mut(face) {
+            f.loops = vec![loop1];
+            f.surface = surf_key;
+        }
+        if let Some(f) = self.faces.get_mut(face2) {
+            f.loops = vec![loop2];
+            f.surface = surf_key;
+        }
+        if let Some(s) = self.shells.get_mut(sf) {
+            s.faces.push((face2, Side::Front));
+        }
+        if let Some(s) = self.shells.get_mut(sb) {
+            s.faces.push((face2, Side::Back));
+        }
+        // Repoint each touched vertex to a live new fin.
+        for &(_, fk) in fins1.iter().chain(fins2.iter()) {
+            if let Some(v) = self.fin_start_vertex(fk)
+                && let Some(vv) = self.vertices.get_mut(v)
+            {
+                vv.fin = Some(fk);
+            }
+        }
+
+        // 7. Delete the old lateral fins, the seam edge + its fins, and the old
+        //    periodic loop.
+        let mut to_unreg: Vec<crate::entity::EntityId> = Vec::new();
+        for &f in &old_fins {
+            if let Some(id) = self.fins.get(f).map(|x| x.id) {
+                to_unreg.push(id);
+            }
+        }
+        if let Some(id) = self.edges.get(seam_edge).map(|x| x.id) {
+            to_unreg.push(id);
+        }
+        to_unreg.push(lp_id);
+        for id in to_unreg {
+            self.unregister(&mut rec, id);
+        }
+        for &f in &old_fins {
+            self.fins.remove(f);
+        }
+        self.edges.remove(seam_edge);
+        self.loops.remove(lp);
+
+        let _ = rec.finish();
+        self.debug_validate();
+        Ok((r1, r2))
+    }
+
     /// Make edge, kill ring: inverse of kemr. Bridges an inner ring of
     /// a face back into the loop `fin_outer` belongs to, with a new
     /// edge from end-vertex(fin_outer) to end-vertex(fin_ring).
