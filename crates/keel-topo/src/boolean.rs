@@ -8078,8 +8078,7 @@ fn imprint_operand(
                         // declines on the sphere NURBS-cut mass/classify (KL5,
                         // dossier #60), so it stays off by default = pass-neutral.
                         coaxial_planar
-                            || (std::env::var("KEEL_WRAP_FLOW").is_ok()
-                                && curve_encircles_axis(curve, c.frame.origin, c.frame.z))
+                            || curve_encircles_axis(curve, c.frame.origin, c.frame.z)
                     }
                     // A coaxial circle wraps a cone lateral the same way
                     // (the countersink rim on the frustum face).
@@ -8322,10 +8321,13 @@ pub fn seam_curves(a: &Body, b: &Body, tol: f64) -> (Vec<SeamCurve>, Vec<BoolFau
                 }
                 _ => false,
             };
-            if cyl_sphere_wrap && std::env::var("KEEL_WRAP_FLOW").is_err() {
-                faults.push(BoolFault::UnassemblableSeam(id_a, id_b));
-                continue;
-            }
+            // WRAP un-gated (was KEEL_WRAP_FLOW): the sphere band assembles via the
+            // dossier-64 periodic split on the cylinder lateral + the sphere
+            // NURBS-cut faces. The TIGHT quadric_sphere_op_volume oracle (plus the
+            // watertight + mass==mesh gate) backstops a malformed result -> it
+            // DECLINES (WRONG-safe by construction): a correct wrap passes, a
+            // mis-classified one fails the independent volume truth and declines.
+            let _ = cyl_sphere_wrap;
             // COINCIDENT cylinders (coaxial, equal radius: the mated
             // pin-in-hole laterals, dossier 39 sec 5) are the curved
             // on-on class, not a crossing: no seam, an informational
