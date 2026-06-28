@@ -431,6 +431,16 @@ impl Body {
             y: t.apply_vector(f.y),
             z: t.apply_vector(f.z),
         };
+        // Carry a homogeneous NURBS control point (x,y,z,w) under the rigid
+        // isometry: the linear part acts on (x,y,z) and w*translation is added,
+        // the weight w is unchanged. A rigid map is affine, and NURBS are
+        // affine-covariant, so the image spline is EXACT (no approximation) ->
+        // transforming/mirroring NURBS geometry is WRONG-safe.
+        let tvec = t.apply_point(Vec3::ZERO);
+        let map_h = |h: Vec4| -> Vec4 {
+            let r = t.apply_vector(Vec3::new(h.x, h.y, h.z));
+            Vec4::new(r.x + h.w * tvec.x, r.y + h.w * tvec.y, r.z + h.w * tvec.z, h.w)
+        };
 
         let vkeys: Vec<_> = out.vertices.iter().map(|(k, _)| k).collect();
         for k in vkeys {
@@ -451,36 +461,44 @@ impl Body {
             let Some(s) = out.surfaces.get(k).cloned() else {
                 continue;
             };
-            let SurfaceGeom::Analytic(a) = s else {
-                return Err(TopoError::Precondition(
-                    "transform: NURBS surfaces are a follow-up",
-                ));
-            };
-            let na = match a {
-                Surface3::Plane(p) => Surface3::Plane(Plane3 {
-                    frame: fr(&p.frame),
+            let img: SurfaceGeom = match s {
+                SurfaceGeom::Analytic(a) => SurfaceGeom::Analytic(match a {
+                    Surface3::Plane(p) => Surface3::Plane(Plane3 {
+                        frame: fr(&p.frame),
+                    }),
+                    Surface3::Cylinder(c) => Surface3::Cylinder(Cylinder3 {
+                        frame: fr(&c.frame),
+                        radius: c.radius,
+                    }),
+                    Surface3::Cone(c) => Surface3::Cone(Cone3 {
+                        frame: fr(&c.frame),
+                        radius: c.radius,
+                        half_angle: c.half_angle,
+                    }),
+                    Surface3::Sphere(c) => Surface3::Sphere(Sphere3 {
+                        frame: fr(&c.frame),
+                        radius: c.radius,
+                    }),
+                    Surface3::Torus(c) => Surface3::Torus(Torus3 {
+                        frame: fr(&c.frame),
+                        major: c.major,
+                        minor: c.minor,
+                    }),
                 }),
-                Surface3::Cylinder(c) => Surface3::Cylinder(Cylinder3 {
-                    frame: fr(&c.frame),
-                    radius: c.radius,
-                }),
-                Surface3::Cone(c) => Surface3::Cone(Cone3 {
-                    frame: fr(&c.frame),
-                    radius: c.radius,
-                    half_angle: c.half_angle,
-                }),
-                Surface3::Sphere(c) => Surface3::Sphere(Sphere3 {
-                    frame: fr(&c.frame),
-                    radius: c.radius,
-                }),
-                Surface3::Torus(c) => Surface3::Torus(Torus3 {
-                    frame: fr(&c.frame),
-                    major: c.major,
-                    minor: c.minor,
-                }),
+                // NURBS surface: carry the control net by the isometry (exact).
+                SurfaceGeom::Nurbs(n) => {
+                    let ctrl: Vec<Vec4> =
+                        n.homogeneous_control().iter().map(|&h| map_h(h)).collect();
+                    SurfaceGeom::Nurbs(
+                        NurbsSurface::from_homogeneous(n.kv_u().clone(), n.kv_v().clone(), ctrl)
+                            .map_err(|_| {
+                                TopoError::Precondition("transform: nurbs surface image")
+                            })?,
+                    )
+                }
             };
             if let Some(slot) = out.surfaces.get_mut(k) {
-                *slot = SurfaceGeom::Analytic(na);
+                *slot = img;
             }
         }
 
@@ -511,10 +529,14 @@ impl Body {
                     a: e.a,
                     b: e.b,
                 }),
-                Curve3::Nurbs(_) => {
-                    return Err(TopoError::Precondition(
-                        "transform: NURBS curves are a follow-up",
-                    ));
+                // NURBS curve: carry the control polygon by the isometry (exact).
+                Curve3::Nurbs(n) => {
+                    let ctrl: Vec<Vec4> =
+                        n.homogeneous_control().iter().map(|&h| map_h(h)).collect();
+                    Curve3::Nurbs(
+                        NurbsCurve::from_homogeneous(n.knot_vector().clone(), ctrl)
+                            .map_err(|_| TopoError::Precondition("transform: nurbs curve image"))?,
+                    )
                 }
             };
             if let Some(slot) = out.curves.get_mut(k) {

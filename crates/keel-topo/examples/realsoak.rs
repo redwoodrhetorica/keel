@@ -1252,7 +1252,14 @@ fn do_boolean(body: &Body, bound: VolBound, op: BoolOp, tag: &str, rng: &mut Lcg
 
 fn topo_err(e: &keel_topo::body::TopoError) -> String {
     let s = format!("{e:?}");
-    // Keep the variant + the first word of any message, dropping addresses.
+    // Precondition collapses ~30 distinct guards into one tag, which hides
+    // which guard actually fires in the soak. Keep its FULL message so the
+    // decline corpus distinguishes them (over-strictness vs correct refusal).
+    if let Some(rest) = s.strip_prefix("Precondition(") {
+        let msg = rest.trim_end_matches(')').trim_matches('"');
+        return format!("Precondition/{msg}");
+    }
+    // Others: keep the variant + the first word of any message, dropping addresses.
     s.split(['(', ' ']).next().unwrap_or("?").to_string()
 }
 

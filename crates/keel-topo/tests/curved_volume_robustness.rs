@@ -106,6 +106,36 @@ fn cyl_sphere_window_four_ops_pass_exact() {
 }
 
 #[test]
+fn mirror_body_with_nurbs_seam_edge_preserves_volume() {
+    // The dominant realsoak Precondition decline (~497/1500 of the real
+    // worklist) was "transform: NURBS curves are a follow-up": the rigid
+    // transform/mirror path carried Line/Circle/Ellipse curves but bailed on
+    // NURBS, so any body that picked up a NURBS SSI seam edge from an earlier
+    // curved boolean could not be mirrored. A non-coaxial cyl/sphere Difference
+    // leaves exactly that -- analytic faces bounded by a NURBS window-loop seam
+    // EDGE (the Add. 281 window result) -- so before the fix this mirror
+    // DECLINED. A rigid isometry maps the homogeneous control polygon exactly,
+    // so the mirror must now SUCCEED, and a reflection preserves volume.
+    let a = cyl(Vec3::new(0., 0., -3.), Vec3::new(0., 0., 1.), 1.0, 6.0);
+    let b = sph(Vec3::new(0., 1.5, 0.), Vec3::new(0., 0., 1.), 1.2);
+    let body = boolean(&a, &b, BoolOp::Difference, 1e-7).unwrap().body;
+    // Confirm this is the intended NURBS-seam window body (cyl with a spherical
+    // bite, vol ~17.78), so the regression is not vacuous.
+    let v0 = body.mass_properties().unwrap().volume;
+    assert!((v0 - 17.78).abs() < 0.12, "expected the window-bite body, got vol {v0}");
+
+    let m = body
+        .mirrored(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0))
+        .expect("mirror of a NURBS-seam body must succeed (was a Precondition decline)");
+    assert!(m.validate().is_ok(), "mirrored body must be a valid shell");
+    let v1 = m.mass_properties().unwrap().volume;
+    assert!(
+        (v0 - v1).abs() < 1e-6 * (1.0 + v0.abs()),
+        "reflection preserves volume exactly: {v0} vs {v1}"
+    );
+}
+
+#[test]
 fn cyl_sphere_planar_cap_intersection_pass() {
     // A sphere sitting inside a (tilted) cylinder radially but poking out one
     // flat END: cyl n sph is the sphere truncated by the cylinder's cap PLANE
