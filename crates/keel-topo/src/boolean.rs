@@ -8081,7 +8081,13 @@ fn imprint_operand(
                             || curve_encircles_axis(curve, c.frame.origin, c.frame.z)
                     }
                     // A coaxial circle wraps a cone lateral the same way
-                    // (the countersink rim on the frustum face).
+                    // (the countersink rim on the frustum face). The off-axis
+                    // cone/sphere ENCIRCLING wrap is NOT routed here: the band
+                    // split assembles but the cone NURBS-seam mass + tessellation
+                    // are not yet correct (probe_conesphwrap: open_ratio up to
+                    // 0.93, mass != mesh != truth), so it stays declined (the cone
+                    // analogue of the cyl/sphere NURBS-band machinery is a
+                    // follow-up). Decline-safe via the mass==mesh + tight oracle.
                     Some(Surface3::Cone(c)) => matches!(
                         closed_curve_center_axis(curve),
                         Some((centre, ax))

@@ -804,6 +804,13 @@ fn audit(body: Body, bound: VolBound, what: &str) -> Step {
 
 fn fault_kind(f: &BoolFault) -> String {
     let s = format!("{f:?}");
+    // AssemblyFailed carries a &str reason (mass!=mesh, unmatched coedge, ...).
+    // Keep it so the corpus distinguishes assembly-failure modes (the others
+    // carry only face ids, so the variant name is enough).
+    if let Some(rest) = s.strip_prefix("AssemblyFailed(") {
+        let msg = rest.trim_end_matches(')').trim_matches('"');
+        return format!("AssemblyFailed/{msg}");
+    }
     s.split(['(', ' ']).next().unwrap_or("?").to_string()
 }
 
