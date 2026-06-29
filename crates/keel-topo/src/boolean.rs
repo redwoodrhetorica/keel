@@ -5525,6 +5525,149 @@ fn quadric_sphere_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
     })
 }
 
+/// Tight INDEPENDENT op-volume oracle for a cylinder + cylinder pair. There is
+/// no closed form for the intersection of two arbitrarily-tilted finite
+/// cylinders (the SSI is a pair of NURBS saddle curves), so the ground truth is
+/// a DETERMINISTIC midpoint voxel integral of the analytic point-in-solid test
+/// over the tight intersection bounding box. The operand volumes themselves are
+/// the EXACT closed forms (pi r^2 h); only the intersection is integrated. None
+/// unless BOTH operands are lone cylinder primitives (same lone-primitive guard
+/// as `cyl_sphere_op_volume`: a compound body that merely contains a cylinder
+/// face must not be scored as the bare primitive). The grid is deterministic
+/// (no RNG -> no resume hazard, no variance), and its midpoint error on these
+/// smooth quadrics is well under 1% at this resolution -- comfortably inside the
+/// 2% gate band, so it catches a GROSS mis-classified cyl/cyl WRONG (tens of
+/// percent off, the analogue of the #48 sphere-window class) while a correct
+/// tilted cyl/cyl result passes. This is the WRONG-safety net that lets the
+/// tilted cyl/cyl seam class assemble un-gated.
+fn cyl_cyl_op_volume(a: &Body, b: &Body, op: BoolOp) -> Option<f64> {
+    use keel_math::vec::Vec3;
+    // A lone finite cylinder: (cylinder surface, axial lo, axial hi).
+    let cyl_of = |body: &Body| -> Option<(keel_geom::surface::Cylinder3, f64, f64)> {
+        let c = body
+            .face_keys()
+            .into_iter()
+            .find_map(|f| match body.face_surface3(f) {
+                Some(Surface3::Cylinder(c)) => Some(c),
+                _ => None,
+            })?;
+        // Reject a body that carries a SECOND distinct curved surface (sphere /
+        // cone / another cylinder axis): those pairs route to their own oracle
+        // or are out of scope here -- this oracle is cylinder-vs-cylinder only.
+        let multi = body.face_keys().into_iter().any(|f| {
+            matches!(
+                body.face_surface3(f),
+                Some(Surface3::Sphere(_)) | Some(Surface3::Cone(_)) | Some(Surface3::Torus(_))
+            )
+        });
+        if multi {
+            return None;
+        }
+        let axis = c.frame.z;
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        for t in body.facets(None) {
+            for p in t {
+                let h = (p - c.frame.origin).dot(axis);
+                lo = lo.min(h);
+                hi = hi.max(h);
+            }
+        }
+        (lo.is_finite() && hi > lo).then_some((c, lo, hi))
+    };
+    let (ca, alo, ahi) = cyl_of(a)?;
+    let (cb, blo, bhi) = cyl_of(b)?;
+    let pi = core::f64::consts::PI;
+    let va = pi * ca.radius * ca.radius * (ahi - alo);
+    let vb = pi * cb.radius * cb.radius * (bhi - blo);
+    // Lone-primitive guard: fire only when each operand IS the bare cylinder it
+    // was detected as (analytic mass == primitive volume), never a compound that
+    // merely contains a cylinder face -- which would otherwise be scored as the
+    // primitive and false-decline a correct compound result (root-B).
+    let prim_ok = |body: &Body, vprim: f64| {
+        body.mass_properties()
+            .is_ok_and(|m| m.volume.is_finite() && (m.volume - vprim).abs() <= 1e-2 * (1.0 + vprim))
+    };
+    if !(prim_ok(a, va) && prim_ok(b, vb)) {
+        return None;
+    }
+    // Point inside a finite cylinder: axial parameter in [lo,hi] AND radial
+    // distance <= radius.
+    let inside = |c: &keel_geom::surface::Cylinder3, lo: f64, hi: f64, p: Vec3| -> bool {
+        let d = p - c.frame.origin;
+        let t = d.dot(c.frame.z);
+        if t < lo || t > hi {
+            return false;
+        }
+        let radial = d - c.frame.z * t;
+        radial.norm() <= c.radius
+    };
+    // Tight integration box: the intersection of the two cylinders' axis-aligned
+    // bounding boxes. A finite cylinder's extent along world axis k is
+    // radius*sqrt(1 - z_k^2) beyond each cap centre.
+    let bbox = |c: &keel_geom::surface::Cylinder3, lo: f64, hi: f64| -> (Vec3, Vec3) {
+        let c0 = c.frame.origin + c.frame.z * lo;
+        let c1 = c.frame.origin + c.frame.z * hi;
+        let z = c.frame.z;
+        let pad = Vec3::new(
+            c.radius * (1.0 - z.x * z.x).max(0.0).sqrt(),
+            c.radius * (1.0 - z.y * z.y).max(0.0).sqrt(),
+            c.radius * (1.0 - z.z * z.z).max(0.0).sqrt(),
+        );
+        let lo_pt = Vec3::new(
+            c0.x.min(c1.x) - pad.x,
+            c0.y.min(c1.y) - pad.y,
+            c0.z.min(c1.z) - pad.z,
+        );
+        let hi_pt = Vec3::new(
+            c0.x.max(c1.x) + pad.x,
+            c0.y.max(c1.y) + pad.y,
+            c0.z.max(c1.z) + pad.z,
+        );
+        (lo_pt, hi_pt)
+    };
+    let (la, ha) = bbox(&ca, alo, ahi);
+    let (lb, hb) = bbox(&cb, blo, bhi);
+    let bmin = Vec3::new(la.x.max(lb.x), la.y.max(lb.y), la.z.max(lb.z));
+    let bmax = Vec3::new(ha.x.min(hb.x), ha.y.min(hb.y), ha.z.min(hb.z));
+    let ext = Vec3::new(bmax.x - bmin.x, bmax.y - bmin.y, bmax.z - bmin.z);
+    if !(ext.x > 0.0 && ext.y > 0.0 && ext.z > 0.0) {
+        // Bounding boxes disjoint -> no intersection.
+        return Some(match op {
+            BoolOp::Intersection => 0.0,
+            BoolOp::Union => va + vb,
+            BoolOp::Difference => va,
+        });
+    }
+    // Cubic cells: pick a cell size from the longest axis so the midpoint error
+    // is isotropic, then clamp per-axis counts. Deterministic, no RNG.
+    let longest = ext.x.max(ext.y).max(ext.z);
+    let cell = longest / 224.0;
+    let n_of = |e: f64| ((e / cell).ceil() as usize).clamp(24, 360);
+    let (nx, ny, nz) = (n_of(ext.x), n_of(ext.y), n_of(ext.z));
+    let (dx, dy, dz) = (ext.x / nx as f64, ext.y / ny as f64, ext.z / nz as f64);
+    let cellvol = dx * dy * dz;
+    let mut hits = 0u64;
+    for ix in 0..nx {
+        let x = bmin.x + (ix as f64 + 0.5) * dx;
+        for iy in 0..ny {
+            let y = bmin.y + (iy as f64 + 0.5) * dy;
+            for iz in 0..nz {
+                let z = bmin.z + (iz as f64 + 0.5) * dz;
+                let p = Vec3::new(x, y, z);
+                if inside(&ca, alo, ahi, p) && inside(&cb, blo, bhi, p) {
+                    hits += 1;
+                }
+            }
+        }
+    }
+    let inter = hits as f64 * cellvol;
+    Some(match op {
+        BoolOp::Intersection => inter,
+        BoolOp::Union => va + vb - inter,
+        BoolOp::Difference => va - inter,
+    })
+}
+
 /// A fault that is purely ADVISORY on a body the boolean has INDEPENDENTLY
 /// verified correct. The caller clears these only when the result passes the
 /// post-condition gate AND re-verifies as a watertight solid against the
@@ -5793,7 +5936,14 @@ fn assemble_boolean(
         // (the #48 class the loose op-bound and mass==mesh both miss), so the
         // cyl/sphere WINDOW class is safe to assemble: a correct window passes,
         // a mis-classified one declines. Mass-declined on such a pair -> decline.
-        let tight_ok = match quadric_sphere_op_volume(a, b, op) {
+        // cyl/sphere + cone/sphere first; else the deterministic voxel cyl/cyl
+        // oracle (the tilted cyl/cyl seam class, likewise no closed-form trimmed
+        // shape). Both catch a watertight self-consistent WRONG; neither false-
+        // declines a correct result (band > oracle error). Any other pair: no
+        // independent oracle, the other gates carry it.
+        let tight_exact =
+            quadric_sphere_op_volume(a, b, op).or_else(|| cyl_cyl_op_volume(a, b, op));
+        let tight_ok = match tight_exact {
             Some(exact) => bm
                 .as_ref()
                 .ok()
