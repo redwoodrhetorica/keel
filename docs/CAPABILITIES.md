@@ -38,6 +38,14 @@ The "never wrong" claim rests on independent, overlapping checks, not a single t
 - **Realistic-workflow soak (10,000 projects).** Grammar-driven long op-chains distilled
   from 113 Plasticity tutorial transcripts. Most recent run: **PASS 8039 / WRONG 0**
   (LOG Add 303). A three-bucket oracle classifies every operation; WRONG is a hard fail.
+- **Faithful workflow census (10,000 distinct workflows).** A separate, harder bar:
+  10,000 hand-specified realistic CAD workflows (flanges, pulleys, gears, shafts,
+  housings, brackets, manifolds), each a full multi-step recipe built from its own stated
+  dimensions and run through the same three-bucket oracle. Complete, with **WRONG 0 across
+  all 10,000** (LOG Add 315). The per-workflow PASS rate is intentionally not the headline
+  here: the corpus is curved-compound-heavy and one declined step (typically a curved
+  boolean or a fillet) declines the whole workflow, so PASS is low while the never-wrong
+  floor is what the census measures, and it held.
 - **The dual mass-vs-mesh gate.** Every solid result must have its analytic mass agree with
   its independently tessellated mesh volume, paired with a coedge-pairing (shell-closure)
   check so a dropped face cannot pass under symmetric volume cancellation. This gate is
@@ -124,12 +132,25 @@ single-shape and simple-compound cases now assemble (T-junction imprint, seam-cr
 the per-face planar overlay, co-wound holes); the residual is curved-carrier arrangements
 and harder stacked planar cases. These DECLINE cleanly (LOG Add 296-301).
 
+A recent fix in this class: a cylindrical tool placed at a rotated orientation (a
+transform-placed feature, e.g. the holes of a bolt circle or a ring of radial set-screws)
+was declining a *valid* result. The hole-wall face was being threaded to cover only half
+its azimuth, so the tessellation disagreed with the analytic mass and the self-consistency
+gate declined. Recording the swept angle on the wrap-circle's two halves makes the wall
+cover the full revolution; the class now assembles exactly (LOG Add 314).
+
 ### 4.4 Curved surface-surface intersection (SSI) edge cases
 
 Some booleans on curved carriers (cylinder/cone/sphere/NURBS) where the intersection is
 tangential, grazing, or near-degenerate DECLINE rather than risk an unstable seam. Equal-
-radius crossing cylinders, countersinks, and ball-in-socket assemble exactly; the frontier
-is the harder curved crossings (LOG Add 290-295).
+radius crossing cylinders, countersinks, and ball-in-socket assemble exactly; an off-axis
+rod swallowed by a sphere (the cyl/sphere wrap band) now assembles for all three ops (LOG
+Add 312). The frontier is the harder curved crossings (LOG Add 290-295). Where a curved
+crossing has no closed-form trimmed volume, an independent op-volume oracle backs the gate
+so a misclassified result declines rather than ships: cylinder-vs-sphere and cone-vs-sphere
+via a 1D-integral truth, and cylinder-vs-cylinder via a deterministic voxel integral (LOG
+Add 313). Tilted cylinder-vs-cylinder still declines on render-mesh watertightness at the
+shared seam, kept safe by that oracle.
 
 ### 4.5 General NURBS booleans
 

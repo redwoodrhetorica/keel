@@ -145,6 +145,18 @@ bracket midpoint overflow in Newton iteration, denormal-coefficient edge cases).
 The completion-gate soak runs 16 sectors back to back; the most recent run logged over
 2.4 billion executions with zero crashes, consistent with a prior soak of similar scale.
 
+### Faithful workflow census
+
+Beyond the randomized lanes, the kernel is run against a fixed corpus of 10,000 distinct,
+hand-specified realistic CAD workflows (flanges, pulleys, gears, shafts, housings,
+brackets, manifolds), each a full multi-step recipe built from its own stated dimensions
+and checked by the same three-bucket oracle. The census is complete with a WRONG count of
+0 across all 10,000. This is a deliberately harder per-workflow bar than the randomized
+soak: a single declined step declines the whole workflow, so the pass rate is low (the
+corpus is dominated by curved-compound parts that decline safely on the self-consistency
+gate). The figure that matters here is the correctness floor, which held: zero wrong
+results across 10,000 distinct realistic workflows.
+
 ---
 
 ## Capabilities
