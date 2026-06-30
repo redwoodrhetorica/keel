@@ -689,17 +689,25 @@ impl Body {
         let arc2_edge = mef.edge;
         let new_face = mef.face;
         // Geometry: the full circle curve + pcurve on both arc edges'
-        // fins; both faces keep the surface. (TASK 29 NOTE: recording
-        // arc_sweep = pi here is what arc identity wants, but
-        // cyl_angular_span's first-arc shortcut reads sweeps as AZIMUTH
-        // spans and HALVED every face carrying them: the torus fillets
-        // regressed. The recording lives in imprint_crossing_pair until
-        // the sweep semantic and the span machinery are reconciled.)
+        // fins; both faces keep the surface. Record arc_sweep = +pi on each
+        // half-arc (P->Q and Q->P are antipodal halves): without it,
+        // loop_polygon / cyl_angular_span / the green-slab cannot tell which
+        // half of the circle each arc covers (its endpoints are antipodal, so
+        // the short-span default picks the SAME half twice) and the wall band
+        // tessellates / spans only HALF -- the rotated-tool hole-wall decline
+        // (a fresh axis-frame tool happened to split where the default guessed
+        // right; a Transform3-rotated tool, every census bolt circle / radial
+        // pattern, did not). The old cyl_angular_span "first-arc shortcut" that
+        // mis-read arc_sweep as an azimuth span (and regressed the torus
+        // fillets) is GONE, so recording it here is now safe; both arcs sweep
+        // +pi in their bounds direction (P->Q then Q->P) so together they cover
+        // the full revolution without overlap.
         let pkey = self.add_curve(Curve3::Nurbs(pcurve));
         for arc in [arc1_edge, arc2_edge] {
             let ckey = self.add_curve(curve.clone());
             if let Some(e) = self.edges.get_mut(arc) {
                 e.curve = Some((ckey, true));
+                e.arc_sweep = Some(core::f64::consts::PI);
             }
             let radial = self
                 .edges
